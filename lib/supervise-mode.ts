@@ -39,6 +39,13 @@ export const SUPERVISOR_MODE_TYPE = "input-supervise-mode:v1";
 export interface SuperviseModeState {
   enabled: boolean;
   previousTools: string[];
+  /**
+   * Which user-facing entry created this policy: `supervise` or `orchestrator`.
+   * Both are the same restrictions, but the tab bar has to redraw the one the
+   * user actually selected after a reload or tree navigation. Absent on entries
+   * written before the two were separated; those restore as `supervise`.
+   */
+  modeId?: string;
 }
 
 export function superviseModeFromBranch(branch: readonly any[] | undefined): SuperviseModeState | undefined {
@@ -50,6 +57,7 @@ export function superviseModeFromBranch(branch: readonly any[] | undefined): Sup
       previousTools: Array.isArray(entry.data.previousTools)
         ? entry.data.previousTools.filter((name: unknown): name is string => typeof name === "string")
         : [],
+      modeId: entry.data.modeId === "orchestrator" || entry.data.modeId === "supervise" ? entry.data.modeId : undefined,
     };
   }
 }

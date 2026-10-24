@@ -34,12 +34,26 @@ export class ModeRegistry {
     this.index = index;
     return true;
   }
-  cycle(): void {
+  /**
+   * The mode Shift+Tab would land on, WITHOUT moving the cursor.
+   *
+   * Callers must decide whether the switch is allowed first (a running turn, or
+   * children holding permissions, can refuse it) and only then apply the mode.
+   * Moving the cursor here made the switch look applied while the policy was
+   * never written, and `select()` could not tell the two apart any more.
+   */
+  next(): ModeDefinition {
+    return this.modes[this.nextIndex()]!;
+  }
+  private nextIndex(): number {
     let next = (this.index + 1) % this.modes.length;
     while (this.modes[next]?.cycleable === false && next !== this.index) {
       next = (next + 1) % this.modes.length;
     }
-    this.index = next;
+    return next;
+  }
+  cycle(): void {
+    this.index = this.nextIndex();
   }
 }
 

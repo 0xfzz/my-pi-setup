@@ -105,14 +105,27 @@ export default function modesExtension(pi: ExtensionAPI) {
     }
   }
 
+  /**
+   * The mode the TRANSCRIPT says this session is in.
+   *
+   * `registry.current` is the tab-bar cursor, not a decision: a cycle, a reload
+   * or a session_tree move can leave it ahead of or behind the branch. Every
+   * transition therefore starts from this value, otherwise a switch that was
+   * refused or never written is indistinguishable from one that was applied.
+   */
+  function policyModeId(ctx: ExtensionContext): string {
+    const branch = policyEntries(ctx);
+    const superviseState = superviseModeFromBranch(branch);
+    if (superviseState?.enabled) return superviseState.modeId === "orchestrator" ? "orchestrator" : "supervise";
+    return planModeFromBranch(branch)?.enabled ? "plan" : "normal";
+  }
+
+  /** Orchestrator and Supervise are one policy behind two user-facing entries. */
+  const isSupervisorMode = (id: string) => id === "supervise" || id === "orchestrator";
+
   function synchronize(ctx: ExtensionContext): boolean {
-    const planActive = isPlan(ctx);
-    const superviseActive = isSupervise(ctx);
-    const currentId = registry.current.id;
-    const modeMatches = (planActive && currentId === "plan")
-      || (superviseActive && currentId === "supervise")
-      || (!planActive && !superviseActive && currentId !== "plan" && currentId !== "supervise");
-    if (restoredKey === stateKey(ctx) && modeMatches) return false;
+    const currentId = policyModeId(ctx);
+    if (restoredKey === stateKey(ctx) && registry.current.id === currentId) return false;
     restore(ctx);
     return true;
   }
@@ -123,43 +136,53 @@ export default function modesExtension(pi: ExtensionAPI) {
       ctx.ui.notify(`Unknown mode: ${id}. Choose ${registry.modes.map(mode => mode.id).join(", ")}.`, "warning");
       return false;
     }
-    if (registry.current.id === id) return true;
-    const enteringRestricted = id === "plan" || id === "supervise";
-    const leavingRestricted = registry.current.id === "plan" || registry.current.id === "supervise";
+    // Compare against the transcript, not the cursor. Cycling used to move the
+    // cursor before the policy was written, so this equality test saw the cycle
+    // as already applied and skipped the transition — Plan → Orchestrator showed
+    // the right tab while the tools stayed in Plan's loadout.
+    const currentId = policyModeId(ctx);
+    registry.select(currentId);
+    if (currentId === id) return true;
+    const enteringPlan = id === "plan";
+    const enteringSupervisor = isSupervisorMode(id);
+    const leavingPlan = currentId === "plan";
+    const leavingSupervisor = isSupervisorMode(currentId);
+    const enteringRestricted = enteringPlan || enteringSupervisor;
+    const leavingRestricted = leavingPlan || leavingSupervisor;
     if ((enteringRestricted || leavingRestricted) && (!ctx.isIdle() || nativeShellSubmissions > 0)) {
       ctx.ui.notify("Stop the current turn or shell command before entering or leaving restricted modes.", "warning");
       return false;
     }
-    if (id === "plan") {
+    if (enteringPlan) {
       if ([...childRecords(policyEntries(ctx)).values()].some(child => !child.ended)) {
         ctx.ui.notify("Finish or stop running/unverified children before entering Plan mode. Their permissions cannot be restricted by this session.", "warning");
         return false;
       }
-      if (registry.current.id === "supervise") {
-        pi.appendEntry(SUPERVISOR_MODE_TYPE, { enabled: false });
+      if (leavingSupervisor) {
+        pi.appendEntry(SUPERVISOR_MODE_TYPE, { enabled: false, modeId: currentId });
       } else {
         previousTools = [...new Set([...pi.getActiveTools(), ...pendingTools])];
         pendingTools.clear();
       }
       pi.appendEntry(PLAN_MODE_TYPE, { enabled: true, previousTools });
       restrictPlanTools();
-    } else if (id === "supervise") {
-      if (registry.current.id === "plan") {
+    } else if (enteringSupervisor) {
+      if (leavingPlan) {
         pi.appendEntry(PLAN_MODE_TYPE, { enabled: false });
       } else {
         previousTools = [...new Set([...pi.getActiveTools(), ...pendingTools])];
         pendingTools.clear();
       }
-      pi.appendEntry(SUPERVISOR_MODE_TYPE, { enabled: true, previousTools });
+      // Both ids write the same entry; `modeId` remembers which tab to redraw
+      // after a reload so `/mode orchestrator` does not come back as Supervise.
+      pi.appendEntry(SUPERVISOR_MODE_TYPE, { enabled: true, previousTools, modeId: id });
       restrictSuperviseTools(ctx);
     } else if (leavingRestricted) {
-      const leavingPlan = registry.current.id === "plan";
-      const leavingSupervise = registry.current.id === "supervise";
       restoreTools(previousTools ?? [], ctx);
       if (leavingPlan) {
         pi.appendEntry(PLAN_MODE_TYPE, { enabled: false, previousTools: previousTools ?? [], pendingTools: [...pendingTools] });
-      } else if (leavingSupervise) {
-        pi.appendEntry(SUPERVISOR_MODE_TYPE, { enabled: false, previousTools: previousTools ?? [], pendingTools: [...pendingTools] });
+      } else {
+        pi.appendEntry(SUPERVISOR_MODE_TYPE, { enabled: false, previousTools: previousTools ?? [], pendingTools: [...pendingTools], modeId: currentId });
       }
       previousTools = undefined;
     }
@@ -170,6 +193,16 @@ export default function modesExtension(pi: ExtensionAPI) {
     return true;
   }
 
+  /**
+   * Shift+Tab and bare `/mode`: step from the transcript's mode, not the cursor.
+   * A refused switch (busy turn, running children) leaves the mode untouched.
+   */
+  function switchToNext(ctx: ExtensionContext): void {
+    const from = policyModeId(ctx);
+    registry.select(from);
+    select(registry.next().id, ctx);
+  }
+
   function restore(ctx: ExtensionContext) {
     const branch = policyEntries(ctx);
     const planState = planModeFromBranch(branch);
@@ -177,7 +210,7 @@ export default function modesExtension(pi: ExtensionAPI) {
     pendingTools.clear();
     if (superviseState?.enabled) {
       previousTools = superviseState.previousTools;
-      registry.select("supervise");
+      registry.select(superviseState.modeId === "orchestrator" ? "orchestrator" : "supervise");
       restrictSuperviseTools(ctx);
     } else if (planState?.enabled) {
       previousTools = planState.previousTools;
@@ -242,8 +275,7 @@ export default function modesExtension(pi: ExtensionAPI) {
       editor.handleInput = (data: string) => {
         // Consume before the base editor handles the built-in thinking shortcut.
         if (matchesKey(data, "shift+tab")) {
-          registry.cycle();
-          select(registry.current.id, ctx);
+          switchToNext(ctx);
           tui.requestRender();
           return;
         }
@@ -409,15 +441,14 @@ export default function modesExtension(pi: ExtensionAPI) {
     async handler(args, ctx) {
       synchronize(ctx);
       const id = args.trim().toLowerCase();
-      if (ctx.mode !== "tui" && id !== "plan" && !(id === "normal" && registry.current.id === "plan")) {
+      if (ctx.mode !== "tui" && id !== "plan" && !(id === "normal" && policyModeId(ctx) === "plan")) {
         ctx.ui.notify("Input modes are available in the terminal UI only; use /plan mode or /plan off elsewhere.", "warning");
         return;
       }
       if (id) {
         select(id, ctx);
       } else {
-        registry.cycle();
-        select(registry.current.id, ctx);
+        switchToNext(ctx);
       }
     },
   });

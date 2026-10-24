@@ -114,3 +114,115 @@ test("unknown mode IDs are refused by the /mode command", async () => {
   assert.match(notices.at(-1)!, /Unknown mode: bash/);
   events.get("session_shutdown")!({}, ctx);
 });
+
+// The cycle used to move the registry cursor BEFORE the policy was written, and
+// select() then compared against that cursor, so it believed the switch was
+// already applied: Plan → Orchestrator drew the Orchestrator tab while the tools
+// stayed in Plan's loadout and no supervisor entry existed, and the following
+// Shift+Tab ping-ponged back to Plan instead of reaching Normal.
+test("ModeRegistry.next() previews the target without moving the cursor", () => {
+  const registry = new ModeRegistry();
+  registry.select("plan");
+  assert.equal(registry.next().id, "orchestrator");
+  assert.equal(registry.current.id, "plan", "next() must not commit the switch");
+  registry.select("orchestrator");
+  assert.equal(registry.next().id, "normal");
+  assert.equal(registry.current.id, "orchestrator");
+});
+
+function modeHarness(initialBranch: any[] = []) {
+  const events = new Map<string, Function>();
+  const commands = new Map<string, any>();
+  const branch = initialBranch;
+  const activeTools = new Set(["read", "edit", "write", "bash", "artifact_save", "orch_spawn", "orch_handoff", "orch_review"]);
+  const fakePi: any = {
+    getAllTools: () => ["read", "edit", "write", "bash", "artifact_save", "orch_spawn", "orch_handoff", "orch_review"]
+      .map(name => ({ name })),
+    getActiveTools: () => [...activeTools],
+    setActiveTools: (tools: string[]) => { activeTools.clear(); for (const tool of tools) activeTools.add(tool); },
+    on: (event: string, handler: Function) => events.set(event, handler),
+    registerCommand: (name: string, definition: any) => commands.set(name, definition),
+    appendEntry: (customType: string, data: any) => branch.push({ type: "custom", customType, data }),
+  };
+  modesExtension(fakePi);
+  const notices: string[] = [];
+  let widgetFactory: any;
+  const ctx: any = {
+    mode: "tui", isIdle: () => true,
+    sessionManager: { getBranch: () => branch },
+    ui: {
+      notify(text: string) { notices.push(text); },
+      setWidget(_key: string, factory: any) { widgetFactory = factory; },
+      setEditorComponent() {},
+    },
+  };
+  events.get("session_start")!({}, ctx);
+  const activeTab = () => {
+    const widget = widgetFactory({}, { fg: (_token: string, text: string) => text, bold: (text: string) => text });
+    return widget.render(200)[0];
+  };
+  return { events, commands, branch, activeTools, ctx, notices, activeTab, fakePi };
+}
+
+test("Shift+Tab from Plan reaches Orchestrator with its policy and then Normal with its tools back", async () => {
+  const h = modeHarness();
+  await h.commands.get("plan").handler("on", h.ctx);
+  assert.ok(!h.activeTools.has("edit"), "Plan removes edit");
+  assert.equal(h.branch.at(-1).data.enabled, true);
+
+  // Plan → Orchestrator: the supervisor policy must actually be persisted.
+  await h.commands.get("mode").handler("", h.ctx);
+  assert.equal(h.branch.at(-1).customType, "input-supervise-mode:v1", "Orchestrator persists supervisor policy");
+  assert.equal(h.branch.at(-1).data.enabled, true);
+  assert.equal(h.branch.at(-1).data.modeId, "orchestrator", "the tab the user picked is recorded");
+  assert.ok(!h.activeTools.has("edit"), "Orchestrator keeps edit disabled");
+  assert.ok(!h.activeTools.has("write"), "Orchestrator keeps write disabled");
+  assert.ok(h.activeTools.has("orch_spawn"), "delegation stays available");
+  assert.match(h.activeTab(), /\[ 󰀅 Orchestrator \]/u, "the Orchestrator tab is the active one");
+
+  // Orchestrator → Normal: the saved loadout comes back.
+  await h.commands.get("mode").handler("", h.ctx);
+  assert.equal(h.branch.at(-1).data.enabled, false, "leaving Orchestrator is recorded");
+  assert.ok(h.activeTools.has("edit"), "Normal restores edit");
+  assert.ok(h.activeTools.has("write"), "Normal restores write");
+  assert.match(h.activeTab(), /\[ 󰚥 Normal \]/u, "the Normal tab is the active one");
+
+  // ...and the cycle continues: Normal → Plan.
+  await h.commands.get("mode").handler("", h.ctx);
+  assert.match(h.activeTab(), /\[ 󰏫 Plan \]/u);
+  h.events.get("session_shutdown")!({}, h.ctx);
+});
+
+test("a refused mode switch leaves both the cursor and the transcript unchanged", async () => {
+  const h = modeHarness();
+  await h.commands.get("plan").handler("on", h.ctx);
+  const entriesBefore = h.branch.length;
+  let idle = false;
+  h.ctx.isIdle = () => idle;
+  await h.commands.get("mode").handler("", h.ctx);
+  assert.equal(h.branch.length, entriesBefore, "no mode entry is written while a turn is running");
+  assert.ok(!h.activeTools.has("edit"), "Plan restrictions stay in force");
+  assert.match(h.notices.at(-1)!, /Stop the current turn/);
+  assert.match(h.activeTab(), /\[ 󰏫 Plan \]/, "the tab does not advance either");
+  idle = true;
+  await h.commands.get("mode").handler("", h.ctx);
+  assert.match(h.activeTab(), /\[ 󰀅 Orchestrator \]/u, "the refused step is not skipped, only deferred");
+  h.events.get("session_shutdown")!({}, h.ctx);
+});
+
+test("a reload restores the supervisor tab the user actually chose", async () => {
+  const branch: any[] = [
+    { type: "custom", customType: "input-supervise-mode:v1", data: { enabled: true, previousTools: ["read", "edit", "write"], modeId: "orchestrator" } },
+  ];
+  const h = modeHarness(branch);
+  assert.match(h.activeTab(), /\[ 󰀅 Orchestrator \]/u);
+  assert.ok(!h.activeTools.has("edit"), "restored supervisor policy still blocks edits");
+  h.events.get("session_shutdown")!({}, h.ctx);
+
+  // Legacy entries predate modeId; they keep their original Supervise label.
+  const legacy = modeHarness([
+    { type: "custom", customType: "input-supervise-mode:v1", data: { enabled: true, previousTools: ["read", "edit"] } },
+  ]);
+  assert.match(legacy.activeTab(), /\[ 󰒋 Supervise \]/u);
+  legacy.events.get("session_shutdown")!({}, legacy.ctx);
+});
