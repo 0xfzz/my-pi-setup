@@ -1,0 +1,55 @@
+{
+  "name": "pi-workflow-extensions",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Conditional AI todo enforcement and uncertainty clarification for Pi and Herdr subagents",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "herdr",
+    "subagents",
+    "orchestrator"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/todo.ts",
+      "./extensions/ask-user.ts",
+      "./extensions/orchestrator.ts",
+      "./extensions/subagent-checkpoints.ts",
+      "./extensions/artifacts.ts",
+      "./extensions/smart-timeout.ts",
+      "./extensions/modes.ts",
+      "./extensions/dynamic-prompt.ts",
+      "./extensions/sidebar.ts",
+      "./extensions/providers.ts",
+      "./extensions/antigravity-accounts.ts",
+      "./extensions/account-router.ts",
+      "./extensions/bubbly-spinner.ts",
+      "./extensions/web-read.ts",
+      "./vendor/antigravity/index.ts",
+      "./vendor/antigravity/features/google-search.ts",
+      "./vendor/antigravity/features/generate-image.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/*.test.ts tests/orchestrator/*.test.ts",
+    "test:core": "node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/*.test.ts",
+    "test:orchestrator": "node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/orchestrator/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build:wasm": "cargo build --manifest-path crates/ascii-anim-engine/Cargo.toml --target wasm32-unknown-unknown --release && cp crates/ascii-anim-engine/target/wasm32-unknown-unknown/release/ascii_anim_engine.wasm lib/ascii_anim_engine.wasm"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "@types/node": "^22.0.0"
+  }
+}

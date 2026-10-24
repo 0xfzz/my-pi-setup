@@ -1,0 +1,9 @@
+{
+  "name": "pi-herdr-subagents-vendored",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Source snapshot of pi-herdr-subagents used by pi-workflow-extensions. Not a publishable package — see VENDORED.md.",
+  "license": "MIT",
+  "author": "Justin",
+  "type": "module"
+}

@@ -1,0 +1,1292 @@
+diff --git a/index.ts b/index.ts
+index 5cf556d..10d0bc8 100644
+--- a/index.ts
++++ b/index.ts
+@@ -29,6 +29,7 @@ import {
+   discoverAgentDefinitions,
+   getAgentConfigDir,
+   loadAgentDefaults,
++  resolveDepthDenial,
+ } from "./src/agents.ts";
+ import {
+   createHerdrClient,
+@@ -55,6 +56,7 @@ import {
+   getSessionId,
+   seedSubagentSessionFile,
+ } from "./src/session.ts";
++import type { ContextProvenance } from "./src/context-provenance.ts";
+ import {
+   watchSubagent,
+   type RunningSubagent,
+@@ -497,6 +499,7 @@ async function executeSubagentSpawn(
+       getSessionFile(): string | null;
+       getSessionId(): string;
+       getSessionDir(): string;
++      getLeafId?(): string | null;
+     };
+   },
+ ) {
+@@ -520,6 +523,13 @@ async function executeSubagentSpawn(
+     );
+   }
+ 
++  // Depth and fork-chain limits are refused before any artifact is written or
++  // pane started, so a denied spawn leaves no half-created child behind.
++  const depthDenial = resolveDepthDenial(params, agentDefs);
++  if (depthDenial) {
++    return errorResult(depthDenial, "delegation depth limit");
++  }
++
+   const parentSessionFile = ctx.sessionManager.getSessionFile();
+   if (!parentSessionFile) {
+     return errorResult(
+@@ -543,11 +553,13 @@ async function executeSubagentSpawn(
+ 
+   let plan;
+   try {
++    const activeParentLeafId = ctx.sessionManager.getLeafId ? ctx.sessionManager.getLeafId() : undefined;
+     plan = buildLaunchPlan(params, agentDefs, {
+       sessionDir: ctx.sessionManager.getSessionDir(),
+       sessionId: ctx.sessionManager.getSessionId(),
+       parentSessionFile,
+       parentCwd: ctx.cwd,
++      parentLeafId: activeParentLeafId,
+       env: process.env,
+     });
+   } catch (error: any) {
+@@ -557,8 +569,16 @@ async function executeSubagentSpawn(
+ 
+   // Execute the plan: write artifacts, seed the child session, start the pane.
+   writePlanFiles(plan.files);
++  let context: ContextProvenance | undefined;
+   if (plan.seedSession) {
+-    seedSubagentSessionFile(plan.seedSession);
++    try {
++      context = seedSubagentSessionFile(plan.seedSession);
++    } catch (error: any) {
++      // Seeding precedes the pane; failing loudly beats launching a child with the
++      // wrong context shape while the parent believes it inherited everything.
++      const message = error?.message ?? String(error);
++      return errorResult(`Failed to seed subagent context: ${message}`, message);
++    }
+   }
+ 
+   let started;
+@@ -605,6 +625,9 @@ async function executeSubagentSpawn(
+       sessionFile: running.sessionFile,
+       launchScriptFile: running.launchScriptFile,
+       status: "started",
++      // Provenance for the parent's checkpoint record and UI. Absent (fresh) when
++      // nothing was seeded, which is the default shape.
++      ...(context ? { context } : {}),
+     },
+   };
+ }
+diff --git a/src/agents.ts b/src/agents.ts
+index 7bd78cd..32323b8 100644
+--- a/src/agents.ts
++++ b/src/agents.ts
+@@ -15,7 +15,14 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+ import { join } from "node:path";
+ import { homedir } from "node:os";
+ 
+-export type SubagentSessionMode = "standalone" | "lineage-only" | "fork";
++/**
++ * `standalone` = fresh child with a self-contained ticket (the default).
++ * `digest` = fresh child plus a zero-LLM parent brief; `lineage-only` is the
++ * legacy frontmatter spelling, accepted and mapped to `digest` so existing agent
++ * definitions keep working without silently behaving like a fork.
++ * `fork` = a full copy of the parent's active branch.
++ */
++export type SubagentSessionMode = "standalone" | "digest" | "lineage-only" | "fork";
+ 
+ /** The subset of `subagent` tool params that agent-def resolution consults. */
+ export interface SubagentSpawnParams {
+@@ -43,6 +50,12 @@ export interface AgentDefaults {
+   interactive?: boolean;
+   systemPromptMode?: "append" | "replace";
+   sessionMode?: SubagentSessionMode;
++  /**
++   * Frontmatter `max-depth`: how deep a delegation chain may go beneath this
++   * agent. A chain at this depth may not spawn again. Defaults to
++   * `DEFAULT_MAX_DEPTH`; `PI_SUBAGENT_MAX_DEPTH` overrides for a run.
++   */
++  maxDepth?: number;
+   cwd?: string;
+   cli?: string;
+   body?: string;
+@@ -110,8 +123,14 @@ function parseOptionalBoolean(value: string | undefined): boolean | undefined {
+   return value != null ? value === "true" : undefined;
+ }
+ 
++function parseOptionalCount(value: string | undefined): number | undefined {
++  if (value == null) return undefined;
++  const parsed = Number.parseInt(value, 10);
++  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
++}
++
+ function parseSessionMode(value: string | undefined): SubagentSessionMode | undefined {
+-  if (value === "standalone" || value === "lineage-only" || value === "fork") {
++  if (value === "standalone" || value === "digest" || value === "lineage-only" || value === "fork") {
+     return value;
+   }
+   return undefined;
+@@ -146,6 +165,7 @@ export function parseAgentDefinition(
+     autoExit: parseOptionalBoolean(getFrontmatterValue(frontmatter, "auto-exit")),
+     interactive: parseOptionalBoolean(getFrontmatterValue(frontmatter, "interactive")),
+     sessionMode: parseSessionMode(getFrontmatterValue(frontmatter, "session-mode")),
++    maxDepth: parseOptionalCount(getFrontmatterValue(frontmatter, "max-depth")),
+     cwd: getFrontmatterValue(frontmatter, "cwd"),
+     cli: getFrontmatterValue(frontmatter, "cli"),
+     body: body || undefined,
+@@ -216,15 +236,19 @@ export function resolveLaunchBehavior(
+   agentDefs: AgentDefaults | null,
+ ): {
+   sessionMode: SubagentSessionMode;
+-  seededSessionMode: "lineage-only" | "fork" | null;
++  seededSessionMode: "digest" | "fork" | null;
+   inheritsConversationContext: boolean;
+   taskDelivery: "direct" | "artifact";
+ } {
+   const sessionMode = resolveEffectiveSessionMode(params, agentDefs);
++  // `lineage-only` never carried content; it is now the digest seed.
++  const seededSessionMode = sessionMode === "standalone"
++    ? null
++    : sessionMode === "fork" ? "fork" : "digest";
+   const inheritsConversationContext = sessionMode === "fork";
+   return {
+     sessionMode,
+-    seededSessionMode: sessionMode === "standalone" ? null : sessionMode,
++    seededSessionMode,
+     inheritsConversationContext,
+     taskDelivery: inheritsConversationContext ? "direct" : "artifact",
+   };
+@@ -255,6 +279,69 @@ export function resolveEffectiveInteractive(
+   return !(agentDefs?.autoExit ?? true);
+ }
+ 
++/** Delegation depth beyond which spawning is refused when nothing overrides it. */
++export const DEFAULT_MAX_DEPTH = 2;
++
++/**
++ * How many delegation hops above this process, from `PI_SUBAGENT_DEPTH`.
++ *
++ * The launch script exports the parent's depth + 1, so the top-level session is
++ * depth 0 and its children are depth 1. An unparsable value reads as 0 (a
++ * malformed env var must not silently disable the cap).
++ */
++export function currentSubagentDepth(env: Record<string, string | undefined> = process.env): number {
++  const parsed = Number.parseInt(env.PI_SUBAGENT_DEPTH ?? "", 10);
++  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
++}
++
++/** Frontmatter `max-depth`, then `PI_SUBAGENT_MAX_DEPTH`, then the default. */
++export function maxSubagentDepth(
++  agentDefs: AgentDefaults | null,
++  env: Record<string, string | undefined> = process.env,
++): number {
++  if (typeof agentDefs?.maxDepth === "number" && Number.isFinite(agentDefs.maxDepth)) {
++    return agentDefs.maxDepth;
++  }
++  return parseOptionalCount(env.PI_SUBAGENT_MAX_DEPTH) ?? DEFAULT_MAX_DEPTH;
++}
++
++/**
++ * Why this spawn is refused, or `null` when it is allowed.
++ *
++ * Two independent limits, both checked before any artifact is written or pane
++ * started:
++ *
++ * - **Depth cap** — a chain already `max-depth` hops deep may not spawn again.
++ * - **Fork chain cap** — a fork child at depth >= 1 may not fork again. Forking
++ *   compounds: each generation re-reads a whole parent branch, so a fork of a
++ *   fork multiplies context cost. A `digest` grandchild is cheap and allowed.
++ *
++ * Checked here rather than by denying tools, because the fork rule depends on
++ * the requested mode: denying `subagent` outright would also forbid the cheap
++ * digest grandchildren the cap is meant to steer callers toward.
++ */
++export function resolveDepthDenial(
++  params: SubagentSpawnParams,
++  agentDefs: AgentDefaults | null,
++  env: Record<string, string | undefined> = process.env,
++): string | null {
++  const depth = currentSubagentDepth(env);
++  const maxDepth = maxSubagentDepth(agentDefs, env);
++  if (depth >= maxDepth) {
++    return (
++      `Delegation depth limit reached (this session is ${depth} hops deep, max-depth ${maxDepth}). ` +
++      `Do this work yourself, or raise max-depth / PI_SUBAGENT_MAX_DEPTH if deeper delegation is truly required.`
++    );
++  }
++  if (resolveEffectiveSessionMode(params, agentDefs) === "fork" && depth >= 1) {
++    return (
++      `A fork child (depth ${depth}) may not fork again: each fork re-reads a whole parent branch, ` +
++      `so forks compound. Use session-mode digest for cheap context, or pass fork: false.`
++    );
++  }
++  return null;
++}
++
+ export function loadAgentDefaults(agentName: string): AgentDefaults | null {
+   const configDir = getAgentConfigDir();
+   const paths = [
+diff --git a/src/context-provenance.ts b/src/context-provenance.ts
+new file mode 100644
+index 0000000..dc81cc7
+--- /dev/null
++++ b/src/context-provenance.ts
+@@ -0,0 +1,33 @@
++// Context provenance for seeded children — the producer half of the contract.
++//
++// The canonical definition and the validating reader live in the workflow
++// companion (`pi-workflow-extensions/lib/subagent-context.ts`, type
++// `subagent-context:v1`). This package is installed separately, so it cannot
++// import that module; the JSON entry shape is the boundary between them and the
++// companion re-validates every field on read. Keep the two in sync by shape, and
++// bump `version` if the shape changes.
++
++export const SUBAGENT_CONTEXT_TYPE = "subagent-context:v1";
++
++/** fresh = empty array; digest = parent brief; fork = copy of the parent branch. */
++export type ContextMode = "fresh" | "digest" | "fork";
++
++export interface ContextProvenance {
++  version: 1;
++  mode: ContextMode;
++  parentSession: string;
++  parentLeafId: string | null;
++  parentSessionId: string;
++  seededAt: string;
++  seededEntries: number;
++  seededChars: number;
++  estimatedTokens: number;
++  truncated: { at: "trailing-user-message"; droppedEntries: number } | null;
++  briefSource?: "vcc";
++  secretsRedacted?: number;
++}
++
++/** chars/4 heuristic, matching the companion's `estimateTokens`. Recorded, never enforced. */
++export function estimateTokens(chars: number): number {
++  return Math.max(0, Math.ceil((Number.isFinite(chars) ? chars : 0) / 4));
++}
+diff --git a/src/launch.ts b/src/launch.ts
+index 78b380b..8639aca 100644
+--- a/src/launch.ts
++++ b/src/launch.ts
+@@ -30,6 +30,7 @@ import { fileURLToPath } from "node:url";
+ 
+ import {
+   type AgentDefaults,
++  currentSubagentDepth,
+   getAgentConfigDir,
+   getDefaultSessionDirFor,
+   resolveDenyTools,
+@@ -61,6 +62,8 @@ export interface LaunchPlanContext {
+   parentSessionFile: string;
+   /** Orchestrator process cwd (ctx.cwd). */
+   parentCwd: string;
++  /** Orchestrator leaf entry id (active leaf at delegation). */
++  parentLeafId?: string | null;
+   /** Environment snapshot — normally process.env. Injectable test seam. */
+   env: Record<string, string | undefined>;
+   /** Deterministic seams for tests. */
+@@ -86,12 +89,13 @@ export interface LaunchPlan {
+   syspromptFile: string | null;
+   /** Files the executor must write (mkdir -p dirname first). Includes the launch script. */
+   files: Array<{ path: string; content: string }>;
+-  /** Session seeding the executor must perform before launch (fork/lineage modes). */
++  /** Session seeding the executor must perform before launch (digest/fork modes). */
+   seedSession: {
+-    mode: "lineage-only" | "fork";
++    mode: "digest" | "fork";
+     parentSessionFile: string;
+     childSessionFile: string;
+     childCwd: string;
++    parentLeafId?: string | null;
+   } | null;
+   /** Arguments for HerdrClient.paneStart(). */
+   paneStart: {
+@@ -151,7 +155,7 @@ export function buildSubagentToolAllowlist(effectiveTools?: string): string | nu
+ /**
+  * Build the positional prompt args for a Pi CLI subagent launch.
+  *
+- * In artifact-backed launches (lineage-only, standalone), Pi's buildInitialMessage()
++ * In artifact-backed launches (digest, standalone), Pi's buildInitialMessage()
+  * concatenates @file content with messages[0] into one initial prompt. That breaks
+  * /skill: expansion because the message no longer starts with "/skill:". Only
+  * messages[1..] are sent as separate follow-up prompts where /skill: is recognized.
+@@ -345,10 +349,14 @@ export function buildLaunchPlan(
+         parentSessionFile: ctx.parentSessionFile,
+         childSessionFile: sessionFile,
+         childCwd: targetCwd,
++        parentLeafId: ctx.parentLeafId,
+       }
+     : null;
+ 
+-  // ── Task message (wrapper instructions only for blank-session modes) ──
++  // ── Task message ──
++  // The ticket is delivered in every mode. A fork inherits the parent's
++  // conversation, not the parent's agent role, completion contract, or exit
++  // protocol, so dropping the wrapper there produced unsummarized fork children.
+   const modeHint = autoExit
+     ? "Complete your task autonomously."
+     : "Complete your task. When finished, call the subagent_done tool. The user can interact with you at any time.";
+@@ -359,9 +367,17 @@ export function buildLaunchPlan(
+   const systemPromptMode = agentDefs?.systemPromptMode;
+   const identityInSystemPrompt = Boolean(systemPromptMode && identity);
+   const roleBlock = identity && !identityInSystemPrompt ? `\n\n${identity}` : "";
+-  const fullTask = launchBehavior.inheritsConversationContext
+-    ? params.task
+-    : `${roleBlock}\n\n${modeHint}\n\n${params.task}\n\n${summaryInstruction}`;
++  // Children that did not inherit the parent's transcript still need to know the
++  // pull channel exists; a digest child gets only a brief, and a fresh child gets
++  // nothing, so both are told how to reach the parent on demand.
++  const contextNote = launchBehavior.inheritsConversationContext
++    ? "The conversation above was copied from your parent at launch. It is a snapshot and may already be stale. If you need a decision, a file the parent touched, or anything the parent did after the snapshot, call parent_recall or parent_digest instead of guessing or re-reading the whole repository. Never modify the parent session."
++    : launchBehavior.seededSessionMode === "digest"
++      ? "You did not inherit your parent's conversation, but a brief of it is being attached to your first request. If you need more than the brief — a specific decision, a file the parent touched, or newer parent work — call parent_recall or parent_digest rather than guessing or re-reading the whole repository. Never modify the parent session."
++      : "You did not inherit your parent's conversation. If the task depends on context you do not have — a decision the parent made, a file it touched, or work it did earlier — call parent_recall or parent_digest instead of guessing or re-reading the whole repository. Never modify the parent session.";
++  const fullTask = [roleBlock, modeHint, contextNote, params.task, summaryInstruction]
++    .filter(Boolean)
++    .join("\n\n");
+ 
+   const files: Array<{ path: string; content: string }> = [];
+   const artifactTimestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+@@ -432,6 +448,15 @@ export function buildLaunchPlan(
+   exports.push(`export PI_SUBAGENT_AUTO_EXIT=${autoExit ? "1" : "0"}`);
+   exports.push(`export PI_SUBAGENT_SESSION=${shellEscape(sessionFile)}`);
+   exports.push(`export PI_SUBAGENT_ID=${shellEscape(id)}`);
++  // Delegation depth, resolved from the planning process's env so the value is
++  // deterministic (and testable) rather than depending on shell arithmetic.
++  // The top-level session is depth 0; its children are depth 1.
++  exports.push(`export PI_SUBAGENT_DEPTH=${currentSubagentDepth(env) + 1}`);
++  // Authoritative parent pointer for child-side recall. A `fresh` child has no
++  // parentSession header, so the environment is the only way it can reach back.
++  if (ctx.parentSessionFile) {
++    exports.push(`export PI_SUBAGENT_PARENT=${shellEscape(ctx.parentSessionFile)}`);
++  }
+   // The pane id is only known inside the pane — forward herdr's injected env.
+   exports.push('export PI_SUBAGENT_PANE="${HERDR_PANE_ID:-}"');
+ 
+@@ -569,6 +594,13 @@ export function buildResumeLaunchPlan(
+   exports.push(`export PI_SUBAGENT_AUTO_EXIT=${autoExit ? "1" : "0"}`);
+   exports.push(`export PI_SUBAGENT_SESSION=${shellEscape(params.sessionPath)}`);
+   exports.push(`export PI_SUBAGENT_ID=${shellEscape(id)}`);
++  // A resumed child keeps the depth it was originally launched at.
++  exports.push(`export PI_SUBAGENT_DEPTH=${currentSubagentDepth(env)}`);
++  // The resuming session is the parent that can answer follow-up pulls now,
++  // even when the child's own provenance points at an earlier seed.
++  if (ctx.parentSessionFile) {
++    exports.push(`export PI_SUBAGENT_PARENT=${shellEscape(ctx.parentSessionFile)}`);
++  }
+   exports.push('export PI_SUBAGENT_PANE="${HERDR_PANE_ID:-}"');
+ 
+   const { content: scriptContent, holdOpenSecs } = buildWrapperScript({
+diff --git a/src/session.ts b/src/session.ts
+index b39a7db..7cd0b4c 100644
+--- a/src/session.ts
++++ b/src/session.ts
+@@ -8,11 +8,17 @@
+ import { appendFileSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+ import { randomBytes, randomUUID } from "node:crypto";
+ import { dirname, join } from "node:path";
++import { parseSessionEntries } from "@mariozechner/pi-coding-agent";
++import {
++  SUBAGENT_CONTEXT_TYPE,
++  estimateTokens,
++  type ContextProvenance,
++} from "./context-provenance.ts";
+ 
+ export interface SessionEntry {
+   type: string;
+   id: string;
+-  parentId?: string;
++  parentId?: string | null;
+   [key: string]: unknown;
+ }
+ 
+@@ -24,40 +30,186 @@ export interface MessageEntry extends SessionEntry {
+   };
+ }
+ 
+-export type SeededSubagentSessionMode = "lineage-only" | "fork";
++/** digest = parent brief only; fork = full copy of the parent's active branch. */
++export type SeededSubagentSessionMode = "digest" | "fork";
+ 
+-function getForkContentLines(parentSessionFile: string): string[] {
+-  const raw = readFileSync(parentSessionFile, "utf8");
+-  const lines = raw.split("\n").filter((line) => line.trim());
++/**
++ * High-confidence secret shapes. This is a seatbelt for the new copy on disk,
++ * not a data-loss-prevention policy: semantic secrets are inherited verbatim.
++ */
++const SECRET_PATTERNS: RegExp[] = [
++  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
++  /\bsk-[A-Za-z0-9_-]{20,}/g,
++  /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
++  /\bAKIA[0-9A-Z]{16}\b/g,
++  /\b(Bearer)\s+[A-Za-z0-9._~+/=-]{20,}/g,
++];
++
++/** Replace high-confidence secrets with a marker. Returns how many were replaced. */
++export function redactSecrets(text: string): { text: string; count: number } {
++  let count = 0;
++  let result = text;
++  for (const pattern of SECRET_PATTERNS) {
++    result = result.replace(pattern, () => {
++      count++;
++      return "[REDACTED by fork seed]";
++    });
++  }
++  return { text: result, count };
++}
++
++/**
++ * Reconstruct the parent's ACTIVE branch from parsed file entries.
++ *
++ * Walks `parentId` back from the active leaf, which is what Pi's own `getBranch()`
++ * does. If `parentLeafId` is specified, starts traversal from that entry (or
++ * returns an empty branch if null). If `parentLeafId` is not found, throws an
++ * invalid boundary error. If omitted, falls back to the file order disk tail.
++ *
++ * Read-only by construction: the parent file is never opened for writing, so a
++ * live parent that is still appending cannot be initialized or rewritten.
++ */
++export function readParentBranch(
++  parentSessionFile: string,
++  parentLeafId?: string | null,
++): {
++  entries: SessionEntry[];
++  parentSessionId: string;
++  parentCwd: string;
++} {
++  const fileEntries = parseSessionEntries(readFileSync(parentSessionFile, "utf8")) as any[];
++  const header = fileEntries.find((entry) => entry?.type === "session");
++  const parentSessionId = typeof header?.id === "string" ? header.id : "";
++  const parentCwd = typeof header?.cwd === "string" ? header.cwd : process.cwd();
++
++  const byId = new Map<string, SessionEntry>();
++  for (const entry of fileEntries) {
++    if (entry?.type === "session") continue;
++    if (typeof entry?.id === "string") byId.set(entry.id, entry as SessionEntry);
++  }
+ 
+-  let truncateAt = lines.length;
+-  for (let i = lines.length - 1; i >= 0; i--) {
+-    try {
+-      const entry = JSON.parse(lines[i]);
+-      if (entry.type === "message" && entry.message?.role === "user") {
+-        truncateAt = i;
+-        break;
++  if (parentLeafId === null) {
++    return { entries: [], parentSessionId, parentCwd };
++  }
++
++  let cursor: SessionEntry | undefined;
++  if (typeof parentLeafId === "string") {
++    cursor = byId.get(parentLeafId);
++    if (!cursor) {
++      throw new Error(`Invalid boundary: parent leaf "${parentLeafId}" not found in session`);
++    }
++  } else {
++    // Pi treats the last entry in file order as the leaf when not explicitly provided.
++    cursor = [...byId.values()].at(-1);
++  }
++
++  const path: SessionEntry[] = [];
++  const seen = new Set<string>();
++  while (cursor && !seen.has(cursor.id)) {
++    seen.add(cursor.id);
++    path.push(cursor);
++    const parentId = (cursor as any).parentId;
++    cursor = typeof parentId === "string" ? byId.get(parentId) : undefined;
++  }
++  path.reverse();
++  return { entries: path, parentSessionId, parentCwd };
++}
++
++/**
++ * Ensure any tool calls in assistant messages have matching tool results so
++ * that downstream providers (Anthropic, OpenAI, Bedrock, etc.) do not reject
++ * incomplete turns or unclosed tool calls, while preserving the assistant's
++ * analysis and findings.
++ */
++export function closeOutstandingToolCalls(
++  entries: SessionEntry[],
++  timestamp: string,
++): SessionEntry[] {
++  const resolvedToolCallIds = new Set<string>();
++  for (const entry of entries) {
++    if (entry.type === "message") {
++      const msg = (entry as any).message;
++      if (msg?.role === "toolResult" && typeof msg.toolCallId === "string") {
++        resolvedToolCallIds.add(msg.toolCallId);
+       }
+-    } catch {
+-      // ignore malformed lines
+     }
+   }
+ 
+-  return lines.slice(0, truncateAt).filter((line) => {
+-    try {
+-      return JSON.parse(line).type !== "session";
+-    } catch {
+-      return true;
++  const result: SessionEntry[] = [];
++  let currentParentId: string | null = null;
++
++  for (const entry of entries) {
++    // The input is already one active path. Rechain every subsequent entry to
++    // the output leaf: one or several inserted results must remain reachable
++    // when a real parent result or metadata entry follows them.
++    const clonedEntry = result.length > 0 && entry.parentId !== currentParentId
++      ? { ...entry, parentId: currentParentId }
++      : entry;
++
++    result.push(clonedEntry);
++    currentParentId = clonedEntry.id;
++
++    if (clonedEntry.type === "message") {
++      const msg = (clonedEntry as any).message;
++      if (msg?.role === "assistant" && Array.isArray(msg.content)) {
++        for (const block of msg.content) {
++          if (
++            block?.type === "toolCall" &&
++            typeof block.id === "string" &&
++            !resolvedToolCallIds.has(block.id)
++          ) {
++            const syntheticId = randomBytes(4).toString("hex");
++            const syntheticResult: SessionEntry = {
++              type: "message",
++              id: syntheticId,
++              parentId: currentParentId,
++              timestamp,
++              message: {
++                role: "toolResult",
++                toolCallId: block.id,
++                toolName: block.name ?? "unknown",
++                content: [{ type: "text", text: "[Inherited parent tool call had no result at fork time; not executed by this child.]" }],
++                isError: true,
++                timestamp: Date.parse(timestamp),
++              },
++            } as any;
++            result.push(syntheticResult);
++            resolvedToolCallIds.add(block.id);
++            currentParentId = syntheticId;
++          }
++        }
++      }
+     }
+-  });
++  }
++
++  return result;
++}
++
++/**
++ * Trailing user messages are retained so the child inherits the user's latest
++ * prompt, findings, and instructions.
++ */
++export function dropTrailingParentTurn(entries: SessionEntry[]): {
++  entries: SessionEntry[];
++  droppedEntries: number;
++} {
++  return { entries, droppedEntries: 0 };
+ }
+ 
++/**
++ * Seed a child session file and return the provenance record describing it.
++ *
++ * Written layout: header, copied parent entries, then one `subagent-context:v1`
++ * entry parented to the last copied entry so it sits on the child's active
++ * branch and reaches the model through the companion's context snapshot.
++ */
+ export function seedSubagentSessionFile(params: {
+   mode: SeededSubagentSessionMode;
+   parentSessionFile: string;
+   childSessionFile: string;
+   childCwd: string;
+-}): void {
++  parentLeafId?: string | null;
++}): ContextProvenance {
+   const header = {
+     type: "session",
+     version: 3,
+@@ -66,12 +218,54 @@ export function seedSubagentSessionFile(params: {
+     cwd: params.childCwd,
+     parentSession: params.parentSessionFile,
+   };
+-  const contentLines =
+-    params.mode === "fork" ? getForkContentLines(params.parentSessionFile) : [];
+-  const lines = [JSON.stringify(header), ...contentLines];
+ 
++  const parent = readParentBranch(params.parentSessionFile, params.parentLeafId);
++  const rawParentLeafId = typeof params.parentLeafId !== "undefined"
++    ? params.parentLeafId
++    : ((parent.entries[parent.entries.length - 1] as any)?.id ?? null);
++
++  const kept = params.mode === "fork"
++    ? { entries: closeOutstandingToolCalls(parent.entries, header.timestamp), droppedEntries: 0 }
++    : { entries: [] as SessionEntry[], droppedEntries: 0 };
++
++  let secretsRedacted = 0;
++  const contentLines = kept.entries.map((entry) => {
++    const raw = JSON.stringify(entry);
++    const redacted = redactSecrets(raw);
++    secretsRedacted += redacted.count;
++    return redacted.text;
++  });
++  const seededChars = contentLines.reduce((total, line) => total + line.length + 1, 0);
++
++  const provenance: ContextProvenance = {
++    version: 1,
++    mode: params.mode,
++    parentSession: params.parentSessionFile,
++    parentLeafId: rawParentLeafId,
++    parentSessionId: parent.parentSessionId,
++    seededAt: header.timestamp,
++    seededEntries: params.mode === "fork" ? kept.entries.length : 0,
++    seededChars: params.mode === "fork" ? seededChars : 0,
++    estimatedTokens: params.mode === "fork" ? estimateTokens(seededChars) : 0,
++    truncated: null,
++  };
++  if (params.mode === "digest") provenance.briefSource = "vcc";
++  if (secretsRedacted) provenance.secretsRedacted = secretsRedacted;
++
++  const lastCopiedId = (kept.entries[kept.entries.length - 1] as any)?.id ?? null;
++  const provenanceEntry = {
++    type: "custom",
++    id: randomBytes(4).toString("hex"),
++    parentId: lastCopiedId,
++    timestamp: header.timestamp,
++    customType: SUBAGENT_CONTEXT_TYPE,
++    data: provenance,
++  };
++
++  const lines = [JSON.stringify(header), ...contentLines, JSON.stringify(provenanceEntry)];
+   mkdirSync(dirname(params.childSessionFile), { recursive: true });
+   writeFileSync(params.childSessionFile, lines.join("\n") + "\n", "utf8");
++  return provenance;
+ }
+ 
+ function readEntries(sessionFile: string): SessionEntry[] {
+diff --git a/test/agents.test.ts b/test/agents.test.ts
+index 9227fa0..600b84f 100644
+--- a/test/agents.test.ts
++++ b/test/agents.test.ts
+@@ -11,11 +11,15 @@ import { join } from "node:path";
+ import { tmpdir } from "node:os";
+ 
+ import {
++  DEFAULT_MAX_DEPTH,
++  currentSubagentDepth,
+   discoverAgentDefinitions,
+   getDefaultSessionDirFor,
+   loadAgentDefaults,
++  maxSubagentDepth,
+   parseAgentDefinition,
+   resolveDenyTools,
++  resolveDepthDenial,
+   resolveEffectiveInteractive,
+   resolveEffectiveSessionMode,
+   resolveLaunchBehavior,
+@@ -409,9 +413,61 @@ describe("agents.ts", () => {
+     });
+   });
+ 
++  describe("delegation depth limits", () => {
++    it("reads depth from the env, treating garbage as the top level", () => {
++      assert.equal(currentSubagentDepth({}), 0);
++      assert.equal(currentSubagentDepth({ PI_SUBAGENT_DEPTH: "3" }), 3);
++      // A malformed value must not silently disable the cap.
++      assert.equal(currentSubagentDepth({ PI_SUBAGENT_DEPTH: "deep" }), 0);
++      assert.equal(currentSubagentDepth({ PI_SUBAGENT_DEPTH: "-2" }), 0);
++    });
++
++    it("resolves max-depth frontmatter, then env, then the default", () => {
++      assert.equal(maxSubagentDepth(null, {}), DEFAULT_MAX_DEPTH);
++      assert.equal(maxSubagentDepth({ maxDepth: 5 }, {}), 5);
++      assert.equal(maxSubagentDepth(null, { PI_SUBAGENT_MAX_DEPTH: "4" }), 4);
++      // Frontmatter is more specific than the run-wide env override.
++      assert.equal(maxSubagentDepth({ maxDepth: 1 }, { PI_SUBAGENT_MAX_DEPTH: "4" }), 1);
++      assert.equal(maxSubagentDepth(null, { PI_SUBAGENT_MAX_DEPTH: "nope" }), DEFAULT_MAX_DEPTH);
++    });
++
++    it("refuses to spawn at the depth limit and allows one hop below it", () => {
++      const env = { PI_SUBAGENT_DEPTH: "2" };
++      const denial = resolveDepthDenial({ name: "A", task: "T" }, null, env);
++      assert.match(denial ?? "", /depth limit reached/i);
++      assert.equal(resolveDepthDenial({ name: "A", task: "T" }, null, { PI_SUBAGENT_DEPTH: "1" }), null);
++      // max-depth frontmatter shifts the boundary for this agent.
++      assert.equal(
++        resolveDepthDenial({ name: "A", task: "T" }, { maxDepth: 3 }, env),
++        null,
++      );
++      assert.match(
++        resolveDepthDenial({ name: "A", task: "T" }, { maxDepth: 2 }, env) ?? "",
++        /depth limit reached/i,
++      );
++    });
++
++    it("refuses a fork of a fork but allows a cheap digest grandchild", () => {
++      const env = { PI_SUBAGENT_DEPTH: "1" };
++      assert.match(
++        resolveDepthDenial({ name: "A", task: "T", fork: true }, null, env) ?? "",
++        /may not fork again/i,
++      );
++      // Same depth, digest instead of fork: allowed, because a digest seed copies
++      // no branch entries and so does not compound context cost.
++      assert.equal(resolveDepthDenial({ name: "A", task: "T" }, { sessionMode: "digest" }, env), null);
++      // The top-level session may fork freely.
++      assert.equal(resolveDepthDenial({ name: "A", task: "T", fork: true }, null, {}), null);
++    });
++  });
++
+   describe("resolveEffectiveSessionMode / resolveLaunchBehavior", () => {
+     it("resolves session mode with fork override precedence", () => {
+       assert.equal(resolveEffectiveSessionMode({ name: "A", task: "T" }, null), "standalone");
++      assert.equal(
++        resolveEffectiveSessionMode({ name: "A", task: "T" }, { sessionMode: "digest" }),
++        "digest",
++      );
+       assert.equal(
+         resolveEffectiveSessionMode({ name: "A", task: "T" }, { sessionMode: "lineage-only" }),
+         "lineage-only",
+@@ -419,24 +475,34 @@ describe("agents.ts", () => {
+       assert.equal(
+         resolveEffectiveSessionMode(
+           { name: "A", task: "T", fork: true },
+-          { sessionMode: "lineage-only" },
++          { sessionMode: "digest" },
+         ),
+         "fork",
+       );
+     });
+ 
+-    it("resolves launch behavior for standalone, lineage-only, and fork modes", () => {
++    it("resolves launch behavior for standalone, digest, legacy lineage-only, and fork modes", () => {
+       assert.deepEqual(resolveLaunchBehavior({ name: "A", task: "T" }, null), {
+         sessionMode: "standalone",
+         seededSessionMode: null,
+         inheritsConversationContext: false,
+         taskDelivery: "artifact",
+       });
++      assert.deepEqual(
++        resolveLaunchBehavior({ name: "A", task: "T" }, { sessionMode: "digest" }),
++        {
++          sessionMode: "digest",
++          seededSessionMode: "digest",
++          inheritsConversationContext: false,
++          taskDelivery: "artifact",
++        },
++      );
++      // Legacy frontmatter spelling keeps working and seeds a digest, not a fork.
+       assert.deepEqual(
+         resolveLaunchBehavior({ name: "A", task: "T" }, { sessionMode: "lineage-only" }),
+         {
+           sessionMode: "lineage-only",
+-          seededSessionMode: "lineage-only",
++          seededSessionMode: "digest",
+           inheritsConversationContext: false,
+           taskDelivery: "artifact",
+         },
+@@ -448,7 +514,7 @@ describe("agents.ts", () => {
+         taskDelivery: "direct",
+       });
+       assert.deepEqual(
+-        resolveLaunchBehavior({ name: "A", task: "T", fork: true }, { sessionMode: "lineage-only" }),
++        resolveLaunchBehavior({ name: "A", task: "T", fork: true }, { sessionMode: "digest" }),
+         {
+           sessionMode: "fork",
+           seededSessionMode: "fork",
+diff --git a/test/launch.test.ts b/test/launch.test.ts
+index 07705fd..b2b41cd 100644
+--- a/test/launch.test.ts
++++ b/test/launch.test.ts
+@@ -359,10 +359,28 @@ describe("launch plan: task delivery", () => {
+     const fx = makeFixture();
+     const p = plan(fx, { fork: true, task: "Iterate on the thing" });
+     assert.equal(p.taskArtifactFile, null);
+-    assert.equal(p.piArgv[p.piArgv.length - 1], "Iterate on the thing");
+     assert.equal(p.seedSession?.mode, "fork");
+-    // no wrapper instructions in fork mode
+-    assert.ok(!p.piArgv.some((a) => a.includes("Complete your task")));
++    assert.ok(p.piArgv[p.piArgv.length - 1]!.includes("Iterate on the thing"));
++  });
++
++  it("fork and digest seed plans preserve the captured active parent boundary", () => {
++    const fx = makeFixture();
++    for (const parentLeafId of ["active-leaf", null, undefined]) {
++      assert.equal(plan(fx, { fork: true }, null, { parentLeafId }).seedSession?.parentLeafId, parentLeafId);
++      assert.equal(plan(fx, {}, { sessionMode: "digest" }, { parentLeafId }).seedSession?.parentLeafId, parentLeafId);
++    }
++  });
++
++  it("fork mode still carries the completion ticket and the recall hint", () => {
++    const fx = makeFixture();
++    const p = plan(fx, { fork: true, task: "Iterate on the thing" }, { autoExit: true });
++    const task = p.piArgv[p.piArgv.length - 1];
++    // A fork inherits the parent's conversation, not its agent role or exit
++    // protocol, so the ticket must survive mode selection.
++    assert.ok(task.includes("Complete your task autonomously."), "mode hint present");
++    assert.ok(task.includes("Your FINAL assistant message should summarize"), "summary instruction present");
++    assert.ok(task.includes("parent_recall"), "recall hint present");
++    assert.ok(task.includes("Iterate on the thing"), "task present");
+   });
+ 
+   it("standalone mode writes the task artifact with wrapper instructions", () => {
+@@ -377,10 +395,17 @@ describe("launch plan: task delivery", () => {
+     assert.match(p.taskArtifactFile!, /context\/worker-.*\.md$/);
+   });
+ 
+-  it("lineage-only mode seeds without fork content and uses artifact delivery", () => {
++  it("legacy lineage-only mode seeds a digest and uses artifact delivery", () => {
+     const fx = makeFixture();
+     const p = plan(fx, {}, { sessionMode: "lineage-only" });
+-    assert.equal(p.seedSession?.mode, "lineage-only");
++    assert.equal(p.seedSession?.mode, "digest");
++    assert.ok(p.taskArtifactFile);
++  });
++
++  it("digest mode seeds a digest and uses artifact delivery", () => {
++    const fx = makeFixture();
++    const p = plan(fx, {}, { sessionMode: "digest" });
++    assert.equal(p.seedSession?.mode, "digest");
+     assert.ok(p.taskArtifactFile);
+   });
+ 
+diff --git a/test/session.test.ts b/test/session.test.ts
+index bc7121f..8b9702a 100644
+--- a/test/session.test.ts
++++ b/test/session.test.ts
+@@ -262,32 +262,44 @@ describe("session.ts", () => {
+   });
+ 
+   describe("seedSubagentSessionFile", () => {
+-    it("creates a lineage-only child session with parent linkage and no copied turns", () => {
++    const readChild = (file: string) =>
++      readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line));
++    const provenanceOf = (entries: any[]) =>
++      entries.find((e) => e.customType === "subagent-context:v1")?.data;
++
++    it("creates a digest child with parent linkage and no copied turns", () => {
+       const parentFile = createSessionFile(dir, [
+         SESSION_HEADER,
+         MODEL_CHANGE,
+         USER_MSG,
+         ASSISTANT_MSG,
+       ]);
+-      const childFile = join(dir, "lineage-child.jsonl");
++      const childFile = join(dir, "digest-child.jsonl");
+ 
+-      seedSubagentSessionFile({
+-        mode: "lineage-only",
++      const provenance = seedSubagentSessionFile({
++        mode: "digest",
+         parentSessionFile: parentFile,
+         childSessionFile: childFile,
+         childCwd: "/tmp/child-cwd",
+       });
+ 
+-      const lines = readFileSync(childFile, "utf8").trim().split("\n");
+-      assert.equal(lines.length, 1);
++      const entries = readChild(childFile);
++      assert.equal(entries.length, 2, "header plus provenance entry only");
+ 
+-      const header = JSON.parse(lines[0]);
++      const header = entries[0];
+       assert.equal(header.type, "session");
+       assert.equal(header.parentSession, parentFile);
+       assert.equal(header.cwd, "/tmp/child-cwd");
++      assert.equal(entries.some((entry) => entry.type === "message"), false);
++
++      assert.equal(provenance.mode, "digest");
++      assert.equal(provenance.briefSource, "vcc");
++      assert.equal(provenance.seededEntries, 0);
++      assert.equal(provenance.estimatedTokens, 0);
++      assert.deepEqual(provenanceOf(entries), provenance);
+     });
+ 
+-    it("creates a forked child session with copied context before the triggering user turn", () => {
++    it("fork copies the parent's active branch and records provenance", () => {
+       const parentFile = createSessionFile(dir, [
+         SESSION_HEADER,
+         MODEL_CHANGE,
+@@ -296,30 +308,37 @@ describe("session.ts", () => {
+       ]);
+       const childFile = join(dir, "fork-child.jsonl");
+ 
+-      seedSubagentSessionFile({
++      const provenance = seedSubagentSessionFile({
+         mode: "fork",
+         parentSessionFile: parentFile,
+         childSessionFile: childFile,
+         childCwd: "/tmp/fork-child-cwd",
+       });
+ 
+-      const entries = readFileSync(childFile, "utf8")
+-        .trim()
+-        .split("\n")
+-        .map((line) => JSON.parse(line));
+-      assert.equal(entries.length, 2);
++      const entries = readChild(childFile);
+       assert.equal(entries[0].type, "session");
+       assert.equal(entries[0].parentSession, parentFile);
+       assert.equal(entries[0].cwd, "/tmp/fork-child-cwd");
+-      assert.equal(entries[1].type, "model_change");
+-      assert.equal(
+-        entries.some((entry) => entry.type === "session" && entry.parentSession !== parentFile),
+-        false,
++      assert.notEqual(entries[0].id, SESSION_HEADER.id, "child gets its own id");
++      // The parent branch, then one provenance entry.
++      assert.deepEqual(
++        entries.slice(1, -1).map((e) => e.id),
++        ["mc-001", "user-001", "asst-001"],
+       );
+       assert.equal(
+-        entries.some((entry) => entry.type === "message"),
++        entries.some((entry) => entry.type === "session" && entry.parentSession !== parentFile),
+         false,
+       );
++
++      assert.equal(provenance.mode, "fork");
++      assert.equal(provenance.parentSession, parentFile);
++      assert.equal(provenance.parentSessionId, "sess-001");
++      assert.equal(provenance.parentLeafId, "asst-001");
++      assert.equal(provenance.seededEntries, 3);
++      assert.ok(provenance.seededChars > 0);
++      assert.equal(provenance.estimatedTokens, Math.ceil(provenance.seededChars / 4));
++      assert.equal(provenance.truncated, null);
++      assert.deepEqual(provenanceOf(entries), provenance);
+     });
+ 
+     it("seeds a version 3 header with a fresh id", () => {
+@@ -327,55 +346,307 @@ describe("session.ts", () => {
+       const childFile = join(dir, "header-child.jsonl");
+ 
+       seedSubagentSessionFile({
+-        mode: "lineage-only",
++        mode: "digest",
+         parentSessionFile: parentFile,
+         childSessionFile: childFile,
+         childCwd: "/tmp/header-cwd",
+       });
+ 
+-      const header = JSON.parse(readFileSync(childFile, "utf8").trim().split("\n")[0]);
++      const header = readChild(childFile)[0];
+       assert.equal(header.version, 3);
+       assert.ok(header.id, "header should have an id");
+       assert.notEqual(header.id, SESSION_HEADER.id);
+       assert.ok(header.timestamp);
+     });
+ 
+-    it("fork truncates from the LAST user message, keeping earlier full turns", () => {
+-      const secondUser = {
++    it("fork retains a trailing user message that IS the branch leaf", () => {
++      const parentFile = createSessionFile(dir, [
++        SESSION_HEADER,
++        MODEL_CHANGE,
++        USER_MSG,
++        ASSISTANT_MSG,
++        {
++          type: "message",
++          id: "user-002",
++          parentId: "asst-001",
++          message: { role: "user", content: [{ type: "text", text: "Now spawn a worker" }] },
++        },
++      ]);
++      const childFile = join(dir, "fork-leaf-user-child.jsonl");
++
++      const provenance = seedSubagentSessionFile({
++        mode: "fork",
++        parentSessionFile: parentFile,
++        childSessionFile: childFile,
++        childCwd: "/tmp/fork-leaf-user-cwd",
++      });
++
++      const entries = readChild(childFile);
++      assert.deepEqual(
++        entries.slice(1, -1).map((e) => e.id),
++        ["mc-001", "user-001", "asst-001", "user-002"],
++      );
++      assert.equal(entries.some((e) => e.id === "user-002"), true);
++      assert.equal(provenance.truncated, null);
++      assert.equal(provenance.seededEntries, 4);
++      // The recorded leaf is the parent's real leaf.
++      assert.equal(provenance.parentLeafId, "user-002");
++    });
++
++    it("fork traverses active branch vs disk tail when parentLeafId is explicit", () => {
++      const abandoned = {
++        type: "message",
++        id: "asst-abandoned",
++        parentId: "asst-001",
++        message: { role: "assistant", content: [{ type: "text", text: "dead end" }] },
++      };
++      const parentFile = createSessionFile(dir, [
++        SESSION_HEADER,
++        USER_MSG,
++        ASSISTANT_MSG,
++        ASSISTANT_MSG_2, // id: asst-002, parentId: asst-001
++        abandoned,       // id: asst-abandoned, parentId: asst-001 (disk tail!)
++      ]);
++      const childFile = join(dir, "fork-active-leaf-child.jsonl");
++
++      const provenance = seedSubagentSessionFile({
++        mode: "fork",
++        parentSessionFile: parentFile,
++        childSessionFile: childFile,
++        childCwd: "/tmp/fork-active-leaf-cwd",
++        parentLeafId: "asst-002",
++      });
++
++      const entries = readChild(childFile);
++      assert.equal(entries.some((e) => e.id === "asst-abandoned"), false);
++      assert.equal(entries.some((e) => e.id === "asst-002"), true);
++      assert.equal(provenance.parentLeafId, "asst-002");
++    });
++
++    it("throws invalid boundary error if parentLeafId is not in session", () => {
++      const parentFile = createSessionFile(dir, [
++        SESSION_HEADER,
++        USER_MSG,
++        ASSISTANT_MSG,
++      ]);
++      const childFile = join(dir, "fork-invalid-boundary.jsonl");
++
++      assert.throws(
++        () => {
++          seedSubagentSessionFile({
++            mode: "fork",
++            parentSessionFile: parentFile,
++            childSessionFile: childFile,
++            childCwd: "/tmp/fork-invalid-cwd",
++            parentLeafId: "nonexistent-leaf-id",
++          });
++        },
++        /Invalid boundary: parent leaf "nonexistent-leaf-id" not found in session/,
++      );
++    });
++
++    it("fork inherits mid-tool-loop analysis and makes outstanding tool calls provider-safe", () => {
++      const midLoopAssistant = {
++        type: "message",
++        id: "asst-mid-loop",
++        parentId: "user-001",
++        message: {
++          role: "assistant",
++          content: [
++            { type: "text", text: "Analysis: token verification failed at line 42" },
++            {
++              type: "toolCall",
++              id: "tc-outstanding",
++              name: "subagent",
++              arguments: { task: "fix line 42" },
++            },
++          ],
++        },
++      };
++      const parentFile = createSessionFile(dir, [
++        SESSION_HEADER,
++        USER_MSG,
++        midLoopAssistant,
++      ]);
++      const childFile = join(dir, "fork-mid-loop-child.jsonl");
++
++      const provenance = seedSubagentSessionFile({
++        mode: "fork",
++        parentSessionFile: parentFile,
++        childSessionFile: childFile,
++        childCwd: "/tmp/fork-mid-loop-cwd",
++      });
++
++      const entries = readChild(childFile);
++      // user-001, asst-mid-loop, synthetic toolResult, provenance custom
++      const copied = entries.slice(1, -1);
++      assert.equal(copied.length, 3);
++      assert.equal(copied[0].id, "user-001");
++      assert.equal(copied[1].id, "asst-mid-loop");
++      // Analysis text is preserved!
++      assert.deepEqual(copied[1].message.content[0], {
++        type: "text",
++        text: "Analysis: token verification failed at line 42",
++      });
++      // Outstanding tool call has a synthesized toolResult
++      const synthToolResult = copied[2];
++      assert.equal(synthToolResult.type, "message");
++      assert.equal(synthToolResult.message.role, "toolResult");
++      assert.equal(synthToolResult.message.toolCallId, "tc-outstanding");
++      assert.equal(synthToolResult.message.toolName, "subagent");
++      assert.equal(synthToolResult.parentId, "asst-mid-loop");
++      assert.equal(synthToolResult.message.isError, true);
++      assert.match(synthToolResult.message.content[0].text, /no result at fork time; not executed by this child/);
++      assert.equal(Number.isFinite(synthToolResult.message.timestamp), true);
++
++      // Provenance entry points to the synthetic tool result
++      const provEntry = entries[entries.length - 1];
++      assert.equal(provEntry.parentId, synthToolResult.id);
++      assert.equal(provenance.parentLeafId, "asst-mid-loop");
++      assert.equal(provenance.seededEntries, 3);
++      assert.equal(provenance.truncated, null);
++    });
++
++    it("fork keeps multiple synthetic results reachable before real results and metadata", () => {
++      const parentFile = createSessionFile(dir, [
++        SESSION_HEADER,
++        USER_MSG,
++        { type: "message", id: "assistant-calls", parentId: "user-001", message: {
++          role: "assistant", content: ["missing-1", "missing-2", "resolved"].map(id => ({
++            type: "toolCall", id, name: "bash", arguments: { command: "true" },
++          })),
++        } },
++        { type: "message", id: "real-result", parentId: "assistant-calls", message: {
++          role: "toolResult", toolCallId: "resolved", toolName: "bash",
++          content: [{ type: "text", text: "Real output" }],
++        } },
++        { type: "custom", id: "metadata", parentId: "real-result", customType: "checkpoint", data: {} },
++      ]);
++      const before = readFileSync(parentFile, "utf8");
++      const childFile = join(dir, "multiple-tool-results.jsonl");
++      seedSubagentSessionFile({ mode: "fork", parentSessionFile: parentFile,
++        childSessionFile: childFile, childCwd: dir });
++      const entries = readChild(childFile).slice(1);
++      assert.deepEqual(entries.filter(e => e.message?.role === "toolResult").map(e => e.message.toolCallId),
++        ["missing-1", "missing-2", "resolved"]);
++      for (let i = 1; i < entries.length; i++) {
++        assert.equal(entries[i].parentId, entries[i - 1].id, "all copied and inserted entries must remain on the active branch");
++      }
++      assert.equal(readFileSync(parentFile, "utf8"), before);
++    });
++
++    it("fork keeps the parent's recent work when the leaf is NOT a user message", () => {
++      // The old rule cut at the last user message and lost asst-002 + the tool
++      // result. Fixtures are local so the parentId chain is a real linear branch.
++      const recentUser = {
+         type: "message",
+         id: "user-002",
+         parentId: "asst-001",
+-        message: { role: "user", content: [{ type: "text", text: "Now spawn a worker" }] },
++        message: { role: "user", content: [{ type: "text", text: "Investigate the bug" }] },
+       };
++      const recentAssistant = { ...ASSISTANT_MSG_2, parentId: "user-002" };
++      const recentTool = { ...TOOL_RESULT, parentId: "asst-002" };
+       const parentFile = createSessionFile(dir, [
+         SESSION_HEADER,
+         MODEL_CHANGE,
+         USER_MSG,
+         ASSISTANT_MSG,
+-        secondUser,
+-        ASSISTANT_MSG_2,
++        recentUser,
++        recentAssistant,
++        recentTool,
+       ]);
+-      const childFile = join(dir, "fork-truncate-child.jsonl");
++      const childFile = join(dir, "fork-full-child.jsonl");
+ 
+-      seedSubagentSessionFile({
++      const provenance = seedSubagentSessionFile({
+         mode: "fork",
+         parentSessionFile: parentFile,
+         childSessionFile: childFile,
+-        childCwd: "/tmp/fork-truncate-cwd",
++        childCwd: "/tmp/fork-full-cwd",
+       });
+ 
+-      const entries = readFileSync(childFile, "utf8")
+-        .trim()
+-        .split("\n")
+-        .map((line) => JSON.parse(line));
+-      // header + model_change + first user turn + first assistant turn;
+-      // the last user message and everything after it are dropped.
++      const entries = readChild(childFile);
+       assert.deepEqual(
+-        entries.map((e) => e.id).slice(1),
+-        ["mc-001", "user-001", "asst-001"],
++        entries.slice(1, -1).map((e) => e.id),
++        ["mc-001", "user-001", "asst-001", "user-002", "asst-002", "tool-001"],
+       );
+-      assert.equal(entries.some((e) => e.id === "user-002"), false);
+-      assert.equal(entries.some((e) => e.id === "asst-002"), false);
++      assert.equal(provenance.truncated, null);
++      assert.equal(provenance.seededEntries, 6);
++    });
++
++    it("fork copies only the parent's ACTIVE branch, not abandoned alternatives", () => {
++      // user-002's subtree is abandoned: the leaf sits under asst-002 instead.
++      const abandoned = {
++        type: "message",
++        id: "asst-abandoned",
++        parentId: "asst-001",
++        message: { role: "assistant", content: [{ type: "text", text: "dead end" }] },
++      };
++      const parentFile = createSessionFile(dir, [
++        SESSION_HEADER,
++        USER_MSG,
++        ASSISTANT_MSG,
++        abandoned,
++        ASSISTANT_MSG_2,
++      ]);
++      const childFile = join(dir, "fork-branch-child.jsonl");
++
++      seedSubagentSessionFile({
++        mode: "fork",
++        parentSessionFile: parentFile,
++        childSessionFile: childFile,
++        childCwd: "/tmp/fork-branch-cwd",
++      });
++
++      const entries = readChild(childFile);
++      assert.equal(entries.some((e) => e.id === "asst-abandoned"), false);
++      assert.equal(entries.some((e) => e.id === "asst-002"), true);
++    });
++
++    it("fork redacts high-confidence secrets in the copy", () => {
++      const secretUser = {
++        type: "message",
++        id: "user-secret",
++        parentId: null,
++        message: {
++          role: "user",
++          content: [
++            { type: "text", text: "key sk-abcdefghijklmnopqrstuvwxyz012345 and ghp_abcdefghijklmnopqrstuvwx1234" },
++          ],
++        },
++      };
++      const secretAssistant = { ...ASSISTANT_MSG, parentId: "user-secret" };
++      const parentFile = createSessionFile(dir, [SESSION_HEADER, secretUser, secretAssistant]);
++      const childFile = join(dir, "fork-secret-child.jsonl");
++
++      const provenance = seedSubagentSessionFile({
++        mode: "fork",
++        parentSessionFile: parentFile,
++        childSessionFile: childFile,
++        childCwd: "/tmp/fork-secret-cwd",
++      });
++
++      const raw = readFileSync(childFile, "utf8");
++      assert.equal(raw.includes("sk-abcdefghijklmnopqrstuvwxyz012345"), false);
++      assert.equal(raw.includes("ghp_abcdefghijklmnopqrstuvwx1234"), false);
++      assert.equal(raw.includes("[REDACTED by fork seed]"), true);
++      assert.equal(provenance.secretsRedacted, 2);
++      // The parent file itself is never modified.
++      assert.equal(readFileSync(parentFile, "utf8").includes("sk-abcdefghijklmnopqrstuvwxyz012345"), true);
++    });
++
++    it("leaves non-secret content byte-identical", () => {
++      const parentFile = createSessionFile(dir, [SESSION_HEADER, MODEL_CHANGE, USER_MSG, ASSISTANT_MSG]);
++      const childFile = join(dir, "fork-identical-child.jsonl");
++      seedSubagentSessionFile({
++        mode: "fork",
++        parentSessionFile: parentFile,
++        childSessionFile: childFile,
++        childCwd: "/tmp/fork-identical-cwd",
++      });
++      const entries = readChild(childFile);
++      const copied = entries.slice(1, -1);
++      assert.deepEqual(copied[1], USER_MSG);
++      assert.deepEqual(copied[2], ASSISTANT_MSG);
+     });
+   });
+ 

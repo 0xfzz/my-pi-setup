@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22.x"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # The pi runtime packages are peer dependencies; npm installs them from the
+      # registry, so no local Pi installation is needed to run the suites.
+      - name: Install dependencies
+        run: npm install --ignore-scripts --legacy-peer-deps
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test

@@ -1,0 +1,184 @@
+diff --git a/subagent-done.ts b/subagent-done.ts
+index fe771e7..516cb8c 100644
+--- a/subagent-done.ts
++++ b/subagent-done.ts
+@@ -61,6 +61,34 @@ export function shouldAutoExitOnAgentEnd(
+   return true;
+ }
+ 
++/** Read only the latest valid workflow snapshot on the active branch, never
++ * cached tool results or all session entries (which include abandoned branches).
++ * Ownership and other extra item fields are intentionally irrelevant here.
++ */
++export function unfinishedWorkflowMessage(branch: readonly any[] | undefined): string | undefined {
++  let state: any;
++  for (const entry of branch ?? []) {
++    if (entry.type === "custom" && entry.customType === "workflow-todo:v1" &&
++        entry.data?.version === 1 && Array.isArray(entry.data.items)) {
++      state = entry.data;
++    }
++  }
++  const items = state?.items.filter((item: any) =>
++    item?.status !== "done" && item?.status !== "cancelled");
++  if (!items?.length) return undefined;
++
++  // Persisted text is data, not a new instruction. Bound both rows and fields
++  // so a parent receives useful context without an unbounded completion steer.
++  const clip = (value: unknown, limit: number) =>
++    typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
++  const rows = items.slice(0, 8).map((item: any) =>
++    `- [${clip(item?.status, 24) || "unknown"}] ${clip(item?.text, 160) || "(untitled)"}` +
++    (item?.note ? ` — ${clip(item.note, 180)}` : ""));
++  if (items.length > 8) rows.push(`- … ${items.length - 8} more unfinished item(s)`);
++  return `Automatic completion withheld: ${items.length} unfinished workflow todo(s) remain on the active branch. ` +
++    `This session is exiting with a ping, not reporting done. Parent can respond or resume.\n` + rows.join("\n");
++}
++
+ export function parseDeniedTools(rawValue: string | undefined): string[] {
+   return (rawValue ?? "")
+     .split(",")
+@@ -68,6 +96,37 @@ export function parseDeniedTools(rawValue: string | undefined): string[] {
+     .filter(Boolean);
+ }
+ 
++/**
++ * Detect if the active branch settled in a fatal error or model limit failure.
++ * Returns a descriptive error message if so, or undefined if the run was clean.
++ */
++export function detectTerminalFailure(branch: readonly any[] | undefined): string | undefined {
++  if (!branch || branch.length === 0) return undefined;
++  const messages: any[] = [];
++  for (const entry of branch) {
++    if (entry.type === "message" && entry.message) {
++      messages.push(entry.message);
++    }
++  }
++  if (messages.length === 0) return undefined;
++
++  const last = messages[messages.length - 1];
++  if (last?.role === "user") {
++    return "Subagent failed to produce a response (model limit or request failure before assistant turn).";
++  }
++
++  for (let i = messages.length - 1; i >= 0; i--) {
++    const msg = messages[i];
++    if (msg?.role === "assistant") {
++      if (msg.stopReason === "error") {
++        return msg.errorMessage || "Model limit or API error encountered (stopReason: error).";
++      }
++      break;
++    }
++  }
++  return undefined;
++}
++
+ export type ExitSidecarData =
+   | { type: "done" }
+   | { type: "ping"; name: string; message: string };
+@@ -215,12 +274,14 @@ export default function (pi: ExtensionAPI) {
+       shouldAutoExitOnAgentEnd(userTookOver, messages, getActiveSubagentCount());
+ 
+     if (shouldExit) {
+-      // Write the .exit sidecar so the watcher classifies this as a proper
+-      // completion, not a user close. Most models finish and stop talking
+-      // without explicitly calling subagent_done — a clean auto-exit IS a
+-      // completion.
++      // Workflow may stop continuing when blocked/waiting or at its reminder
++      // cap. Do not turn that unfinished state into a successful completion.
++      // Preserve shutdown and use the existing resumable parent ping protocol.
++      const unfinished = unfinishedWorkflowMessage(ctx.sessionManager?.getBranch());
+       snapshotContextUsage(ctx);
+-      signalTerminalSidecar({ type: "done" });
++      signalTerminalSidecar(unfinished
++        ? { type: "ping", name: process.env.PI_SUBAGENT_NAME ?? "subagent", message: unfinished }
++        : { type: "done" });
+       ctx.shutdown();
+       return;
+     }
+@@ -232,6 +293,26 @@ export default function (pi: ExtensionAPI) {
+     }
+   });
+ 
++  // When a run fully settles with an unrecoverable model limit or API error,
++  // do not leave the autonomous subagent idling in an open pane indefinitely.
++  // Notify the parent via a ping sidecar and shut down so Herdr closes the pane.
++  pi.on("agent_settled", (event, ctx) => {
++    if (!autoExit || userTookOver || (event as any)?.aborted) return;
++    if (getActiveSubagentCount() > 0) return;
++
++    const branch = ctx.sessionManager?.getBranch();
++    const failureReason = detectTerminalFailure(branch);
++    if (failureReason) {
++      snapshotContextUsage(ctx);
++      signalTerminalSidecar({
++        type: "ping",
++        name: process.env.PI_SUBAGENT_NAME ?? "subagent",
++        message: `Subagent halted: model limit or fatal error reached: ${failureReason}`,
++      });
++      ctx.shutdown();
++    }
++  });
++
+   // User-driven exits do not pass through a terminal tool or clean agent_end.
+   // Do not overwrite a snapshot already published by another terminal path.
+   pi.on("session_shutdown", (_event, ctx) => {
+diff --git a/test/launch.test.ts b/test/launch.test.ts
+index 1523f0f..4f89261 100644
+--- a/test/launch.test.ts
++++ b/test/launch.test.ts
+@@ -201,11 +201,34 @@ describe("launch plan: curated env exports", () => {
+     assert.ok(!script.includes("parents-own-id"), "orchestrator's own PI_SUBAGENT_ID must not leak");
+   });
+ 
+-  it("omits PI_SUBAGENT_AUTO_EXIT and PI_SUBAGENT_AGENT without agent defs", () => {
++  it("bare spawns auto-complete without a completion tool or agent profile", () => {
+     const fx = makeFixture();
+-    const script = scriptOf(plan(fx));
+-    assert.ok(!script.includes("PI_SUBAGENT_AUTO_EXIT"));
++    const p = plan(fx);
++    const script = scriptOf(p);
++    assert.equal(p.interactive, false);
++    assert.equal(p.autoExit, true);
++    assert.ok(script.includes("export PI_SUBAGENT_AUTO_EXIT=1"));
+     assert.ok(!script.includes("PI_SUBAGENT_AGENT="));
++    const task = p.files.find(f => f.path === p.taskArtifactFile);
++    assert.ok(!task?.content.includes("call the subagent_done tool"));
++  });
++
++  it("explicit interactive:false enables automatic completion even for interactive profiles", () => {
++    const fx = makeFixture();
++    const p = plan(fx, { interactive: false }, { autoExit: false, interactive: true });
++    assert.equal(p.autoExit, true);
++    assert.equal(p.interactive, false);
++    assert.ok(scriptOf(p).includes("export PI_SUBAGENT_AUTO_EXIT=1"));
++  });
++
++  it("explicit interactive:true keeps the pane open and clears an inherited auto-exit flag", () => {
++    const fx = makeFixture();
++    fx.env.PI_SUBAGENT_AUTO_EXIT = "1";
++    const p = plan(fx, { interactive: true }, { autoExit: true });
++    assert.equal(p.autoExit, false);
++    assert.equal(p.interactive, true);
++    assert.ok(scriptOf(p).includes("export PI_SUBAGENT_AUTO_EXIT=0"));
++    assert.ok(!scriptOf(p).includes("export PI_SUBAGENT_AUTO_EXIT=1"));
+   });
+ 
+   it("local .pi/agent wins for PI_CODING_AGENT_DIR", () => {
+@@ -314,7 +337,7 @@ describe("launch plan: pi argv", () => {
+     const fx = makeFixture();
+     const p = plan(fx, {}, { tools: "read,bash" });
+     const argv = p.piArgv;
+-    assert.equal(argv[argv.indexOf("--tools") + 1], "read,bash,caller_ping,subagent_done");
++    assert.equal(argv[argv.indexOf("--tools") + 1], "read,bash,caller_ping,subagent_done,workflow_todo,subagent_progress");
+   });
+ 
+   it("omits --tools without an explicit restriction", () => {
+@@ -434,7 +457,7 @@ describe("ported helpers", () => {
+   it("buildSubagentToolAllowlist preserves requested tools and adds child control tools", () => {
+     assert.equal(
+       buildSubagentToolAllowlist("read,bash,web_search"),
+-      "read,bash,web_search,caller_ping,subagent_done",
++      "read,bash,web_search,caller_ping,subagent_done,workflow_todo,subagent_progress",
+     );
+   });
+ 

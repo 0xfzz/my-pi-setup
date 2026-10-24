@@ -1,0 +1,170 @@
+diff --git a/README.md b/README.md
+index 96b14b8..059498a 100644
+--- a/README.md
++++ b/README.md
+@@ -223,6 +223,21 @@ runtime fallback; `/subagents-init` explicitly copies them into one of these use
+ locations. A `subagent_done` / `caller_ping` child extension is loaded into every child for the
+ completion handshake.
+ 
++## Local customization: automatic completion by default
++
++Bare spawns and profiles without lifecycle settings are now autonomous: a normal
++completed run writes the existing done handshake, returns its final summary, and
++closes its pane without requiring the model to call `subagent_done`. This uses
++Pi's lifecycle hook, not a timer or a guess based on the terminal being idle.
++Explicit `interactive: true` (or profile `auto-exit: false`) keeps a session open;
++explicit `interactive: false` enables automatic completion regardless of profile.
++Both spawn and resume scripts explicitly export the resolved auto-exit flag so
++nested children do not inherit the wrong setting. Errors, Escape/abort, and
++outstanding nested children are not mislabeled as successful completion.
++
++Restart/reload the parent before launching new children. Existing children retain
++their old settings. This is a local patch; review/reapply it after package updates.
++
+ ## Lifecycle: every child ends in exactly one honest state
+ 
+ The watcher classifies each child from socket events + sidecar files. There is **no path to an
+@@ -230,7 +245,7 @@ eternal "stalled" zombie** — every row below terminates the running entry with
+ 
+ | What happened | Steer you get |
+ |---|---|
+-| child called `subagent_done` | `completed` + summary (last assistant message) |
++| autonomous child finishes normally (no tool required), or calls `subagent_done` | `completed` + summary (last assistant message) |
+ | child called `caller_ping` | `subagent_ping` + the child's question + session path |
+ | user drove the child and quit pi without `subagent_done` | distinct honest phrasing: *"closed by user, no subagent_done"* + last message + session path |
+ | child exited nonzero within the startup window (e.g. bad `--model`) | `failed to launch (exit code N)` + captured pane tail + pane id + launch script path; pane held open for post-mortem |
+diff --git a/index.ts b/index.ts
+index e7fec6d..9dc8d0b 100644
+--- a/index.ts
++++ b/index.ts
+@@ -432,7 +432,7 @@ const SubagentParams = Type.Object({
+   interactive: Type.Optional(
+     Type.Boolean({
+       description:
+-        "Mark the subagent as interactive (long-running, user drives the conversation in its own pane). If omitted, falls back to the agent's `interactive` frontmatter, otherwise the inverse of `auto-exit`.",
++        "Mark the subagent as interactive (long-running, user drives the conversation in its own pane). If omitted, falls back to the agent's `interactive` frontmatter, otherwise the inverse of `auto-exit` (default true). Children close and return results automatically by default; set interactive:true only for a long-running session.",
+     }),
+   ),
+ });
+diff --git a/src/agents.ts b/src/agents.ts
+index 2b62072..8a4f5ee 100644
+--- a/src/agents.ts
++++ b/src/agents.ts
+@@ -237,9 +237,9 @@ export function resolveLaunchBehavior(
+  *      driven by the user in their own pane (planner, iterate/fork) and
+  *      stall pings are noise.
+  *
+- * When no agent defs exist at all (bare `subagent({ name, task })` call,
+- * typical for `/iterate` with `fork: true`), `autoExit` is undefined and the
+- * subagent is treated as interactive — matching the intent of iterate.
++ * Bare spawns and profiles without lifecycle settings are autonomous by
++ * default. Long-running user-driven sessions must explicitly set interactive:
++ * true (or auto-exit: false). Forking context does not imply staying open.
+  */
+ export function resolveEffectiveInteractive(
+   params: SubagentSpawnParams,
+@@ -247,7 +247,7 @@ export function resolveEffectiveInteractive(
+ ): boolean {
+   if (params.interactive != null) return params.interactive;
+   if (agentDefs?.interactive != null) return agentDefs.interactive;
+-  return !(agentDefs?.autoExit ?? false);
++  return !(agentDefs?.autoExit ?? true);
+ }
+ 
+ export function loadAgentDefaults(agentName: string): AgentDefaults | null {
+diff --git a/src/launch.ts b/src/launch.ts
+index b510dfc..4fa1977 100644
+--- a/src/launch.ts
++++ b/src/launch.ts
+@@ -314,7 +314,8 @@ export function buildLaunchPlan(
+   const effectiveSkills = params.skills ?? agentDefs?.skills;
+   const effectiveThinking = agentDefs?.thinking;
+   const interactive = resolveEffectiveInteractive(params, agentDefs);
+-  const autoExit = agentDefs?.autoExit ?? false;
++  // Share the resolved lifecycle between parent tracking and child shutdown.
++  const autoExit = !interactive;
+ 
+   const artifactDir = getArtifactDir(ctx.sessionDir, ctx.sessionId);
+   const { effectiveCwd, localAgentDir, effectiveAgentDir } = resolveSubagentPaths(
+@@ -425,9 +426,8 @@ export function buildLaunchPlan(
+   if (params.agent) {
+     exports.push(`export PI_SUBAGENT_AGENT=${shellEscape(params.agent)}`);
+   }
+-  if (autoExit) {
+-    exports.push("export PI_SUBAGENT_AUTO_EXIT=1");
+-  }
++  // Explicit 0 prevents inheriting auto-exit from an autonomous parent.
++  exports.push(`export PI_SUBAGENT_AUTO_EXIT=${autoExit ? "1" : "0"}`);
+   exports.push(`export PI_SUBAGENT_SESSION=${shellEscape(sessionFile)}`);
+   exports.push(`export PI_SUBAGENT_ID=${shellEscape(id)}`);
+   // The pane id is only known inside the pane — forward herdr's injected env.
+@@ -564,9 +564,7 @@ export function buildResumeLaunchPlan(
+     exports.push(`export PI_CODING_AGENT_DIR=${shellEscape(env.PI_CODING_AGENT_DIR)}`);
+   }
+   exports.push(`export PI_SUBAGENT_NAME=${shellEscape(displayName)}`);
+-  if (autoExit) {
+-    exports.push("export PI_SUBAGENT_AUTO_EXIT=1");
+-  }
++  exports.push(`export PI_SUBAGENT_AUTO_EXIT=${autoExit ? "1" : "0"}`);
+   exports.push(`export PI_SUBAGENT_SESSION=${shellEscape(params.sessionPath)}`);
+   exports.push(`export PI_SUBAGENT_ID=${shellEscape(id)}`);
+   exports.push('export PI_SUBAGENT_PANE="${HERDR_PANE_ID:-}"');
+diff --git a/test/agents.test.ts b/test/agents.test.ts
+index d21a43d..9227fa0 100644
+--- a/test/agents.test.ts
++++ b/test/agents.test.ts
+@@ -373,9 +373,9 @@ describe("agents.ts", () => {
+       assert.equal(resolveEffectiveInteractive({ name: "A", task: "T" }, { autoExit: true }), false);
+       // Agents without auto-exit ARE interactive — parent does not receive status transition pings.
+       assert.equal(resolveEffectiveInteractive({ name: "A", task: "T" }, { autoExit: false }), true);
+-      assert.equal(resolveEffectiveInteractive({ name: "A", task: "T" }, {}), true);
+-      // Bare spawn with no agent defs (e.g. /iterate fork) is interactive by default.
+-      assert.equal(resolveEffectiveInteractive({ name: "A", task: "T" }, null), true);
++      assert.equal(resolveEffectiveInteractive({ name: "A", task: "T" }, {}), false);
++      // Bare spawns auto-complete unless explicitly made interactive.
++      assert.equal(resolveEffectiveInteractive({ name: "A", task: "T" }, null), false);
+     });
+ 
+     it("honors explicit frontmatter over the auto-exit default", () => {
+diff --git a/test/launch.test.ts b/test/launch.test.ts
+index 1523f0f..3360011 100644
+--- a/test/launch.test.ts
++++ b/test/launch.test.ts
+@@ -201,11 +201,34 @@ describe("launch plan: curated env exports", () => {
+     assert.ok(!script.includes("parents-own-id"), "orchestrator's own PI_SUBAGENT_ID must not leak");
+   });
+ 
+-  it("omits PI_SUBAGENT_AUTO_EXIT and PI_SUBAGENT_AGENT without agent defs", () => {
++  it("bare spawns auto-complete without a completion tool or agent profile", () => {
+     const fx = makeFixture();
+-    const script = scriptOf(plan(fx));
+-    assert.ok(!script.includes("PI_SUBAGENT_AUTO_EXIT"));
++    const p = plan(fx);
++    const script = scriptOf(p);
++    assert.equal(p.interactive, false);
++    assert.equal(p.autoExit, true);
++    assert.ok(script.includes("export PI_SUBAGENT_AUTO_EXIT=1"));
+     assert.ok(!script.includes("PI_SUBAGENT_AGENT="));
++    const task = p.files.find(f => f.path === p.taskArtifactFile);
++    assert.ok(!task?.content.includes("call the subagent_done tool"));
++  });
++
++  it("explicit interactive:false enables automatic completion even for interactive profiles", () => {
++    const fx = makeFixture();
++    const p = plan(fx, { interactive: false }, { autoExit: false, interactive: true });
++    assert.equal(p.autoExit, true);
++    assert.equal(p.interactive, false);
++    assert.ok(scriptOf(p).includes("export PI_SUBAGENT_AUTO_EXIT=1"));
++  });
++
++  it("explicit interactive:true keeps the pane open and clears an inherited auto-exit flag", () => {
++    const fx = makeFixture();
++    fx.env.PI_SUBAGENT_AUTO_EXIT = "1";
++    const p = plan(fx, { interactive: true }, { autoExit: true });
++    assert.equal(p.autoExit, false);
++    assert.equal(p.interactive, true);
++    assert.ok(scriptOf(p).includes("export PI_SUBAGENT_AUTO_EXIT=0"));
++    assert.ok(!scriptOf(p).includes("export PI_SUBAGENT_AUTO_EXIT=1"));
+   });
+ 
+   it("local .pi/agent wins for PI_CODING_AGENT_DIR", () => {

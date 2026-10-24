@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Local Pi state that extensions create in the working directory
+sessions/
+.pi/
+auth.json
+models-store.json
+*.jsonl
+!tests/**/*.jsonl
+
+# Build output
+crates/**/target/
+*.wasm
+!lib/ascii_anim_engine.wasm
+dist/
+coverage/
+
+# Test artifacts
+*.log
+*.tap
+*-results.txt
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

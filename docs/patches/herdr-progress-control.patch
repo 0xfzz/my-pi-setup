@@ -1,0 +1,13 @@
+--- a/src/launch.ts
++++ b/src/launch.ts
+@@ -120,7 +120,9 @@
+   return "'" + s.replace(/'/g, "'\\''") + "'";
+ }
+ 
+-const SUBAGENT_CONTROL_TOOLS = ["caller_ping", "subagent_done"] as const;
++// Workflow assessment, milestones, and artifacts are supplied by the local workflow companion.
++// Without assessment and artifact tools, restricted-profile children would be blocked.
++const SUBAGENT_CONTROL_TOOLS = ["caller_ping", "subagent_done", "workflow_todo", "subagent_progress", "artifact_save", "artifact_edit", "artifact_recall", "artifact_search"] as const;
+ 
+ /**
+  * Build the child --tools allowlist.

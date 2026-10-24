@@ -1,0 +1,70 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { getAgentConfigDir } from "./agents.ts";
+
+export interface SubagentSettings {
+  defaultModel?: string; // "inherit" | "provider/model" | undefined
+}
+
+export function getSubagentSettingsFile(
+  scope: "global" | "project" = "global",
+  cwd?: string,
+): string {
+  if (scope === "project") {
+    return join(cwd ?? process.cwd(), ".pi", "subagents.json");
+  }
+  return join(getAgentConfigDir(), "subagents.json");
+}
+
+export function loadSubagentSettings(cwd?: string): SubagentSettings {
+  const globalPath = getSubagentSettingsFile("global");
+  const projectPath = getSubagentSettingsFile("project", cwd);
+  let settings: SubagentSettings = {};
+
+  if (existsSync(globalPath)) {
+    try {
+      const content = readFileSync(globalPath, "utf8").trim();
+      if (content) {
+        settings = { ...settings, ...JSON.parse(content) };
+      }
+    } catch {
+      // Ignore corrupt or unreadable files gracefully
+    }
+  }
+
+  if (existsSync(projectPath)) {
+    try {
+      const content = readFileSync(projectPath, "utf8").trim();
+      if (content) {
+        settings = { ...settings, ...JSON.parse(content) };
+      }
+    } catch {
+      // Ignore corrupt or unreadable files gracefully
+    }
+  }
+
+  return settings;
+}
+
+export function saveSubagentSettings(
+  updates: Partial<SubagentSettings>,
+  options?: { scope?: "global" | "project"; cwd?: string },
+): void {
+  const targetPath = getSubagentSettingsFile(options?.scope ?? "global", options?.cwd);
+  mkdirSync(dirname(targetPath), { recursive: true });
+
+  let existing: SubagentSettings = {};
+  if (existsSync(targetPath)) {
+    try {
+      const content = readFileSync(targetPath, "utf8").trim();
+      if (content) {
+        existing = JSON.parse(content);
+      }
+    } catch {
+      existing = {};
+    }
+  }
+
+  const merged = { ...existing, ...updates };
+  writeFileSync(targetPath, JSON.stringify(merged, null, 2) + "\n", "utf8");
+}
