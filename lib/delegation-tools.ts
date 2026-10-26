@@ -2,7 +2,7 @@
  * delegation-tools.ts — the single authority for the delegation tool surface.
  *
  * Before this module, the same capabilities were described in five places:
- * `V1_TOOLS`/`V2_TOOLS` (delegate-switch), `SUPERVISOR_TOOLS` (supervise-mode),
+ * the old v1/v2 switch lists, `SUPERVISOR_TOOLS` (supervise-mode),
  * `NOT_ADMIN`/`isAdminTool` (tool-policy), `UNSAFE_TOOLS` (plan-mode), and
  * `SUBAGENT_CONTROL_TOOLS` (the launcher). A tool added to one list and forgotten
  * in another became a permission bypass or a silent capability gap.
