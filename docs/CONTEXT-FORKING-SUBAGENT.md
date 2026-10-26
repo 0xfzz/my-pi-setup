@@ -195,6 +195,8 @@ Nested forking multiplies both cost and disk.
 `parentLeaf`, no `seededTokens`, no `truncatedAt`. `/subagents` cannot distinguish a fork from a scout, and
 nothing ever deletes or compacts the full transcript copies accumulating in the session dir.
 
+**Status after the delegation migration (2026-10).** The spawn path now closes G6 and G8 for ordinary children: `purpose` decides the child's tools (a research child gets no write tool), Plan admits only research/review/spec, a child may not spawn again (`PI_SUBAGENT_DEPTH`), and breadth is capped (`PI_SUBAGENT_MAX_CHILDREN`, default 8). G7 and G9 remain open for **fork** children: inherited checkpoint/artifact entries are still not filtered by relevance, and fork copies still lack `mode`/`parentLeaf` in the registry. Tool names quoted above are the historical v1 surface; the canonical names are `orch_*` (`orch_ping`, `orch_resume`, `orch_progress`, `orch_history`).
+
 ### G10 — P2: secrets and scope leak into a new file and a different model
 
 The seed copies the parent's literal transcript, including any pasted credentials, tokens in bash output,

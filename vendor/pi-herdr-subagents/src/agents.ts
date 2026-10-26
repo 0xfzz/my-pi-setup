@@ -76,10 +76,10 @@ export interface ListedAgentDefinition extends AgentDefinition {
 
 /** Tools that are gated by `spawning: false` */
 export const SPAWNING_TOOLS = new Set([
-  "subagent",
-  "subagent_interrupt",
-  "subagents_list",
-  "subagent_resume",
+  "orch_spawn",
+  "orch_interrupt",
+  "orch_running",
+  "orch_resume",
 ]);
 
 /**

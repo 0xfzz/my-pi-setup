@@ -85,6 +85,10 @@ Target after the migration: the same capabilities under `orch_*` only, with
 `spec_review_submit` → `orch_spec_review_submit` and `subagent_history` →
 `orch_history`. No aliases.
 
+**Status: done.** The inventory above is the pre-migration record; see
+[Final verification](#final-verification-c12-after-v1-removal) for the shipped
+surface.
+
 ## Gate commands used at every step
 
 ```bash
@@ -92,5 +96,30 @@ npx tsc --noEmit
 npm test
 npm run test:orchestrator
 ```
+
+## Final verification (C12, after v1 removal)
+
+The section above is the pre-migration baseline and is intentionally unchanged.
+This is the shipped state.
+
+- `npx tsc --noEmit`: **0 errors**. No new errors at any commit; the three
+  pre-existing errors recorded at C0 are no longer present on this branch.
+- `npm test`: **996 passed, 1 skipped, 2 failed** — only the two exempt TUI
+  clipping tests (`native regular/fullscreen inline custom UI reproduces
+  clipping…`). No new failures.
+- Registered v1 tool names: none. `grep` over `lib/`, `extensions/` and
+  `vendor/` finds them only in `RETIRED_V1_TOOLS`, the retired-name map, the
+  refusal text, and the guard's tests. Historical prose in `docs/` is allowed
+  and marked as historical.
+- Canonical surface: `orch_*` only; one switch (`/subagents on|off|status`);
+  one capability table (`lib/delegation-tools.ts`).
+- Cut-over: a v1 child launched before the migration must be finished or closed
+  before reload. Resuming it would call a tool that no longer exists. CI has no
+  such state; this is a dev-environment gate only.
+- Mode × purpose: Normal admits spec/adhoc/research/implementation; Plan admits
+  spec/research/review and refuses adhoc/implementation with explicit text;
+  Supervise admits spec only. Depth (default 1) and breadth (default 8) are
+  refused before a pane exists.
+
 
 The full plan is in artifact `normal-mode-delegation-fix-plan` (v3), §4.3.

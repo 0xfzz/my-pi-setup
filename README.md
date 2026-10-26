@@ -45,7 +45,7 @@ Tool: **`workflow_todo`**. Command: **`/workflow-todos`**.
 - `modify` allows in-place task description, continuous activeText (`activeText`), or reason/note editing.
 - `cancel` supports both global scope cancellation and per-item cancellation (by providing `id`).
 - On a premature final response with an actionable unfinished plan, a `turn_end` boundary requests continuation. It does not reopen a plain reply just to record a skip or invent a task to resume. This boundary is deliberately before Herdr's child `agent_end` auto-exit; a final-settlement-only hook would be too late.
-- Genuine `blocked` and `waiting` states require reasons and allow yielding. They are **not completed**. The AI should report them honestly and update them when input/results arrive. Parent completion is blocked while unresolved items remain; a child may still `caller_ping` for help.
+- Genuine `blocked` and `waiting` states require reasons and allow yielding. They are **not completed**. The AI should report them honestly and update them when input/results arrive. Parent completion is blocked while unresolved items remain; a child may still `orch_ping` for help.
 - New user requests take priority, but preserve unfinished plans. The AI can add a step and continue. Explicit scope cancellation is recorded, not silently cleared.
 - State lives in Pi session custom entries, reconstructed from the **active branch**, not a global file. Reload, resume, fork/tree navigation, and normal compaction retain the plan. Separate sessions have independent state.
 - No extra classifier model, inference bill, keyword guesser, timers, filesystem watcher, network, or polling. The existing AI judges complexity.
@@ -73,7 +73,7 @@ This is a workflow guardrail, not a permission sandbox or a proof of correctness
 2. refuses the redundant administrative call for that turn so the steer cannot be ignored;
 3. **fails open**: after a few steers the guardrail stops refusing and lets the agent's chosen call run, so the guard itself can never become the cause of a stall.
 
-The plan, all evidence, and all unfinished work are always retained. Real work (or an explicit milestone: `plan`, `skip`, `cancel`, or an `update` to `done`/`blocked`/`waiting`) resets the counter immediately, so ordinary progress never trips the guard. Only intentional yields — a forwarded `ask_user`/`caller_ping` — end a turn early.
+The plan, all evidence, and all unfinished work are always retained. Real work (or an explicit milestone: `plan`, `skip`, `cancel`, or an `update` to `done`/`blocked`/`waiting`) resets the counter immediately, so ordinary progress never trips the guard. Only intentional yields — a forwarded `ask_user`/`orch_ping` — end a turn early.
 
 The user can always press Escape. To drop removed scope explicitly:
 
@@ -85,28 +85,28 @@ The user can always press Escape. To drop removed scope explicitly:
 
 Tool: **`ask_user`**. Ask about consequential ambiguity, missing requirements, conflicting instructions, or unavailable information—not facts that can be checked using available tools, and not routine confirmations already authorized by the request.
 
-In the main session, use Pi's native select/input dialogs rather than a custom terminal renderer. In a Herdr child, questions route through the existing **`caller_ping`** tool; no direct user dialog, sidecar duplication, parallel question transport, or change to the Herdr plugin. The parent receives the question and child session path, answers from existing context when possible, otherwise calls `ask_user`, then resumes the child with `subagent_resume` and the answer. This is Herdr's exit-and-resume handshake, not a child blocking forever on a new RPC channel.
+In the main session, use Pi's native select/input dialogs rather than a custom terminal renderer. In a Herdr child, questions route through the existing **`orch_ping`** tool; no direct user dialog, sidecar duplication, parallel question transport, or change to the Herdr plugin. The parent receives the question and child session path, answers from existing context when possible, otherwise calls `ask_user`, then resumes the child with `orch_resume` and the answer. This is Herdr's exit-and-resume handshake, not a child blocking forever on a new RPC channel.
 
-Cancelled/unavailable input is not an answer or consent. The AI must keep dependent work blocked and report missing information. Non-interactive sessions must not invent user answers. Agent definitions that explicitly restrict tools must allow `ask_user` in the parent and `caller_ping` in the child; the extensions do not override those restrictions.
+Cancelled/unavailable input is not an answer or consent. The AI must keep dependent work blocked and report missing information. Non-interactive sessions must not invent user answers. Agent definitions that explicitly restrict tools must allow `ask_user` in the parent and `orch_ping` in the child; the extensions do not override those restrictions.
 
 **Guidance is injected only when it applies.** A Herdr child always receives the child-side rules, because they constrain tools it can reach at any moment. The parent receives the ping-handling rules **only on a `subagent_ping` turn** — not on every turn. Injecting them unconditionally made the rules read as a standing assignment, so a bare `test` arrived with hidden instructions about answering pings and resuming children and was answered with a protocol recital instead of an acknowledgement.
 
 ## 3. Durable delegated-work checkpoints & VCC history reduction
 
-Command: **`/subagents`**. Parent tool: **`subagent_history`**. Child tool: **`subagent_progress`**.
+Command: **`/subagents`**. Parent tool: **`orch_history`**. Child tool: **`orch_progress`**.
 
 - The parent records child identity, task, saved session path, pane/run identity, latest milestone, changed files, verification, next action/question, and terminal outcome. A compact widget shows recent/active work. `/subagents` lists running and completed history, opens saved checkpoints/results and transcript previews, displays a reopen command, and can explicitly request a follow-up resume for an ended child.
-- **VCC Algorithmic History Distillation & Recall**: Instead of dumping monolithic raw transcripts (up to 30,000 characters) into model context, `subagent_history` integrates with `pi-vcc`:
+- **VCC Algorithmic History Distillation & Recall**: Instead of dumping monolithic raw transcripts (up to 30,000 characters) into model context, `orch_history` integrates with `pi-vcc`:
   - `vccSummary: true`: Generates a structured zero-LLM algorithmic summary (`[Session Goal]`, `[Files And Changes]`, `[Commits]`, `[Key Signals]`, and rolled-up `[Brief Transcript]`) directly from the child session branch (~95% token savings).
   - `query: "<regex>"`: Performs regex/keyword search over child session entries and returns indexed matches with pagination.
   - `expand: [<indices>]`: Expands only the requested entry indices in full untruncated detail, avoiding token bloat.
   - Terminal child completion automatically compiles a VCC summary into the parent's recorded summary.
 - Dashboard previews use native editor dialogs for scrolling/copying; edits are **discarded**. They never edit child files. Transcripts are read only on request, use the active child branch, omit thinking, and show at most 40 text/tool entries / 30,000 characters. Files over 16 MiB must be reopened directly. The parent tool only reads children admitted by launches/checkpoints on the active parent branch—not arbitrary file paths or late off-branch results.
 - Registry entries live in the parent session as `subagent-checkpoint:v1`. Every model request receives a fresh, bounded (14,000-character) checkpoint snapshot, including after native/VCC compaction **and** the separate 20% auto-compactor. Old records omitted by the bound remain accessible through history. No full child transcript is copied into every prompt, and no extra summarizer/model call is added. The snapshot adds context tokens to the existing request.
-- Children publish meaningful milestones with `subagent_progress`, not every tool call. Changes made through `workflow_todo` also publish automatically when that tool is allowed. Atomic, private `<child-session>.progress-checkpoint.json` sidecars carry only the latest milestone; event-driven filesystem notifications update the parent's widget/checkpoint journal. They do **not** wake the parent model or spend inference tokens. The next ordinary request receives the latest checkpoint. Completion still uses Herdr's existing automatic result delivery; questions needing an answer still use `caller_ping` / `ask_user`.
+- Children publish meaningful milestones with `orch_progress`, not every tool call. Changes made through `workflow_todo` also publish automatically when that tool is allowed. Atomic, private `<child-session>.progress-checkpoint.json` sidecars carry only the latest milestone; event-driven filesystem notifications update the parent's widget/checkpoint journal. They do **not** wake the parent model or spend inference tokens. The next ordinary request receives the latest checkpoint. Completion still uses Herdr's existing automatic result delivery; questions needing an answer still use `orch_ping` / `ask_user`.
 - Progress is not completion. A blocked-but-running milestone cannot offer a resume action. Terminal results are correlated with pane identity so delayed results from an old run cannot terminate a resumed writer. Sidecars are matched to both session path and run ID, and only previously accepted milestones establish progress ordering.
 - Registry recovery is not process recovery. After reload/restart, unfinished records are labeled **unverified**: the companion restores history and milestone watching, but it does not recreate Herdr's in-memory completion watchers or prove that a child is alive. Do not reload while children are running. Check their existing panes first; never open/resume the same session concurrently. No automatic restart or duplicate writer is created.
-- Existing saved launches/results on the active branch are reconstructed when possible. Old children that predate activation cannot emit the new milestone tool until they are restarted/resumed after activation. Restricted profiles receive `subagent_progress` and `workflow_todo` through a minimal local Herdr control-tool allowlist patch (otherwise the existing todo guardrail would block those children before assessment). If disabling this companion entirely, revert that compatibility patch too.
+- Existing saved launches/results on the active branch are reconstructed when possible. Old children that predate activation cannot emit the new milestone tool until they are restarted/resumed after activation. Restricted profiles receive `orch_progress` and `workflow_todo` through a minimal local Herdr control-tool allowlist patch (otherwise the existing todo guardrail would block those children before assessment). If disabling this companion entirely, revert that compatibility patch too.
 
 Example child milestone:
 
@@ -210,7 +210,7 @@ Grill @artifact:auth-spec: what assumptions are weak, and what could fail?
 - **Create or update artifacts** through `artifact_save`, including new IDs on an empty branch. Existing artifact versions/history are retained. Raw `write`/`edit` are blocked everywhere, even for paths named `artifacts/`; the exception is the artifact API, not a directory name.
 - **`ask_user` and `workflow_todo`** remain available as conversation/workflow control exceptions. Todos track research/discussion, not permission to implement.
 - **Shell inspection** is supported through `bash`, `!`, and `!!` using the same conservative parser. It normalizes/quotes arguments and checks every command in pipelines or `&&` chains. Supported commands include `cat`, `ls`, `head`, `tail`, `wc`, `stat`, `rg`, `grep`, restricted `find`, and read-only Git status/log/diff/show/listing commands. Git pagers, external diff/text conversion, fsmonitor hooks and optional index locks are disabled. Redirection, expansions, glob expansion, interpreters, arbitrary executables and write/execute options are rejected. Quote literal special characters and use read/search tools for unsupported commands. Native Plan shell execution uses checked local operations; Normal preserves other shell extensions unchanged.
-- Unrestricted browser/codemode/MCP script gateways, image generation, delegation, and unclassified tools remain blocked because their internal operations can bypass nested tool checks. Direct MCP tools with read-only annotations are supported. Nested, deferred, stale and newly registered calls go through the same `tool_call` policy. Tool hiding is **not** the enforcement boundary. Normal-mode tool availability is restored on exit.
+- Unrestricted browser/codemode/MCP script gateways, image generation, ad-hoc/implementation delegation, and unclassified tools remain blocked because their internal operations can bypass nested tool checks. Direct MCP tools with read-only annotations are supported. The `orch_*` parent tools are allowed: Plan can delegate research/review work, and spec work with a handoff; the child's `purpose`, not the parent's mode, decides its tools. Nested, deferred, stale and newly registered calls go through the same `tool_call` policy. Tool hiding is **not** the enforcement boundary. Normal-mode tool availability is restored on exit.
 - **File/path and artifact completions, `/skill:` file expansion, image attachments, slash commands and templates are available in Plan**. Reading/attaching content is not permission to modify it. Keep the FFF load order documented above for combined file/artifact suggestions.
 - The sidebar shows **Plan / Read; artifacts RW**. Entering/leaving Plan during an agent turn or a native shell submission through the mode editor is refused; stop/cancel it first. Shell tracking clears on completion, cancellation or failure. Entry is also refused while branch checkpoints contain running/unverified children; finish/stop them and resolve their checkpoint state first.
 - Tool restoration respects Pi's destination-branch transcript, including intentionally empty/read-only loadouts and exits immediately followed by resume/switch/fork. Deferred tools that reconnect after a restored Plan exit return on the next Normal AI request; pending names survive checkpoints/reload/tree without leaking to unrelated branches or repeatedly undoing later deactivation. Normal preserves other extensions' explicit per-request tool selection.
@@ -397,12 +397,32 @@ Mode: **Orchestrator** (`/mode orchestrator`). The supervisor decomposes a large
 **The loop:**
 
 1. **Author** — `orch_handoff` writes one spec per work unit (scope slug, goal, acceptance criteria, lane files, out-of-lane files, interfaces, guidance) and publishes it as a **scoped artifact**. A child recalls its spec by id and sees nothing else: no sibling scope, no sibling path.
-2. **Delegate** — `orch_spawn` takes the `handoffId` (mandatory — a spawn without a spec has no lane, so it is refused) plus `budgetMinutes` (default 30) and runs the child in its own Herdr pane. Workers with disjoint lanes run in parallel.
+2. **Delegate** — `orch_spawn` takes a `handoffId` (spec work), or runs an **ad-hoc** child with `purpose`, optional `laneFiles`/`acceptanceCriteria`, and `budgetMinutes` (default 30). The child runs in its own Herdr pane; workers with disjoint lanes run in parallel. Purpose is resolved before any pane exists, so a refused spawn leaves no trace.
 3. **Steer** — `orch_steer` (Esc→settle→type→observe delivery, confirmed by echo), `orch_route` (deterministic owner resolution), `orch_interrupt`/`orch_resume`. `orch_running` reports every child with scope, lane, and pending escalations.
 4. **Review** — `orch_review` records each criterion against evidence the orchestrator gathered itself; an approved verdict with a failing criterion or an out-of-lane diff is refused in code. Two consecutive `revise` rounds stop the loop and move the decision to the user.
 5. **Escalate** — `orch_escalate` is the ladder: `answer` / `to-user` (through the ask-user extension — a cancelled dialog is unanswered, never consent) / `relay-user` / `cancel`.
 
 **Durability.** The registry persists to an atomic versioned sidecar (`orchestrator-registry.json`) and is restored + reconciled on session start: dead panes are closed, live panes keep running, pending escalations survive. A watchdog enforces each child's wall-clock budget and stall-detects (3 identical pane tails) — interrupting and steering the parent instead of burning tokens. `orch_running` lazily re-verifies pane liveness, so a child whose pane died never lingers as a zombie triggering cleanup loops across sessions; `orch_resume` refuses session paths that do not exist.
+
+### Spawn shapes and mode policy
+
+`purpose` is resolved before any registry row or pane exists. A refused spawn writes nothing.
+
+| `purpose` | Normal | Plan | Child policy |
+|---|---|---|---|
+| `research` (Plan default) | ✅ | ✅ | read-only tools + `bash`/web inspection; no `write`/`edit`/patch |
+| `review` | via `orch_spec_review` | via `orch_spec_review` | isolated reviewer, no shell, no writer |
+| `spec` (`handoffId`) | ✅ | ✅ | worker allowlist, lane frozen |
+| `adhoc` (Normal default) | ✅ | ❌ | worker allowlist; no lane unless declared |
+| `implementation` | ✅ | ❌ without an execution approval | worker allowlist |
+
+Plan is read-only for the **parent**; delegating research, review or spec work is not implementation. Plan refuses `adhoc` and `implementation` with an explicit message. `orch_check` reports `lane: not-declared` for an ad-hoc unit with no `laneFiles` (it is not a failure), and `orch_review` treats an empty lane as "nothing to violate".
+
+A delegated child may not spawn again (`PI_SUBAGENT_DEPTH`, default max-depth 1), and one parent may hold at most 8 running children (`PI_SUBAGENT_MAX_CHILDREN`). Both are hard stops before a pane exists and both are overridable.
+
+### v1 removal and cut-over
+
+The old `subagent*`, `caller_ping` and `parent_*` names are **removed**, not aliased. Everything is `orch_*`; `/subagents on|off|status` is the single switch, and `lib/delegation-tools.ts` is the single capability table. A stale global install that registers a v1 name is stripped from the active set and refused at call time. A v1 child launched before the migration must be finished or closed before reloading: resuming it would call a tool that no longer exists.
 
 **Status:** `/orch status | list | handoffs | escalations`.
 
@@ -419,7 +439,7 @@ orch_spec_review({ action: "resolve", runId, dispositions: [...] })
   → records how each finding was handled; readiness settles only when no blocker is open
 ```
 
-Presets: `quick` (comprehension + readiness) and `architecture` (zoom-out, comprehension, critic, readiness). A reviewer gets a snapshot quoted into its ticket, `read`, the todo tools, and `spec_review_submit` — **no** shell, **no** write tool, **no** artifact writer, **no** parent transcript pointer, and it is forced to `standalone` so an agent profile cannot widen its context. That is enforced by the launcher and the parent's `tool_call` guard, not by prompt text.
+Presets: `quick` (comprehension + readiness) and `architecture` (zoom-out, comprehension, critic, readiness). A reviewer gets a snapshot quoted into its ticket, `read`, the todo tools, and `orch_spec_review_submit` — **no** shell, **no** write tool, **no** artifact writer, **no** parent transcript pointer, and it is forced to `standalone` so an agent profile cannot widen its context. That is enforced by the launcher and the parent's `tool_call` guard, not by prompt text.
 
 Bind the result to the work unit with `designRef`, and the gate refuses a stale approval at both ends:
 
@@ -480,7 +500,7 @@ Verification: `node --experimental-strip-types --import ./tests/isolate-env.mjs 
 - [Official question example](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/question.ts): model-callable clarification. Native dialogs were preferred here to keep RPC compatibility and avoid another custom UI/keybinding layer.
 - [pi-model-router](https://github.com/yeliu84/pi-model-router/): prior art for virtual-model routing in Pi. This implementation keeps routing provider-agnostic and adds per-provider account pools, which that project does not provide.
 - [Pi virtual models](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/virtual-models.md): `registerVirtualModel`, route reasons (`user`/`continuation`/`retry`/`direct`), and why continuations stay on the answering model.
-- [Herdr subagents](https://github.com/modem-dev/pi-herdr-subagents), especially `subagent-done.ts`: `caller_ping` and parent `subagent_resume` protocol, plus the child's auto-exit lifecycle. Herdr's completion/question protocol is unchanged; only the control-tool allowlist adds the companion milestone and workflow assessment tools.
+- [Herdr subagents](https://github.com/modem-dev/pi-herdr-subagents), especially its completion/question handshake (ported here as `orch_done` / `orch_ping` and parent `orch_resume`; the vendored `orch-child.ts` is the local fork). Herdr's completion/question protocol is unchanged; only the control-tool allowlist adds the companion milestone and workflow assessment tools.
 - [pi-antigravity](https://github.com/Rahularya01/pi-antigravity) by Rahul Arya (MIT): the Antigravity / Cloud Code Assist provider, vendored under `vendor/antigravity/` so this package needs no npm dependency for it. The multi-account layer on top — one provider per account — is this package's own.
 - [ascii.rest/aquarium](https://ascii.rest/aquarium/) by @bas3line (MIT): ASCII fish tank art, physics, and swimming animation equations. Adapted for compact terminal dimensions and sidebar lifecycle.
 
