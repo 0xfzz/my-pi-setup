@@ -20,6 +20,8 @@
  * `bash`, MCP tools, and other extensions cannot be collateral damage.
  */
 
+import { DELEGATION_TOOLS } from "./delegation-tools.ts";
+
 /** v1 delegation surface (pi-herdr-subagents). */
 export const V1_TOOLS = [
   "subagent",
@@ -65,8 +67,13 @@ export interface DelegateSwitchState {
 }
 
 const V1 = new Set<string>(V1_TOOLS);
+// The canonical table is the authority for *stored decisions*: `V2_TOOLS`
+// predates orch_history, orch_ping and the other ported tools, so a decision
+// naming one of them used to be silently dropped. The v1/v2 toggle surface is
+// left as-is here; it is replaced wholesale in the next step.
+const CANONICAL_SURFACE = DELEGATION_TOOLS.map(tool => tool.name);
 const V2 = new Set<string>(V2_TOOLS);
-const ALL = new Set<string>(ALL_DELEGATE_TOOLS);
+const ALL = new Set<string>([...ALL_DELEGATE_TOOLS, ...CANONICAL_SURFACE]);
 
 export function isDelegateTool(name: string): boolean {
   return ALL.has(name);

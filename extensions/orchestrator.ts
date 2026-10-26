@@ -86,7 +86,7 @@ import { buildOutcomeMessage } from "../vendor/pi-herdr-subagents/src/messages.t
 import { loadAgentDefaults } from "../vendor/pi-herdr-subagents/src/agents.ts";
 import { loadSubagentSettings } from "../vendor/pi-herdr-subagents/src/settings.ts";
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";
-import { isDelegationTool, mayUseDelegationTool } from "../lib/delegation-tools.ts";
+import { isDelegationTool, isRetiredDelegationTool, mayUseDelegationTool } from "../lib/delegation-tools.ts";
 import { CHECKPOINT_TYPE } from "../lib/subagent-state.ts";
 import {
   artifactFromRecord,
@@ -1179,6 +1179,11 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       return;
     }
     const parentOnly = `${event.toolName} is parent-only: this session is a delegated child. Report back with orch_ping or orch_done instead.`;
+    // A retired name may still be registered by a foreign extension. Refuse it
+    // before the capability lookup, which deliberately has no entry for it.
+    if (isRetiredDelegationTool(event.toolName)) {
+      return { block: true, reason: `${event.toolName} was removed from this package; use the orch_* delegation tools instead.` };
+    }
     // A child owns its reporting/pull tools (orch_done, orch_ping, …) but never a
     // parent-role delegation tool. This is the call-time half of the capability
     // table; the `--tools` allowlist is the first half.

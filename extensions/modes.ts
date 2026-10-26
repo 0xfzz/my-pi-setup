@@ -9,6 +9,7 @@ import { INPUT_MODE_CONTEXT_TYPE, inputModeGuidance, isPlanTool, missingPlanTool
 import { declaredSuperviseTools, isSupervisorTool, v2DelegationInForce, SUPERVISOR_MODE_GUIDANCE, SUPERVISOR_MODE_TYPE, superviseModeFromBranch } from "../lib/supervise-mode.ts";
 import { isControlPlanePath } from "../lib/orchestrator/control-plane.ts";
 import { reconcileLoadout, switchStateFromBranch } from "../lib/delegate-switch.ts";
+import { RETIRED_V1_TOOLS, isRetiredDelegationTool, stripRetiredTools } from "../lib/delegation-tools.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardMode } from "../lib/dashboard/integration.ts";
 
 /** Derive from the UI contract so this does not depend on a re-exported alias. */
@@ -144,10 +145,32 @@ export default function modesExtension(pi: ExtensionAPI) {
     // A restored snapshot is a *record of the previous loadout*, not an authority
     // override. Re-apply the session's switch decision so leaving a restricted
     // mode cannot resurrect a delegate tool the user switched off while inside it.
+    // Retired v1 names are dropped here, not in `reconcileLoadout`: the v1 toggle
+    // still needs to re-enable them until it is deleted.
+    const kept = stripRetiredTools(names);
     const disabled = switchStateFromBranch(policyEntries(ctx)).disabled;
-    pi.setActiveTools(reconcileLoadout(names, disabled));
+    pi.setActiveTools(reconcileLoadout(kept, disabled));
     const registered = new Set(pi.getAllTools().map(tool => tool.name));
-    pendingTools = new Set(names.filter(name => !registered.has(name) && !disabled.has(name)));
+    pendingTools = new Set(kept.filter(name => !registered.has(name) && !disabled.has(name)));
+  }
+
+  /**
+   * A v1 name that a foreign extension still registers must not survive into the
+   * active set. The call guard refuses it either way; removing it here keeps the
+   * advertised loadout honest and stops the model from selecting it.
+   */
+  function stripRetiredDelegationTools(ctx: ExtensionContext): void {
+    const active = pi.getActiveTools();
+    const removed = active.filter(isRetiredDelegationTool);
+    if (!removed.length) return;
+    pi.setActiveTools(active.filter(name => !isRetiredDelegationTool(name)));
+    if (ctx.hasUI) {
+      try {
+        ctx.ui.notify(`Removed v1 delegation tool(s): ${removed.join(", ")}. The delegation namespace is orch_*.`, "warning");
+      } catch {
+        // A notification is a courtesy; the strip already happened.
+      }
+    }
   }
 
   function restoreConnectedTools(ctx: ExtensionContext) {
@@ -308,6 +331,7 @@ export default function modesExtension(pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => {
     restore(ctx);
+    stripRetiredDelegationTools(ctx);
     // Surface allowlist drift once: a renamed tool would otherwise narrow Plan
     // mode silently, which looks like a policy decision rather than a bug.
     const registeredTools = typeof pi.getAllTools === "function" ? pi.getAllTools().map(tool => tool.name) : [];
@@ -399,6 +423,7 @@ export default function modesExtension(pi: ExtensionAPI) {
    * defeat the adapter's own exposure decision.
    */
   function reconcileTools(ctx: ExtensionContext) {
+    stripRetiredDelegationTools(ctx);
     if (isSupervise(ctx)) restrictSuperviseTools(ctx);
     else if (isPlan(ctx)) restrictPlanTools();
     else restoreConnectedTools(ctx);
@@ -449,7 +474,7 @@ export default function modesExtension(pi: ExtensionAPI) {
       !(message.role === "custom" && message.customType === INPUT_MODE_CONTEXT_TYPE));
     messages.push({
       role: "custom", customType: INPUT_MODE_CONTEXT_TYPE, display: false, timestamp: Date.now(),
-      content: `<current-input-mode>\nLive mode for this request, derived from the selected branch. This supersedes historical mode instructions, assistant statements and compaction summaries; it does not grant permissions beyond the current tools and normal safety rules.\n${inputModeGuidance(registry.current)}\n</current-input-mode>`,
+      content: `<current-input-mode>\nLive mode for this request, derived from the selected branch. This supersedes historical mode instructions, assistant statements and compaction summaries; it does not grant permissions beyond the current tools and normal safety rules.\n${inputModeGuidance(registry.current)}\nDelegation tools use the orch_* namespace only. Removed and unavailable: ${[...RETIRED_V1_TOOLS].join(", ")}.\n</current-input-mode>`,
     });
     return { messages };
   });
@@ -457,6 +482,11 @@ export default function modesExtension(pi: ExtensionAPI) {
   // Enforce on execution too: stale, nested, deferred and late tools still pass
   // through this guard. Read-only annotations are trusted extension/server claims.
   pi.on("tool_call", (event, ctx) => {
+    // Removed v1 names are refused in every mode, parent or child: a stale global
+    // extension must not reopen the surface the migration closed.
+    if (isRetiredDelegationTool(event.toolName)) {
+      return { block: true, reason: `${event.toolName} was removed from this package; it is not part of the current delegation surface.` };
+    }
     const superviseActive = isSupervise(ctx);
     const planActive = isPlan(ctx);
     if (!planActive && !superviseActive) return;

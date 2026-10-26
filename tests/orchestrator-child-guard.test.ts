@@ -150,6 +150,12 @@ test("a delegated child never restores, watches, or writes the orchestrator regi
     assert.equal(blocked.length, 1);
     assert.equal(blocked[0].block, true);
     assert.match(blocked[0].reason, /parent-only/);
+    const retired = await f.emit("tool_call", { toolName: "subagent" }, ctx);
+    assert.equal(retired.length, 1);
+    assert.equal(retired[0].block, true);
+    assert.match(retired[0].reason, /removed/);
+    assert.deepEqual(await f.emit("tool_call", { toolName: "orch_done" }, ctx), [],
+      "a child owns its completion tool");
     assert.deepEqual(await f.emit("tool_call", { toolName: "read" }, ctx), [],
       "ordinary tools stay untouched in a child");
 
