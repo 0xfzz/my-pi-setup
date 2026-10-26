@@ -364,6 +364,58 @@ ${spec.reportShape ?? "A short summary, then for EACH acceptance criterion: what
 }
 
 /**
+ * The ticket for a spawn with no handoff spec.
+ *
+ * An ad-hoc child still gets the escalation ladder and an explicit statement of
+ * what it owns. What it does NOT get is a fabricated spec: telling it to recall
+ * an artifact that does not exist is exactly how it would learn to guess a lane.
+ */
+export function buildAdhocTicket(input: {
+  scope: string;
+  purpose: "adhoc" | "research" | "implementation";
+  task: string;
+  laneFiles?: readonly string[];
+  acceptanceCriteria?: readonly string[];
+}): string {
+  const assignment = String(input.task ?? "").trim();
+  const lane = input.laneFiles?.length
+    ? input.laneFiles.map((file) => `- \`${file}\``).join("\n")
+    : "_No lane declared._ Do not modify files; report what you found and what would need to change.";
+  const criteria = input.acceptanceCriteria?.length
+    ? input.acceptanceCriteria.map((criterion) => `- ${criterion}`).join("\n")
+    : "_No acceptance criteria declared._ Say what you verified and how.";
+  const role = input.purpose === "research"
+    ? "You are a research child: inspect, read and report. Do not modify files."
+    : input.purpose === "implementation"
+      ? "You are an implementation child. Change only what the assignment and the lane allow."
+      : "You are an ad-hoc worker. You have no handoff spec; this ticket is your whole brief.";
+
+  return `# Ad-hoc work unit: ${input.scope}
+
+${role}
+
+## Your assignment
+${assignment || "(no assignment text was provided)"}
+
+## Lane
+${lane}
+
+## What "done" looks like
+${criteria}
+
+## If you are unsure — escalate, never guess
+Use \`orch_ping\` with the question, what you already checked, and the options you see.
+This pauses your session; the orchestrator resumes you with an answer. If the
+orchestrator cannot answer, it escalates to the user. Never resolve an ambiguity
+by picking the interpretation that lets you proceed.
+
+## What to report back
+A short summary, then for each criterion above: what you did (file:line) and how
+you verified it. Say plainly what you did not do and why.
+`;
+}
+
+/**
  * Two child tickets must not share content beyond the shared preamble.
  *
  * This is the isolation assertion, expressed as data so it can be tested without

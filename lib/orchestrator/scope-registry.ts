@@ -51,9 +51,10 @@ export interface ScopedChild {
    * Reviewers are readers of a pinned document, not writers of a lane, so they are
    * registered with `laneFiles: []`. Keeping the purpose explicit is what lets
    * steering, review, and status report the right thing instead of treating a
-   * missing lane as a malformed worker.
+   * missing lane as a malformed worker. Research and ad-hoc children also have no
+   * lane by default; their purpose says so instead of inventing one.
    */
-  purpose?: "implementation" | "review";
+  purpose?: "implementation" | "review" | "research" | "adhoc";
   /** Review metadata. Present iff `purpose` is `review`. */
   reviewRunId?: string;
   reviewLens?: string;

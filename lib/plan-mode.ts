@@ -1,5 +1,6 @@
 /** Branch-local plan mode policy shared by modes, artifact storage, and autocomplete. */
 import { isDispatcherTool } from "./tool-policy.ts";
+import { PLAN_SAFE_DELEGATION_TOOLS } from "./delegation-tools.ts";
 
 export const PLAN_MODE_TYPE = "input-plan-mode:v1";
 /** Request-local briefing, not persisted policy or conversation history. */
@@ -61,6 +62,11 @@ export function pendingPlanDeferredTools(branch: readonly any[]): string[] {
  * absence really is a bug.
  */
 export const PLAN_TOOLS: ReadonlySet<string> = new Set([
+  // Delegation is read-only for the PARENT when it is research/review/spec work;
+  // the child's purpose decides its tools, not the parent's mode. Taking this
+  // from the capability table means a new plan-safe parent tool cannot be
+  // forgotten here.
+  ...PLAN_SAFE_DELEGATION_TOOLS,
   // `artifact_edit` is listed for the same reason as `artifact_save`: the sanctioned
   // write in Plan mode is editing workspace artifacts, and a partial edit is
   // strictly narrower than replacing a whole document. Both are artifact-scoped;
@@ -152,6 +158,6 @@ Workflow (adapt to the conversation; do not force a questionnaire or repeat alre
 5. Create or refine artifacts with proposals, agreed decisions, open questions, and refined plans. Preserve useful content and distinguish proposals from agreed decisions; suggestions are not approval. New artifact IDs are allowed.
 6. Summarize decisions, unresolved blockers, and what would be needed for implementation. Stop before implementation; do not automatically leave Plan mode or launch work.
 Use the available read-only tools, artifact_list, artifact_recall, artifact_search, artifact_save, and artifact_edit. ask_user and the todo tools (todo_plan, todo_act, todo_next) are conversation/workflow controls; todos describe research/discussion steps, and a todo title is never permission to implement.
-Shell inspection is limited to supported read-only commands (including pipelines and cd path && command). No redirection, expansion, interpreters, installs, builds, tests that write, or arbitrary scripts. Use read/search tools for unsupported inspection commands. Unannotated third-party tools, opaque script/browser/MCP gateways, and delegation are blocked unless their read-only behavior can be enforced; direct MCP tools explicitly annotated read-only are allowed. Do not attempt another route around a blocked operation.
+Shell inspection is limited to supported read-only commands (including pipelines and cd path && command). No redirection, expansion, interpreters, installs, builds, tests that write, or arbitrary scripts. Use read/search tools for unsupported inspection commands. Unannotated third-party tools and opaque script/browser/MCP gateways are blocked unless their read-only behavior can be enforced; direct MCP tools explicitly annotated read-only are allowed. The orch_* parent delegation tools are allowed: delegate research or review, and spec work with a handoff. Ad-hoc and implementation delegation are refused until you leave Plan mode. Do not attempt another route around a blocked operation.
 If no artifacts exist, create one with artifact_save when useful, or continue in chat. Read a long artifact by line range (artifact_recall offset/limit) and locate text in it with artifact_search instead of pulling the whole document. Only the user can leave this mode with /plan off or /mode normal, or Shift+Tab; do not claim to switch it yourself.
 This workflow applies only while the live current-mode briefing says Plan is ON. The request-local current-input-mode reminder reflects the current branch policy and supersedes historical Plan instructions, assistant claims, and compaction summaries. When input_mode says Plan is OFF (also confirmed by the live reminder), follow the current mode instead.`;

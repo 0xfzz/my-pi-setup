@@ -69,6 +69,10 @@ test("normalized shell reads files outside the working directory without changin
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 test("read-only tool annotations allow research but do not reopen opaque execution tools", () => {
+  // Plan may delegate, because researching and reviewing is read-only for the parent.
+  for (const name of ["orch_handoff", "orch_spawn", "orch_running", "orch_brief", "orch_check", "orch_review", "orch_escalate"]) {
+    assert.equal(isPlanTool(name), true, `${name} is a plan-safe parent tool`);
+  }
   assert.equal(isPlanTool("mcp__docs__search", { name: "mcp__docs__search", annotations: { readOnlyHint: true } }), true);
   assert.equal(isPlanTool("unknown"), false);
   assert.equal(isPlanTool("mcp__docs__write", { name: "mcp__docs__write", annotations: { destructiveHint: false } }), false);

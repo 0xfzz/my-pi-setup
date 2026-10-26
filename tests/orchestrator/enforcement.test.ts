@@ -21,6 +21,8 @@ interface Harness {
   tools: Map<string, any>;
   spawned: any[];
   messages: any[];
+  /** The branch the context reports; tests push a mode entry here. */
+  branch: any[];
   ctx: any;
   call: (name: string, params: any) => Promise<any>;
   /** What a child in `scope` can actually recall — the real isolation boundary. */
@@ -68,6 +70,7 @@ async function harness(opts: { inputAnswer?: string } = {}): Promise<Harness> {
   };
 
   const hooks = new Map<string, Function[]>();
+  const branch: any[] = [];
   const pi: any = {
     registerTool(tool: any) {
       tools.set(tool.name, tool);
@@ -100,6 +103,7 @@ async function harness(opts: { inputAnswer?: string } = {}): Promise<Harness> {
       getSessionId: () => "parent-session",
       getSessionFile: () => join(dir, "parent-session.jsonl"),
       getSessionDir: () => dir,
+      getBranch: () => branch,
     },
     ui: {
       notify() {},
@@ -148,6 +152,7 @@ async function harness(opts: { inputAnswer?: string } = {}): Promise<Harness> {
     tools,
     spawned,
     messages,
+    branch,
     ctx,
     async call(name: string, params: any) {
       const tool = tools.get(name);
@@ -255,6 +260,50 @@ test("concept 1: a handoff with no lane, no goal, or no criteria is rejected bef
       "no spec was recorded",
     );
     assert.equal(h.spawned.length, 0);
+  } finally {
+    handoffs.clear();
+    await h.detach();
+  }
+});
+
+test("concept 1: Normal spawns an ad-hoc unit without a handoff and orch_check says not-declared", async () => {
+  const h = await harness();
+  const name = uniqueScope("spike");
+  try {
+    const spawned = await h.call("orch_spawn", {
+      name,
+      task: "Inspect the retry path and report what would change.",
+      purpose: "adhoc",
+    });
+    assert.equal(spawned.details.status, "started");
+    assert.equal(spawned.details.handoffId, undefined, "an ad-hoc unit has no handoff id");
+    assert.equal(spawned.details.purpose, "adhoc");
+    assert.match(spawned.content[0].text, /ad-hoc, no handoff spec/);
+    assert.equal(h.spawned.length, 1, "exactly one pane, and it exists");
+
+    const checked = await h.call("orch_check", { scope: spawned.details.scope });
+    assert.equal(checked.details.lane.state, "not-declared");
+  } finally {
+    handoffs.clear();
+    await h.detach();
+  }
+});
+
+test("concept 1: Plan admits research but refuses ad-hoc and implementation before a pane exists", async () => {
+  const h = await harness();
+  h.branch.push({ type: "custom", customType: "input-plan-mode:v1", data: { enabled: true } });
+  try {
+    for (const purpose of ["adhoc", "implementation"] as const) {
+      const refused = await h.call("orch_spawn", { name: uniqueScope(`x-${purpose}`), task: "t", purpose });
+      assert.equal(refused.details.error, "purpose-refused", purpose);
+      assert.equal(refused.details.mode, "plan");
+    }
+    assert.equal(h.spawned.length, 0, "a refused spawn starts nothing");
+
+    const research = await h.call("orch_spawn", { name: uniqueScope("reader"), task: "Inspect the retry path." });
+    assert.equal(research.details.status, "started", "Plan defaults to a research child");
+    assert.equal(research.details.purpose, "research");
+    assert.equal(h.spawned.length, 1);
   } finally {
     handoffs.clear();
     await h.detach();

@@ -47,6 +47,8 @@ export interface PacketChild {
   frozenCriteria?: string[];
   handoffRevision?: number;
   laneFiles?: string[];
+  /** Registry purpose, so an ad-hoc packet does not pretend to have a spec. */
+  purpose?: string;
 }
 
 export interface PacketInput {
@@ -75,6 +77,7 @@ export interface ReviewPacket {
   scope: string;
   handoffId?: string;
   revision?: number;
+  purpose?: string;
   /** True when the criteria came from the frozen spawn-time copy. */
   frozen: boolean;
   criteria: string[];
@@ -140,8 +143,10 @@ export function buildReviewPacket(input: PacketInput): ReviewPacket {
   const laneFiles = child?.laneFiles?.length ? child.laneFiles : (input.handoff?.laneFiles ?? []);
   const changed = input.changed;
   // An unknown diff is reported as unknown: "no violations" and "could not look"
-  // are different facts, and only one of them licenses an approval.
-  const outOfLane = changed ? changed.filter((file) => !pathMatchesAnyLane(laneFiles, file)) : [];
+  // are different facts, and only one of them licenses an approval. An ad-hoc
+  // unit with no declared lane has nothing to violate, so it is not all-violations.
+  const laneDeclared = laneFiles.length > 0;
+  const outOfLane = laneDeclared && changed ? changed.filter((file) => !pathMatchesAnyLane(laneFiles, file)) : [];
   const previous = new Set(input.previousFiles ?? []);
   const allHunks = parseDiff(input.diff);
   const fresh = previous.size ? allHunks.filter((hunk) => !previous.has(hunk.file)) : allHunks;
@@ -153,6 +158,7 @@ export function buildReviewPacket(input: PacketInput): ReviewPacket {
     scope: input.scope,
     handoffId: input.handoff?.id,
     revision: child?.handoffRevision ?? input.handoff?.revision,
+    purpose: child?.purpose ?? (input.handoff ? "implementation" : undefined),
     frozen: Boolean(child?.frozenCriteria?.length),
     criteria,
     laneFiles,
@@ -198,6 +204,7 @@ export function renderReviewPacket(packet: ReviewPacket, budgetChars = PACKET_CH
   const bodyBudget = Math.max(400, budgetChars - reserve);
   const lines: string[] = [];
   const head = [packet.scope];
+  if (packet.purpose === "adhoc") head.push("ad-hoc work unit: no handoff spec");
   if (packet.handoffId) head.push(`handoff ${packet.handoffId} rev ${packet.revision ?? "?"}${packet.frozen ? " (frozen)" : ""}`);
   if (packet.child) {
     head.push(`${packet.child.name} [${packet.child.id}] ${packet.child.status}${packet.child.elapsed ? ` ${packet.child.elapsed}` : ""}${packet.child.budget ? `/${packet.child.budget}` : ""}`);
@@ -211,7 +218,9 @@ export function renderReviewPacket(packet: ReviewPacket, budgetChars = PACKET_CH
     ? `changed ${packet.changed.length}`
     : "changed: unknown (git unavailable — lane NOT verified)";
   const violations = packet.outOfLane.length ? ` · OUT OF LANE ${packet.outOfLane.length}: ${packet.outOfLane.join(", ")}` : "";
-  lines.push(`lane: ${packet.laneFiles.join(", ") || "(none)"} — ${changed}${violations}`);
+  lines.push(packet.laneFiles.length
+    ? `lane: ${packet.laneFiles.join(", ")} — ${changed}${violations}`
+    : `lane: NOT DECLARED — ${changed} (ad-hoc work unit; no lane to violate)`);
 
   const added = packet.hunks.reduce((total, hunk) => total + hunk.added, 0);
   const removed = packet.hunks.reduce((total, hunk) => total + hunk.removed, 0);
@@ -290,6 +299,8 @@ export interface CommandResult {
 export interface CheckInput {
   scope: string;
   laneFiles: readonly string[];
+  /** False for an ad-hoc spawn with no handoff lane: absence is not a violation. */
+  laneDeclared?: boolean;
   changed: string[] | null;
   criteria: readonly string[];
   command?: string;
@@ -299,7 +310,7 @@ export interface CheckInput {
 
 export interface CheckReport {
   scope: string;
-  lane: { state: "pass" | "fail" | "unknown"; violations: string[]; changed: number };
+  lane: { state: "pass" | "fail" | "unknown" | "not-declared"; violations: string[]; changed: number };
   tests: { state: "pass" | "fail" | "not-run"; command?: string; exit?: number; failed: string[]; reason?: string };
   refs: EvidenceRef[];
   lines: string[];
@@ -326,12 +337,15 @@ function failedNames(output: string): string[] {
  */
 export function buildCheckReport(input: CheckInput): CheckReport {
   const changed = input.changed;
-  const violations = changed ? changed.filter((file) => !pathMatchesAnyLane(input.laneFiles, file)) : [];
-  const lane = {
-    state: changed ? (violations.length ? "fail" : "pass") as "pass" | "fail" : "unknown" as const,
-    violations,
-    changed: changed?.length ?? 0,
-  };
+  const laneDeclared = input.laneDeclared !== false;
+  const violations = laneDeclared && changed ? changed.filter((file) => !pathMatchesAnyLane(input.laneFiles, file)) : [];
+  const lane = laneDeclared
+    ? {
+        state: (changed ? (violations.length ? "fail" : "pass") : "unknown") as "pass" | "fail" | "unknown",
+        violations,
+        changed: changed?.length ?? 0,
+      }
+    : { state: "not-declared" as const, violations: [], changed: changed?.length ?? 0 };
 
   const refs: EvidenceRef[] = [];
   for (const file of (changed ?? []).filter((file) => !violations.includes(file)).slice(0, 5)) {
@@ -362,7 +376,9 @@ export function buildCheckReport(input: CheckInput): CheckReport {
 
   const lines = [
     `${input.scope} · check`,
-    `lane: ${lane.state.toUpperCase()}${changed ? ` (${lane.changed} changed${violations.length ? `, ${violations.length} out of lane: ${violations.join(", ")}` : ""})` : " (git unavailable — not verified)"}`,
+    lane.state === "not-declared"
+      ? `lane: NOT DECLARED (ad-hoc work unit; ${lane.changed} changed, no lane to judge)`
+      : `lane: ${lane.state.toUpperCase()}${changed ? ` (${lane.changed} changed${violations.length ? `, ${violations.length} out of lane: ${violations.join(", ")}` : ""})` : " (git unavailable — not verified)"}`,
     `tests: ${tests.state === "not-run" ? `NOT RUN${tests.reason ? ` — ${tests.reason}` : ""}` : `${tests.state.toUpperCase()} [${tests.command} exit ${tests.exit}]${tests.failed.length ? ` failing: ${tests.failed.join(", ")}` : ""}`}`,
     `criteria (${input.criteria.length}): judge each against the refs below`,
     `refs: ${refs.length ? refs.map((ref) => ref.kind === "file" ? `file:${(ref as any).path}` : ref.kind === "cmd" ? `cmd:${(ref as any).cmd} exit ${(ref as any).exit}` : `test:${(ref as any).name} ${(ref as any).pass ? "pass" : "fail"}`).join(" · ") : "(none)"}`,

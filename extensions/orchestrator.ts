@@ -30,6 +30,7 @@ import { dirname, join, resolve } from "node:path";
 
 import {
   HandoffError,
+  buildAdhocTicket,
   buildChildTicket,
   handoffArtifactPayload,
   handoffIdFor,
@@ -110,6 +111,14 @@ import {
   verifyCommandProblem,
 } from "../lib/orchestrator/brief.ts";
 import { superviseModeFromBranch } from "../lib/supervise-mode.ts";
+import { planModeFromBranch } from "../lib/plan-mode.ts";
+import {
+  childToolsForPurpose,
+  defaultSpawnPurpose,
+  registryPurpose,
+  spawnRefusal,
+} from "../lib/spawn-policy.ts";
+import type { SpawnPurpose } from "../lib/delegation-tools.ts";
 import {
   SPEC_ONLY_TOOLS,
   isReviewLens,
@@ -1447,6 +1456,30 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     return undefined;
   }
 
+  /**
+   * A scope for a spawn with no handoff to name it.
+   *
+   * Deterministic from the name or the first words of the task, so `orch_running`,
+   * `orch_steer` and `orch_check` all address the same unit. `sanitizeScope` is
+   * allowed to reject the slug ("global" is reserved), in which case the neutral
+   * fallback is still a valid scope rather than a crash after the pane started.
+   */
+  function adhocScope(params: { name?: string; task: string }): string {
+    const seed = params.name?.trim() || params.task.trim().split(/\s+/).slice(0, 6).join("-");
+    const slug = seed.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+    try {
+      return sanitizeScope(slug || "adhoc");
+    } catch {
+      return "adhoc";
+    }
+  }
+
+  /** The branch, when the context has one. A minimal test context may not. */
+  function branchOf(ctx: ExtensionContext): readonly any[] {
+    const manager: any = ctx.sessionManager as any;
+    return typeof manager?.getBranch === "function" ? (manager.getBranch() ?? []) : [];
+  }
+
   // ── spec review: independent readers of a pinned document ───────────────────
   //
   // The EGM property this implements is narrow and worth restating: a specification
@@ -2092,7 +2125,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     name: "orch_spawn",
     label: "Spawn Orchestrator",
     description:
-      "Spawn a worker with exactly one handoff spec inlined into its ticket. The child cannot see any other work unit's spec, scope name, or paths.",
+      "Spawn a worker. With handoffId it gets exactly one handoff spec inlined into its ticket; without one it gets an ad-hoc ticket and no lane. The child cannot see any other work unit's spec, scope name, or paths.",
     parameters: Type.Object({
       name: Type.Optional(
         Type.String({
@@ -2100,8 +2133,31 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             "Display name for the worker. Optional: omit it and a Javanese given name plus role is derived from the handoff scope (e.g. 'Bima · Skeleton Builder'). An explicit human name is kept; a slug is replaced.",
         }),
       ),
-      task: Type.String({ description: "The specific assignment inside this handoff. Must stay inside the handoff's lane." }),
-      handoffId: Type.String({ description: "Handoff id returned by orch_handoff (its scope is accepted too)." }),
+      task: Type.String({ description: "The specific assignment. For an ad-hoc spawn this is the whole brief; for a spec spawn it must stay inside the handoff's lane." }),
+      handoffId: Type.Optional(Type.String({ description: "Handoff id returned by orch_handoff (its scope is accepted too). Omit it for an ad-hoc spawn." })),
+      purpose: Type.Optional(
+        Type.Union(
+          [
+            Type.Literal("spec"),
+            Type.Literal("adhoc"),
+            Type.Literal("research"),
+            Type.Literal("review"),
+            Type.Literal("implementation"),
+          ],
+          {
+            description:
+              "What this spawn is for. Defaults to spec when handoffId is present, research in Plan mode, adhoc otherwise. Plan admits research/review/spec; Supervise admits spec only.",
+          },
+        ),
+      ),
+      laneFiles: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "Ad-hoc only: files this child owns. Omit it and orch_check reports lane: not-declared instead of inventing a lane.",
+        }),
+      ),
+      acceptanceCriteria: Type.Optional(
+        Type.Array(Type.String(), { description: "Ad-hoc only: what done means. Omit it for a pure research child." }),
+      ),
       agent: Type.Optional(Type.String({ description: "Agent profile (e.g. 'worker')." })),
       model: Type.Optional(Type.String({ description: "Model override." })),
       skills: Type.Optional(Type.String({ description: "Comma-separated skills." })),
@@ -2119,16 +2175,47 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           { error: "orchestrator-paused", paused: registry.getPausedChildren().map((c) => c.id) },
         );
       }
-      const handoff = resolveHandoff(params);
-      if (!handoff) {
+      // ── mode × purpose, resolved before any row exists ───────────────────
+      // A refused spawn must leave no registry row, pane, watcher or ticket.
+      const branch = branchOf(ctx);
+      const planState = planModeFromBranch(branch);
+      const superviseState = superviseModeFromBranch(branch);
+      const modeId = planState?.enabled
+        ? "plan"
+        : superviseState?.enabled
+          ? (superviseState.modeId ?? "supervise")
+          : "normal";
+      const purpose: SpawnPurpose = params.purpose
+        ?? (params.handoffId ? "spec" : defaultSpawnPurpose(modeId));
+      const refusal = spawnRefusal(modeId, purpose, false);
+      if (refusal) return text(refusal, { error: "purpose-refused", mode: modeId, purpose });
+
+      if (purpose === "review") {
         return text(
-          `No handoff "${params.handoffId}". Author one first with orch_handoff: a child spawned without a spec has no lane, ` +
-            `so neither steering nor review can be precise. Known handoffs: ${[...handoffs.keys()].join(", ") || "(none)"}.`,
-          { error: "handoff-required", known: [...handoffs.keys()] },
+          "A review spawn needs a pinned document and an isolated reviewer: start it with orch_spec_review, which creates the reviewer and its ticket.",
+          { error: "use-spec-review" },
         );
       }
 
-      const scope = handoff.scope;
+      const handoff = resolveHandoff(params);
+      if (purpose === "spec" && !handoff) {
+        return text(
+          `No handoff "${params.handoffId}". Author one first with orch_handoff, or spawn an ad-hoc unit without handoffId. ` +
+            `Known handoffs: ${[...handoffs.keys()].join(", ") || "(none)"}.`,
+          { error: "handoff-required", known: [...handoffs.keys()] },
+        );
+      }
+      if (handoff && purpose === "adhoc") {
+        return text(
+          `A handoff (${handoff.id}) was supplied, so this is a spec spawn. Drop handoffId for ad-hoc work, or ask for purpose "spec".`,
+          { error: "handoff-vs-adhoc", handoffId: handoff.id },
+        );
+      }
+
+      const scope = handoff?.scope ?? adhocScope(params);
+      const laneFiles = handoff?.laneFiles ?? [...(params.laneFiles ?? [])];
+      const acceptanceCriteria = handoff?.acceptanceCriteria ?? [...(params.acceptanceCriteria ?? [])];
+      const handoffId = handoff?.id;
 
       // ── human naming ─────────────────────────────────────────────────────
       // A worker is a person, not a slug. The given name is derived here (from an
@@ -2147,7 +2234,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       // revision that was actually reviewed. Re-authoring the design after review
       // would otherwise leave an approval attached to text nobody read, so the
       // current content is re-read here rather than trusted from the record.
-      if (handoff.designRef) {
+      if (handoff?.designRef) {
         const run = specReviews.get(handoff.designRef.runId);
         const problem = designRefProblem(
           handoff.designRef,
@@ -2203,17 +2290,25 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       // sibling's. getArtifactDir() is join(sessionDir, 'artifacts', sessionId), so
       // qualifying the sessionId with the handoff id isolates the tree without
       // touching v1's launch planner.
-      const childArtifactSessionId = `${parentSessionId}-${handoff.id}`;
+      const childArtifactSessionId = `${parentSessionId}-${handoffId ?? `adhoc-${scope}`}`;
 
-      const ticket = buildChildTicket(handoff, params.task);
+      const ticket = handoff
+        ? buildChildTicket(handoff, params.task)
+        : buildAdhocTicket({
+            scope,
+            purpose: purpose === "research" ? "research" : purpose === "implementation" ? "implementation" : "adhoc",
+            task: params.task,
+            laneFiles,
+            acceptanceCriteria,
+          });
 
       // Isolation is a data invariant, checked before the child exists rather than
       // trusted to happen. A ticket that names a sibling's scope hands this child
       // knowledge it has no lane for, and the resulting diff is unattributable.
       const siblingScopes = [...handoffs.values()]
         .map((entry) => entry.record.scope)
-        .filter((scope) => scope !== handoff.scope);
-      const leaked = leakedSiblingScopes(ticket, handoff.scope, siblingScopes);
+        .filter((sibling) => sibling !== scope);
+      const leaked = leakedSiblingScopes(ticket, scope, siblingScopes);
       if (leaked.length > 0) {
         return text(
           `Refused to spawn: this child's ticket names other work units (${leaked.join(", ")}). ` +
@@ -2231,7 +2326,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             agent: params.agent,
             model: params.model,
             skills: params.skills,
-            tools: params.tools,
+            tools: params.tools ?? childToolsForPurpose(purpose),
             cwd: params.cwd,
             scope,
             // Deliberately NOT passing specPath: a path is a promise the child
@@ -2281,19 +2376,22 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       armWatcher(
         running,
         scope,
-        handoff.laneFiles,
-        handoff.id,
+        laneFiles,
+        handoffId,
         params.budgetMinutes ? params.budgetMinutes * 60_000 : undefined,
-        { criteria: handoff.acceptanceCriteria, revision: handoff.revision },
+        { criteria: acceptanceCriteria, revision: handoff?.revision ?? 1 },
+        { purpose: registryPurpose(purpose) },
       );
 
       return text(
         [
-          `Subagent "${displayName}" launched (scope: ${scope}, handoff: ${handoff.id}).`,
+          `Subagent "${displayName}" launched (scope: ${scope}, ${handoffId ? `handoff: ${handoffId}` : "ad-hoc, no handoff spec"}).`,
           `Pane: ${started.paneId}`,
-          `Lane: ${handoff.laneFiles.join(", ")}`,
+          `Lane: ${laneFiles.join(", ") || "not declared (ad-hoc)"}`,
           ``,
-          `The child holds this handoff only. It cannot see any other work unit.`,
+          handoffId
+            ? `The child holds this handoff only. It cannot see any other work unit.`
+            : `The child has no handoff spec. orch_check will report lane: not-declared unless you passed laneFiles.`,
           `The scope (${scope}) is the identity: use it in orch_steer, orch_check and orch_review.`,
           `Do NOT guess results. The outcome (or an orch_ping escalation) arrives automatically.`,
         ].join("\n"),
@@ -2301,11 +2399,12 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           id: running.id,
           name: displayName,
           scope,
-          handoffId: handoff.id,
+          purpose,
+          ...(handoffId ? { handoffId } : {}),
           status: "started",
           paneId: started.paneId,
           sessionFile: running.sessionFile,
-          laneFiles: handoff.laneFiles,
+          laneFiles,
         },
       );
     },
@@ -2863,6 +2962,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
               frozenCriteria: child.frozenCriteria,
               handoffRevision: child.handoffRevision,
               laneFiles: child.laneFiles,
+              purpose: child.purpose,
             }
           : undefined,
         previousFiles: previous ? [...previous] : undefined,
@@ -2904,6 +3004,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       const handoff = [...handoffs.values()].find((entry) => entry.record.scope === scope)?.record;
       const child = [...registry.getChildrenInScope(scope)].sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))[0];
       const laneFiles = child?.laneFiles?.length ? child.laneFiles : (handoff?.laneFiles ?? []);
+      const laneDeclared = Boolean(handoff || child?.laneFiles?.length);
       const criteria = child?.frozenCriteria?.length ? child.frozenCriteria : (handoff?.acceptanceCriteria ?? []);
       const command = params.command ?? (handoff as any)?.verifyCommand;
       const changed = (reviewSeams.changedFiles ?? gitChangedFiles)(cwd);
@@ -2911,6 +3012,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       const report = buildCheckReport({
         scope,
         laneFiles,
+        laneDeclared,
         changed,
         criteria,
         command,
@@ -3240,11 +3342,15 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       // ── lane compliance is computed, not declared ─────────────────────────
       const changed = (reviewSeams.changedFiles ?? gitChangedFiles)(reviewCwd);
       const laneFiles = frozenRow?.laneFiles ?? handoff?.laneFiles ?? [];
+      // An ad-hoc unit declared no lane, so there is nothing to leave. Treating an
+      // empty lane as "every file is outside it" would make every ad-hoc approval
+      // impossible, which is a policy the mode table never agreed to.
+      const laneDeclared = Boolean(frozenRow?.laneFiles?.length || handoff?.laneFiles?.length);
       const declared = params.laneCompliance;
       let laneSource: "git" | "declared" = "declared";
       let laneViolations: string[] = [];
       let inLane = declared?.inLane ?? true;
-      if (changed) {
+      if (laneDeclared && changed) {
         laneSource = "git";
         laneViolations = changed.filter((file) => !pathMatchesAnyLane(laneFiles, file));
         inLane = laneViolations.length === 0;

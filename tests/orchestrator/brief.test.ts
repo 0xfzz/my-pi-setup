@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   PACKET_CHAR_BUDGET,
+  buildCheckReport,
   buildReviewPacket,
   parseDiff,
   renderReviewPacket,
@@ -133,4 +134,43 @@ test("the child's report is flattened to one bounded paragraph", () => {
   const report = rendered.split("\n").find((line) => line.startsWith("child report:"))!;
   assert.ok(report.length < 400, "a child's log is not the parent's context");
   assert.match(report, /…$/);
+});
+
+test("an ad-hoc unit has no lane to violate and says so", () => {
+  const packet = buildReviewPacket({
+    scope: "spike-cache",
+    changed: ["src/a.ts", "src/b.ts"],
+    child: { id: "c", name: "Spike", status: "completed", purpose: "adhoc", laneFiles: [] },
+  });
+  assert.deepEqual(packet.outOfLane, [], "an empty lane is not 'everything is out of lane'");
+  assert.equal(packet.handoffId, undefined);
+  const rendered = renderReviewPacket(packet);
+  assert.match(rendered, /ad-hoc work unit: no handoff spec/);
+  assert.match(rendered, /lane: NOT DECLARED/);
+  assert.doesNotMatch(rendered, /OUT OF LANE/);
+});
+
+test("orch_check reports not-declared for an ad-hoc unit instead of failing it", () => {
+  const report = buildCheckReport({
+    scope: "spike-cache",
+    laneFiles: [],
+    laneDeclared: false,
+    changed: ["src/a.ts"],
+    criteria: [],
+    command: undefined,
+  });
+  assert.equal(report.lane.state, "not-declared");
+  assert.deepEqual(report.lane.violations, []);
+  assert.match(report.lines.join("\n"), /lane: NOT DECLARED/);
+});
+
+test("a declared lane still fails when the diff leaves it", () => {
+  const report = buildCheckReport({
+    scope: "s",
+    laneFiles: ["src/net/"],
+    changed: ["src/net/client.ts", "src/auth/jwt.ts"],
+    criteria: [],
+  });
+  assert.equal(report.lane.state, "fail");
+  assert.deepEqual(report.lane.violations, ["src/auth/jwt.ts"]);
 });
