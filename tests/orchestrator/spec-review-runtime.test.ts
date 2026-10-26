@@ -163,7 +163,7 @@ test("start pins the design, launches one isolated reviewer per lens, and leaks 
           `reviewer tool allowlist must not include ${forbidden}: ${toolsLine}`,
         );
       }
-      assert.match(toolsLine, /spec_review_submit/);
+      assert.match(toolsLine, /orch_spec_review_submit/);
       assert.match(toolsLine, /read/);
     }
 
@@ -196,11 +196,11 @@ test("a stale design reference is refused at authoring time, not at spawn", asyn
   }
 });
 
-test("spec_review_submit is inert outside a reviewer session", async () => {
+test("orch_spec_review_submit is inert outside a reviewer session", async () => {
   const h = await harness();
   try {
     await assert.rejects(
-      () => h.call("spec_review_submit", { summary: "clean", findings: [] }),
+      () => h.call("orch_spec_review_submit", { summary: "clean", findings: [] }),
       /only available to a spec-only reviewer child/,
     );
   } finally {
@@ -220,14 +220,14 @@ test("a reviewer files its report into the run directory, and the gate rejects a
 
     // A finding that names no location cannot be acted on, so it never reaches disk.
     await assert.rejects(
-      () => h.call("spec_review_submit", {
+      () => h.call("orch_spec_review_submit", {
         summary: "Missing a section",
         findings: [{ severity: "blocker", location: "", discrepancy: "no jitter policy", rationale: "implementers will guess" }],
       }),
       /rejected by the review gate/,
     );
 
-    const filed = await h.call("spec_review_submit", {
+    const filed = await h.call("orch_spec_review_submit", {
       summary: "The document does not state a jitter policy, so two retries can synchronise.",
       findings: [
         {

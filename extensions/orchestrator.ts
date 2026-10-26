@@ -1141,7 +1141,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       if (isSpecOnlyDeniedTool(event.toolName)) {
         return {
           block: true,
-          reason: `${event.toolName} is not available to a spec-only reviewer. You have read instruments and \`spec_review_submit\`.`,
+          reason: `${event.toolName} is not available to a spec-only reviewer. You have read instruments and \`orch_spec_review_submit\`.`,
         };
       }
       if (READ_PATH_TOOLS.has(event.toolName)) {
@@ -1513,7 +1513,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
    * to file a review into somebody else's run.
    */
   pi.registerTool({
-    name: "spec_review_submit",
+    name: "orch_spec_review_submit",
     label: "Submit Specification Review",
     description:
       "Submit your independent specification review. Only available in a spec-only reviewer session; the run, lens and pinned revision come from your session, not from arguments.",
@@ -1544,7 +1544,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       const policy = reviewPolicyFromEnv();
       if (!policy) {
         throw new Error(
-          "spec_review_submit is only available to a spec-only reviewer child. The orchestrator collects reports with orch_spec_review.",
+          "orch_spec_review_submit is only available to a spec-only reviewer child. The orchestrator collects reports with orch_spec_review.",
         );
       }
       if (!isReviewLens(policy.lens)) {

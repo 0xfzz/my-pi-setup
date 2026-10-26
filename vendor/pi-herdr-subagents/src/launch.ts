@@ -163,7 +163,7 @@ const SUBAGENT_CONTROL_TOOLS = ["caller_ping", "subagent_done", "orch_progress",
  * its ticket, so it needs no artifact reader, and it must not hold an artifact
  * writer it could use to alter the document it is judging.
  */
-const REVIEWER_CONTROL_TOOLS = ["caller_ping", "subagent_done", "orch_progress", "todo_plan", "todo_act", "todo_next", "spec_review_submit"] as const;
+const REVIEWER_CONTROL_TOOLS = ["caller_ping", "subagent_done", "orch_progress", "todo_plan", "todo_act", "todo_next", "orch_spec_review_submit"] as const;
 
 /**
  * Build the child --tools allowlist.

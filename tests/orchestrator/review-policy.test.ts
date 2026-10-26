@@ -50,13 +50,14 @@ test("reviewers cannot reach the author, the network, or a writer", () => {
   for (const name of ["bash", "write", "edit", "orch_parent_recall", "orch_parent_digest", "orch_history", "browser", "mcp", "codemode", "web_read", "artifact_save", "artifact_edit", "orch_spawn", "orch_review", "tool_search"]) {
     assert.equal(isSpecOnlyDeniedTool(name), true, `${name} must be denied`);
   }
-  for (const name of ["read", "grep", "find", "ls", "ffgrep", "fffind", "spec_review_submit", "caller_ping", "subagent_done"]) {
+  for (const name of ["read", "grep", "find", "ls", "ffgrep", "fffind", "orch_spec_review_submit", "caller_ping", "subagent_done"]) {
     assert.equal(isSpecOnlyDeniedTool(name), false, `${name} must be allowed`);
   }
   // Fail closed: an unknown third-party or gateway tool is not in the allowlist.
   assert.equal(isSpecOnlyDeniedTool("some_new_gateway"), true);
   assert.equal(isSpecOnlyDeniedTool(""), true);
-  assert.ok(SPEC_ONLY_TOOLS.has("spec_review_submit"));
+  assert.ok(SPEC_ONLY_TOOLS.has("orch_spec_review_submit"));
+  assert.equal(isSpecOnlyDeniedTool("orch_spec_review_submit"), false, "the reviewer's own submit tool survives the orch_ prefix rule");
 });
 
 test("control-plane paths are unreadable to a reviewer", () => {
@@ -89,5 +90,5 @@ test("read guards inspect the paths a read tool actually names", () => {
   assert.deepEqual(readTargets("ls", { path: "src" }), ["src"]);
   assert.deepEqual(readTargets("grep", { path: "src", pattern: "retry" }), ["src"]);
   assert.deepEqual(readTargets("fffind", { pattern: "src/**" }), ["src/**"]);
-  assert.deepEqual(readTargets("spec_review_submit", { path: "ignored" }), []);
+  assert.deepEqual(readTargets("orch_spec_review_submit", { path: "ignored" }), []);
 });

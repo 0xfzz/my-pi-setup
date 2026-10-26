@@ -283,7 +283,7 @@ test("the reviewer ticket embeds the pinned revision and the isolation facts", (
   assert.ok(ticket.includes(target.snapshot), "the snapshot is inside the ticket");
   assert.ok(ticket.includes(target.contentHash), "the revision is named");
   assert.match(ticket, /did not inherit any parent conversation/);
-  assert.match(ticket, /spec_review_submit/);
+  assert.match(ticket, /orch_spec_review_submit/);
   assert.match(ticket, /blocker \| major \| nit/);
   // No author reasoning, no sibling scope, no parent path.
   assert.doesNotMatch(ticket, /orch_parent_recall/);

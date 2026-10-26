@@ -591,7 +591,7 @@ ${target.snapshot}
 <<<PINNED_TARGET_END>>>
 
 ## How to report
-Call \`spec_review_submit\` exactly once, with:
+Call \`orch_spec_review_submit\` exactly once, with:
 - verdict-level \`summary\` (2-4 sentences, plain English, no praise);
 - \`findings[]\` — each with \`severity\` (blocker | major | nit), \`location\`
   (section heading or line number inside the pinned text), \`discrepancy\`

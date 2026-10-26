@@ -78,12 +78,12 @@ export const SPEC_ONLY_TOOLS: ReadonlySet<string> = new Set([
   "read", "grep", "find", "ls", "ffgrep", "fffind",
   "todo_plan", "todo_act", "todo_next", "workflow_todo",
   "caller_ping", "subagent_done", "orch_progress",
-  "spec_review_submit",
+  "orch_spec_review_submit",
 ]);
 
 /**
  * Names a reviewer must never reach even if an agent profile, an MCP server, or a
- * late registration were to expose them. `spec_review_submit` and the read
+ * late registration were to expose them. `orch_spec_review_submit` and the read
  * instruments are the whole surface; anything else is refused by default.
  */
 export const SPEC_ONLY_DENIED_TOOLS: ReadonlySet<string> = new Set([
@@ -100,11 +100,14 @@ export const SPEC_ONLY_DENIED_TOOLS: ReadonlySet<string> = new Set([
 export function isSpecOnlyDeniedTool(name: string): boolean {
   if (!name) return true;
   if (SPEC_ONLY_DENIED_TOOLS.has(name)) return true;
-  if (name.startsWith("orch_")) return true;
-  return !SPEC_ONLY_TOOLS.has(name);
+  // The allowlist wins over the prefix rule: the reviewer's own submit tool is the
+  // one `orch_*` writer it is supposed to have.
+  if (SPEC_ONLY_TOOLS.has(name)) return false;
+  // Any other `orch_` tool is parent-only.
+  return true;
 }
 
-/** Names accepted by `spec_review_submit`; kept next to the policy so they cannot drift. */
+/** Names accepted by `orch_spec_review_submit`; kept next to the policy so they cannot drift. */
 export const REVIEW_LENSES = ["comprehension", "readiness", "zoom-out", "critic"] as const;
 export type ReviewLens = (typeof REVIEW_LENSES)[number];
 
