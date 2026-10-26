@@ -8,6 +8,7 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import modes from "../extensions/modes.ts";
 import { V1_TOOLS, V2_TOOLS } from "../lib/delegate-switch.ts";
+import { CORE_REVIEW_TOOLS, DEFERRED_ORCH_TOOLS, isSupervisorTool } from "../lib/supervise-mode.ts";
 
 /**
  * Boot the LIVE gate in a real Pi runtime.
@@ -90,10 +91,33 @@ test("real Pi supervise mode keeps orch_handoff/orch_escalate and refuses v1 del
     // The mode command alone must never reach a model.
     assert.equal(requests, 0, "the /supervise command is local");
     const active = session.getActiveToolNames();
-    // Both authoring and escalation tools must survive the gate. `orch_spawn` without
-    // `orch_handoff` is the exact broken combination from the debug session.
-    for (const name of ["orch_handoff", "orch_spawn", "orch_escalate", "orch_review", "orch_running", "orch_steer", "orch_route", "read", "artifact_save", "artifact_edit", "artifact_search", "artifact_recall", "artifact_list"]) {
-      assert.ok(active.includes(name), `${name} must be active in supervise mode`);
+    // REACHABILITY, not declaration.
+    //
+    // The loadout declares every permitted tool except the ones registered with
+    // `exposure: "deferred"`. Withholding anything else is permanent: `tool_search`
+    // only indexes tools that were never declared *by exposure*, so a `direct` tool
+    // the mode removed cannot be found again. Session `01a16c5b` is the evidence:
+    // thirteen searches for a spawn tool the mode had just un-declared, thirteen
+    // "No matching tools found". Reachability here therefore means "declared, or
+    // deferred on purpose".
+    const reachable = (name: string) => active.includes(name) || DEFERRED_ORCH_TOOLS.has(name);
+    for (const name of ["orch_handoff", "orch_spawn", "orch_escalate", "orch_review", "orch_running", "orch_steer", "read", "artifact_save", "artifact_edit", "artifact_search", "artifact_recall", "artifact_list"]) {
+      assert.ok(reachable(name), `${name} must be reachable in supervise mode`);
+    }
+    // Host tools the review reads with are direct-exposure and cannot be deferred,
+    // so they must be actively declared — not merely permitted.
+    for (const name of ["read", "artifact_recall", "artifact_list"]) {
+      assert.ok(active.includes(name), `${name} is direct-exposure: undeclaring it makes it unreachable`);
+    }
+    // The authoring → observe → verify → judge loop is called every turn, so paying
+    // its schema is cheaper than a tool_search round trip for each of them. Only the
+    // tools THIS fixture registers are asserted: `tool_search`, `ask_user` and
+    // `orch_close` are host/fixture-dependent, and their declaration is pinned by
+    // `tests/orchestrator/loadout-budget.test.ts` against the real registration.
+    const declared = ["orch_handoff", "orch_spawn", "orch_running", "orch_brief", "orch_check", "orch_review", "orch_escalate"];
+    for (const name of declared) {
+      assert.ok(V2_TOOLS.includes(name as any), `${name} is asserted here but this fixture does not register it`);
+      assert.ok(active.includes(name), `${name} must be declared, not deferred`);
     }
     for (const name of [...V1_TOOLS]) {
       assert.equal(active.includes(name), false, `${name} must be withheld while v2 is in force`);

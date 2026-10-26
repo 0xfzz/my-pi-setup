@@ -6,8 +6,10 @@ import { recordsFromBranch as childRecords } from "../lib/subagent-state.ts";
 import { childContextState, isSubagentChildSession, ownEntries } from "../lib/subagent-context.ts";
 import { readOnlyShellCommand } from "../lib/plan-shell.ts";
 import { INPUT_MODE_CONTEXT_TYPE, inputModeGuidance, isPlanTool, missingPlanTools, pendingPlanDeferredTools, pendingPlanExitTools, PLAN_MODE_GUIDANCE, PLAN_MODE_TYPE, planModeFromBranch } from "../lib/plan-mode.ts";
-import { isSupervisorTool, v2DelegationInForce, SUPERVISOR_MODE_GUIDANCE, SUPERVISOR_MODE_TYPE, superviseModeFromBranch } from "../lib/supervise-mode.ts";
+import { declaredSuperviseTools, isSupervisorTool, v2DelegationInForce, SUPERVISOR_MODE_GUIDANCE, SUPERVISOR_MODE_TYPE, superviseModeFromBranch } from "../lib/supervise-mode.ts";
+import { isControlPlanePath } from "../lib/orchestrator/control-plane.ts";
 import { reconcileLoadout, switchStateFromBranch } from "../lib/delegate-switch.ts";
+import { DASHBOARD_SYNC_EVENT, publishDashboardMode } from "../lib/dashboard/integration.ts";
 
 /** Derive from the UI contract so this does not depend on a re-exported alias. */
 type EditorFactory = NonNullable<ReturnType<ExtensionContext["ui"]["getEditorComponent"]>>;
@@ -35,18 +37,76 @@ export default function modesExtension(pi: ExtensionAPI) {
    * complete bypass of the handoff/isolation/escalation contract: no spec, no
    * lane, one shared artifact catalog, and no ladder back to the orchestrator.
    */
+  /**
+   * Branch-derived options for supervise mode.
+   *
+   * Both come from the session's own switch decision, not from the live active
+   * set — that set is what this mode is in the middle of rewriting. Without the
+   * `v2` flag, supervise mode leaves the v1 `subagent` tool enabled, and v1 is a
+   * complete bypass of the handoff/isolation/escalation contract: no spec, no
+   * lane, one shared artifact catalog, and no ladder back to the orchestrator.
+   */
   const superviseOptions = (ctx: ExtensionContext) => {
     const disabled = switchStateFromBranch(policyEntries(ctx)).disabled;
     const registered = pi.getAllTools().map(tool => tool.name);
-    return { disabledDelegates: disabled, v2DelegationAvailable: v2DelegationInForce(registered, disabled) };
+    return {
+      disabledDelegates: disabled,
+      v2DelegationAvailable: v2DelegationInForce(registered, disabled),
+    };
   };
   const allowedSuperviseTool = (ctx: ExtensionContext, name: string) =>
     isSupervisorTool(name, pi.getAllTools().find(tool => tool.name === name), superviseOptions(ctx));
   const restrictPlanTools = () => pi.setActiveTools(pi.getAllTools()
     .filter(tool => isPlanTool(tool.name, tool) && tool.exposure !== "hidden").map(tool => tool.name));
-  const restrictSuperviseTools = (ctx: ExtensionContext) => pi.setActiveTools(pi.getAllTools()
-    .filter(tool => isSupervisorTool(tool.name, tool, superviseOptions(ctx)) && tool.exposure !== "hidden").map(tool => tool.name));
+  /**
+   * Declare everything the mode permits, except tools registered as deferred.
+   *
+   * Withholding a `direct`-exposure tool is permanent: pi's `tool_search` only
+   * indexes tools that are undeclared *because of their exposure*, so a tool this
+   * function un-declares cannot be found again — not by the model, not by a
+   * later turn. Session `01a16c5b` recorded thirteen `tool_search` calls asking
+   * for a spawn tool the mode had just removed, and thirteen "No matching tools
+   * found" replies.
+   *
+   * So the only thing withheld here is what this package registered with
+   * `exposure: "deferred"` (`DEFERRED_ORCH_TOOLS`), which `tool_search` can
+   * genuinely return. The token win lives in the review itself — one bounded
+   * `orch_brief` packet instead of an ad-hoc read expedition — not in hiding the
+   * instruments the loop may need.
+   */
+  const restrictSuperviseTools = (ctx: ExtensionContext) =>
+    pi.setActiveTools(declaredSuperviseTools(pi.getAllTools(), superviseOptions(ctx)));
+  /**
+   * Tools that write files. Their inputs are inspected for control-plane paths —
+   * the reviewer never writes, but a late-registered or MCP-provided writer still
+   * reaches this hook, and the instruments of the review are not negotiable.
+   */
+  const MUTATING_TOOLS = new Set(["write", "edit", "multi_edit", "multiedit", "apply_patch", "applypatch", "patch"]);
+  function writtenPaths(input: any): string[] {
+    const out: string[] = [];
+    for (const key of ["path", "file_path", "filePath"]) {
+      if (typeof input?.[key] === "string") out.push(input[key]);
+    }
+    if (Array.isArray(input?.paths)) out.push(...input.paths.filter((value: unknown) => typeof value === "string"));
+    if (Array.isArray(input?.edits)) {
+      for (const edit of input.edits) if (typeof edit?.path === "string") out.push(edit.path);
+    }
+    return out;
+  }
+  function controlPlaneViolation(ctx: ExtensionContext, input: any): string | undefined {
+    let sessionDir: string | null = null;
+    try { sessionDir = ctx.sessionManager.getSessionDir(); } catch { sessionDir = null; }
+    for (const path of writtenPaths(input)) {
+      const reason = isControlPlanePath(path, { sessionDir });
+      if (reason) return reason;
+    }
+    return undefined;
+  }
+
   pi.events?.on(REFRESH_EVENT, () => draw?.());
+  // Dashboard handshake: re-emit the branch-derived mode so an extension loaded
+  // after the original transition still receives the initial state.
+  pi.events?.on(DASHBOARD_SYNC_EVENT, () => publishDashboardMode(pi, registry.current.id));
 
   /**
    * Branch entries that define THIS session's own mode policy.
@@ -142,6 +202,10 @@ export default function modesExtension(pi: ExtensionAPI) {
     // the right tab while the tools stayed in Plan's loadout.
     const currentId = policyModeId(ctx);
     registry.select(currentId);
+    // Compare against the transcript, not the cursor: a cycle moves the cursor
+    // before the policy is written, so an equality test on the cursor would read
+    // the transition as already applied and skip it (Plan → Orchestrator used to
+    // show the right tab while the tools stayed in Plan's loadout).
     if (currentId === id) return true;
     const enteringPlan = id === "plan";
     const enteringSupervisor = isSupervisorMode(id);
@@ -175,7 +239,11 @@ export default function modesExtension(pi: ExtensionAPI) {
       }
       // Both ids write the same entry; `modeId` remembers which tab to redraw
       // after a reload so `/mode orchestrator` does not come back as Supervise.
-      pi.appendEntry(SUPERVISOR_MODE_TYPE, { enabled: true, previousTools, modeId: id });
+      pi.appendEntry(SUPERVISOR_MODE_TYPE, {
+        enabled: true,
+        previousTools,
+        modeId: id,
+      });
       restrictSuperviseTools(ctx);
     } else if (leavingRestricted) {
       restoreTools(previousTools ?? [], ctx);
@@ -190,6 +258,9 @@ export default function modesExtension(pi: ExtensionAPI) {
     restoredKey = stateKey(ctx);
     draw?.();
     refresh?.();
+    // Notification only, after the transition actually applied. A refused switch
+    // returned above and therefore publishes nothing.
+    publishDashboardMode(pi, id);
     return true;
   }
 
@@ -230,6 +301,9 @@ export default function modesExtension(pi: ExtensionAPI) {
     restoredKey = stateKey(ctx);
     draw?.();
     refresh?.();
+    // Restore is also the resume/reload path: publish the mode the transcript
+    // actually resolved to, so a resumed Orchestrator session reconnects.
+    publishDashboardMode(pi, registry.current.id);
   }
 
   pi.on("session_start", (_event, ctx) => {
@@ -389,11 +463,17 @@ export default function modesExtension(pi: ExtensionAPI) {
 
     if (superviseActive) {
       if (!allowedSuperviseTool(ctx, event.toolName)) {
-        return { block: true, reason: `Supervise mode: ${event.toolName} is blocked. Direct file edits and browser tools are disabled; delegate tasks via orch_spawn or review diffs. Use /mode normal to exit.` };
+        return { block: true, reason: `Supervise mode: ${event.toolName} is not available to a reviewer. You do not implement: delegate the work with orch_spawn, inspect the result with orch_brief and orch_check, and record the verdict with orch_review. /mode normal to implement.` };
+      }
+      if (MUTATING_TOOLS.has(event.toolName)) {
+        const violation = controlPlaneViolation(ctx, event.input);
+        if (violation) {
+          return { block: true, reason: `Supervise mode: ${violation}. Control-plane files cannot be edited: they are the review's own instruments. Use /mode normal to exit.` };
+        }
       }
       if (event.toolName === "bash") {
         const command = readOnlyShellCommand(event.input?.command);
-        if (command === undefined) return { block: true, reason: "Supervise mode: bash command is blocked (not supported read-only inspection). Inspect files or review diffs, or use /mode normal to exit." };
+        if (command === undefined) return { block: true, reason: "Supervise mode: that shell command is not read-only, so it is refused. Use orch_brief for the diff, read/grep for the files it flags, or orch_check to run the declared verification. /mode normal to run it yourself." };
         event.input.command = command;
       }
       return;
@@ -420,6 +500,8 @@ export default function modesExtension(pi: ExtensionAPI) {
     const superviseActive = isSupervise(ctx);
     const planActive = isPlan(ctx);
     if (!planActive && !superviseActive) return;
+    // The user's own shell follows the same read-only grammar: an orchestrator
+    // that can run arbitrary commands is an orchestrator that can edit files.
     const command = readOnlyShellCommand(event.command);
     if (command === undefined) {
       const modeLabel = superviseActive ? "Supervise mode" : "Plan mode";
@@ -440,9 +522,16 @@ export default function modesExtension(pi: ExtensionAPI) {
     },
     async handler(args, ctx) {
       synchronize(ctx);
-      const id = args.trim().toLowerCase();
+      const [id, ...flags] = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
       if (ctx.mode !== "tui" && id !== "plan" && !(id === "normal" && policyModeId(ctx) === "plan")) {
         ctx.ui.notify("Input modes are available in the terminal UI only; use /plan mode or /plan off elsewhere.", "warning");
+        return;
+      }
+      // There is exactly one orchestrator policy now; `full` was removed because
+      // a widened allowlist bought implementation quality the parent should have
+      // delegated, and cost independence, tokens and lane ownership in exchange.
+      if (flags.length) {
+        ctx.ui.notify(`Unknown option "${flags[0]}". Use /mode normal|plan|supervise|orchestrator.`, "warning");
         return;
       }
       if (id) {

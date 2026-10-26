@@ -31,9 +31,17 @@ test("real Pi loads subagent-v2 with zero extension errors", async () => {
 
     const names = [...session.getActiveToolNames()].sort();
     console.log("ACTIVE:", JSON.stringify(names.filter((n: string) => n.startsWith("orch_"))));
-    for (const t of ["orch_handoff", "orch_spawn", "orch_review", "orch_escalate", "orch_running", "orch_steer", "orch_route"]) {
+    for (const t of ["orch_handoff", "orch_spawn", "orch_review", "orch_escalate", "orch_running", "orch_steer"]) {
       assert.ok(names.includes(t), `${t} must be registered and active`);
     }
+    // `orch_route` is deferred on purpose: undeclared, but findable by `tool_search`
+    // because the extension registered it with `exposure: "deferred"`. That is the
+    // only kind of tool a mode may withhold — a `direct` tool removed from the
+    // active set is unreachable for the rest of the session.
+    const route = (session as any).getAllTools().find((tool: any) => tool.name === "orch_route");
+    assert.ok(route, "orch_route must be registered");
+    assert.equal(route.exposure, "deferred", "orch_route must be deferred, or tool_search cannot return it");
+    assert.equal(names.includes("orch_route"), false, "a deferred tool is not declared");
     const commands = session.extensionRunner.getRegisteredCommands?.() ?? [];
     console.log("COMMANDS:", JSON.stringify((commands as any[]).map((c) => c.name).filter((n: string) => n === "orch" || n === "steer")));
     console.log("ERRORS:", JSON.stringify(errors.map(String)));

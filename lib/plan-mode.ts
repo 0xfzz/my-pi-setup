@@ -67,7 +67,7 @@ export const PLAN_TOOLS: ReadonlySet<string> = new Set([
   // neither reaches the filesystem. `artifact_search` is read-only but is named
   // here explicitly so the intent survives a future annotation change.
   "artifact_list", "artifact_recall", "artifact_save", "artifact_edit", "artifact_search",
-  "ask_user", "todo_plan", "todo_act", "todo_next", "workflow_todo",
+  "ask_user", "todo_plan", "todo_act", "todo_next", "workflow_todo", "session_goal",
   "read", "grep", "find", "ls", "ffgrep", "fffind", "bash",
   // `google_search` carries no readOnlyHint, so its explicit entry is load-bearing.
   // `fetch_content`/`source_check` are deliberately absent: they write page caches

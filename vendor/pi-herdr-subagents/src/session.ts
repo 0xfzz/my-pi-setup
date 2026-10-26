@@ -5,10 +5,10 @@
 // and battle-tested; the entry shapes are the version-3 session file format the
 // child pi must accept — do not refactor. Summary extraction is crash-safe because
 // the child session file is written incrementally.
-import { appendFileSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes, randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
-import { parseSessionEntries } from "@mariozechner/pi-coding-agent";
+import { parseSessionEntries } from "@earendil-works/pi-coding-agent";
 import {
   SUBAGENT_CONTEXT_TYPE,
   estimateTokens,
@@ -266,6 +266,55 @@ export function seedSubagentSessionFile(params: {
   mkdirSync(dirname(params.childSessionFile), { recursive: true });
   writeFileSync(params.childSessionFile, lines.join("\n") + "\n", "utf8");
   return provenance;
+}
+
+/**
+ * Name prefix for stamped child sessions. Read back by `lib/session-stamp.ts`.
+ */
+export const CHILD_SESSION_NAME_PREFIX = "child";
+
+/**
+ * Birth stamp for a child session that is NOT seeded from the parent transcript.
+ *
+ * A child session is otherwise an ordinary session in the same per-project
+ * directory, so `pi --resume` lists it beside real conversations with nothing to
+ * tell them apart. Two facts fix that, and this writes both:
+ *
+ *   - `parentSession` in the header — what the picker groups on.
+ *   - a `session_info` name — exactly what the picker displays (and what the
+ *     rename key writes), so the row reads `child · <agent> · <task>`.
+ *
+ * Refuses to touch an existing file: `pi --session <file>` resumes what is there,
+ * and clobbering a session to label it would be the worst trade in the system.
+ */
+export function stampNewChildSessionFile(params: {
+  sessionFile: string;
+  sessionId: string;
+  childCwd: string;
+  parentSessionFile: string;
+  label?: string;
+}): boolean {
+  if (existsSync(params.sessionFile)) return false;
+  const timestamp = new Date().toISOString();
+  const label = (params.label ?? "").replace(/\s+/g, " ").trim().slice(0, 64);
+  const header = {
+    type: "session",
+    version: 3,
+    id: params.sessionId,
+    timestamp,
+    cwd: params.childCwd,
+    parentSession: params.parentSessionFile,
+  };
+  const info = {
+    type: "session_info",
+    id: randomBytes(4).toString("hex"),
+    parentId: null,
+    timestamp,
+    name: label ? `${CHILD_SESSION_NAME_PREFIX} · ${label}` : CHILD_SESSION_NAME_PREFIX,
+  };
+  mkdirSync(dirname(params.sessionFile), { recursive: true });
+  writeFileSync(params.sessionFile, `${[header, info].map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
+  return true;
 }
 
 function readEntries(sessionFile: string): SessionEntry[] {

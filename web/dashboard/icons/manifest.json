@@ -1,0 +1,111 @@
+{
+  "$comment": "Provenance manifest for the vendored Phosphor icon subset. Every file under regular/ is a byte-for-byte copy of the named asset from the pinned npm package; sha256 lets tests/dashboard-icons.test.ts re-verify both the vendored files and the inline sprite in ../index.html.",
+  "package": "@phosphor-icons/core",
+  "version": "2.1.1",
+  "weight": "regular",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2023 Phosphor Icons",
+  "registry": "https://registry.npmjs.org/@phosphor-icons/core/-/core-2.1.1.tgz",
+  "integrity": "sha512-v4ARvrip4qBCImOE5rmPUylOEK4iiED9ZyKjcvzuezqMaiRASCHKcRIuvvxL/twvLpkfnEODCOJp5dM4eZilxQ==",
+  "repository": "https://github.com/phosphor-icons/core",
+  "attribution": "../licenses/phosphor-icons-MIT.txt",
+  "usage": "Inline <symbol> sprite in ../index.html; no build step, no network fetch, no runtime dependency.",
+  "icons": [
+    {
+      "symbol": "icon-manager",
+      "name": "briefcase",
+      "file": "regular/briefcase.svg",
+      "sha256": "c908360aa8ffeff3b78be469066aa9faf7df2eda8f34a3596c44157dddc96453"
+    },
+    {
+      "symbol": "icon-agent",
+      "name": "user-circle",
+      "file": "regular/user-circle.svg",
+      "sha256": "5aee25838c1915058940900df322afc36b76f4ea7e48499c33603cf121258b2a"
+    },
+    {
+      "symbol": "icon-spec",
+      "name": "file-text",
+      "file": "regular/file-text.svg",
+      "sha256": "9a580a038cce9f6dd223597864abe1b5c5c03bf8176d2f7171574598468b16f7"
+    },
+    {
+      "symbol": "icon-review",
+      "name": "seal-check",
+      "file": "regular/seal-check.svg",
+      "sha256": "462ca0e3c6be8be9b834e3c5a3eff2b4600ccaa9341dab9a13caf71ce6190788"
+    },
+    {
+      "symbol": "icon-folder",
+      "name": "folder",
+      "file": "regular/folder.svg",
+      "sha256": "4a882bcd4a91ae0a01887024f08d358932f183b6b171e87a3e48c5910364d507"
+    },
+    {
+      "symbol": "icon-escalation",
+      "name": "warning-octagon",
+      "file": "regular/warning-octagon.svg",
+      "sha256": "47db99799b11ee693baa8437f3cd1122f844b2dc28ec8abaafc3ca572cb9c35a"
+    },
+    {
+      "symbol": "icon-snippet",
+      "name": "code",
+      "file": "regular/code.svg",
+      "sha256": "882462ff89cc7b864cb2af1a3a2660bd796f01bdac35b6d4cff7c131fb74e3dc"
+    },
+    {
+      "symbol": "icon-node",
+      "name": "circle",
+      "file": "regular/circle.svg",
+      "sha256": "efc9ee22b165d0d40c21b1c5ebe2463c99744af44ab6f530b4d6c44f25181974"
+    },
+    {
+      "symbol": "icon-close",
+      "name": "x",
+      "file": "regular/x.svg",
+      "sha256": "7397b15e1fa66eaf6ff9b59fe91d483cb5c3bcf75b2fe052097ab6f0593b513a"
+    },
+    {
+      "symbol": "icon-menu",
+      "name": "list",
+      "file": "regular/list.svg",
+      "sha256": "fb1851842c74b40a3f42ce3d6ae0e67ede556b624218e79c0f4ead7d9ceec51f"
+    },
+    {
+      "symbol": "icon-plus",
+      "name": "plus",
+      "file": "regular/plus.svg",
+      "sha256": "d688feb9dd2e41c1721d6906a05a2a42e18cd774762fe706d72b2bdfd91cddc4"
+    },
+    {
+      "symbol": "icon-minus",
+      "name": "minus",
+      "file": "regular/minus.svg",
+      "sha256": "5a068d1cfd707fde5ddb0ce0623958123b6a5afba98401318983aeb0fdad6382"
+    },
+    {
+      "symbol": "icon-fit",
+      "name": "corners-out",
+      "file": "regular/corners-out.svg",
+      "sha256": "fd79277404b3662b50b737127fb6bf6f63ae93c9b60d9f2aca9122a950ec08c8"
+    },
+    {
+      "symbol": "icon-legend",
+      "name": "info",
+      "file": "regular/info.svg",
+      "sha256": "438a1f319d53d86e840af73fb7b1d224c9224a437b9fa449a4e2cb45a82a3552"
+    },
+    {
+      "symbol": "icon-list",
+      "name": "list-bullets",
+      "file": "regular/list-bullets.svg",
+      "sha256": "5c685a673fbd053a3c548039725d1a9f902938fbcddaef3c5f958f0a64c19341"
+    },
+    {
+      "symbol": "icon-graph",
+      "name": "graph",
+      "file": "regular/graph.svg",
+      "sha256": "0a863bd9d39960eb220400400332ee1b3ada0e6ce309b89b202bb0784e4e28aa"
+    }
+  ]
+}

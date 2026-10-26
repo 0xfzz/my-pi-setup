@@ -201,15 +201,15 @@ test("supervise mode command and tool execution policy in modesExtension", async
 
 test("the debug-session loadout survives the gate: orch_handoff and orch_escalate are kept", async () => {
   // Replay the exact loadout recorded in the failing session's `previousTools`
-  // (session 01a16ca1-e77e-75ca-8788-3b4c333ab975, branch entry 4). The gate used
-  // to strip `orch_handoff` and `orch_escalate` from precisely this list, after which
-  // the orchestrator discovered via tool_search that no handoff tool existed,
-  // called v1 `subagent` instead, and put its spec in the shared artifact catalog.
+  // (session 01a16ca1-e77e-75ca-8788-3b4c333ab975, branch entry 4), with the two
+  // tools added since (`orch_brief`, `orch_check`) and `orch_close` — the historical
+  // entry predates them, and a loadout missing a v2 tool makes v2 look absent, which
+  // would silently re-enable the v1 escape hatch this test forbids.
   const debugLoadout = [
     "read", "grep", "find", "ls", "bash", "artifact_save", "artifact_recall", "artifact_list",
     "workflow_todo", "ask_user", "subagents_list", "subagent_history", "tool_search",
     "orch_handoff", "orch_spawn", "orch_resume", "orch_interrupt", "orch_steer",
-    "orch_route", "orch_running", "orch_review", "orch_escalate",
+    "orch_route", "orch_running", "orch_brief", "orch_check", "orch_review", "orch_spec_review", "orch_escalate", "orch_close",
     "subagent", "subagent_resume",
   ];
   const events = new Map<string, Function>();

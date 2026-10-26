@@ -5,11 +5,14 @@ import { ScopeRegistry, type ScopedChild } from "../../lib/orchestrator/scope-re
 import { matchOwner, extractPotentialPaths } from "../../lib/orchestrator/steer-router.ts";
 
 function createChild(overrides: Partial<ScopedChild> = {}): ScopedChild {
+  // One session file = one child. A shared default path silently made every
+  // fixture child a resume of the previous one.
+  const id = overrides.id ?? "child-123";
   return {
-    id: "child-123",
+    id,
     name: "Worker1",
     scope: "auth-module",
-    sessionFile: "/tmp/sessions/child-123.jsonl",
+    sessionFile: `/tmp/sessions/${id}.jsonl`,
     paneId: "w1:p2",
     status: "running",
     laneFiles: ["src/auth/login.ts", "src/auth/token.ts", "src/auth/"],

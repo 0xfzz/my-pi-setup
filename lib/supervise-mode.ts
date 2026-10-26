@@ -36,6 +36,27 @@ import { V1_TOOLS, V2_TOOLS } from "./delegate-switch.ts";
 export const SUPERVISOR_MODE_ID = "supervise";
 export const SUPERVISOR_MODE_TYPE = "input-supervise-mode:v1";
 
+/**
+ * There is one capability: review-only.
+ *
+ * A `full` variant was implemented and removed. It widened the allowlist to
+ * write/edit/browser while the review gate compensated with verified evidence,
+ * computed lanes and spec freeze — but a widened allowlist does not buy review
+ * quality, it buys implementation quality the parent should have delegated. The
+ * measured trade-off (see artifact `orchestrator-review-vs-full-evidence`: 8.55
+ * vs 5.75, and 5 of 7 scenarios) put independence, cost and blast radius ahead of
+ * the parent's own editing, and independence is only free when the reviewer
+ * cannot produce the artifact it judges.
+ *
+ * Old branch entries that carry `capability: "full"` are accepted and ignored:
+ * a session written before this change must not resurrect the branch, and tool
+ * availability is now decided by the allowlist alone.
+ *
+ * The control-plane path guard (`lib/orchestrator/control-plane.ts`) still
+ * applies: forging the registry, a transcript, or an exit sidecar was never a
+ * capability question.
+ */
+
 export interface SuperviseModeState {
   enabled: boolean;
   previousTools: string[];
@@ -74,6 +95,12 @@ export function superviseModeFromBranch(branch: readonly any[] | undefined): Sup
  * Inherits `PLAN_TOOLS`, which supplies the read-only inspection surface
  * (`read`, `grep`, `bash`, …) the review depends on. `bash` is narrowed per
  * invocation by the mode's `tool_call` hook via `readOnlyShellCommand`.
+ *
+ * This is the PERMISSION set. It is wider than the declared loadout only by
+ * `DEFERRED_ORCH_TOOLS` — the tools this package registers with
+ * `exposure: "deferred"`. Permission is enforced at call time by the `tool_call`
+ * guard either way, and `tool_search` can genuinely return a deferred tool,
+ * which it cannot do for a `direct` one the mode stopped declaring.
  */
 export const SUPERVISOR_TOOLS: ReadonlySet<string> = new Set([
   // ── Authoring, delegation, review (v2) ──────────────────────────────────
@@ -83,9 +110,14 @@ export const SUPERVISOR_TOOLS: ReadonlySet<string> = new Set([
   "orch_resume",
   "orch_interrupt",
   "orch_steer",
+  "orch_close",
   "orch_route",
   "orch_running",
+  "orch_brief",
+  "orch_check",
   "orch_review",
+  // Independent specification review — the gate that runs before a worker exists.
+  "orch_spec_review",
   // ── Delegation (v1) ────────────────────────────────────────────────────
   // Coexistence is supported, so v1 stays reachable while it is switched on.
   // `isSupervisorTool` additionally honours the session's delegate switch, so
@@ -113,6 +145,7 @@ export const SUPERVISOR_TOOLS: ReadonlySet<string> = new Set([
   "todo_act",
   "todo_next",
   "workflow_todo",
+  "session_goal", // Conversation metadata, not a source-code mutation.
   "ask_user",
   "subagent_history",
   "subagent_progress",
@@ -125,9 +158,92 @@ export const SUPERVISOR_TOOLS: ReadonlySet<string> = new Set([
 export const SUPERVISOR_ALLOWED_TOOLS = SUPERVISOR_TOOLS;
 
 /**
+ * The hot path: the tools the review loop calls, which are never deferred.
+ *
+ * This is NOT the declared set. Declaration is "everything allowed, except the
+ * tools registered with `deferred` exposure" — see `restrictSuperviseTools` in
+ * `extensions/modes.ts`. An earlier revision made this list the declared set and
+ * that was wrong, for a reason the transcripts prove:
+ *
+ *   pi's `tool_search` only indexes tools that are undeclared *because of their
+ *   exposure* (`deferred`, `codemode`). A `direct`-exposure tool that
+ *   `setActiveTools` removed is invisible to it — permanently. In session
+ *   `01a16c5b` the orchestrator asked `tool_search` for a spawn tool thirteen
+ *   times and got "No matching tools found" thirteen times, because the mode had
+ *   just un-declared it. "Search for it" is not a fallback for a tool you took
+ *   away; it is only a fallback for a tool that was never declared on purpose.
+ *
+ * So the only tools this package may withhold are the ones it registers itself
+ * with `exposure: "deferred"` (`DEFERRED_ORCH_TOOLS`), because those are the only
+ * ones `tool_search` can genuinely return. Everything else the mode permits stays
+ * declared, and the token win comes from the cost of the *review* (packet, check,
+ * compact verdict), not from hiding instruments the loop may need.
+ */
+export const CORE_REVIEW_TOOLS: ReadonlySet<string> = new Set([
+  // The loop: author → spawn → observe → verify → judge.
+  "orch_handoff",
+  "orch_spawn",
+  "orch_resume",
+  "orch_running",
+  "orch_brief",
+  "orch_check",
+  "orch_review",
+  // Independent specification review: the gate that runs before a worker exists.
+  "orch_spec_review",
+  // Move a child: queue a note, interrupt, end it.
+  "orch_steer",
+  "orch_interrupt",
+  "orch_close",
+  "orch_escalate",
+  // Inspect what the packet flagged.
+  "read",
+  "grep",
+  "bash",
+  // Persist the verdict, ask the user the one question that decides it.
+  "artifact_save",
+  "ask_user",
+  // The escape hatch for deferred tools.
+  "tool_search",
+]);
+
+/**
+ * Tools this package registers with `exposure: "deferred"`.
+ *
+ * Declared nowhere, discoverable by `tool_search`, and still permission-checked
+ * at call time. Only names this package owns may appear here: a host tool
+ * (`read`, `artifact_recall`, `find`, …) is registered by another extension with
+ * `direct` exposure, and there is no supported way to defer it from here — so
+ * deferring one would make it permanently unreachable, which is exactly the bug
+ * this list exists to prevent.
+ */
+export const DEFERRED_ORCH_TOOLS: ReadonlySet<string> = new Set(["orch_route"]);
+
+/** Whether a name is one this package defers (and therefore may withhold). */
+export function isDeferredOrchTool(name: string): boolean {
+  return DEFERRED_ORCH_TOOLS.has(name);
+}
+
+/**
+ * Allowed but not declared, and genuinely reachable through `tool_search`.
+ *
+ * Deliberately smaller than "allowed minus core": that larger set was the bug.
+ */
+export function deferredOrchTools(): string[] {
+  return [...DEFERRED_ORCH_TOOLS].filter((name) => !CORE_REVIEW_TOOLS.has(name)).sort();
+}
+
+/**
  * Denied even though some look "read-ish": they reach other tools whose behaviour
  * is not visible here, or they write to the world outside the repository.
  */
+/**
+ * Opaque gateways: tools whose real arguments are executed by another layer.
+ * The `tool_call` guard cannot inspect the inner call, and the control-plane path
+ * guard is equally blind, so a dispatcher would be an unguarded path to the
+ * review's own instruments.
+ */
+const DISPATCHER_NAMES: ReadonlySet<string> = new Set(["codemode", "mcp", "mcpScript", "mcp_call", "mcp_call_tool"]);
+
 export const SUPERVISOR_DENIED_TOOLS: ReadonlySet<string> = new Set([
   "write",
   "edit",
@@ -191,10 +307,13 @@ export function isSupervisorTool(
   tool?: PlanToolInfo,
   options?: SupervisorToolOptions,
 ): boolean {
+  if (options?.disabledDelegates?.has(name)) return false;
   if (SUPERVISOR_DENIED_TOOLS.has(name) || tool?.annotations?.destructiveHint === true) return false;
+  // A dispatcher executes tools this policy never sees, so neither the
+  // allowlist nor the control-plane path guard can inspect what it runs.
+  if (DISPATCHER_NAMES.has(name)) return false;
   // Opaque gateways dispatch to tools this policy never sees.
   if (name.startsWith("browser_") || name.startsWith("mcp__")) return false;
-  if (options?.disabledDelegates?.has(name)) return false;
   // v1 delegation is withheld while v2 is fully available; see the option's doc.
   if (V1_DELEGATE_TOOLS.has(name)) return options?.v2DelegationAvailable !== true;
   if (SUPERVISOR_TOOLS.has(name)) return true;
@@ -202,6 +321,28 @@ export function isSupervisorTool(
   // Trust an explicit read-only claim for tools this package does not know about
   // (an MCP server's read tool, for example). The mode hook still gates bash.
   return tool?.annotations?.readOnlyHint === true;
+}
+
+/**
+ * The names to declare in supervise mode.
+ *
+ * Everything the mode permits, minus tools registered with `deferred` (or
+ * `hidden`) exposure. Exported so the declaration rule can be tested directly,
+ * rather than inferred from a session's active set.
+ *
+ * The rule this protects: withholding a `direct`-exposure tool is irreversible.
+ * `tool_search` indexes undeclared tools *by exposure*, so a `direct` tool that
+ * `setActiveTools` dropped is unreachable for the rest of the session. Only a
+ * `deferred` tool is both undeclared and findable — which is why only the tools
+ * this package registers that way may be withheld.
+ */
+export function declaredSuperviseTools(
+  tools: ReadonlyArray<{ name: string; exposure?: string } & PlanToolInfo>,
+  options?: SupervisorToolOptions,
+): string[] {
+  return tools
+    .filter((tool) => tool.exposure !== "hidden" && tool.exposure !== "deferred" && isSupervisorTool(tool.name, tool, options))
+    .map((tool) => tool.name);
 }
 
 /**
@@ -240,44 +381,35 @@ export function supervisorAllowlistGaps(
 export const EXPECTED_SUPERVISOR_TOOLS: ReadonlySet<string> = new Set([
   "orch_handoff",
   "orch_spawn",
+  "orch_running",
+  "orch_brief",
+  "orch_check",
   "orch_review",
+  "orch_spec_review",
   "orch_escalate",
 ]);
 
-export const SUPERVISOR_MODE_GUIDANCE = `Supervise mode is active: you are the orchestrator parent. You do not implement.
+/**
+ * The orchestrator briefing.
+ *
+ * is a token the model pays for each turn. It says only what the machinery cannot
+ * enforce — role, loop, and the rules whose violation the gate would refuse
+ * anyway. Everything else is the gate's job (verified evidence, computed lane,
+ * frozen criteria, control-plane paths).
+ *
+ * A test keeps it under a line/character budget, so this cannot quietly grow back
+ * into the essay it replaced.
+ */
+export const SUPERVISOR_MODE_GUIDANCE = `You are the orchestrator: you delegate, then verify. You do not implement.
 
-Two jobs, in order:
+Loop: orch_spec_review → orch_handoff → orch_spawn → orch_brief → orch_check → orch_review.
 
-1. AUTHOR A HANDOFF SPEC (orch_handoff) for each work unit. A spec states:
-   - the goal, in one line
-   - acceptance criteria, each of which the review will require evidence for
-   - the lane: exactly which files this work unit owns
-   - out-of-lane files it must not touch
-   - interfaces it must honour, so parallel work units still fit together
-   An empty or vague lane means the child owns the whole repository, and then
-   neither steering nor review can be precise. Reject your own draft.
+- A design that matters gets orch_spec_review first (pinned, isolated reviewers); pass { runId, targetHash } as designRef so spawn refuses a stale approval.
 
-2. REVIEW THE RESULT (orch_review). For each criterion, gather evidence yourself
-   with read/bash (git diff, git status) — the child's claim is not evidence.
-   Check the diff stayed inside the lane. An outside-lane change is a violation
-   regardless of quality. Then record a verdict. An approval with a failing
-   criterion is refused, so do not try to record one.
-
-Delegation:
-- orch_spawn requires a handoffId. A child receives exactly one inlined spec: no
-  sibling scope name, no sibling path, no directory it could enumerate.
-- orch_route resolves a correction to its owning work unit deterministically. If
-  nothing matches, or two things match, it escalates instead of guessing.
-- Two children cannot share a scope. Two writers in one lane produce a diff
-  nobody owns.
-
-Escalation ladder (child → orchestrator → user):
-- A child that is unsure pings; its session pauses and the ping arrives here.
-- Answer with orch_escalate when you genuinely know the answer from context you
-  have. If you do not, escalate to the user with your reason.
-- You may not answer a question you already escalated.
-- A cancelled or blank dialog is NOT consent. Resume the child with cancel so it
-  reports the blocker, rather than inventing a decision for it.
-
-Direct file edits (edit, write), browser tools, and opaque gateways are disabled.
-Shell commands are restricted to read-only inspection. /mode normal to exit.`;
+- One spec per unit: goal, testable criteria, lane (files it owns). No whole-repo lane; two children never share a scope or a lane. A child sees only its own spec.
+- Criteria are frozen at spawn. Revising them later makes the review need the user.
+- orch_brief is the review packet: criteria, lane, diff hunks, what the child last said. Read only what it flags; it is cheaper than finding out yourself.
+- orch_check runs the declared command and returns evidenceRefs you can cite. If it says "not run", you have no test evidence — say so in the findings.
+- Verify, don't trust. Prose is not evidence; a citation that does not exist is refused. Lane drift is a violation however good the code: verdict "revise" with findings, never "approved".
+- Stuck child: orch_steer (queue) or orch_interrupt; end it with orch_close. Unsure: orch_escalate, then ask_user. A cancelled dialog is not consent.
+- Approve only when every criterion passes on evidence you gathered yourself. /mode normal to implement.`;

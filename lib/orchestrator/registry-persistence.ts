@@ -15,6 +15,14 @@ export interface PersistedState extends RegistrySnapshot {
   handoffs: Array<{ id: string; record: any; path: string }>;
   /** Open escalation records, so pending questions survive a restart. */
   escalations: any[];
+  /**
+   * Independent specification reviews.
+   *
+   * Persisted deliberately: readiness is a claim that a document was reviewed by
+   * named lenses at a named revision. Losing it on restart would silently convert
+   * an unreviewed design back into an approvable one.
+   */
+  specReviews?: any[];
 }
 
 export function saveRegistrySnapshot(path: string, state: PersistedState): void {

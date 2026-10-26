@@ -4,7 +4,7 @@ import { homedir } from "node:os";
  * Parse and re-quote every argument: no expansion, redirection, scripts or executable pipelines.
  * Unknown commands and unsafe options fail closed; use read/search tools for unsupported inspections. */
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-const READ_COMMANDS = new Set(["pwd", "ls", "cat", "head", "tail", "wc", "stat", "du", "df", "readlink", "realpath", "basename", "dirname", "uname", "whoami", "id", "printenv"]);
+const READ_COMMANDS = new Set(["pwd", "ls", "cat", "head", "tail", "wc", "stat", "du", "df", "readlink", "realpath", "basename", "dirname", "uname", "whoami", "id", "printenv", "echo"]);
 const FIND_FLAGS = new Set(["-L", "-P", "-H", "-name", "-iname", "-path", "-ipath", "-regex", "-iregex", "-type", "-size", "-mtime", "-mmin", "-maxdepth", "-mindepth", "-print", "-print0", "-ls", "-empty", "-readable", "-writable", "-executable", "-not", "-and", "-or", "-o", "-a", "-true", "-false", "-follow"]);
 const GIT_COMMANDS = new Set(["status", "log", "diff", "show", "ls-files", "ls-tree", "rev-parse"]);
 
@@ -15,7 +15,7 @@ interface CommandSegment {
 
 export function readOnlyShellCommand(command: unknown): string | undefined {
   if (typeof command !== "string" || !command.trim() || /[\r\n\0$`]/.test(command)) return;
-  const parts: (CommandSegment | "|" | "&&")[] = [];
+  const parts: (CommandSegment | "|" | "&&" | ";")[] = [];
   let words: string[] = [], word = "", started = false, quoted: string | undefined;
   let currentStderrNull = false;
   const flushWord = () => { if (started) words.push(word); word = ""; started = false; };
@@ -30,9 +30,9 @@ export function readOnlyShellCommand(command: unknown): string | undefined {
     if (char === "'" || char === '"') { quoted = char; started = true; continue; }
     if (char === "\\") { if (++i >= command.length) return; word += command[i]; started = true; continue; }
     if (/\s/.test(char)) { flushWord(); continue; }
-    if (char === "|" || char === "&") {
+    if (char === "|" || char === "&" || char === ";") {
       flushWord();
-      const separator = char === "&" && command[i + 1] === "&" ? "&&" : char === "|" && command[i + 1] !== "|" ? "|" : undefined;
+      const separator = char === "&" && command[i + 1] === "&" ? "&&" : char === "|" && command[i + 1] !== "|" ? "|" : char === ";" ? ";" : undefined;
       if (!separator || !words.length) return;
       if (separator === "&&") i++;
       parts.push({ words, stderrNull: currentStderrNull }, separator);
@@ -59,7 +59,7 @@ export function readOnlyShellCommand(command: unknown): string | undefined {
         continue;
       }
     }
-    if (/[;<>()[\]{}#!~*?]/.test(char)) return; // Quote literal glob/path characters; no shell expansion.
+    if (/[<>()[\]{}#!~*?]/.test(char)) return; // Quote literal glob/path characters; no shell expansion.
     word += char; started = true;
   }
   if (quoted) return;
@@ -83,9 +83,18 @@ export function readOnlyShellCommand(command: unknown): string | undefined {
       // GNU grep has no command execution or file-output options.
     } else if (name === "find") {
       if (args.some(arg => arg.startsWith("-") && !FIND_FLAGS.has(arg) && !/^-\d+$/.test(arg))) return;
+    } else if (name === "env") {
+      // `env` with no arguments prints the environment, exactly like the already-
+      // allowed `printenv`. With a non-flag argument it becomes a launcher
+      // (`env FOO=1 ./x`), so only flags are accepted.
+      if (args.some(arg => !arg.startsWith("-"))) return;
     } else if (name === "git") {
+      // `git -C <path> <cmd>` is how a reviewer inspects another worktree or repo;
+      // the path stays a quoted literal, so no expansion is introduced.
+      let pathFlags: string[] = [];
+      while (args.length >= 2 && args[0] === "-C" && !args[1]!.startsWith("-")) { pathFlags = pathFlags.concat(args.slice(0, 2)); args.splice(0, 2); }
       if (!GIT_COMMANDS.has(args[0] ?? "") || args.some(arg => /^(?:--(?:o|ou|out|outp|outpu|output|(?:no-)*(?:ext-diff|textconv)|exec-path|config-env)(?:=|$)|-[cC])/.test(arg))) return;
-      prefix = ["--no-pager", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "core.hooksPath=/dev/null"];
+      prefix = ["--no-pager", "--no-optional-locks", ...pathFlags, "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "core.hooksPath=/dev/null"];
       if (["diff", "show", "log"].includes(args[0]!)) args.splice(1, 0, "--no-ext-diff", "--no-textconv");
     } else if (!READ_COMMANDS.has(name!)) return;
     const rendered = [name!, ...prefix, ...args].map(quote).join(" ");

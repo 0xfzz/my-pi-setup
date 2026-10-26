@@ -32,13 +32,17 @@ export const V1_TOOLS = [
 export const V2_TOOLS = [
   "orch_spawn",
   "orch_handoff",
+  "orch_spec_review",
   "orch_resume",
   "orch_interrupt",
   "orch_steer",
   "orch_route",
   "orch_running",
+  "orch_brief",
+  "orch_check",
   "orch_review",
   "orch_escalate",
+  "orch_close",
 ] as const;
 
 export const ALL_DELEGATE_TOOLS = [...V1_TOOLS, ...V2_TOOLS] as const;

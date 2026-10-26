@@ -12,6 +12,10 @@ const allowed = [
   "cd '/tmp/a b' && rg 'foo|bar' . | head -n 10", "grep -n 'a;touch /tmp/no' file",
   "find /tmp -maxdepth 2 -type f -name '*.ts' -print", "git status --short", "git log -n 2",
   "git diff -- src/file.ts", "git show HEAD:package.json", "git ls-files", "git rev-parse HEAD",
+  // Reviewer shapes recorded in real sessions: a read-only chain joined with `;`,
+  // a repo inspected from outside its worktree, the environment dumped, a probe.
+  "ls -la /tmp; ls -la /var; wc -l /etc/hosts", "git -C /tmp/repo status --short",
+  "git -C /tmp/repo diff --stat", "env", "env -i", "echo test",
 ];
 const blocked = [
   "", "touch new", "cat file > copy", "cat file >> copy", "cat file 2>/tmp/error", "cat file; touch copy",
@@ -27,6 +31,14 @@ const blocked = [
   "git diff --output=copy", "git log --output copy", "git diff --out=copy", "git diff --ext-diff", "git show --textconv file",
   "git show --no-no-textconv", "git diff --no-no-ext-diff", "git log -cexternal.key=value",
   "/tmp/fake-cat file", "PATH=/tmp cat file", "cd -P /tmp", "cd /tmp | cat file", "ls *.ts",
+  // `;` is only a separator between read-only segments, and it cannot smuggle a
+  // command, a leading segment, or a cd that changes what follows.
+  "; cat file", "cat file;", "cat file; touch copy", "ls; rm -rf /tmp/x", "cd /tmp; cat file",
+  // `env` is a launcher as soon as it gets a non-flag argument.
+  "env FOO=1 cat file", "env -u FOO cat file", "env cat file",
+  // `-C` accepts a path, not a config override or a `-c` escape.
+  "git -C /tmp/repo -c alias.x='!touch copy' status", "git -C /tmp/repo commit -m x",
+  "git -C -c status",
 ];
 test("Plan shell parses and normalizes supported read-only commands", () => {
   for (const command of allowed) assert.equal(typeof readOnlyShellCommand(command), "string", command);
@@ -39,6 +51,8 @@ test("Plan shell parses and normalizes supported read-only commands", () => {
   assert.equal(readOnlyShellCommand("ls 2>/dev/null"), "'ls' 2>/dev/null");
   assert.equal(readOnlyShellCommand("grep -rl foo /tmp 2>/dev/null | head -n 2"), "'grep' '-rl' 'foo' '/tmp' 2>/dev/null | 'head' '-n' '2'");
   assert.match(readOnlyShellCommand("ls ~/projects")!, /'ls' '.*\/projects'/);
+  assert.equal(readOnlyShellCommand("ls -la /tmp; wc -l /etc/hosts"), "'ls' '-la' '/tmp' ; 'wc' '-l' '/etc/hosts'");
+  assert.match(readOnlyShellCommand("git -C /tmp/repo status")!, /'git' '--no-pager'.*'-C' '\/tmp\/repo' .*'status'$/);
 });
 test("Plan shell rejects mutation, command execution and shell expansion routes", () => {
   for (const command of blocked) assert.equal(readOnlyShellCommand(command), undefined, command);

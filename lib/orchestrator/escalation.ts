@@ -113,6 +113,15 @@ export class EscalationLedger {
     this.byId.set(escalation.id, escalation);
   }
 
+  /**
+   * Drop every escalation. The ledger outlives a session switch in the same
+   * process, so a new session must start with its own ladder rather than
+   * answering questions asked by the session it replaced.
+   */
+  clear(): void {
+    this.byId.clear();
+  }
+
   /** Waiting on the orchestrator. */
   forOrchestrator(): Escalation[] {
     return this.all().filter((e) => e.stage === "orchestrator");

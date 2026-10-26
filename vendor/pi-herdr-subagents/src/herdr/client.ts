@@ -253,10 +253,12 @@ export function createHerdrClient(opts?: { exec?: ExecFn; bin?: string }): Herdr
         );
         return result.stdout;
       } catch (error) {
-        // Diagnostic capture is best-effort. In particular, panes can vanish
-        // between lifecycle classification and this read.
+        // Only a missing pane is a definitive answer. A timeout, a server
+        // restart, or any other transport failure must reach the caller: when
+        // this resolved null for every error, the orchestrator read "herdr was
+        // briefly unreachable" as "the pane is gone" and closed live children.
         if (error instanceof HerdrError && error.code === "pane_not_found") return null;
-        return null;
+        throw error;
       }
     },
 

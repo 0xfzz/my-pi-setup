@@ -43,6 +43,7 @@ async function harness(opts: { inputAnswer?: string } = {}): Promise<Harness> {
   const tools = new Map<string, any>();
   const spawned: any[] = [];
   const messages: any[] = [];
+  const closedPanes = new Set<string>();
 
   const client: any = {
     async paneStart(p: any) {
@@ -50,8 +51,9 @@ async function harness(opts: { inputAnswer?: string } = {}): Promise<Harness> {
       return { paneId: `pane-${spawned.length}` };
     },
     async paneRename() {},
-    async paneGet() {
-      return null;
+    async paneGet(paneId: string) {
+      // Live until this harness closes it: liveness is existence, not a guess.
+      return closedPanes.has(paneId) ? null : { pane_id: paneId };
     },
     async paneRead() {
       return null;
@@ -59,17 +61,21 @@ async function harness(opts: { inputAnswer?: string } = {}): Promise<Harness> {
     async paneList() {
       return [];
     },
-    async paneClose() {},
-    async paneSendKeys() {},
+    async paneClose(paneId: string) {
+      closedPanes.add(paneId);
+    },
     async paneSendText() {},
   };
 
+  const hooks = new Map<string, Function[]>();
   const pi: any = {
     registerTool(tool: any) {
       tools.set(tool.name, tool);
     },
     registerCommand() {},
-    on() {},
+    on(name: string, fn: Function) {
+      hooks.set(name, [...(hooks.get(name) ?? []), fn]);
+    },
     getAllTools() {
       return [...tools.values()];
     },
@@ -154,10 +160,15 @@ async function harness(opts: { inputAnswer?: string } = {}): Promise<Harness> {
       return visibleToScope(art, scope) ? art : undefined;
     },
     async detach() {
+      // Behave like a real shutdown: abort the watchers first. A live watcher
+      // holds an fs.watch handle and a poll timer, which would keep the test
+      // process alive after the assertions are done.
+      for (const stop of hooks.get("session_shutdown") ?? []) await stop({}, ctx);
       // The registry is a module-level singleton shared across tests. Children
       // left "running" here would trip the lane-conflict gate in later tests,
       // so every test ends its children explicitly.
       for (const child of registry.getAllChildren()) {
+        if (child.paneId) closedPanes.add(child.paneId);
         registry.updateStatus(child.sessionFile, "closed");
       }
       handoffs.clear();
@@ -361,8 +372,18 @@ test("concept 1: the review gate refuses a failing criterion or an out-of-lane d
       scope,
       verdict: "approved",
       criteriaNotes: [
-        { criterion: "Backoff is exponential", evidence: "read src/net/client.ts:40", passed: true },
-        { criterion: "Jitter is applied", evidence: "read src/net/client.ts:52", passed: true },
+        {
+          criterion: "Backoff is exponential",
+          evidence: "read the diff",
+          evidenceRefs: [{ kind: "cmd", cmd: "git diff --stat", exit: 0 }],
+          passed: true,
+        },
+        {
+          criterion: "Jitter is applied",
+          evidence: "read the diff",
+          evidenceRefs: [{ kind: "test", name: "backoff.test.ts::jitter is applied", pass: true }],
+          passed: true,
+        },
       ],
       laneCompliance: { inLane: true },
       summary: "Both criteria verified in the diff.",

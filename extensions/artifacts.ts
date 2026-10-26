@@ -22,6 +22,8 @@ import {
   applyArtifactEdit, artifactLineCount, renderArtifactSlice, searchArtifactText, sliceArtifactContent,
 } from "../lib/artifact-state.ts";
 import { isSubagentChildProcess } from "../lib/subagent-context.ts";
+import { DASHBOARD_SYNC_EVENT, publishDashboardArtifacts } from "../lib/dashboard/integration.ts";
+import { toArtifactRecord, type DashboardArtifactRecord } from "../lib/dashboard/projection.ts";
 
 export async function readSidecarArtifact(filePath: string): Promise<Artifact | undefined> {
   let handle;
@@ -431,6 +433,13 @@ export default function artifactsExtension(pi: ExtensionAPI) {
   const childScope = verifiedChild && process.env.PI_SUBAGENT_SCOPE ? sanitizeScope(process.env.PI_SUBAGENT_SCOPE) : undefined;
   const isChild = Boolean(childSession && childRun);
   const runScopes = new Map<string, string>();
+  const REMOVALS_SUFFIX = ".artifact-removals.json";
+  /**
+   * Last catalog signature published to the dashboard. Artifact content changes
+   * always change id/version/updatedAt, so this bounds duplicate snapshots without
+   * dropping a real edit or removal.
+   */
+  let dashboardSignature = "";
 
   function widget() {
     if (!ctx?.hasUI || isChild) return;
@@ -461,28 +470,100 @@ export default function artifactsExtension(pi: ExtensionAPI) {
   }
 
   /**
-   * The catalog a read/edit tool should see.
+   * The effective catalog for this session.
    *
-   * Mirrors `artifact_save`'s view rather than the branch alone. A child sees its
-   * own staged sidecars plus the scope-filtered parent snapshot. A parent sees the
-   * branch plus sidecar-only scoped specs — those are deliberately kept off the
-   * branch so a child fork cannot inherit them, which means a branch-only read
-   * cannot find them, and then they could never be edited at all.
+   * This is the single source of truth for dashboard publication as well as the
+   * read/edit tools. A child sees its own staged sidecars plus the scope-filtered
+   * parent snapshot. A parent sees the selected branch plus sidecar-only scoped
+   * specs — those are deliberately kept off the branch so a child fork cannot
+   * inherit them, which means a branch-only read cannot find them, and then they
+   * could never be edited at all.
+   *
+   * Tombstones win over sidecars. A removed artifact's sidecar can still exist on
+   * disk, and merging it back because the branch no longer has the id is exactly
+   * how a deleted artifact gets resurrected.
    */
-  function resolveCatalog(context: ExtensionContext): Map<string, Artifact> {
+  function effectiveCatalog(context: ExtensionContext): Map<string, Artifact> {
     if (isChild) return loadChildAvailableArtifacts();
     ctx = context;
-    const map = recordsFromBranch(context.sessionManager.getBranch());
+    const branch = context.sessionManager.getBranch();
+    const map = recordsFromBranch(branch);
+    const removed = pendingRemovalIds(context);
     const sessionFile = (context.sessionManager as any).getSessionFile?.();
     if (typeof sessionFile === "string" && sessionFile) {
       for (const [id, art] of loadParentSidecars(sessionFile)) {
-        if (!map.has(id)) map.set(id, art);
+        if (!removed.has(id) && !map.has(id)) map.set(id, art);
       }
     }
     // Keep the module-level view in sync for `widget()`. Sidecar-only scoped specs
     // are not branch entries, so without this the sidebar would omit them.
     artifacts = map;
     return map;
+  }
+
+  /** Tools ask for the same view the dashboard publishes; keep one name for it. */
+  function resolveCatalog(context: ExtensionContext): Map<string, Artifact> {
+    return effectiveCatalog(context);
+  }
+
+  /** Ids removed by an in-branch tombstone. */
+  function tombstonedArtifactIds(branch: readonly any[] | undefined): Set<string> {
+    const ids = new Set<string>();
+    for (const entry of branch ?? []) {
+      if (entry?.type !== "custom" || entry.customType !== ARTIFACT_TYPE) continue;
+      const raw = entry.data as any;
+      if (raw && raw.deleted === true && typeof raw.id === "string") ids.add(sanitizeArtifactId(raw.id));
+    }
+    return ids;
+  }
+
+  /**
+   * Removal intent for this session: branch tombstones plus the session removal
+   * marker. The marker survives even when a transcript was compacted past the
+   * tombstone entry, so a later child re-ingest cannot silently undo a removal.
+   */
+  function pendingRemovalIds(context: ExtensionContext): Set<string> {
+    const ids = tombstonedArtifactIds(context.sessionManager.getBranch());
+    if (isChild) return ids;
+    const sessionFile = (context.sessionManager as any).getSessionFile?.();
+    if (typeof sessionFile === "string" && sessionFile) {
+      try {
+        const raw = JSON.parse(readFileSync(`${sessionFile}${REMOVALS_SUFFIX}`, "utf8"));
+        if (Array.isArray(raw)) {
+          for (const value of raw) {
+            if (typeof value !== "string") continue;
+            const id = sanitizeArtifactId(value);
+            if (id) ids.add(id);
+          }
+        }
+      } catch { /* no marker */ }
+    }
+    return ids;
+  }
+
+  /**
+   * Publish the effective catalog to the dashboard bridge.
+   *
+   * Observer-only: every failure is swallowed, and an unchanged catalog is not
+   * republished unless the caller is answering a sync handshake.
+   */
+  function publishCatalog(context: ExtensionContext | undefined, force = false): void {
+    if (isChild || !context) return;
+    try {
+      const catalog = effectiveCatalog(context);
+      const records = [...catalog.values()]
+        .map(toArtifactRecord)
+        .filter((record): record is DashboardArtifactRecord => Boolean(record));
+      const signature = records
+        .map(record => `${record.id}:${record.version}:${record.updatedAt}:${record.scope ?? ""}`)
+        .sort()
+        .join("|");
+      if (!force && signature === dashboardSignature) return;
+      dashboardSignature = signature;
+      publishDashboardArtifacts(pi, records);
+    } catch {
+      // Dashboard visibility must never interfere with the artifact tools.
+    }
   }
 
   /**
@@ -506,14 +587,19 @@ export default function artifactsExtension(pi: ExtensionAPI) {
       }
       artifacts.set(art.id, art);
       widget();
+      publishCatalog(context, true);
       return { staged: false, sidecarOnly: true };
     }
     persistArtifact(art);
+    publishCatalog(context, true);
     return { staged: false, sidecarOnly: false };
   }
 
   async function ingestChildDirectory(dir: string): Promise<number> {
     let ingestedCount = 0;
+    // A tombstone (or the session removal marker) is final: re-ingesting the
+    // child's sidecar must not bring the artifact back into the parent catalog.
+    const removed = ctx ? pendingRemovalIds(ctx) : new Set<string>();
     try {
       const files = readdirSync(dir);
       for (const file of files) {
@@ -521,6 +607,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
           const fullPath = `${dir}/${file}`;
           const art = await readSidecarArtifact(fullPath);
           if (art) {
+            if (removed.has(art.id)) continue;
             const childSessionFile = art.sourceSession;
             if (childSessionFile && runScopes.has(childSessionFile)) {
               art.scope ??= runScopes.get(childSessionFile);
@@ -537,6 +624,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
         }
       }
     } catch { /* directory might not exist yet */ }
+    if (ingestedCount) publishCatalog(ctx, true);
     return ingestedCount;
   }
 
@@ -592,21 +680,9 @@ export default function artifactsExtension(pi: ExtensionAPI) {
     // given. Replaying the inherited branch would adopt the parent's artifacts as
     // this child's and, worse, publish the grandparent's catalog as the parent
     // snapshot for any worker this child spawns.
-    if (isChild) {
-      artifacts = loadChildAvailableArtifacts();
-    } else {
-      artifacts = recordsFromBranch(context.sessionManager.getBranch());
-      const sessionFile = (context.sessionManager as any).getSessionFile?.();
-      if (typeof sessionFile === "string" && sessionFile) {
-        const sidecars = loadParentSidecars(sessionFile);
-        for (const [id, art] of sidecars) {
-          if (!artifacts.has(id)) {
-            artifacts.set(id, art);
-          }
-        }
-      }
-    }
+    artifacts = effectiveCatalog(context);
     widget();
+    publishCatalog(context, true);
   }
 
   // A session-scoped `<sessionFile>.artifact-removals.json` marker (a JSON array
@@ -615,7 +691,6 @@ export default function artifactsExtension(pi: ExtensionAPI) {
   // resurrect a removed id; absent ids are skipped, making repeat runs a no-op.
   // Appended entries travel the harness's own appendEntry path, keeping the
   // in-memory entry index and the on-disk file consistent.
-  const REMOVALS_SUFFIX = ".artifact-removals.json";
 
   function applyPendingRemovals(context: ExtensionContext): number {
     if (isChild) return 0;
@@ -696,6 +771,9 @@ export default function artifactsExtension(pi: ExtensionAPI) {
 
   // ── Lifecycle Hooks ──
   pi.events?.on(REFRESH_EVENT, widget);
+  // Dashboard handshake: republish the effective catalog even if unchanged, so a
+  // publisher loaded after the last mutation still contributes its initial state.
+  pi.events?.on(DASHBOARD_SYNC_EVENT, () => publishCatalog(ctx, true));
 
   pi.on("session_start", (_event, context) => {
     restore(context);
@@ -735,6 +813,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
         attachDirectoryWatcher(dir);
         await publishChildSnapshot(dir, file, scope, artifacts);
         await ingestChildDirectory(dir);
+        publishCatalog(context, true);
       }
     }
   });
@@ -746,6 +825,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
       const file = (message.details as any)?.sessionFile ?? (message.details as any)?.sessionPath;
       if (typeof file === "string") {
         await ingestChildDirectory(dirname(file));
+        publishCatalog(context, true);
       }
     }
   });
@@ -754,14 +834,8 @@ export default function artifactsExtension(pi: ExtensionAPI) {
   pi.on("context", async (event, context) => {
     ctx = context;
     if (!isChild) {
-      artifacts = recordsFromBranch(context.sessionManager.getBranch());
-      const sessionFile = (context.sessionManager as any).getSessionFile?.();
-      if (typeof sessionFile === "string" && sessionFile) {
-        const sidecars = loadParentSidecars(sessionFile);
-        for (const [id, art] of sidecars) {
-          if (!artifacts.has(id)) artifacts.set(id, art);
-        }
-      }
+      artifacts = effectiveCatalog(context);
+      publishCatalog(context);
       const catalog = artifactCatalogContext(artifacts, 8000, { isChild, childScope });
       const messages = event.messages.filter(m => !(m.role === "custom" && m.customType === ARTIFACT_CONTEXT_TYPE));
       if (catalog) {

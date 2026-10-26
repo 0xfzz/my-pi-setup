@@ -110,7 +110,13 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
   const childRun = verifiedChild ? process.env.PI_SUBAGENT_ID : undefined;
   // Resolved once: the parent pointer is fixed for the life of this process, and
   // resolving it needs a synchronous read of the child's own seed record.
-  const parentContext = childSession ? resolveParentContext(childSession) : undefined;
+  //
+  // A spec-only reviewer never resolves one. Its whole value is that it judges a
+  // document without the author's reasoning, so the pull channel (`parent_recall`,
+  // `parent_digest`) and the digest brief are not registered and not injected.
+  // Absence, not instruction, is what makes that hold.
+  const specOnlyReviewer = process.env.PI_SUBAGENT_REVIEW_POLICY === "spec-only";
+  const parentContext = childSession && !specOnlyReviewer ? resolveParentContext(childSession) : undefined;
   // A digest child is promised a parent brief but seeds an empty transcript, so
   // the brief is compiled lazily and cached for the process.
   let parentBrief: string | undefined;
@@ -368,6 +374,9 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
       customType: "subagent-progress-guidance", display: false,
       content: [
         "Report meaningful milestones using subagent_progress when available: findings, changed files, verification, next steps, and blockers. Do not report each tool call. Workflow todo changes also publish checkpoints automatically. Progress is not completion; keep Herdr's existing subagent_done/caller_ping protocol.",
+        specOnlyReviewer
+          ? "You are an independent reviewer with no parent history. Judge only the pinned document in your ticket and the permitted paths. Missing context is a finding, not a reason to reconstruct the author's intent."
+          : "",
         parentContext
           ? `Your parent session is ${parentContext.sessionFile} (your context: ${parentContext.provenance?.mode ?? "unknown"}). When you need context you do not have — a decision your parent made, a file it touched, or parent work newer than your snapshot — use parent_recall (search) or parent_digest (structured brief) instead of guessing or re-reading the repository. Both are read-only and never modify the parent session.`
           : "",

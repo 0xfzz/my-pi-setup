@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'none'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="color-scheme" content="dark">
+  <title>Pi Workflow Dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#session-title">Skip to session</a>
+
+  <!-- Inline icon sprite: static markup, no network, no inline style, CSP-safe.
+       Geometry is the official Phosphor "regular" set, pinned at
+       @phosphor-icons/core 2.1.1, MIT. See ICONS.md and licenses/phosphor-icons-MIT.txt;
+       tests/dashboard-icons.test.ts re-derives every path from icons/regular/*.svg. -->
+  <svg class="icon-sprite" width="0" height="0" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="icon-manager" data-icon="briefcase" viewBox="0 0 256 256" fill="currentColor">
+      <path d="M216,56H176V48a24,24,0,0,0-24-24H104A24,24,0,0,0,80,48v8H40A16,16,0,0,0,24,72V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V72A16,16,0,0,0,216,56ZM96,48a8,8,0,0,1,8-8h48a8,8,0,0,1,8,8v8H96ZM216,72v41.61A184,184,0,0,1,128,136a184.07,184.07,0,0,1-88-22.38V72Zm0,128H40V131.64A200.19,200.19,0,0,0,128,152a200.25,200.25,0,0,0,88-20.37V200ZM104,112a8,8,0,0,1,8-8h32a8,8,0,0,1,0,16H112A8,8,0,0,1,104,112Z"/>
+    </symbol>
+    <symbol id="icon-agent" data-icon="user-circle" viewBox="0 0 256 256" fill="currentColor">
+      <path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24ZM74.08,197.5a64,64,0,0,1,107.84,0,87.83,87.83,0,0,1-107.84,0ZM96,120a32,32,0,1,1,32,32A32,32,0,0,1,96,120Zm97.76,66.41a79.66,79.66,0,0,0-36.06-28.75,48,48,0,1,0-59.4,0,79.66,79.66,0,0,0-36.06,28.75,88,88,0,1,1,131.52,0Z"/>
+    </symbol>
+    <symbol id="icon-spec" data-icon="file-text" viewBox="0 0 256 256" fill="currentColor">
+      <path d="M213.66,82.34l-56-56A8,8,0,0,0,152,24H56A16,16,0,0,0,40,40V216a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V88A8,8,0,0,0,213.66,82.34ZM160,51.31,188.69,80H160ZM200,216H56V40h88V88a8,8,0,0,0,8,8h48V216Zm-32-80a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,136Zm0,32a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,168Z"/>
+    </symbol>
+    <symbol id="icon-review" data-icon="seal-check" viewBox="0 0 256 256" fill="currentColor">
+      <path d="M225.86,102.82c-3.77-3.94-7.67-8-9.14-11.57-1.36-3.27-1.44-8.69-1.52-13.94-.15-9.76-.31-20.82-8-28.51s-18.75-7.85-28.51-8c-5.25-.08-10.67-.16-13.94-1.52-3.56-1.47-7.63-5.37-11.57-9.14C146.28,23.51,138.44,16,128,16s-18.27,7.51-25.18,14.14c-3.94,3.77-8,7.67-11.57,9.14C88,40.64,82.56,40.72,77.31,40.8c-9.76.15-20.82.31-28.51,8S41,67.55,40.8,77.31c-.08,5.25-.16,10.67-1.52,13.94-1.47,3.56-5.37,7.63-9.14,11.57C23.51,109.72,16,117.56,16,128s7.51,18.27,14.14,25.18c3.77,3.94,7.67,8,9.14,11.57,1.36,3.27,1.44,8.69,1.52,13.94.15,9.76.31,20.82,8,28.51s18.75,7.85,28.51,8c5.25.08,10.67.16,13.94,1.52,3.56,1.47,7.63,5.37,11.57,9.14C109.72,232.49,117.56,240,128,240s18.27-7.51,25.18-14.14c3.94-3.77,8-7.67,11.57-9.14,3.27-1.36,8.69-1.44,13.94-1.52,9.76-.15,20.82-.31,28.51-8s7.85-18.75,8-28.51c.08-5.25.16-10.67,1.52-13.94,1.47-3.56,5.37-7.63,9.14-11.57C232.49,146.28,240,138.44,240,128S232.49,109.73,225.86,102.82Zm-11.55,39.29c-4.79,5-9.75,10.17-12.38,16.52-2.52,6.1-2.63,13.07-2.73,19.82-.1,7-.21,14.33-3.32,17.43s-10.39,3.22-17.43,3.32c-6.75.1-13.72.21-19.82,2.73-6.35,2.63-11.52,7.59-16.52,12.38S132,224,128,224s-9.15-4.92-14.11-9.69-10.17-9.75-16.52-12.38c-6.1-2.52-13.07-2.63-19.82-2.73-7-.1-14.33-.21-17.43-3.32s-3.22-10.39-3.32-17.43c-.1-6.75-.21-13.72-2.73-19.82-2.63-6.35-7.59-11.52-12.38-16.52S32,132,32,128s4.92-9.15,9.69-14.11,9.75-10.17,12.38-16.52c2.52-6.1,2.63-13.07,2.73-19.82.1-7,.21-14.33,3.32-17.43S70.51,56.9,77.55,56.8c6.75-.1,13.72-.21,19.82-2.73,6.35-2.63,11.52-7.59,16.52-12.38S124,32,128,32s9.15,4.92,14.11,9.69,10.17,9.75,16.52,12.38c6.1,2.52,13.07,2.63,19.82,2.73,7,.1,14.33.21,17.43,3.32s3.22,10.39,3.32,17.43c.1,6.75.21,13.72,2.73,19.82,2.63,6.35,7.59,11.52,12.38,16.52S224,124,224,128,219.08,137.15,214.31,142.11ZM173.66,98.34a8,8,0,0,1,0,11.32l-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35A8,8,0,0,1,173.66,98.34Z"/>
+    </symbol>
+    <symbol id="icon-folder" data-icon="folder" viewBox="0 0 256 256" fill="currentColor">
+      <path d="M216,72H131.31L104,44.69A15.86,15.86,0,0,0,92.69,40H40A16,16,0,0,0,24,56V200.62A15.4,15.4,0,0,0,39.38,216H216.89A15.13,15.13,0,0,0,232,200.89V88A16,16,0,0,0,216,72ZM40,56H92.69l16,16H40ZM216,200H40V88H216Z"/>
+    </symbol>
+    <symbol id="icon-escalation" data-icon="warning-octagon" viewBox="0 0 256 256" fill="currentColor">
+      <path d="M120,136V80a8,8,0,0,1,16,0v56a8,8,0,0,1-16,0ZM232,91.55v72.9a15.86,15.86,0,0,1-4.69,11.31l-51.55,51.55A15.86,15.86,0,0,1,164.45,232H91.55a15.86,15.86,0,0,1-11.31-4.69L28.69,175.76A15.86,15.86,0,0,1,24,164.45V91.55a15.86,15.86,0,0,1,4.69-11.31L80.24,28.69A15.86,15.86,0,0,1,91.55,24h72.9a15.86,15.86,0,0,1,11.31,4.69l51.55,51.55A15.86,15.86,0,0,1,232,91.55Zm-16,0L164.45,40H91.55L40,91.55v72.9L91.55,216h72.9L216,164.45ZM128,160a12,12,0,1,0,12,12A12,12,0,0,0,128,160Z"/>
+    </symbol>
+    <symbol id="icon-snippet" data-icon="code" viewBox="0 0 256 256" fill="currentColor">
+      <path d="M69.12,94.15,28.5,128l40.62,33.85a8,8,0,1,1-10.24,12.29l-48-40a8,8,0,0,1,0-12.29l48-40a8,8,0,0,1,10.24,12.3Zm176,27.7-48-40a8,8,0,1,0-10.24,12.3L227.5,128l-40.62,33.85a8,8,0,1,0,10.24,12.29l48-40a8,8,0,0,0,0-12.29ZM162.73,32.48a8,8,0,0,0-10.25,4.79l-64,176a8,8,0,0,0,4.79,10.26A8.14,8.14,0,0,0,96,224a8,8,0,0,0,7.52-5.27l64-176A8,8,0,0,0,162.73,32.48Z"/>
+    </symbol>
+    <symbol id="icon-node" data-icon="circle" viewBox="0 0 256 256" fill="currentColor">
+      <path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Z"/>
+    </symbol>
+    <symbol id="icon-close" data-icon="x" viewBox="0 0 256 256" fill="currentColor">
+      <path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"/>
+    </symbol>
+    <symbol id="icon-menu" data-icon="list" viewBox="0 0 256 256" fill="currentColor">
+      <path d="M224,128a8,8,0,0,1-8,8H40a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128ZM40,72H216a8,8,0,0,0,0-16H40a8,8,0,0,0,0,16ZM216,184H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Z"/>
+    </symbol>
+    <symbol id="icon-plus" data-icon="plus" viewBox="0 0 256 256" fill="currentColor">
+      <path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"/>
+    </symbol>
+    <symbol id="icon-minus" data-icon="minus" viewBox="0 0 256 256" fill="currentColor">
+      <path d="M224,128a8,8,0,0,1-8,8H40a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128Z"/>
+    </symbol>
+    <symbol id="icon-fit" data-icon="corners-out" viewBox="0 0 256 256" fill="currentColor">
+      <path d="M216,48V88a8,8,0,0,1-16,0V56H168a8,8,0,0,1,0-16h40A8,8,0,0,1,216,48ZM88,200H56V168a8,8,0,0,0-16,0v40a8,8,0,0,0,8,8H88a8,8,0,0,0,0-16Zm120-40a8,8,0,0,0-8,8v32H168a8,8,0,0,0,0,16h40a8,8,0,0,0,8-8V168A8,8,0,0,0,208,160ZM88,40H48a8,8,0,0,0-8,8V88a8,8,0,0,0,16,0V56H88a8,8,0,0,0,0-16Z"/>
+    </symbol>
+    <symbol id="icon-legend" data-icon="info" viewBox="0 0 256 256" fill="currentColor">
+      <path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm16-40a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176ZM112,84a12,12,0,1,1,12,12A12,12,0,0,1,112,84Z"/>
+    </symbol>
+    <symbol id="icon-list" data-icon="list-bullets" viewBox="0 0 256 256" fill="currentColor">
+      <path d="M80,64a8,8,0,0,1,8-8H216a8,8,0,0,1,0,16H88A8,8,0,0,1,80,64Zm136,56H88a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Zm0,64H88a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16ZM44,52A12,12,0,1,0,56,64,12,12,0,0,0,44,52Zm0,64a12,12,0,1,0,12,12A12,12,0,0,0,44,116Zm0,64a12,12,0,1,0,12,12A12,12,0,0,0,44,180Z"/>
+    </symbol>
+    <symbol id="icon-graph" data-icon="graph" viewBox="0 0 256 256" fill="currentColor">
+      <path d="M200,152a31.84,31.84,0,0,0-19.53,6.68l-23.11-18A31.65,31.65,0,0,0,160,128c0-.74,0-1.48-.08-2.21l13.23-4.41A32,32,0,1,0,168,104c0,.74,0,1.48.08,2.21l-13.23,4.41A32,32,0,0,0,128,96a32.59,32.59,0,0,0-5.27.44L115.89,81A32,32,0,1,0,96,88a32.59,32.59,0,0,0,5.27-.44l6.84,15.4a31.92,31.92,0,0,0-8.57,39.64L73.83,165.44a32.06,32.06,0,1,0,10.63,12l25.71-22.84a31.91,31.91,0,0,0,37.36-1.24l23.11,18A31.65,31.65,0,0,0,168,184a32,32,0,1,0,32-32Zm0-64a16,16,0,1,1-16,16A16,16,0,0,1,200,88ZM80,56A16,16,0,1,1,96,72,16,16,0,0,1,80,56ZM56,208a16,16,0,1,1,16-16A16,16,0,0,1,56,208Zm56-80a16,16,0,1,1,16,16A16,16,0,0,1,112,128Zm88,72a16,16,0,1,1,16-16A16,16,0,0,1,200,200Z"/>
+    </symbol>
+  </svg>
+
+  <div class="app" id="app">
+    <aside class="sidebar" id="sidebar" aria-label="Sessions">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">π</div>
+        <div class="brand-text">
+          <h1>Pi Workflow</h1>
+          <p>Local control plane</p>
+        </div>
+        <button id="sidebar-close" class="icon-button sidebar-close" type="button" aria-label="Close sessions panel">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"/></svg>
+        </button>
+      </div>
+      <div class="sidebar-head">
+        <span>Sessions</span>
+        <span class="pill" id="session-count">0</span>
+      </div>
+      <nav class="session-list" id="session-list" aria-label="Session list"></nav>
+    </aside>
+
+    <div class="shell">
+      <header class="topbar">
+        <button class="icon-button nav-toggle" id="nav-toggle" type="button" aria-controls="sidebar" aria-expanded="false" aria-label="Open sessions panel">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-menu"/></svg>
+        </button>
+        <div class="topbar-titles">
+          <h2 id="session-title" tabindex="-1">Dashboard</h2>
+          <p class="topbar-meta" id="session-meta">Waiting for session data…</p>
+        </div>
+        <p class="summary-line" id="summary-line"></p>
+        <div class="connection-pill" id="connection-pill">
+          <span class="connection-dot is-offline" id="connection-dot" aria-hidden="true"></span>
+          <span id="connection-label">connecting…</span>
+        </div>
+      </header>
+
+      <div class="banner banner-error" id="error-banner" role="alert" hidden>
+        <span id="error-text"></span>
+        <button class="button button-ghost" id="error-retry" type="button">Retry</button>
+      </div>
+
+      <div class="banner banner-info" id="notice" role="status" hidden></div>
+
+      <nav class="tabs" role="tablist" aria-label="Dashboard views">
+        <button type="button" role="tab" id="tab-work" data-tab="work" aria-controls="panel-work" aria-selected="true">Work</button>
+        <button type="button" role="tab" id="tab-artifacts" data-tab="artifacts" aria-controls="panel-artifacts" aria-selected="false" tabindex="-1">Artifacts <span class="tab-count" id="artifact-tab-count"></span></button>
+      </nav>
+
+      <main class="main" id="main">
+        <section class="panel" id="panel-work" role="tabpanel" aria-labelledby="tab-work">
+          <div class="panel-toolbar">
+            <div class="segmented" role="group" aria-label="Work view">
+              <button type="button" class="segment" id="view-list" data-view="list" aria-pressed="true">
+                <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-list"/></svg>
+                <span>List</span>
+              </button>
+              <button type="button" class="segment" id="view-graph" data-view="graph" aria-pressed="false">
+                <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-graph"/></svg>
+                <span>Graph</span>
+              </button>
+            </div>
+            <label class="checkbox"><input type="checkbox" id="hide-completed"> Hide completed</label>
+            <p class="graph-caption" id="graph-caption" aria-hidden="true"></p>
+            <span class="muted small" id="work-summary"></span>
+          </div>
+
+          <div class="work-list" id="work-list" role="list"></div>
+          <div class="empty-state" id="work-empty" hidden>No work units yet. The manager has not handed off any specs.</div>
+
+          <div class="graph-view" id="graph-view" hidden>
+            <div class="graph-toolbar" role="toolbar" aria-label="Graph controls">
+              <button type="button" class="button button-ghost button-icon" id="graph-zoom-out" aria-label="Zoom out">
+                <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-minus"/></svg>
+              </button>
+              <button type="button" class="button button-ghost button-icon" id="graph-zoom-in" aria-label="Zoom in">
+                <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-plus"/></svg>
+              </button>
+              <button type="button" class="button button-ghost" id="graph-fit" aria-label="Fit graph to view">
+                <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-fit"/></svg>
+                <span>Fit</span>
+              </button>
+              <button type="button" class="button button-ghost" id="legend-toggle" aria-expanded="false" aria-controls="graph-legend" aria-label="Toggle node and edge legend">
+                <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-legend"/></svg>
+                <span>Legend</span>
+              </button>
+            </div>
+            <div class="legend-popover" id="graph-legend" aria-label="Node, edge and state legend" hidden></div>
+            <div class="graph-frame">
+              <div class="graph-canvas" id="graph-canvas" role="application" aria-label="Workflow graph"></div>
+              <div class="empty-state" id="graph-empty" hidden>No workflow yet. The manager has not handed off any specs.</div>
+              <div class="empty-state error-state" id="graph-error" hidden></div>
+            </div>
+            <p class="sr-only" id="graph-status" aria-live="polite"></p>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-artifacts" role="tabpanel" aria-labelledby="tab-artifacts" hidden>
+          <div class="artifacts-layout">
+            <div class="artifact-catalog">
+              <div class="catalog-head">
+                <h3>Catalog</h3>
+                <span class="muted small" id="artifact-count"></span>
+              </div>
+              <input class="search-input" id="artifact-query" type="search" placeholder="Search title, id, tag, scope…" aria-label="Search artifacts">
+              <div class="artifact-list" id="artifact-list" role="list"></div>
+              <div class="empty-state small" id="artifact-empty" hidden>No artifacts match.</div>
+            </div>
+            <article class="artifact-detail" id="artifact-detail" aria-label="Artifact detail">
+              <div class="empty-state" id="artifact-placeholder">Select an artifact to view it.</div>
+              <div id="artifact-view" hidden>
+                <header class="artifact-head">
+                  <div class="artifact-head-text">
+                    <h3 id="artifact-title"></h3>
+                    <p class="muted small" id="artifact-subtitle"></p>
+                  </div>
+                  <button type="button" class="button button-ghost" id="artifact-source" data-mode="rendered" aria-pressed="false">Source</button>
+                </header>
+                <p class="artifact-meta-line" id="artifact-meta"></p>
+                <details class="details" id="artifact-details">
+                  <summary>Details</summary>
+                  <div class="details-body" id="artifact-details-body"></div>
+                </details>
+                <div class="banner banner-warn" id="artifact-banner" role="status" hidden></div>
+                <div class="artifact-content" id="artifact-content" tabindex="0"></div>
+              </div>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+    <aside class="drawer" id="drawer" aria-label="Detail" hidden>
+      <header class="drawer-head">
+        <div class="drawer-head-text">
+          <span class="drawer-kind" id="drawer-kind"></span>
+          <h3 class="drawer-title" id="drawer-title"></h3>
+          <p class="drawer-meta muted small" id="drawer-meta"></p>
+        </div>
+        <button class="icon-button drawer-close" id="drawer-close" type="button" aria-label="Close detail">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"/></svg>
+        </button>
+      </header>
+      <div class="drawer-body" id="drawer-body"></div>
+    </aside>
+  </div>
+  <div class="sr-only" id="live" aria-live="polite"></div>
+  <script type="module" src="/dist/app.js"></script>
+</body>
+</html>

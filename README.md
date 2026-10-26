@@ -178,18 +178,20 @@ Limits: agent `bash` only, not user `!` shell commands, powershell, browser oper
 
 Focused tests: `node --experimental-strip-types --test tests/smart-timeout.test.ts` exercise real short-lived shell commands, quiet/chatty hangs, explicit budgets, cancellation, parallel isolation, descendant termination, diagnostics, validation, and extension registration.
 
-## 6. Input modes: Normal / Plan
+## 6. Input modes: Normal / Plan / Orchestrator
 
 **Shift+Tab** cycles modes. The sidebar shows a bold, theme-colored mode label with a distinct single-column icon, a concise description, and a dimmed switching hint. **◇ Normal** uses the accent color and **≡ Plan** the success color. These are standard text glyphs, not emoji or Nerd Font icons; labels remain readable without color. Without the sidebar, a compact bar above the editor uses the same icons and highlights the active mode:
 
 ```text
-[ ◇ Normal ]   ≡ Plan    Shift+Tab to switch
+[ ◇ Normal ]   ≡ Plan     Supervise     ⌁ Orchestrator    Shift+Tab to switch
 Chat with AI
 ```
 
 - **Normal**: Pi's regular AI input, tools, commands, and shortcuts. Shell commands still run through Pi's native `!`/`!!` prefix.
 - **Plan**: brainstorming and grilling, not implementation. `/plan mode` (also `/plan` or `/plan on`) enters; `/plan off` returns to Normal and restores the previous tool loadout. `/plan status` reports the policy. `/mode plan` selects the same mode.
-- `/mode` and Shift+Tab cycle **Normal → Plan → Normal**; `/mode normal` and `/mode plan` select explicitly (with completions). `/mode`, `/plan`, `/sidebar`, `/reload`, and `/quit` remain available in every mode; switch to Normal for other Pi slash commands.
+- **Orchestrator** (also spelled **Supervise**): delegation without implementation. `/mode orchestrator` (or `/supervise on`) enters; `/mode normal` exits and restores the previous tool loadout. Direct edits, browser tools and mutating shell commands are blocked; `orch_handoff → orch_spawn → orch_review → orch_escalate` stay available. See [Orchestrator mode](#orchestrator-mode-parallel-delegated-work).
+- `/mode` and Shift+Tab cycle **Normal → Plan → Orchestrator → Normal**; `Supervise` is the same policy as Orchestrator and is reachable explicitly with `/mode supervise` but is skipped by the cycle. `/mode normal`, `/mode plan` and `/mode orchestrator` select explicitly (with completions). `/mode`, `/plan`, `/sidebar`, `/reload`, and `/quit` remain available in every mode; switch to Normal for other Pi slash commands.
+- **A switch is a transition, not a cursor move.** Entering or leaving a restricted mode is refused while a turn or native shell command is running (or while unverified children hold permissions in Plan); a refused switch leaves both the tab and the policy unchanged, so repeating the keypress is never skipped. The transcript is the source of truth: the selected tab, the enforced allowlist and the request's mode reminder are all derived from the same branch entry.
 - Switching preserves the current draft. Normal remains local input routing; **Plan policy is branch-local session state** and survives reload/resume/fork, follows tree navigation, and restores the original tools on exit. `/plan` also works through RPC/print prompts. It does not change global agent configuration.
 - Shift+Tab replaces thinking-level cycling **in the main editor**; other shortcuts still go through `CustomEditor`. No global keybindings file is modified. Another extension replacing the editor can conflict.
 - This is an inline command runner, **not a persistent PTY**: interactive apps such as vim/htop are not supported, and `cd`/exports do not persist across submissions. Use `cd path && command` within one submission.
@@ -404,9 +406,54 @@ Mode: **Orchestrator** (`/mode orchestrator`). The supervisor decomposes a large
 
 **Status:** `/orch status | list | handoffs | escalations`.
 
+### Independent specification review (opt-in)
+
+Reviewing only the finished diff catches problems after they are expensive. `orch_spec_review` puts an independent, **read-only** review in front of implementation:
+
+```text
+orch_spec_review({ action: "start", targetArtifactId: "retry-design" })
+  → pins the document by content hash, launches one isolated reviewer per lens
+orch_spec_review({ action: "collect", runId })
+  → reads their reports; every finding is bound to its lens and revision
+orch_spec_review({ action: "resolve", runId, dispositions: [...] })
+  → records how each finding was handled; readiness settles only when no blocker is open
+```
+
+Presets: `quick` (comprehension + readiness) and `architecture` (zoom-out, comprehension, critic, readiness). A reviewer gets a snapshot quoted into its ticket, `read`, the todo tools, and `spec_review_submit` — **no** shell, **no** write tool, **no** artifact writer, **no** parent transcript pointer, and it is forced to `standalone` so an agent profile cannot widen its context. That is enforced by the launcher and the parent's `tool_call` guard, not by prompt text.
+
+Bind the result to the work unit with `designRef`, and the gate refuses a stale approval at both ends:
+
+```text
+orch_handoff({ scope, …, designRef: { runId, targetHash } })   // refuses an unready or amended design
+orch_spawn({ handoffId, … })                                    // re-reads the content and refuses drift
+```
+
+**Check receipts.** `orch_check` now returns a `checkRunId`. `orch_review({ …, checkRunId })` refuses a verdict when the receipt is missing, belongs to another scope, was taken against different acceptance criteria, or was taken against a different tree. Without a receipt, `cmd`/`test` evidence is still accepted as *attested* (shape-verified) — the difference is now visible in the audit trail instead of being indistinguishable from a real run.
+
+**Known limitations:** receipts live in memory for the process that observed the run (a restart cannot vouch for work it did not watch); `treeDigest` covers the whole worktree, so two lanes in one checkout invalidate each other's receipt; reviewer isolation is harness isolation, not an OS sandbox.
+
 Tests: `node --test tests/orchestrator/*.test.ts`.
 
-## Web Read (lightweight headless browser reader)
+## Orchestrator web dashboard (live graph + artifacts)
+
+A local, read-only web view of the orchestrator, its subagents, and workspace artifacts. Full details in [`docs/ORCHESTRATOR-DASHBOARD.md`](docs/ORCHESTRATOR-DASHBOARD.md).
+
+```text
+npm install && npm run build:dashboard   # once; serves Graphviz WASM locally, no native graphviz, no CDN
+/mode orchestrator                      # Pi prints a dashboard URL; open it in a browser
+```
+
+The first parent session that enters Orchestrator mode starts **one detached server** for the OS user (`~/.pi/dashboard`); every later orchestrator session — including other Pi processes and other projects — is added to the same page's left sidebar instead of starting a second one. A refused mode switch and a delegated child session never register a top-level entry. Leaving the mode publishes the new mode and keeps observing the work.
+
+- **Names**: every worker is a person — a vendored Javanese given name plus a role (`Bima · Skeleton Builder`) — and the root is an authority, not a peer: `{Project} Manager` (`Pi Workflow Extensions Manager`). Handoffs read `Spec · Repo Skeleton`; reviews and escalations are never labelled as people. Assignment is deterministic (`fnv1a(child id)` over sorted ids, probing past claimed names), an explicit author name always wins, slugs and UUIDs are never printed as a person, and `scope` stays an immutable slug. Dictionary provenance: [`web/dashboard/NAMES.md`](web/dashboard/NAMES.md).
+- **Graph**: Realtime Graphviz (WASM in the browser) of the session, workers/reviewers, handoffs, spec reviews, and escalations. Edges come from recorded ids (`handoffId`, `reviewRunId`, `supersededIds`, `childId`) — never from matching names or scopes. Kind is the primary encoding (manager `box3d`, worker rounded box, spec dashed `note`, review `hexagon`, spec review `folder`, escalation `octagon`) with status as a second layer; pan/zoom, “hide completed”, stable relayout only on topology change.
+- **Motion**: 320 ms viewBox relayout, staggered node entry, edge draw-in, a slow ambient pulse for running workers only, and a 600 ms status flash — all CSS classes (no inline style, no SMIL, CSP unchanged) behind a full `prefers-reduced-motion` kill switch. Animation classes never enter the topology signature, so status updates still skip Graphviz.
+- **Artifacts**: The session's effective catalog (branch + scoped-spec sidecars + ingested child artifacts), rendered as sanitized Markdown with `raw` toggle, version metadata, and live refresh. Bodies are fetched on selection; attachment HTML is never executed and remote images are blocked.
+- **Health**: Producer connection state is shown separately from worker state. A disconnected Pi process never makes its workers look finished.
+
+Bounds and trust: loopback only, separate producer/browser credentials, Host/Origin validation, size/count/SSE caps, no mutation endpoints. Snapshot projection is an allowlist — no transcripts, session-file paths, terminal tails, or credentials. Delivery is best-effort and coalesced, so a slow browser or dead server cannot block orchestration. Tests: `node --test tests/dashboard-*.test.ts`; `tests/dashboard-host-runtime.test.ts` drives a real Pi runtime, mode switch, detached server, and browser API end to end.
+
+
 
 Tool: **`web_read`**. Opens and reads content from referenced web pages using a lightweight headless browser (`chromium_headless_shell` or `chromium` via `playwright-core`).
 

@@ -1,6 +1,6 @@
-import type { ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
-import type { Component, Focusable, SelectItem, SelectListTheme } from "@mariozechner/pi-tui";
-import { Input, SelectList, matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { Component, Focusable, SelectItem, SelectListTheme } from "@earendil-works/pi-tui";
+import { Input, SelectList, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 export interface ModelPickerItem {
   value: string;

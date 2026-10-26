@@ -41,6 +41,8 @@ import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import type { DesignRef } from "./spec-review.ts";
+
 export class HandoffError extends Error {}
 
 /** A scope is a work-unit slug. It is the isolation key, so it must be exact. */
@@ -75,12 +77,30 @@ export interface HandoffSpec {
   outOfLaneFiles?: string[];
   /** What the report must contain beyond a prose summary. */
   reportShape?: string;
+  /**
+   * The command that decides the review (`orch_check` runs it).
+   *
+   * Declared at authoring time rather than chosen at review time: a verification
+   * command picked after seeing the diff can be picked to pass. It is restricted
+   * to test/typecheck runners by `verifyCommandProblem` in `brief.ts`.
+   */
+  verifyCommand?: string;
   /** Orchestrator notes: conventions, interfaces, prior decisions. */
   guidance?: string;
   /** Interfaces this scope must conform to (consumed by other scopes). */
   interfaces?: string[];
   /** Global vision this scope refines. Never contradicts it. */
   vision?: string;
+  /**
+   * The independent specification review backing this work unit.
+   *
+   * Optional on purpose: existing handoffs must keep working. When present,
+   * `orch_spawn` refuses a run that is not ready or whose target has changed, so
+   * a worker cannot be started against an approval that no longer describes the
+   * document. Presence never authorises implementation by itself — it only binds
+   * the work unit to a reviewed revision.
+   */
+  designRef?: DesignRef;
 }
 
 export interface HandoffRecord extends HandoffSpec {
@@ -142,18 +162,32 @@ export function validateHandoff(spec: HandoffSpec): HandoffRecord & { revision: 
     }
   }
 
+  // A design reference is a claim that an independent review exists. A malformed
+  // one must fail here, not be discovered at spawn with a child already planned.
+  let designRef: DesignRef | undefined;
+  if (spec.designRef) {
+    const runId = String((spec.designRef as any).runId ?? "").trim();
+    const targetHash = String((spec.designRef as any).targetHash ?? "").trim().toLowerCase();
+    if (!runId) throw new HandoffError("designRef.runId is required when a design reference is given.");
+    if (!/^[a-f0-9]{64}$/.test(targetHash)) {
+      throw new HandoffError("designRef.targetHash must be a sha256 hex digest of the reviewed content.");
+    }
+    designRef = { runId, targetHash };
+  }
+
   return {
     id: handoffIdFor(scope),
     artifactId: handoffArtifactId({ id: handoffIdFor(scope) }),
     scope,
     goal: String(spec.goal).trim(),
-    acceptanceCriteria: criteria,
-    laneFiles: lane,
+    acceptanceCriteria: criteria,    laneFiles: lane,
     ...(spec.outOfLaneFiles?.length ? { outOfLaneFiles: spec.outOfLaneFiles.map(String) } : {}),
     ...(spec.reportShape ? { reportShape: String(spec.reportShape).trim() } : {}),
+    ...(spec.verifyCommand ? { verifyCommand: String(spec.verifyCommand).trim() } : {}),
     ...(spec.guidance ? { guidance: String(spec.guidance).trim() } : {}),
     ...(spec.interfaces?.length ? { interfaces: spec.interfaces.map(String) } : {}),
     ...(spec.vision ? { vision: String(spec.vision).trim() } : {}),
+    ...(designRef ? { designRef } : {}),
     revision: 1,
     authoredAt: new Date().toISOString(),
     parentSessionId: "",
@@ -198,6 +232,10 @@ export function renderHandoffForChild(spec: HandoffRecord): string {
 
   const guidance = spec.guidance ? `\n## Notes from the orchestrator\n${spec.guidance}\n` : "";
 
+  const design = spec.designRef
+    ? `\n## Reviewed design you implement\nSpec review \`${spec.designRef.runId}\`, revision \`${spec.designRef.targetHash.slice(0, 12)}\`.\nThat review judged a document, not your task: it does not pre-approve your diff.\nYour acceptance criteria below are what the implementation review checks.\nIf this document contradicts the reviewed design, escalate — do not invent a third interpretation.\n`
+    : "";
+
   const reportShape = spec.reportShape
     ? spec.reportShape
     : "A short summary, then for EACH acceptance criterion: what you changed (file:line) and how you verified it. Say plainly what you did not do and why.";
@@ -206,7 +244,7 @@ export function renderHandoffForChild(spec: HandoffRecord): string {
 
 ## Goal
 ${spec.goal}
-${vision}${outOfLane}${interfaces}${guidance}
+${vision}${design}${outOfLane}${interfaces}${guidance}
 ## Files you own (your lane)
 ${lane}
 

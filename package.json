@@ -31,6 +31,7 @@
       "./extensions/account-router.ts",
       "./extensions/bubbly-spinner.ts",
       "./extensions/web-read.ts",
+      "./extensions/dashboard.ts",
       "./vendor/antigravity/index.ts",
       "./vendor/antigravity/features/google-search.ts",
       "./vendor/antigravity/features/generate-image.ts"
@@ -41,6 +42,7 @@
     "test:core": "node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/*.test.ts",
     "test:orchestrator": "node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/orchestrator/*.test.ts",
     "typecheck": "tsc --noEmit",
+    "build:dashboard": "node scripts/build-dashboard.mjs",
     "build:wasm": "cargo build --manifest-path crates/ascii-anim-engine/Cargo.toml --target wasm32-unknown-unknown --release && cp crates/ascii-anim-engine/target/wasm32-unknown-unknown/release/ascii_anim_engine.wasm lib/ascii_anim_engine.wasm"
   },
   "peerDependencies": {
@@ -49,7 +51,16 @@
     "typebox": "*"
   },
   "devDependencies": {
-    "typescript": "^5.7.3",
-    "@types/node": "^22.0.0"
+    "@types/jsdom": "^30.0.0",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.28.2",
+    "jsdom": "^30.1.3",
+    "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "@viz-js/viz": "^3.31.0",
+    "dompurify": "^3.4.17",
+    "highlight.js": "^11.12.0",
+    "marked": "^18.1.1"
   }
 }

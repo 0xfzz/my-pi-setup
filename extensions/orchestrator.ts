@@ -25,8 +25,8 @@
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 import {
   HandoffError,
@@ -42,6 +42,7 @@ import {
 } from "../lib/orchestrator/handoff.ts";
 import {
   ScopeRegistry,
+  type CloseReason,
   type ReviewRecord,
   type ScopedChild,
   type SteerRecord,
@@ -85,16 +86,204 @@ import { buildOutcomeMessage } from "../vendor/pi-herdr-subagents/src/messages.t
 import { loadAgentDefaults } from "../vendor/pi-herdr-subagents/src/agents.ts";
 import { loadSubagentSettings } from "../vendor/pi-herdr-subagents/src/settings.ts";
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";
+import { CHECKPOINT_TYPE } from "../lib/subagent-state.ts";
+import {
+  artifactFromRecord,
+  artifactSidecarPath,
+  lookupArtifact,
+  recordsFromBranch,
+  sanitizeArtifactId,
+} from "../lib/artifact-state.ts";
+import {
+  checkEvidenceRefs,
+  pathMatchesAnyLane,
+  renderEvidence,
+  type EvidenceRef,
+} from "../lib/orchestrator/evidence.ts";
+import { execFileSync } from "node:child_process";
+import {
+  buildCheckReport,
+  buildReviewPacket,
+  renderCheckReport,
+  renderReviewPacket,
+  verifyCommandProblem,
+} from "../lib/orchestrator/brief.ts";
+import { superviseModeFromBranch } from "../lib/supervise-mode.ts";
+import {
+  SPEC_ONLY_TOOLS,
+  isReviewLens,
+  isSpecOnlyDeniedTool,
+  pathPolicyProblem,
+  readTargets,
+  renderPolicyForReviewer,
+  reviewPolicyFromEnv,
+  type ReviewLens,
+} from "../lib/orchestrator/review-policy.ts";
+import {
+  REVIEW_PRESET_QUICK,
+  applyDispositions,
+  designRefProblem,
+  evaluateReadiness,
+  isReviewPreset,
+  openReviewRun,
+  parseReviewerReport,
+  pinTarget,
+  renderReviewerTicket,
+  renderRunSummary,
+  reviewerScope,
+  settleReadiness,
+  stalenessProblem,
+  type DesignRef,
+  type ReviewRun,
+} from "../lib/orchestrator/spec-review.ts";
+import {
+  criteriaHashOf,
+  describeReceipt,
+  evaluateReceipt,
+  outputDigestOf,
+  treeDigestOf,
+  type CheckReceipt,
+} from "../lib/orchestrator/receipts.ts";
+import { DASHBOARD_SYNC_EVENT, publishDashboardState } from "../lib/dashboard/integration.ts";
+import { projectChildProvenance, projectOrchestrator } from "../lib/dashboard/projection.ts";
+import * as naming from "../web/dashboard/src/naming.mjs";
 
 /** Shared handles. Exported so tests can assert on real state, not a mock. */
 export const registry = new ScopeRegistry();
 export const escalations = new EscalationLedger();
 export const handoffs = new Map<string, { record: HandoffRecord; path: string }>();
+/**
+ * Independent specification reviews, keyed by run id.
+ *
+ * Lives beside `handoffs` because they answer the same kind of question — "what
+ * was agreed for this work unit" — and is persisted with them so a restart does
+ * not silently turn an approved design back into an unreviewed one.
+ */
+export const specReviews = new Map<string, ReviewRun>();
+/**
+ * Check receipts, keyed by receipt id.
+ *
+ * In memory only by design: a receipt says "this command ran in this tree during
+ * this process". Restoring one after a restart would vouch for work the gate no
+ * longer has any way to observe, which is exactly the claim a receipt exists to
+ * make honestly.
+ */
+export const checkReceipts = new Map<string, CheckReceipt>();
 
 export interface OrchestratorDeps {
   client?: HerdrClient;
   stream?: any;
+  /** Clock seam: the watchdog's budget maths must be testable without waiting. */
+  now?: () => number;
+  /** Watchdog period override for runtime tests (default 30s). */
+  watchdogIntervalMs?: number;
 }
+
+/**
+ * Test seam.
+ *
+ * The watchdog is driven by an interval created inside the extension, so a
+ * runtime test has no deterministic way to advance it. Assigned during init and
+ * `null` until then, so a test cannot silently exercise an uninitialised tick.
+ */
+export const watchdogSeams: { tick: (() => Promise<void>) | null } = { tick: null };
+
+/**
+ * Review seam: the changed-file list the lane check is computed from.
+ *
+ * A test cannot safely depend on the repository it runs in, so it supplies the
+ * list. In production this is `git status`, and `null` means "could not compute"
+ * — the review then says so instead of pretending it verified the lane.
+ */
+export const reviewSeams: {
+  changedFiles: ((cwd: string) => string[] | null) | null;
+  /** Unified diff for the review packet; null means "could not compute". */
+  diffText: ((cwd: string) => string | null) | null;
+  /** Runs a verification command. Injected so a test never shells out. */
+  runCommand: ((command: string, cwd: string) => { exit: number; output: string; timedOut?: boolean }) | null;
+} = { changedFiles: null, diffText: null, runCommand: null };
+
+function gitChangedFiles(cwd: string): string[] | null {
+  try {
+    const output = execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const files: string[] = [];
+    for (const line of String(output).split("\n")) {
+      if (!line.trim()) continue;
+      const rest = line.slice(3).trim();
+      const path = rest.includes(" -> ") ? rest.split(" -> ").pop()! : rest;
+      files.push(path.replace(/^"|"$/g, ""));
+    }
+    return files;
+  } catch {
+    // Not a repo, no git, or an unreadable worktree: "unknown", never "clean".
+    return null;
+  }
+}
+
+/**
+ * Unified diff for the packet.
+ *
+ * Bounded at the source: a 20k-line diff would blow the packet budget before the
+ * renderer ever saw it, and `git diff` on a huge worktree can take seconds.
+ */
+function gitDiffText(cwd: string, files?: readonly string[]): string | null {
+  try {
+    const output = execFileSync(
+      "git",
+      ["diff", "HEAD", "--unified=2", "--no-color", ...(files?.length ? ["--", ...files] : [])],
+      { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 8 * 1024 * 1024 },
+    );
+    return String(output);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Run a verification command.
+ *
+ * The caller has already narrowed the grammar (`verifyCommandProblem`); this only
+ * has to bound it. `shell: false` is not usable because the allowed forms carry
+ * arguments, so the command string is passed to `sh -c` after that grammar check.
+ * Output is kept to the last 400 lines: a failing suite prints the summary at the
+ * end, and the beginning is what the truncation would otherwise keep.
+ */
+function runVerifyCommand(command: string, cwd: string, timeoutMs = 300_000) {
+  try {
+    const output = execFileSync("sh", ["-c", command], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: timeoutMs,
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    return { exit: 0, output: tail(String(output), 400) };
+  } catch (error: any) {
+    const output = `${error?.stdout ?? ""}${error?.stderr ?? ""}`;
+    return {
+      exit: typeof error?.status === "number" ? error.status : 1,
+      output: tail(String(output), 400),
+      timedOut: error?.signal === "SIGTERM" || error?.code === "ETIMEDOUT",
+    };
+  }
+}
+
+function tail(value: string, lines: number): string {
+  const all = value.split("\n");
+  return (all.length <= lines ? all : all.slice(-lines)).join("\n");
+}
+
+/**
+ * Files already sent for a scope, so a second review does not re-read them.
+ *
+ * Nothing is persisted: this is a request-level convenience. A restart simply
+ * re-sends the hunks, which is the safe direction to fail.
+ */
+const briefCursor = new Map<string, Set<string>>();
 
 function text(value: string, details?: unknown) {
   return {
@@ -112,27 +301,53 @@ function text(value: string, details?: unknown) {
  * interrupted", i.e. the only numbers that justified the interrupt were missing.
  * Keep the facts (elapsed/budget, strikes/elapsed checks) in the sentence.
  */
-export function budgetNotice(params: { name: string; scope: string; elapsedMs: number; budgetMs: number }): string {
+export function budgetNotice(params: {
+  name: string;
+  scope: string;
+  elapsedMs: number;
+  budgetMs: number;
+  /** False when no keystroke landed (pane already gone / Esc refused). */
+  interrupted?: boolean;
+}): string {
   const elapsed = Math.max(0, Math.round(params.elapsedMs / 60_000));
   const budget = Math.max(0, Math.round(params.budgetMs / 60_000));
+  const outcome = params.interrupted === false
+    ? `No interrupt could be delivered (the pane is gone), so the child is marked closed — nothing is parked.`
+    : `It was interrupted (Esc) and is paused.`;
   return `Watchdog: child "${params.name}" (scope: ${params.scope}) exceeded its wall-clock budget `
-    + `(${elapsed}m elapsed of ${budget}m). It was interrupted. `
-    + `Decide: orch_resume to grant more time, or close it and re-scope. Do NOT leave it parked.`;
+    + `(${elapsed}m elapsed of ${budget}m). ${outcome} `
+    + `Decide: orch_resume to grant more time, or orch_close to end it and re-scope.`;
 }
 
-export function stallNotice(params: { name: string; scope: string; strikes: number; intervalMs: number }): string {
+export function stallNotice(params: {
+  name: string;
+  scope: string;
+  strikes: number;
+  intervalMs: number;
+  interrupted?: boolean;
+}): string {
   const strikes = Math.max(1, Math.round(params.strikes));
   const minutes = Math.max(0, Math.round((strikes * params.intervalMs) / 60_000));
   const span = minutes >= 1 ? `~${minutes}m` : `~${Math.round((strikes * params.intervalMs) / 1000)}s`;
+  const outcome = params.interrupted === false
+    ? `No interrupt could be delivered (the pane is gone), so the child is marked closed.`
+    : `It was interrupted and is paused.`;
   return `Watchdog: child "${params.name}" (scope: ${params.scope}) showed no visible progress across `
-    + `${strikes} consecutive checks (${span}). It was interrupted. `
-    + `Inspect its pane, then orch_resume with direction or re-scope.`;
+    + `${strikes} consecutive checks (${span}). ${outcome} `
+    + `Inspect its pane, then orch_resume with direction, or orch_close to end it.`;
 }
 
 export default function orchestratorExtension(pi: ExtensionAPI, deps?: OrchestratorDeps): void {
   const client: HerdrClient = deps?.client || createHerdrClient();
   const moduleController = new AbortController();
-  const activeWatchers = new Map<string, () => void>();
+  /**
+   * One watcher per session file, tagged with the attempt that armed it.
+   *
+   * The id matters: an aborted watcher settles asynchronously, and its `.then`
+   * used to delete the *new* abort handle and close the *new* row after a resume
+   * had superseded it — leaving a live child unwatched.
+   */
+  const activeWatchers = new Map<string, { id: string; abort: () => void }>();
 
   let eventStream = deps?.stream;
   const getEventStream = () => {
@@ -146,10 +361,22 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
 
   // ── Persistence + watchdog state (module-function scope) ────────────────────
   let sessionDir: string | null = null;
+  /** The session id this in-memory state belongs to, so a switch can be detected. */
+  let lastOwnerSessionId: string | null = null;
   let watchdogTimer: ReturnType<typeof setInterval> | null = null;
-  const WATCHDOG_INTERVAL_MS = 30_000;
+  let tickInFlight = false;
+  const now = deps?.now ?? (() => Date.now());
+  const WATCHDOG_INTERVAL_MS = deps?.watchdogIntervalMs ?? 30_000;
   const DEFAULT_BUDGET_MS = 30 * 60 * 1000;
   const MAX_STALL_STRIKES = 3;
+  /** After an interrupt the pane is static by definition; do not call it a stall. */
+  const INTERRUPT_COOLDOWN_MS = 10 * 60 * 1000;
+  /** Backoff before retrying a close that failed while the pane was still alive. */
+  const CLOSE_RETRY_MS = Math.min(WATCHDOG_INTERVAL_MS, 60_000);
+  /** Failed Escape deliveries tolerated before the watchdog ends the child itself. */
+  const MAX_INTERRUPT_ATTEMPTS = 2;
+  /** A sidecar nobody consumed after this long is stale, not pending. */
+  const SIDECAR_GRACE_MS = 60_000;
   const MAX_REVISE_ROUNDS = 2;
 
   // ── Parent-only guard ──────────────────────────────────────────────────────
@@ -177,14 +404,61 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   }
 
   function persistState(): void {
+    // Publish first: dashboard state is authoritative in memory and must not be
+    // lost when the sidecar write fails or the directory is read-only.
+    publishDashboard();
     const path = registryPath();
     if (!path) return;
     const state: PersistedState = {
       ...registry.toSnapshot(),
       handoffs: [...handoffs.entries()].map(([id, entry]) => ({ id, record: entry.record, path: entry.path })),
       escalations: escalations.all(),
+      specReviews: [...specReviews.values()],
     };
     saveRegistrySnapshot(path, state);
+  }
+
+  /**
+   * Publish the current orchestrator view for the dashboard.
+   *
+   * Children own no top-level session, so a delegated child never publishes. The
+   * projection is allowlisted there; this function only decides when and what to
+   * hand it. Every failure is swallowed: a dashboard observer must not be able to
+   * change an orchestration decision.
+   */
+  function publishDashboard(): void {
+    if (isChildSession) return;
+    try {
+      const children = registry.getAllChildren();
+      publishDashboardState(pi, {
+        orchestrator: projectOrchestrator({
+          children,
+          handoffs: [...handoffs.values()].map((entry) => entry.record),
+          reviews: registry.getReviews(),
+          escalations: escalations.all(),
+          specReviews: [...specReviews.values()],
+          paused: registry.isPaused(),
+        }),
+        childSessions: projectChildProvenance(children),
+      });
+    } catch {
+      // Best-effort observer bridge only.
+    }
+  }
+
+  // Handshake: the dashboard may load after this extension, so it asks for a
+  // fresh statement of current state instead of relying on a missed event.
+  pi.events?.on(DASHBOARD_SYNC_EVENT, () => publishDashboard());
+
+  /** Drop everything that belongs to the session that just ended. */
+  function resetSessionState(): void {
+    for (const entry of activeWatchers.values()) entry.abort();
+    activeWatchers.clear();
+    registry.reset();
+    handoffs.clear();
+    escalations.clear();
+    specReviews.clear();
+    checkReceipts.clear();
   }
 
   function restorePersistedState(): void {
@@ -203,22 +477,492 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         // A malformed escalation record must not block the session restore.
       }
     }
+    for (const run of snapshot.specReviews ?? []) {
+      // A run without an id, target hash, or reviewer list cannot be trusted to
+      // answer "was this reviewed?", so it is dropped rather than half-restored.
+      if (!run || typeof run !== "object") continue;
+      if (typeof run.id !== "string" || !run.target?.contentHash || !Array.isArray(run.reviewers)) continue;
+      specReviews.set(run.id, run as ReviewRun);
+    }
+  }
+
+  /**
+   * Single source of truth for "is this pane still there?".
+   *
+   * Tri-state on purpose. `pane get` is the existence oracle: null means
+   * pane_not_found and every other failure throws. `pane read` is only a
+   * diagnostic tail — it used to resolve null for *every* error, so one herdr
+   * timeout was indistinguishable from a dead pane and the watchdog closed a
+   * live child. `unknown` means "do not decide": keep the row, keep watching,
+   * retry — never treat an unreachable CLI as a death certificate.
+   */
+  async function paneLiveness(
+    paneId: string,
+    lines = 1,
+  ): Promise<
+    | { state: "alive"; tail: string | null }
+    | { state: "gone"; reason: string }
+    | { state: "unknown"; reason: string }
+  > {
+    let pane: { pane_id?: string } | null;
+    try {
+      pane = await client.paneGet(paneId);
+    } catch (error: any) {
+      return { state: "unknown", reason: `pane get failed: ${String(error?.message ?? error)}` };
+    }
+    if (pane === null) return { state: "gone", reason: "pane_not_found" };
+    try {
+      return { state: "alive", tail: await client.paneRead(paneId, lines) };
+    } catch {
+      // Existence is proven; only the diagnostic tail is unavailable.
+      return { state: "alive", tail: null };
+    }
+  }
+
+  /** A watcher is about to classify this child from a sidecar; do not race it. */
+  function hasPendingExitSignal(sessionFile: string): boolean {
+    return existsSync(`${sessionFile}.exit`) || existsSync(`${sessionFile}.exitcode`);
+  }
+
+  /**
+   * A sidecar old enough that no live watcher is going to consume it. Without
+   * this, an aborted watcher plus a leftover sidecar hid a dead pane forever.
+   */
+  function hasStaleExitSignal(sessionFile: string): boolean {
+    for (const file of [`${sessionFile}.exit`, `${sessionFile}.exitcode`]) {
+      try {
+        if (now() - statSync(file).mtimeMs >= SIDECAR_GRACE_MS) return true;
+      } catch {
+        // absent: try the other sidecar
+      }
+    }
+    return false;
+  }
+
+  /**
+   * A closed child leaves no question waiting: a pane that is gone cannot answer
+   * one. Matched by id *and* session file, because a resume supersedes the id —
+   * a stale question whose childId no longer exists would otherwise stay open and
+   * let a later answer hijack the live child.
+   */
+  function closeEscalationsFor(child: { id: string; sessionFile: string }, reason: string): void {
+    for (const escalation of escalations.all()) {
+      if (escalation.childId !== child.id && escalation.sessionFile !== child.sessionFile) continue;
+      if (escalation.stage === "answered" || escalation.stage === "cancelled") continue;
+      try {
+        escalations.cancel(escalation.id, reason);
+      } catch {
+        // A settled escalation is immutable; nothing to do.
+      }
+    }
+  }
+
+  /** Mutating only the row is not enough: a watcher that is still running can overwrite it. */
+  function detachWatcher(sessionFile: string): void {
+    const entry = activeWatchers.get(sessionFile);
+    if (!entry) return;
+    activeWatchers.delete(sessionFile);
+    try {
+      entry.abort();
+    } catch {
+      // best effort
+    }
+  }
+
+  /**
+   * Drop the handle only if it still belongs to this attempt. A superseded
+   * watcher that settles late must not delete its successor's handle.
+   */
+  function releaseWatcher(sessionFile: string, id: string): void {
+    if (activeWatchers.get(sessionFile)?.id === id) activeWatchers.delete(sessionFile);
+  }
+
+  /** Does this attempt still own the row for its session file? */
+  function ownsRow(running: RunningSubagent): boolean {
+    const current = registry.getChildById(running.id);
+    return current !== undefined && current.sessionFile === running.sessionFile;
+  }
+
+  /**
+   * The only terminal transition.
+   *
+   * Every path that ends a child (interrupt+close, review, watchdog, escalation)
+   * goes through here, so the pane, the row, the watcher and the escalation
+   * ledger agree. Reporting an observation, never an intention: `paneState` says
+   * whether a close actually happened.
+   */
+  /**
+   * End a child's checkpoint record, which is what the panel and sidebar read.
+   *
+   * The registry and the checkpoints live in different layers: closing a row here
+   * left the checkpoint entry saying `running`, so `/subagents` and the sidebar
+   * kept showing "unverified (last known running)" for a child whose pane was
+   * already gone. A checkpoint entry is a display fact, never a reason to fail a
+   * close, so it is best-effort.
+   */
+  function recordChildClosed(child: ScopedChild, reason: CloseReason): void {
+    try {
+      pi.appendEntry(CHECKPOINT_TYPE, {
+        sessionFile: child.sessionFile,
+        runId: "",
+        name: child.name,
+        ...(child.agent ? { agent: child.agent } : {}),
+        task: child.task ?? "",
+        ...(child.paneId ? { paneId: child.paneId } : {}),
+        status: "closed",
+        ended: true,
+        updatedAt: child.closedAt ?? new Date(now()).toISOString(),
+        summary: `Closed by the orchestrator (${reason}).`,
+        files: child.lastMilestoneFiles ?? [],
+        verification: "",
+        next: "",
+        ...(child.scope ? { scope: child.scope } : {}),
+      });
+    } catch {
+      // Display state only; the registry remains authoritative.
+    }
+  }
+
+  async function settleChild(
+    target: ScopedChild,
+    reason: CloseReason,
+  ): Promise<
+    | { ok: true; paneState: "closed" | "already-gone"; child: ScopedChild }
+    | { ok: false; paneState: "failed"; reason: string }
+  > {
+    let paneState: "closed" | "already-gone" = "already-gone";
+    let closeFailed: string | null = null;
+    if (target.paneId) {
+      const liveness = await paneLiveness(target.paneId);
+      if (liveness.state === "unknown") {
+        // "I could not reach herdr" is not "the child is done". Closing the row
+        // here would hand a live agent to nobody — the leak this audit is about.
+        return {
+          ok: false,
+          paneState: "failed",
+          reason: `pane ${target.paneId} liveness unknown (${liveness.reason}); refused to close on a guess`,
+        };
+      }
+      if (liveness.state === "alive") {
+        try {
+          await client.paneClose(target.paneId);
+          paneState = "closed";
+        } catch (error: any) {
+          const message = String(error?.message ?? error);
+          if (!/pane_not_found|not found/i.test(message)) closeFailed = message;
+        }
+      }
+    }
+    if (closeFailed) {
+      // A live pane must never sit in a status the watchdog ignores (blocked and
+      // ping-paused rows are not ticked). Re-arm the budget loop so it retries.
+      registry.rearmForRetry(target.sessionFile, closeFailed, new Date(now()).toISOString());
+      persistState();
+      return { ok: false, paneState: "failed", reason: closeFailed };
+    }
+    detachWatcher(target.sessionFile);
+    closeEscalationsFor(target, `Child closed (${reason}).`);
+    const wasClosed = target.status === "closed";
+    const child = registry.closeChild(target.sessionFile, reason) ?? target;
+    if (!wasClosed) recordChildClosed(child, reason);
+    persistState();
+    return { ok: true, paneState, child };
   }
 
   /**
    * Reconcile restored children against live panes. A child whose pane is gone
    * is closed — pretending it still runs makes orch_running lie. A child with a
-   * live pane keeps running.
+   * live pane is re-watched: after a restart nobody else would report its end.
    */
-  async function reconcileRestoredChildren(): Promise<void> {
+  async function reconcileRestoredChildren(): Promise<{ restored: number; closed: number }> {
+    let restored = 0;
+    let closed = 0;
     for (const child of registry.getRunningChildren()) {
       if (!child.paneId) {
-        registry.updateStatus(child.sessionFile, "closed");
+        registry.closeChild(child.sessionFile, "pane-gone");
+        closed++;
         continue;
       }
-      const alive = await client.paneRead(child.paneId, 1).then(() => true).catch(() => false);
-      if (!alive) registry.updateStatus(child.sessionFile, "closed");
+      const liveness = await paneLiveness(child.paneId);
+      if (liveness.state === "gone") {
+        registry.closeChild(child.sessionFile, "pane-gone");
+        closed++;
+        continue;
+      }
+      // `unknown` still gets a watcher: the watcher retries liveness itself and
+      // will report the child's end. Closing on a failed probe is the leak.
+      rewatchRestored(child);
+      restored++;
     }
+    if (closed > 0) persistState();
+    return { restored, closed };
+  }
+
+  /** Re-attach a watcher to a child that survived a pi restart. */
+  function rewatchRestored(child: ScopedChild): void {
+    if (!child.paneId || activeWatchers.has(child.sessionFile)) return;
+    registry.recordPane(child.paneId);
+    const running: RunningSubagent = {
+      id: child.id,
+      name: child.name,
+      task: child.task ?? "Restored child",
+      agent: child.agent,
+      paneId: child.paneId,
+      startTime: child.startedAt ?? now(),
+      sessionFile: child.sessionFile,
+      launchScriptFile: child.launchScriptFile ?? "",
+      interactive: child.interactive ?? false,
+      autoExit: child.autoExit ?? false,
+      scope: child.scope,
+    };
+    const controller = new AbortController();
+    activeWatchers.set(child.sessionFile, { id: child.id, abort: () => controller.abort() });
+    void watchSubagent(running, { client: client as any, stream: getEventStream(), signal: controller.signal })
+      .then((outcome: SubagentOutcome) => {
+        releaseWatcher(child.sessionFile, child.id);
+        handleOutcome(running, child.scope, outcome);
+      })
+      .catch(() => {
+        releaseWatcher(child.sessionFile, child.id);
+        // A watcher that cannot run leaves a live pane with nobody reporting its
+        // end. Settle it rather than parking a row no loop will ever look at.
+        if (ownsRow(running)) void settleChild(child, "watcher-error").catch(() => {});
+      });
+  }
+
+  const ANSI_ESCAPE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
+
+  /** Spinner frames and colour codes are not progress; a static screen is not a stall. */
+  function normalizePaneTail(tail: string | null): string {
+    return (tail ?? "").replace(ANSI_ESCAPE, "").trim();
+  }
+
+  async function interruptPane(child: ScopedChild): Promise<boolean> {
+    if (!child.paneId) return false;
+    try {
+      await client.paneSendKeys(child.paneId, [INTERRUPT_KEY]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Trip the watchdog for one reason, exactly once.
+   *
+   * The `watchdog.trip` guard is the fix for the notice storm: the old budget
+   * branch set the child `blocked`, but `getRunningChildren()` includes
+   * `blocked`, so the same child re-tripped on every 30s tick — pressing Escape
+   * and re-notifying forever. A trip is now a state, not an event.
+   *
+   * Parking is only allowed on positive evidence: a delivered Escape or a pane
+   * confirmed gone. When the Escape does not land the child is still running, so
+   * it stays in the watchdog (a `blocked` row is not ticked) with an attempt
+   * counter, and is closed after MAX_INTERRUPT_ATTEMPTS. That closes the hole
+   * where a failed interrupt parked a live agent outside every loop.
+   */
+  async function tripWatchdog(
+    child: ScopedChild,
+    kind: "budget-exceeded" | "stall-detected",
+    facts: { elapsedMs?: number; budgetMs?: number; strikes?: number; tail: string | null; retry?: boolean },
+  ): Promise<void> {
+    if (child.watchdog?.trip === kind && !facts.retry) return;
+
+    const interrupted = await interruptPane(child);
+    const at = new Date(now()).toISOString();
+
+    // Re-read existence after the Escape: a pane can vanish mid-trip, and a plain
+    // pseudo-terminal prompt does not always accept a key event.
+    const liveness = child.paneId
+      ? await paneLiveness(child.paneId)
+      : ({ state: "gone", reason: "no pane recorded" } as const);
+    if (liveness.state === "gone") {
+      await settlePaneGone(child);
+      return;
+    }
+
+    if (!interrupted) {
+      // The child is still running, so it must stay in the watchdog: `blocked`
+      // rows are not ticked, and parking a live agent there is how one escaped
+      // every loop. Count attempts, retry on the next tick, then end it.
+      const failures = (child.watchdog?.interruptFailures ?? 0) + 1;
+      registry.updateRuntime(child.sessionFile, { lastTail: facts.tail, stallStrikes: 0 });
+      registry.updateWatchdog(child.sessionFile, {
+        trip: kind,
+        trippedAt: at,
+        interruptFailures: failures,
+        ...(facts.retry ? {} : { notifiedAt: at }),
+      });
+      persistState();
+
+      if (failures >= MAX_INTERRUPT_ATTEMPTS) {
+        const settled = await settleChild(child, "interrupt-failed");
+        pi.sendMessage(
+          {
+            customType: "subagent_result",
+            content: settled.ok
+              ? `Watchdog: child "${child.name}" (scope: ${child.scope}) ignored ${failures} interrupts. `
+                + `Its pane was closed (${settled.paneState}) so it cannot keep running unowned.`
+              : `Watchdog: child "${child.name}" (scope: ${child.scope}) ignored ${failures} interrupts, and closing it failed (${settled.reason}). `
+                + `It stays under watchdog retry — use orch_close on pane ${child.paneId}.`,
+            display: true,
+            details: {
+              id: child.id,
+              name: child.name,
+              scope: child.scope,
+              reason: "interrupt-failed",
+              interruptFailures: failures,
+              closed: settled.ok,
+            },
+          },
+          { triggerTurn: true, deliverAs: "followUp" },
+        );
+        return;
+      }
+
+      if (!facts.retry) {
+        pi.sendMessage(
+          {
+            customType: "subagent_result",
+            content:
+              `Watchdog: child "${child.name}" (scope: ${child.scope}) exceeded its limit, but the interrupt did not land `
+              + `(${liveness.state === "unknown" ? "herdr is unreachable" : "the pane refused keys"}). `
+              + `It was kept in the watchdog and will retry; if that keeps failing it is closed. `
+              + `Decide now: orch_resume with direction, or orch_close.`,
+            display: true,
+            details: {
+              id: child.id,
+              name: child.name,
+              scope: child.scope,
+              reason: kind,
+              interrupted: false,
+              interruptFailures: failures,
+            },
+          },
+          { triggerTurn: true, deliverAs: "followUp" },
+        );
+      }
+      return;
+    }
+
+    // Escape delivered: only now is `blocked` a truthful state.
+    registry.updateStatus(child.sessionFile, "blocked");
+    registry.updateRuntime(child.sessionFile, { lastTail: facts.tail, stallStrikes: 0 });
+    registry.updateWatchdog(child.sessionFile, {
+      trip: kind,
+      trippedAt: at,
+      notifiedAt: at,
+      interruptSentAt: at,
+      addInterrupt: true,
+      interruptFailures: 0,
+    });
+    persistState();
+
+    const content = kind === "budget-exceeded"
+      ? budgetNotice({
+          name: child.name,
+          scope: child.scope,
+          elapsedMs: facts.elapsedMs ?? 0,
+          budgetMs: facts.budgetMs ?? 0,
+          interrupted,
+        })
+      : stallNotice({
+          name: child.name,
+          scope: child.scope,
+          strikes: facts.strikes ?? 0,
+          intervalMs: WATCHDOG_INTERVAL_MS,
+          interrupted,
+        });
+
+    pi.sendMessage(
+      {
+        customType: "subagent_result",
+        content,
+        display: true,
+        details: {
+          id: child.id,
+          name: child.name,
+          scope: child.scope,
+          reason: kind,
+          interrupted,
+          ...(kind === "budget-exceeded"
+            ? { elapsedMs: facts.elapsedMs ?? 0, budgetMs: facts.budgetMs ?? 0 }
+            : { strikes: facts.strikes ?? 0 }),
+        },
+      },
+      // `followUp`, not `steer`: a watchdog notice is not a mid-turn correction,
+      // and a steer preempts whatever the parent is doing.
+      { triggerTurn: true, deliverAs: "followUp" },
+    );
+  }
+
+  /**
+   * A running child whose pane is gone is not coming back.
+   *
+   * A sidecar means a watcher is about to classify the child itself — but only if
+   * a watcher exists. A stale sidecar with no watcher used to freeze the row as
+   * `running` with a dead pane, invisible to every later tick, so the sidecar is
+   * ignored once it is old enough and nobody is listening for it.
+   */
+  async function settlePaneGone(child: ScopedChild): Promise<void> {
+    if (hasPendingExitSignal(child.sessionFile)) {
+      if (activeWatchers.has(child.sessionFile) || !hasStaleExitSignal(child.sessionFile)) return;
+    }
+    const settled = await settleChild(child, "pane-gone");
+    if (!settled.ok) return;
+    pi.sendMessage(
+      {
+        customType: "subagent_result",
+        content:
+          `Child "${child.name}" (scope: ${child.scope}) ended without a report: its pane is gone. `
+          + `It is marked closed (pane-gone). Nothing is parked.`,
+        display: true,
+        details: { id: child.id, name: child.name, scope: child.scope, reason: "pane-gone" },
+      },
+      { triggerTurn: true, deliverAs: "followUp" },
+    );
+  }
+
+  /**
+   * Close panes this parent opened that no row owns any more.
+   *
+   * Attribution is the point: `pane list` also contains the user's panes and other
+   * sessions' children. Only an id recorded when *this* parent called paneStart is
+   * ever closed, so a lost row cannot hide a live pane without risking a pane the
+   * orchestrator never owned.
+   */
+  async function sweepOrphanPanes(): Promise<{ closed: number }> {
+    const known = registry.getKnownPanes();
+    if (known.length === 0) return { closed: 0 };
+    let live: Set<string>;
+    try {
+      live = new Set((await client.paneList()).map((pane) => pane.pane_id));
+    } catch {
+      return { closed: 0 }; // herdr unreachable: sweep nothing rather than guess
+    }
+    const owned = new Set(
+      registry
+        .getAllChildren()
+        .filter((c) => c.status !== "closed" && c.paneId)
+        .map((c) => c.paneId as string),
+    );
+    let closed = 0;
+    for (const paneId of known) {
+      if (!live.has(paneId)) {
+        registry.forgetPane(paneId);
+        continue;
+      }
+      if (owned.has(paneId)) continue;
+      try {
+        await client.paneClose(paneId);
+        registry.forgetPane(paneId);
+        closed++;
+      } catch {
+        // keep it known so the next start retries
+      }
+    }
+    if (closed > 0) persistState();
+    return { closed };
   }
 
   /**
@@ -226,70 +970,97 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
    * the two failure modes a child cannot self-report (it believes it is still
    * working). Without it, `budgetMinutes` was accepted-but-never-enforced and a
    * stuck child burned the budget forever.
+   *
+   * Input is `getWatchdogChildren()` (running only): a tripped or ping-paused
+   * child is waiting on a decision, not on a timer.
    */
   async function runWatchdogTick(): Promise<void> {
-    for (const child of registry.getRunningChildren()) {
-      if (!child.paneId) continue;
-      let tail: string | null = null;
-      try {
-        tail = await client.paneRead(child.paneId, 20);
-      } catch {
-        continue; // pane read failed — the watcher/exit path owns pane death
-      }
-
-      const budgetMs = child.budgetMs ?? DEFAULT_BUDGET_MS;
-      const elapsed = child.startedAt ? Date.now() - child.startedAt : 0;
-
-      if (elapsed >= budgetMs) {
-        registry.updateStatus(child.sessionFile, "blocked");
-        registry.updateRuntime(child.sessionFile, { lastTail: tail, stallStrikes: 0 });
-        try {
-          await client.paneSendKeys(child.paneId, [INTERRUPT_KEY]);
-        } catch {
-          // Pane may have died between the read and the interrupt.
+    for (const child of registry.getWatchdogChildren()) {
+      // A failed close is not a decision for the parent to make: retry it.
+      if (child.watchdog?.trip === "close-failed") {
+        const lastAttempt = child.watchdog.trippedAt ? Date.parse(child.watchdog.trippedAt) : 0;
+        if (!Number.isFinite(lastAttempt) || now() - lastAttempt >= CLOSE_RETRY_MS) {
+          await settleChild(child, "watchdog-close");
         }
-        persistState();
-        pi.sendMessage(
-          {
-            customType: "subagent_result",
-            content: budgetNotice({ name: child.name, scope: child.scope, elapsedMs: elapsed, budgetMs }),
-            display: true,
-            details: { id: child.id, name: child.name, scope: child.scope, reason: "budget-exceeded", elapsedMs: elapsed, budgetMs },
-          },
-          { triggerTurn: true, deliverAs: "steer" },
-        );
+        continue;
+      }
+      // A trip that could not park the child (failed Escape) stays in the loop.
+      const pendingTrip = child.watchdog?.trip;
+      if (pendingTrip === "budget-exceeded" || pendingTrip === "stall-detected") {
+        const lastAttempt = child.watchdog?.trippedAt ? Date.parse(child.watchdog.trippedAt) : 0;
+        if (Number.isFinite(lastAttempt) && now() - lastAttempt < CLOSE_RETRY_MS) continue;
+        await tripWatchdog(child, pendingTrip, { tail: null, retry: true });
+        continue;
+      }
+      if (!child.paneId) {
+        await settlePaneGone(child);
         continue;
       }
 
+      const liveness = await paneLiveness(child.paneId, 20);
+      if (liveness.state === "gone") {
+        await settlePaneGone(child);
+        continue;
+      }
+      if (liveness.state === "unknown") continue; // never close on a failed probe
+      const tail = liveness.tail;
+
+      const budgetMs = child.budgetMs ?? DEFAULT_BUDGET_MS;
+      const elapsed = child.startedAt !== undefined ? now() - child.startedAt : 0;
+
+      if (elapsed >= budgetMs) {
+        await tripWatchdog(child, "budget-exceeded", { elapsedMs: elapsed, budgetMs, tail });
+        continue;
+      }
+
+      // Already tripped for a stall: waiting on the parent, not on the pane.
+      if (child.watchdog?.trip) continue;
+
       // Stall detection: N consecutive identical pane tails means no visible
       // progress. Interrupt so the parent can decide instead of burning tokens.
-      const strikes = tail === child.lastTail ? (child.stallStrikes ?? 0) + 1 : 0;
+      const lastInterrupt = child.watchdog?.interruptSentAt ? Date.parse(child.watchdog.interruptSentAt) : null;
+      const cooling = lastInterrupt !== null && Number.isFinite(lastInterrupt) && now() - lastInterrupt < INTERRUPT_COOLDOWN_MS;
+      const unchanged = normalizePaneTail(tail) === normalizePaneTail(child.lastTail ?? null);
+      const strikes = !cooling && unchanged && tail !== null ? (child.stallStrikes ?? 0) + 1 : 0;
       registry.updateRuntime(child.sessionFile, { lastTail: tail, stallStrikes: strikes });
       if (strikes >= MAX_STALL_STRIKES) {
-        registry.updateStatus(child.sessionFile, "blocked");
-        try {
-          await client.paneSendKeys(child.paneId, [INTERRUPT_KEY]);
-        } catch {
-          // Pane may have died.
-        }
-        persistState();
-        pi.sendMessage(
-          {
-            customType: "subagent_result",
-            content: stallNotice({ name: child.name, scope: child.scope, strikes, intervalMs: WATCHDOG_INTERVAL_MS }),
-            display: true,
-            details: { id: child.id, name: child.name, scope: child.scope, reason: "stall-detected", strikes },
-          },
-          { triggerTurn: true, deliverAs: "steer" },
-        );
+        await tripWatchdog(child, "stall-detected", { strikes, tail });
       }
     }
+
+    // Terminal rows can still own a live pane (a wrapper that held it open after
+    // the child finished). Nothing watches those, so sweep them here: a pane is
+    // a process, and an unwatched one is exactly what this audit is about.
+    for (const child of registry.getTerminalChildren()) {
+      if (!child.paneId) continue;
+      const liveness = await paneLiveness(child.paneId);
+      if (liveness.state !== "alive") continue;
+      try {
+        await client.paneClose(child.paneId);
+      } catch {
+        continue; // leave it for the next tick / orch_close
+      }
+      detachWatcher(child.sessionFile);
+      registry.markPaneSwept(child.sessionFile, "auto-close-terminal");
+      persistState();
+    }
   }
+
+  watchdogSeams.tick = runWatchdogTick;
 
   function startWatchdog(): void {
     if (watchdogTimer) return;
     watchdogTimer = setInterval(() => {
-      void runWatchdogTick().catch(() => {});
+      // A tick can outlive its interval when herdr is slow; two overlapping ticks
+      // read the same untripped state and both notify, which is the notice storm
+      // the trip guard exists to prevent.
+      if (tickInFlight) return;
+      tickInFlight = true;
+      void runWatchdogTick()
+        .catch(() => {})
+        .finally(() => {
+          tickInFlight = false;
+        });
     }, WATCHDOG_INTERVAL_MS);
     if (typeof watchdogTimer === "object" && "unref" in (watchdogTimer as any)) {
       (watchdogTimer as any).unref?.();
@@ -317,10 +1088,32 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       stopWatchdog();
       return;
     }
+    // A session is replaced *inside* this process (`/new`, `/resume`, `/fork`):
+    // shutdown persists the old one, then startup fires again with a new id and
+    // the same module singletons. Clearing here is the boundary; without it the
+    // new session adopted the replaced session's children, handoffs, and
+    // escalations, then wrote them into its own sidecar on the first persist.
+    if (lastOwnerSessionId !== null && lastOwnerSessionId !== ownerSessionId) resetSessionState();
+    lastOwnerSessionId = ownerSessionId;
     restorePersistedState();
-    await reconcileRestoredChildren();
+    publishDashboard();
+    const restored = await reconcileRestoredChildren();
+    const swept = await sweepOrphanPanes();
     startWatchdog();
-    ctx.ui.notify("orchestrator active: author a handoff with orch_handoff, then delegate with orch_spawn.", "info");
+    const parked = registry.getRunningChildren().filter((c) => c.status === "blocked");
+    ctx.ui.notify(
+      [
+        "orchestrator active: author a handoff with orch_handoff, then delegate with orch_spawn.",
+        restored.restored || restored.closed
+          ? `Restored ${restored.restored} live child(ren); closed ${restored.closed} whose pane was gone.`
+          : "",
+        swept.closed ? `Closed ${swept.closed} orphaned pane(s) this parent had opened.` : "",
+        parked.length ? `${parked.length} child(ren) waiting on your decision — run orch_running.` : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+      "info",
+    );
   });
 
   pi.on("session_shutdown", () => {
@@ -329,20 +1122,86 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     // siblings closed/blocked behind the parent's back.
     if (!isChildSession) persistState();
     moduleController.abort();
-    for (const stop of activeWatchers.values()) stop();
+    for (const entry of activeWatchers.values()) entry.abort();
     activeWatchers.clear();
   });
 
   // A child's `--tools` allowlist excludes the orchestrator surface, but a resumed or
   // user-touched child can still have it active. Refuse rather than let a child spawn
   // work the parent cannot see or review.
-  pi.on("tool_call", (event) => {
-    if (!isChildSession || !event.toolName.startsWith("orch_")) return;
+  pi.on("tool_call", (event, ctx) => {
+    // ── spec-only reviewer guard ────────────────────────────────────────────
+    // The `--tools` allowlist is the first line, not the only one: a resumed or
+    // user-touched reviewer pane could still hold a wider set. The policy is
+    // resolved from the launcher-written environment, so a profile that 'wants'
+    // bash or a writer does not get one — the profile can narrow the policy but
+    // cannot widen it.
+    const reviewPolicy = reviewPolicyFromEnv();
+    if (reviewPolicy) {
+      if (isSpecOnlyDeniedTool(event.toolName)) {
+        return {
+          block: true,
+          reason: `${event.toolName} is not available to a spec-only reviewer. You have read instruments and \`spec_review_submit\`.`,
+        };
+      }
+      if (READ_PATH_TOOLS.has(event.toolName)) {
+        let sessionDir: string | null = null;
+        try {
+          sessionDir = ctx.sessionManager.getSessionDir();
+        } catch {
+          sessionDir = null;
+        }
+        const cwd = (ctx as any).cwd || process.cwd();
+        for (const target of readTargets(event.toolName, event.input)) {
+          const problem = pathPolicyProblem(target, {
+            cwd,
+            roots: reviewPolicy.roots.length ? reviewPolicy.roots : [cwd],
+            deny: sessionDir ? [sessionDir] : [],
+          });
+          if (problem) return { block: true, reason: problem };
+        }
+      }
+      return;
+    }
+
+    if (!isChildSession) {
+      // Independence is a fact about who touched the lane, so the parent's own
+      // writes are recorded as they happen. Only `write`/`edit` are exact; a shell
+      // command can write anywhere, which is why the review also computes the diff
+      // from git instead of trusting this log as proof.
+      if (AUTHOR_WRITE_TOOLS.has(event.toolName)) {
+        for (const path of authorWrittenPaths(event.input)) {
+          registry.recordAuthorWrite({ path, tool: event.toolName, at: new Date(now()).toISOString() });
+        }
+        persistState();
+      }
+      return;
+    }
+    if (!event.toolName.startsWith("orch_")) return;
     return {
       block: true,
       reason: `${event.toolName} is parent-only: this session is a delegated child. Report back with caller_ping or subagent_done instead.`,
     };
   });
+
+  /** Tools whose input names a filesystem path a reviewer might read. */
+  const READ_PATH_TOOLS = new Set(["read", "grep", "find", "ls", "ffgrep", "fffind"]);
+
+  /** Files a write/edit call names. Kept next to the audit that consumes it. */
+  const AUTHOR_WRITE_TOOLS = new Set(["write", "edit", "multi_edit", "multiedit", "apply_patch", "applypatch", "patch"]);
+  function authorWrittenPaths(input: any): string[] {
+    const paths: string[] = [];
+    for (const key of ["path", "file_path", "filePath"]) {
+      if (typeof input?.[key] === "string" && input[key].trim()) paths.push(input[key]);
+    }
+    if (Array.isArray(input?.paths)) {
+      paths.push(...input.paths.filter((value: unknown): value is string => typeof value === "string"));
+    }
+    if (Array.isArray(input?.edits)) {
+      for (const edit of input.edits) if (typeof edit?.path === "string" && edit.path.trim()) paths.push(edit.path);
+    }
+    return paths;
+  }
 
   // ── Child lifecycle ───────────────────────────────────────────────────────
 
@@ -361,8 +1220,20 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     laneFiles: string[],
     handoffId?: string,
     budgetMs?: number,
+    frozenSpec?: { criteria?: string[]; revision?: number },
+    /**
+     * Extra registry facts for this row.
+     *
+     * Kept as a narrow pick rather than a partial row: identity and lifecycle
+     * fields are set by the caller above, and letting a caller overwrite them
+     * would reintroduce the ghost-row class of bug this registry was rewritten to
+     * remove.
+     */
+    meta?: Pick<ScopedChild, "purpose" | "reviewRunId" | "reviewLens" | "targetHash">,
   ) {
-    registry.registerChild({
+    // One row per session file: a resume supersedes the previous row instead of
+    // forking a second "running" ghost that only the newest row can update.
+    const superseded = registry.registerChild({
       id: running.id,
       name: running.name,
       agent: running.agent,
@@ -374,16 +1245,34 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       lastMilestoneFiles: [],
       updatedAt: new Date().toISOString(),
       task: running.task,
-      startedAt: Date.now(),
+      startedAt: now(),
       budgetMs: budgetMs ?? DEFAULT_BUDGET_MS,
       stallStrikes: 0,
       launchScriptFile: running.launchScriptFile,
+      interactive: running.interactive,
+      autoExit: running.autoExit,
+      watchdog: { trip: null, interrupts: 0 },
       ...(handoffId ? { handoffId } : {}),
+      ...(meta ? { ...meta, purpose: meta.purpose ?? "implementation" } : {}),
+      // Freeze the criteria at spawn: the review judges these, not a spec that
+      // was rewritten after the child ran.
+      ...(frozenSpec?.criteria?.length
+        ? {
+            frozenCriteria: [...frozenSpec.criteria],
+            handoffRevision: frozenSpec.revision ?? 1,
+            specFrozenAt: new Date(now()).toISOString(),
+          }
+        : {}),
     });
+    // Abort the superseded watchers BEFORE installing the new handle, or the old
+    // abort function is overwritten and leaks — the bug that let a previous run
+    // keep writing status for the same session file.
+    for (const old of superseded) detachWatcher(old.sessionFile);
+    detachWatcher(running.sessionFile);
     persistState();
 
     const controller = new AbortController();
-    activeWatchers.set(running.sessionFile, () => controller.abort());
+    activeWatchers.set(running.sessionFile, { id: running.id, abort: () => controller.abort() });
 
     void watchSubagent(running, {
       client: client as any,
@@ -391,29 +1280,55 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       signal: controller.signal,
     })
       .then((outcome: SubagentOutcome) => {
-        activeWatchers.delete(running.sessionFile);
+        releaseWatcher(running.sessionFile, running.id);
         handleOutcome(running, scope, outcome);
       })
       .catch((error: any) => {
-        activeWatchers.delete(running.sessionFile);
-        registry.updateStatus(running.sessionFile, "failed");
-        pi.sendMessage(
-          {
-            customType: "subagent_result",
-            content: `Subagent "${running.name}" watcher error: ${error?.message ?? String(error)}`,
-            display: true,
-            details: { id: running.id, name: running.name, scope, error: String(error?.message ?? error) },
-          },
-          { triggerTurn: true, deliverAs: "steer" },
-        );
+        releaseWatcher(running.sessionFile, running.id);
+        // No watcher means nobody will ever report this child. `failed` used to
+        // be invisible to both the watchdog and startup reconciliation, so the
+        // pane kept running unowned. Settle it and report what was observed.
+        void (async () => {
+          if (!ownsRow(running)) return;
+          const target = registry.getChildBySession(running.sessionFile);
+          const settled = target ? await settleChild(target, "watcher-error") : null;
+          pi.sendMessage(
+            {
+              customType: "subagent_result",
+              content:
+                `Subagent "${running.name}" watcher error: ${error?.message ?? String(error)}. `
+                + (settled?.ok
+                  ? "Its pane was closed instead of leaving an unwatched process behind."
+                  : `Its pane could NOT be closed${settled ? `: ${settled.reason}` : ""} — it stays under watchdog retry (orch_close also works).`),
+              display: true,
+              details: {
+                id: running.id,
+                name: running.name,
+                scope,
+                error: String(error?.message ?? error),
+                closed: settled?.ok ?? false,
+              },
+            },
+            // `followUp`, not `steer`: an error notice is not a mid-turn correction.
+            { triggerTurn: true, deliverAs: "followUp" },
+          );
+        })();
       });
   }
 
   function handleOutcome(running: RunningSubagent, scope: string, outcome: SubagentOutcome) {
+    // Ownership check: a superseded attempt must not speak for the current row.
+    // Without it, an aborted watcher from a resume's old run deleted the new
+    // abort handle and closed the NEW row (same session file, different id),
+    // leaving its pane running unwatched.
+    const current = registry.getChildById(running.id);
+    if (!current || current.sessionFile !== running.sessionFile) return;
     if (outcome.kind === "cancelled") {
-      registry.updateStatus(running.sessionFile, "closed");
+      if (current.status !== "closed") registry.closeChild(running.sessionFile, "scope-cancelled");
       return;
     }
+    // A terminal transition wins over a late report: never resurrect a closed row.
+    if (current.status === "closed") return;
 
     if (outcome.kind === "ping") {
       // A child that asked a question is *paused*, not failed. It stays in the
@@ -428,6 +1343,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         sessionFile: running.sessionFile,
         question: outcome.message,
       });
+      // The blocked transition and the new escalation are both dashboard state.
+      publishDashboard();
       pi.appendEntry(ESCALATION_TYPE, { id: escalation.id, childId: running.id, stage: escalation.stage });
       pi.sendMessage(
         {
@@ -520,6 +1437,483 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     return undefined;
   }
 
+  // ── spec review: independent readers of a pinned document ───────────────────
+  //
+  // The EGM property this implements is narrow and worth restating: a specification
+  // is judged by readers who did not write it and cannot consult the author. The
+  // pinned snapshot travels *inside* the reviewer's ticket, so the reviewer needs
+  // no artifact reader and cannot see a sibling's report, a global note, or the
+  // parent transcript. `orch_spec_review` is the parent's whole surface: start,
+  // collect, resolve, status, cancel.
+
+  /** Reports are control-plane files: written by the child's submit tool, read by the parent. */
+  function reviewReportDir(ctx: ExtensionContext, runId: string): string {
+    return join(artifactsBase(ctx), ctx.sessionManager.getSessionId(), "spec-reviews", runId);
+  }
+
+  /** Largest document we will pin; a 10 MB blob is not a reviewable specification. */
+  const MAX_PINNED_CHARS = 512 * 1024;
+
+  /**
+   * Read a workspace artifact's exact content.
+   *
+   * Branch first, then the sidecar the artifact extension writes for scoped specs
+   * — those are deliberately kept off the branch, so a branch-only read would
+   * report "no such artifact" for a handoff spec that exists.
+   */
+  function readArtifactForReview(ctx: ExtensionContext, id: string): { title: string; content: string } | null {
+    let art = lookupArtifact(id, recordsFromBranch(ctx.sessionManager.getBranch()));
+    if (!art) {
+      const sessionFile = (ctx.sessionManager as any).getSessionFile?.();
+      if (typeof sessionFile === "string" && sessionFile) {
+        const path = artifactSidecarPath(sessionFile, sanitizeArtifactId(id));
+        if (existsSync(path)) {
+          try {
+            art = artifactFromRecord(JSON.parse(readFileSync(path, "utf8")));
+          } catch {
+            art = undefined;
+          }
+        }
+      }
+    }
+    if (!art) return null;
+    if (art.content.length > MAX_PINNED_CHARS) {
+      throw new Error(`Artifact [${art.id}] is ${art.content.length} chars; the review cap is ${MAX_PINNED_CHARS}. Narrow the document first.`);
+    }
+    return { title: art.title, content: art.content };
+  }
+
+  /** Re-read whatever the run was pinned from, so staleness is a fact and not a guess. */
+  function currentReviewContent(ctx: ExtensionContext, run: ReviewRun): string | null {
+    try {
+      if (run.target.kind === "artifact") {
+        return readArtifactForReview(ctx, run.target.ref)?.content ?? null;
+      }
+      const path = resolve((ctx as any).cwd || process.cwd(), run.target.ref);
+      if (statSync(path).size > MAX_PINNED_CHARS) return null;
+      return readFileSync(path, "utf8");
+    } catch {
+      return null;
+    }
+  }
+
+  function repoHead(cwd: string): string | null {
+    try {
+      return String(execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })).trim();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Submit tool for a spec-only reviewer.
+   *
+   * Registered in every process so the child has it, but inert unless the launcher
+   * wrote a complete policy: an ordinary session that finds this tool cannot use it
+   * to file a review into somebody else's run.
+   */
+  pi.registerTool({
+    name: "spec_review_submit",
+    label: "Submit Specification Review",
+    description:
+      "Submit your independent specification review. Only available in a spec-only reviewer session; the run, lens and pinned revision come from your session, not from arguments.",
+    parameters: Type.Object({
+      verdict: Type.Optional(
+        Type.Union([Type.Literal("clean"), Type.Literal("findings"), Type.Literal("blocked")], {
+          description: "Optional self-description. The gate derives readiness from findings, not from this label.",
+        }),
+      ),
+      summary: Type.String({ minLength: 1, maxLength: 4000, description: "2-4 sentences: what you judged and what you concluded." }),
+      findings: Type.Array(
+        Type.Object({
+          id: Type.Optional(Type.String({ maxLength: 80, description: "Optional stable id; derived from your lens if omitted (F-<lens>-<n>)." })),
+          severity: Type.Union([Type.Literal("blocker"), Type.Literal("major"), Type.Literal("nit")]),
+          location: Type.String({ minLength: 1, description: "Section heading or line number inside the pinned document." }),
+          discrepancy: Type.String({ minLength: 1, description: "What is wrong or missing." }),
+          rationale: Type.String({ minLength: 1, description: "Why it matters for implementation." }),
+          references: Type.Optional(Type.Array(Type.String({ description: "Permitted repository path supporting the finding." }))),
+          suggestion: Type.Optional(Type.String({ description: "Optional concrete replacement or addition." })),
+        }),
+        { description: "Findings for your lens. An empty array is a valid clean answer." },
+      ),
+      missingContext: Type.Optional(
+        Type.Array(Type.String({ description: "Anything you needed and could not find in the document or permitted paths." })),
+      ),
+    }),
+    async execute(_toolCallId, params) {
+      const policy = reviewPolicyFromEnv();
+      if (!policy) {
+        throw new Error(
+          "spec_review_submit is only available to a spec-only reviewer child. The orchestrator collects reports with orch_spec_review.",
+        );
+      }
+      if (!isReviewLens(policy.lens)) {
+        throw new Error(`This reviewer session has an unknown lens (${policy.lens}); refusing to file a report.`);
+      }
+      const lens = policy.lens as ReviewLens;
+      const parsed = parseReviewerReport(
+        {
+          version: 1,
+          runId: policy.runId,
+          lens,
+          targetHash: policy.targetHash,
+          summary: params.summary,
+          findings: params.findings ?? [],
+          ...(params.missingContext?.length ? { missingContext: params.missingContext } : {}),
+          submittedAt: new Date(now()).toISOString(),
+        },
+        { runId: policy.runId, lens, targetHash: policy.targetHash },
+      );
+      if (!parsed.ok || !parsed.report) {
+        throw new Error(`Report rejected by the review gate:\n${parsed.problems.map((problem) => `- ${problem}`).join("\n")}`);
+      }
+      const file = join(policy.reportDir, `${lens}.json`);
+      const temp = `${file}.${process.pid}.tmp`;
+      mkdirSync(policy.reportDir, { recursive: true, mode: 0o700 });
+      writeFileSync(temp, JSON.stringify(parsed.report, null, 2), { mode: 0o600 });
+      renameSync(temp, file);
+      const counts = parsed.report.findings.reduce(
+        (acc, finding) => ({ ...acc, [finding.severity]: acc[finding.severity] + 1 }),
+        { blocker: 0, major: 0, nit: 0 } as Record<string, number>,
+      );
+      return text(
+        [
+          `Review submitted for ${policy.runId} (${lens}).`,
+          `${parsed.report.findings.length} finding(s): ${counts.blocker} blocker, ${counts.major} major, ${counts.nit} nit.`,
+          `The orchestrator collects it with orch_spec_review; you are done unless it resumes you with a question.`,
+        ].join("\n"),
+        { runId: policy.runId, lens, findings: parsed.report.findings.length, ...counts },
+      );
+    },
+  });
+
+  // ── orch_spec_review — the parent's side of the same contract ───────────────
+  pi.registerTool({
+    name: "orch_spec_review",
+    label: "Independent Spec Review",
+    description:
+      "Run or resolve an independent, read-only review of a specification before implementation. Pins the document by content hash, launches isolated reviewer children (one per lens), validates their findings, and records readiness. Actions: start | collect | resolve | status | cancel.",
+    parameters: Type.Object({
+      action: Type.Union([
+        Type.Literal("start"),
+        Type.Literal("collect"),
+        Type.Literal("resolve"),
+        Type.Literal("status"),
+        Type.Literal("cancel"),
+      ], { description: "start = pin + launch reviewers; collect = read submitted reports; resolve = record dispositions and readiness; status = read; cancel = stop the run." }),
+      targetArtifactId: Type.Optional(Type.String({ description: "Workspace artifact to review (preferred while the design is still an artifact)." })),
+      targetFile: Type.Optional(Type.String({ description: "Repository file to review, relative to the working directory." })),
+      title: Type.Optional(Type.String({ description: "Human title for the pinned target." })),
+      preset: Type.Optional(Type.Union([Type.Literal("quick"), Type.Literal("architecture")], {
+        description: "quick = comprehension + readiness (default). architecture = zoom-out, comprehension, critic, readiness.",
+      })),
+      references: Type.Optional(Type.Array(Type.String(), { description: "Repository paths reviewers may consult. Defaults to none." })),
+      focus: Type.Optional(Type.String({ description: "Optional extra instruction. Never include author reasoning: reviewers must judge the document, not your intent." })),
+      budgetMinutes: Type.Optional(Type.Number({ description: "Wall-clock budget per reviewer (default 20)." })),
+      runId: Type.Optional(Type.String({ description: "Existing review run id, for collect/resolve/status/cancel." })),
+      dispositions: Type.Optional(
+        Type.Array(
+          Type.Object({
+            findingId: Type.String({ minLength: 1 }),
+            action: Type.Union([Type.Literal("fix"), Type.Literal("contested"), Type.Literal("accepted"), Type.Literal("unresolved")]),
+            rationale: Type.Optional(Type.String({ description: "Required for accepted/contested: why the finding is a trade-off or wrong." })),
+            userConfirmed: Type.Optional(Type.Boolean({ description: "Set only after asking the user: required to accept a blocker." })),
+          }),
+          { description: "For action=resolve: how each finding was handled." },
+        ),
+      ),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (isChildSession) {
+        return text("orch_spec_review is parent-only.", { error: "parent-only" });
+      }
+      const runId = params.runId ? String(params.runId).trim() : undefined;
+      const lookup = (id: string) => specReviews.get(id);
+
+      if (params.action === "start") {
+        if (registry.isPaused()) {
+          return text("The orchestrator is paused: no reviewers were launched.", { error: "orchestrator-paused" });
+        }
+        const preset = params.preset && isReviewPreset(params.preset) ? params.preset : REVIEW_PRESET_QUICK;
+        const cwd = (ctx as any).cwd || process.cwd();
+        if (!ctx.sessionManager.getSessionFile()) {
+          return text("Error: no session file, so reviewer children cannot be tracked.", { error: "no-session-file" });
+        }
+
+        let source: { title: string; content: string } | null = null;
+        let kind: "artifact" | "file" = "artifact";
+        let ref = "";
+        try {
+          if (params.targetArtifactId) {
+            ref = params.targetArtifactId.trim();
+            source = readArtifactForReview(ctx, ref);
+            if (!source) {
+              return text(`No artifact [${ref}] in this session's catalog. Save the design first with artifact_save.`, { error: "unknown-artifact" });
+            }
+          } else if (params.targetFile) {
+            kind = "file";
+            ref = params.targetFile.trim();
+            const path = resolve(cwd, ref);
+            if (statSync(path).size > MAX_PINNED_CHARS) {
+              return text(`Refusing to pin ${ref}: larger than ${MAX_PINNED_CHARS} characters.`, { error: "target-too-large" });
+            }
+            source = { title: ref, content: readFileSync(path, "utf8") };
+          } else {
+            return text("Give a target: targetArtifactId (preferred) or targetFile.", { error: "no-target" });
+          }
+        } catch (error: any) {
+          return text(`Could not read the review target: ${error?.message ?? error}`, { error: "target-unreadable" });
+        }
+
+        let target;
+        try {
+          target = pinTarget({
+            kind,
+            ref,
+            title: params.title ?? source.title,
+            content: source.content,
+            references: params.references ?? [],
+            repoBaseline: { head: repoHead(cwd), dirty: (reviewSeams.changedFiles ?? gitChangedFiles)(cwd) },
+            now: new Date(now()),
+          });
+        } catch (error: any) {
+          return text(`Refusing to pin the target: ${error?.message ?? error}`, { error: "pin-failed" });
+        }
+
+        // A rerun over the same content is a genuinely new attempt: the id carries
+        // a salt so the previous run's reports and dispositions stay auditable
+        // instead of being overwritten by a second opinion.
+        const run = openReviewRun({ target, preset, now: new Date(now()), salt: String(specReviews.size + 1) });
+        const dir = reviewReportDir(ctx, run.id);
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+        chmodPrivate(dir);
+
+        const parentSessionId = ctx.sessionManager.getSessionId();
+        const parentSessionFile = ctx.sessionManager.getSessionFile()!;
+        const subagentSettings = loadSubagentSettings(cwd);
+        const budgetMinutes = Math.max(1, params.budgetMinutes ?? 20);
+        const tools = [...SPEC_ONLY_TOOLS].join(",");
+
+        const launched: string[] = [];
+        const failed: string[] = [];
+        for (const slot of run.reviewers) {
+          const ticket = renderReviewerTicket({
+            runId: run.id,
+            lens: slot.lens,
+            target,
+            focus: params.focus,
+            policy: { roots: [cwd] },
+          }) + `\n${renderPolicyForReviewer({ lens: slot.lens, roots: [cwd] })}\n`;
+          let plan: LaunchPlan;
+          try {
+            plan = buildLaunchPlan(
+              {
+                name: `spec-${slot.lens}`,
+                task: ticket,
+                tools,
+                policy: "spec-only",
+                review: { runId: run.id, lens: slot.lens, targetHash: target.contentHash, dir, roots: [cwd] },
+                scope: slot.scope,
+              },
+              null,
+              {
+                sessionDir: ctx.sessionManager.getSessionDir(),
+                sessionId: `${parentSessionId}-${run.id}-${slot.lens}`,
+                parentSessionFile,
+                parentCwd: cwd,
+                defaultModel: subagentSettings.defaultModel,
+                env: process.env,
+              },
+            );
+          } catch (error: any) {
+            failed.push(`${slot.lens}: ${error?.message ?? error}`);
+            continue;
+          }
+
+          try {
+            materializePlan(plan);
+            const started = await client.paneStart(plan.paneStart);
+            registry.recordPane(started.paneId);
+            armWatcher(
+              {
+                id: plan.id,
+                name: plan.name,
+                task: ticket,
+                paneId: started.paneId,
+                startTime: Date.now(),
+                sessionFile: plan.sessionFile,
+                launchScriptFile: plan.launchScriptFile,
+                interactive: plan.interactive,
+                autoExit: plan.autoExit,
+                scope: slot.scope,
+              },
+              slot.scope,
+              [],
+              undefined,
+              budgetMinutes * 60_000,
+              undefined,
+              { purpose: "review", reviewRunId: run.id, reviewLens: slot.lens, targetHash: target.contentHash },
+            );
+            Object.assign(slot, {
+              status: "running",
+              childId: plan.id,
+              sessionFile: plan.sessionFile,
+              paneId: started.paneId,
+              updatedAt: new Date(now()).toISOString(),
+            });
+            launched.push(slot.lens);
+          } catch (error: any) {
+            slot.status = "failed";
+            slot.reason = `launch failed: ${error?.message ?? error}`;
+            slot.updatedAt = new Date(now()).toISOString();
+            failed.push(`${slot.lens}: ${slot.reason}`);
+          }
+        }
+
+        specReviews.set(run.id, run);
+        persistState();
+        return text(
+          [
+            renderRunSummary(run),
+            `Pinned ${target.kind} \`${target.ref}\` at ${target.contentHash.slice(0, 12)}.`,
+            launched.length ? `Launched: ${launched.join(", ")}.` : "No reviewer was launched.",
+            ...(failed.length ? [`Failed: ${failed.join("; ")}`] : []),
+            ``,
+            `Reviewers are isolated: no parent transcript, no artifacts, no write tool, no shell.`,
+            `When they finish, run orch_spec_review({ action: "collect", runId: "${run.id}" }).`,
+          ].join("\n"),
+          { runId: run.id, targetHash: target.contentHash, preset, launched, failed },
+        );
+      }
+
+      if (!runId) {
+        const known = [...specReviews.keys()];
+        return text(
+          `Give a runId. ${known.length ? `Known runs: ${known.join(", ")}.` : "No spec review has been started in this session."}`,
+          { error: "run-required", known },
+        );
+      }
+      const run = lookup(runId);
+      if (!run) {
+        return text(`No spec review \`${runId}\` in this session. Known runs: ${[...specReviews.keys()].join(", ") || "(none)"}.`, {
+          error: "unknown-run",
+        });
+      }
+
+      if (params.action === "status") {
+        // Status re-checks the document: a readiness badge that outlives the text
+        // it approved is the failure this whole mechanism exists to prevent.
+        const stale = stalenessProblem(run, currentReviewContent(ctx, run));
+        return text(
+          renderRunSummary(run) + (stale ? `\nStale: ${stale}. Start a new review of the revised document.` : ""),
+          { runId: run.id, status: run.status, ready: run.readiness.ready, stale: stale ?? null },
+        );
+      }
+
+      if (params.action === "cancel") {
+        for (const slot of run.reviewers) {
+          if (slot.status !== "running") continue;
+          const child = slot.sessionFile ? registry.getChildBySession(slot.sessionFile) : undefined;
+          if (child) await settleChild(child, "scope-cancelled");
+          slot.status = "failed";
+          slot.reason = "run cancelled";
+        }
+        const cancelled: ReviewRun = {
+          ...run,
+          status: "cancelled",
+          updatedAt: new Date(now()).toISOString(),
+          readiness: { ...run.readiness, ready: false, reasons: ["the review run was cancelled"] },
+        };
+        specReviews.set(cancelled.id, cancelled);
+        persistState();
+        return text(renderRunSummary(cancelled), { runId: cancelled.id, status: cancelled.status });
+      }
+
+      if (params.action === "resolve") {
+        const result = applyDispositions(
+          run,
+          (params.dispositions ?? []).map((entry) => ({
+            findingId: entry.findingId,
+            action: entry.action,
+            rationale: entry.rationale,
+            userConfirmed: entry.userConfirmed,
+          })),
+          { now: new Date(now()) },
+        );
+        if (!result.ok) {
+          return text(
+            `Dispositions refused — nothing was recorded:\n${result.problems.map((problem) => `- ${problem}`).join("\n")}`,
+            { error: "invalid-dispositions", runId: run.id, problems: result.problems },
+          );
+        }
+        specReviews.set(result.run.id, result.run);
+        persistState();
+        return text(renderRunSummary(result.run), {
+          runId: result.run.id,
+          ready: result.run.readiness.ready,
+          status: result.run.status,
+          counts: result.run.readiness.counts,
+        });
+      }
+
+      // collect
+      const dir = reviewReportDir(ctx, run.id);
+      const problems: string[] = [];
+      for (const slot of run.reviewers) {
+        if (slot.status === "submitted") continue;
+        const file = join(dir, `${slot.lens}.json`);
+        if (!existsSync(file)) {
+          if (slot.status === "running") problems.push(`${slot.lens}: no report yet`);
+          continue;
+        }
+        let raw: unknown;
+        try {
+          raw = JSON.parse(readFileSync(file, "utf8"));
+        } catch (error: any) {
+          slot.status = "failed";
+          slot.reason = `report is not valid JSON: ${error?.message ?? error}`;
+          slot.updatedAt = new Date(now()).toISOString();
+          problems.push(`${slot.lens}: ${slot.reason}`);
+          continue;
+        }
+        const parsed = parseReviewerReport(raw, { runId: run.id, lens: slot.lens, targetHash: run.target.contentHash });
+        if (!parsed.ok || !parsed.report) {
+          slot.status = "failed";
+          slot.reason = `invalid report: ${parsed.problems.join("; ")}`;
+          slot.updatedAt = new Date(now()).toISOString();
+          problems.push(`${slot.lens}: ${slot.reason}`);
+          continue;
+        }
+        run.reports[slot.lens] = parsed.report;
+        slot.status = "submitted";
+        slot.reportPath = file;
+        slot.reason = undefined;
+        slot.updatedAt = new Date(now()).toISOString();
+      }
+
+      const allIn = run.reviewers.every((slot) => slot.status === "submitted");
+      const next = allIn
+        ? settleReadiness({ ...run, status: "collected" }, { now: new Date(now()) })
+        : {
+            ...run,
+            readiness: { ...evaluateReadiness(run, { now: new Date(now()) }), decidedAt: new Date(now()).toISOString() },
+            updatedAt: new Date(now()).toISOString(),
+          };
+      specReviews.set(next.id, next);
+      persistState();
+      return text(
+        [renderRunSummary(next), ...(problems.length ? [``, `Waiting on:`, ...problems.map((p) => `- ${p}`)] : [])].join("\n"),
+        {
+          runId: next.id,
+          status: next.status,
+          ready: next.readiness.ready,
+          counts: next.readiness.counts,
+          waiting: problems,
+        },
+      );
+    },
+  });
+
   // ── orch_handoff — the orchestrator's first act ─────────────────────────────
   pi.registerTool({
     name: "orch_handoff",
@@ -543,7 +1937,19 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       interfaces: Type.Optional(Type.Array(Type.String(), { description: "Contracts another work unit consumes; changing them silently breaks it." })),
       guidance: Type.Optional(Type.String({ description: "Conventions, prior decisions, or notes from the orchestrator." })),
       reportShape: Type.Optional(Type.String({ description: "What the report must contain beyond prose." })),
+      verifyCommand: Type.Optional(
+        Type.String({
+          description:
+            "Test/typecheck command that decides the review; orch_check runs it and returns evidenceRefs. Declare it now: a command chosen after seeing the diff can be chosen to pass.",
+        }),
+      ),
       vision: Type.Optional(Type.String({ description: "Global vision this spec refines. It must not contradict it." })),
+      designRef: Type.Optional(
+        Type.Object({
+          runId: Type.String({ description: "Spec review run id from orch_spec_review." }),
+          targetHash: Type.String({ description: "The reviewed content hash, from orch_spec_review status." }),
+        }, { description: "Bind this work unit to an independent specification review. orch_spawn refuses a run that is not ready or whose document changed." }),
+      ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       // A `**/*`-style lane is the whole repo: steering and review cannot be
@@ -570,6 +1976,23 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       let record: HandoffRecord;
       let path: string;
       try {
+        // A design reference is verified before the handoff exists. Failing at
+        // spawn instead would leave a spec in the registry that can never be used.
+        if (params.designRef) {
+          const reviewed = specReviews.get(String(params.designRef.runId).trim());
+          const problem = designRefProblem(
+            { runId: String(params.designRef.runId).trim(), targetHash: String(params.designRef.targetHash).trim().toLowerCase() },
+            (id) => specReviews.get(id),
+            reviewed ? currentReviewContent(ctx, reviewed) : null,
+          );
+          if (problem) {
+            return text(
+              `Refusing designRef: ${problem}. Run orch_spec_review({ action: "status", runId }) for the current state, ` +
+                `or resolve the findings first.`,
+              { error: "design-ref-not-ready", runId: params.designRef.runId },
+            );
+          }
+        }
         const written = writeHandoff(artifactsBase(ctx), ctx.sessionManager.getSessionId(), {
           scope: params.scope,
           goal: params.goal,
@@ -579,7 +2002,11 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           interfaces: params.interfaces,
           guidance: params.guidance,
           reportShape: params.reportShape,
+          verifyCommand: params.verifyCommand,
           vision: params.vision,
+          designRef: params.designRef
+            ? { runId: String(params.designRef.runId).trim(), targetHash: String(params.designRef.targetHash).trim().toLowerCase() }
+            : undefined,
         } as HandoffSpec);
         record = written.record;
         path = written.path;
@@ -657,7 +2084,12 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     description:
       "Spawn a worker with exactly one handoff spec inlined into its ticket. The child cannot see any other work unit's spec, scope name, or paths.",
     parameters: Type.Object({
-      name: Type.String({ description: "Display name for the worker." }),
+      name: Type.Optional(
+        Type.String({
+          description:
+            "Display name for the worker. Optional: omit it and a Javanese given name plus role is derived from the handoff scope (e.g. 'Bima · Skeleton Builder'). An explicit human name is kept; a slug is replaced.",
+        }),
+      ),
       task: Type.String({ description: "The specific assignment inside this handoff. Must stay inside the handoff's lane." }),
       handoffId: Type.String({ description: "Handoff id returned by orch_handoff (its scope is accepted too)." }),
       agent: Type.Optional(Type.String({ description: "Agent profile (e.g. 'worker')." })),
@@ -668,6 +2100,15 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       budgetMinutes: Type.Optional(Type.Number({ description: "Wall-clock budget in minutes. The watchdog interrupts the child at the budget and asks the parent to decide. Default 30." })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (registry.isPaused()) {
+        // A pause that still accepts work is not a pause. Checked before the
+        // handoff lookup so a refused spawn writes nothing at all.
+        return text(
+          `The orchestrator is paused (/orch-pause): no child was spawned and nothing was written. `
+            + `${registry.getPausedChildren().length} paused child(ren) are waiting for /orch-resume.`,
+          { error: "orchestrator-paused", paused: registry.getPausedChildren().map((c) => c.id) },
+        );
+      }
       const handoff = resolveHandoff(params);
       if (!handoff) {
         return text(
@@ -678,10 +2119,60 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       }
 
       const scope = handoff.scope;
-      const runningInScope = registry.getRunningChildren().filter((c) => c.scope === scope);
-      if (runningInScope.length > 0) {
+
+      // ── human naming ─────────────────────────────────────────────────────
+      // A worker is a person, not a slug. The given name is derived here (from an
+      // explicit human name when the author supplied one, otherwise from the
+      // handoff scope, which is the only stable identifier before the launch plan
+      // mints the child id), and the composed label is what the pane, the prompt,
+      // the registry and the dashboard all read. `scope` stays the identity key.
+      const requestedName = typeof params.name === "string" ? params.name.trim() : "";
+      const givenName = naming.isHumanName(requestedName)
+        ? naming.givenNamePart(requestedName)
+        : naming.givenNameFor(`scope:${scope}`);
+      const displayName = naming.displayName({ name: givenName, scope }, { givenName, max: 44 });
+
+      // ── the design gate ──────────────────────────────────────────────────
+      // A reviewed design is only useful if the worker is launched against the
+      // revision that was actually reviewed. Re-authoring the design after review
+      // would otherwise leave an approval attached to text nobody read, so the
+      // current content is re-read here rather than trusted from the record.
+      if (handoff.designRef) {
+        const run = specReviews.get(handoff.designRef.runId);
+        const problem = designRefProblem(
+          handoff.designRef,
+          (id) => specReviews.get(id),
+          run ? currentReviewContent(ctx, run) : null,
+        );
+        if (problem) {
+          return text(
+            `Refusing to spawn \"${displayName}\": ${problem}. ` +
+              `Resolve it with orch_spec_review, or re-author the handoff without designRef if this unit genuinely does not depend on a reviewed design.`,
+            { error: "design-ref-not-ready", scope, designRef: handoff.designRef },
+          );
+        }
+      }
+      const scopeRows = registry.getRunningChildren().filter((c) => c.scope === scope);
+      // Busy is a question about live panes, not about rows: a row whose pane is
+      // gone is not a second writer, and blocking on it deadlocks the scope. A
+      // row whose pane is alive is busy — including one the registry thinks is
+      // closed, which is exactly how two agents ended up in one lane.
+      const liveInScope: ScopedChild[] = [];
+      for (const row of scopeRows) {
+        if (!row.paneId) {
+          liveInScope.push(row);
+          continue;
+        }
+        const liveness = await paneLiveness(row.paneId);
+        if (liveness.state === "gone") {
+          await settleChild(row, "pane-gone");
+          continue;
+        }
+        liveInScope.push(row);
+      }
+      if (liveInScope.length > 0) {
         return text(
-          `Scope "${scope}" already has a running child (${runningInScope.map((c) => c.name).join(", ")}). ` +
+          `Scope "${scope}" already has a running child (${liveInScope.map((c) => c.name).join(", ")}). ` +
             `Two writers in one lane produce diffs nobody owns. Steer or finish it first.`,
           { error: "scope-busy", scope },
         );
@@ -725,7 +2216,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       try {
         plan = buildLaunchPlan(
           {
-            name: params.name,
+            name: displayName,
             task: ticket,
             agent: params.agent,
             model: params.model,
@@ -759,10 +2250,13 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       } catch (error: any) {
         return text(`Failed to start pane: ${error.message}`, { error: error.message });
       }
+      // Attribution for the orphan sweep: a pane this parent opened is ours even
+      // after its row is gone; a pane it never opened is never touched.
+      registry.recordPane(started.paneId);
 
       const running: RunningSubagent = {
         id: plan.id,
-        name: params.name,
+        name: displayName,
         task: params.task,
         agent: params.agent,
         paneId: started.paneId,
@@ -774,20 +2268,28 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         scope,
       };
 
-      armWatcher(running, scope, handoff.laneFiles, handoff.id, params.budgetMinutes ? params.budgetMinutes * 60_000 : undefined);
+      armWatcher(
+        running,
+        scope,
+        handoff.laneFiles,
+        handoff.id,
+        params.budgetMinutes ? params.budgetMinutes * 60_000 : undefined,
+        { criteria: handoff.acceptanceCriteria, revision: handoff.revision },
+      );
 
       return text(
         [
-          `Subagent "${params.name}" launched (scope: ${scope}, handoff: ${handoff.id}).`,
+          `Subagent "${displayName}" launched (scope: ${scope}, handoff: ${handoff.id}).`,
           `Pane: ${started.paneId}`,
           `Lane: ${handoff.laneFiles.join(", ")}`,
           ``,
           `The child holds this handoff only. It cannot see any other work unit.`,
+          `The scope (${scope}) is the identity: use it in orch_steer, orch_check and orch_review.`,
           `Do NOT guess results. The outcome (or a caller_ping escalation) arrives automatically.`,
         ].join("\n"),
         {
           id: running.id,
-          name: params.name,
+          name: displayName,
           scope,
           handoffId: handoff.id,
           status: "started",
@@ -798,6 +2300,145 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       );
     },
   });
+
+  /**
+   * The launch half of a resume, shared by `orch_resume` and by an answered
+   * escalation. One implementation, so "answer the child" cannot drift from
+   * "resume the child" — that drift produced a second pi process on one session
+   * file and a fresh registry row per answer.
+   */
+  async function startResume(
+    ctx: ExtensionContext,
+    params: { sessionPath: string; message?: string; name?: string; autoExit?: boolean },
+  ) {
+    const child = registry.getChildBySession(params.sessionPath);
+    const scope = child?.scope ?? "resumed";
+
+    // A resume of a session file that does not exist spawns an orphan pane
+    // bound to nothing — observed live when a stopped child was "resumed" and
+    // sat parked as a second instance of the same scope. Refuse instead.
+    if (!existsSync(params.sessionPath)) {
+      return text(
+        `Refused to resume: session file ${params.sessionPath} does not exist. ` +
+          `Check orch_running for what is actually active; if the scope was cancelled, close it out with orch_review instead of resuming it.`,
+        { error: "session-not-found", sessionPath: params.sessionPath },
+      );
+    }
+
+    // Two pi processes must never share one session file. Close the old pane and
+    // abort its watcher before starting the new one, so a resume supersedes the
+    // child instead of forking a second instance of the same scope.
+    if (child?.paneId) {
+      const before = await paneLiveness(child.paneId);
+      if (before.state === "unknown") {
+        // Two pi processes on one session file is the leak this guard exists for:
+        // an unreachable CLI is not proof that the old pane is gone.
+        return text(
+          `Refusing to resume "${child.name}": pane ${child.paneId} liveness is unknown (${before.reason}). `
+            + `Nothing was started — a second process on the same session file would leave one of them unowned.`,
+          { error: "resume-aborted", reason: "unknown-liveness", paneId: child.paneId },
+        );
+      }
+      if (before.state === "alive") {
+        try {
+          await client.paneClose(child.paneId);
+        } catch (error: any) {
+          const message = String(error?.message ?? error);
+          if (!/pane_not_found|not found/i.test(message)) {
+            // Positive evidence before a second pane. Reporting "resumed" while an
+            // old process still holds the session file is how a child became
+            // unaddressable — here the resume is refused instead.
+            const after = await paneLiveness(child.paneId);
+            if (after.state !== "gone") {
+              return text(
+                `Refusing to resume "${child.name}": closing its live pane ${child.paneId} failed (${message}). `
+                  + `Nothing was started. Close it with orch_close, then retry.`,
+                { error: "resume-aborted", reason: message, paneId: child.paneId },
+              );
+            }
+          }
+        }
+      }
+      detachWatcher(child.sessionFile);
+      // The resume supersedes this child: an answer to its old question must not
+      // be able to re-target the live row later.
+      closeEscalationsFor(child, "Child resumed; the previous question is superseded.");
+    }
+
+    // Stale sidecars from the previous run would complete the new watcher
+    // instantly with the old outcome. The launch planner documents this.
+    rmSync(`${params.sessionPath}.exit`, { force: true });
+    rmSync(`${params.sessionPath}.exitcode`, { force: true });
+
+    let plan;
+    try {
+      // buildResumeLaunchPlan takes (params, ctx) — two arguments. The previous
+      // call passed a third, shifting ctx into the params slot so every field
+      // read (ctx.env, ctx.sessionDir) came from the wrong object.
+      plan = buildResumeLaunchPlan(
+        {
+          sessionPath: params.sessionPath,
+          message: params.message,
+          name: params.name ?? child?.name ?? "Resumed Subagent",
+          autoExit: params.autoExit ?? true,
+        },
+        {
+          sessionDir: ctx.sessionManager.getSessionDir(),
+          sessionId: ctx.sessionManager.getSessionId(),
+          parentSessionFile: ctx.sessionManager.getSessionFile() ?? "",
+          parentCwd: ctx.cwd,
+          env: process.env,
+        },
+      );
+    } catch (error: any) {
+      return text(`Failed to resume subagent: ${error.message}`, { error: error.message });
+    }
+
+    for (const file of plan.files) {
+      mkdirSync(dirname(file.path), { recursive: true });
+      writeFileSync(file.path, file.content, "utf8");
+    }
+
+    let started;
+    try {
+      started = await client.paneStart(plan.paneStart);
+    } catch (error: any) {
+      return text(`Failed to start resumed pane: ${error.message}`, { error: error.message });
+    }
+    registry.recordPane(started.paneId);
+
+    const running: RunningSubagent = {
+      id: plan.id,
+      name: plan.name,
+      task: params.message ?? "Resumed session",
+      paneId: started.paneId,
+      startTime: now(),
+      sessionFile: plan.sessionFile,
+      launchScriptFile: plan.launchScriptFile,
+      interactive: plan.interactive,
+      autoExit: plan.autoExit,
+      scope,
+    };
+
+    armWatcher(
+      running,
+      scope,
+      child?.laneFiles ?? [],
+      child?.handoffId,
+      undefined,
+      child?.frozenCriteria?.length
+        ? { criteria: child.frozenCriteria, revision: child.handoffRevision ?? 1 }
+        : undefined,
+    );
+
+    return text(`Resumed "${running.name}" in pane ${started.paneId} (scope: ${scope}).`, {
+      id: running.id,
+      paneId: started.paneId,
+      sessionFile: running.sessionFile,
+      scope,
+      status: "started",
+    });
+  }
 
   // ── orch_resume ────────────────────────────────────────────────────────────
   pi.registerTool({
@@ -811,83 +2452,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       autoExit: Type.Optional(Type.Boolean({ description: "Whether the child auto-exits when its turn completes." })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const child = registry.getChildBySession(params.sessionPath);
-      const scope = child?.scope ?? "resumed";
-
-      // A resume of a session file that does not exist spawns an orphan pane
-      // bound to nothing — observed live when a stopped child was "resumed" and
-      // sat parked as a second instance of the same scope. Refuse instead.
-      if (!existsSync(params.sessionPath)) {
-        return text(
-          `Refused to resume: session file ${params.sessionPath} does not exist. ` +
-            `Check orch_running for what is actually active; if the scope was cancelled, close it out with orch_review instead of resuming it.`,
-          { error: "session-not-found", sessionPath: params.sessionPath },
-        );
-      }
-
-      // Stale sidecars from the previous run would complete the new watcher
-      // instantly with the old outcome. The launch planner documents this.
-      rmSync(`${params.sessionPath}.exit`, { force: true });
-      rmSync(`${params.sessionPath}.exitcode`, { force: true });
-
-      let plan;
-      try {
-        // buildResumeLaunchPlan takes (params, ctx) — two arguments. The previous
-        // call passed a third, shifting ctx into the params slot so every field
-        // read (ctx.env, ctx.sessionDir) came from the wrong object.
-        plan = buildResumeLaunchPlan(
-          {
-            sessionPath: params.sessionPath,
-            message: params.message,
-            name: params.name ?? child?.name ?? "Resumed Subagent",
-            autoExit: params.autoExit ?? true,
-          },
-          {
-            sessionDir: ctx.sessionManager.getSessionDir(),
-            sessionId: ctx.sessionManager.getSessionId(),
-            parentSessionFile: ctx.sessionManager.getSessionFile() ?? "",
-            parentCwd: ctx.cwd,
-            env: process.env,
-          },
-        );
-      } catch (error: any) {
-        return text(`Failed to resume subagent: ${error.message}`, { error: error.message });
-      }
-
-      for (const file of plan.files) {
-        mkdirSync(dirname(file.path), { recursive: true });
-        writeFileSync(file.path, file.content, "utf8");
-      }
-
-      let started;
-      try {
-        started = await client.paneStart(plan.paneStart);
-      } catch (error: any) {
-        return text(`Failed to start resumed pane: ${error.message}`, { error: error.message });
-      }
-
-      const running: RunningSubagent = {
-        id: plan.id,
-        name: plan.name,
-        task: params.message ?? "Resumed session",
-        paneId: started.paneId,
-        startTime: Date.now(),
-        sessionFile: plan.sessionFile,
-        launchScriptFile: plan.launchScriptFile,
-        interactive: plan.interactive,
-        autoExit: plan.autoExit,
-        scope,
-      };
-
-      armWatcher(running, scope, child?.laneFiles ?? [], child?.handoffId);
-
-      return text(`Resumed "${running.name}" in pane ${started.paneId} (scope: ${scope}).`, {
-        id: running.id,
-        paneId: started.paneId,
-        sessionFile: running.sessionFile,
-        scope,
-        status: "started",
-      });
+      return startResume(ctx, params);
     },
   });
 
@@ -895,31 +2460,145 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   pi.registerTool({
     name: "orch_interrupt",
     label: "Interrupt Orchestrator",
-    description: "Send Escape to a running child's active turn, keeping its pane, session, and watcher alive.",
+    description:
+      "Send Escape to a running child's active turn. By default the pane, session, and watcher are kept; pass close:true to end the child instead of parking it.",
     parameters: Type.Object({
       id: Type.Optional(Type.String({ description: "Target child id." })),
       name: Type.Optional(Type.String({ description: "Target child name." })),
       scope: Type.Optional(Type.String({ description: "Target child scope." })),
+      close: Type.Optional(
+        Type.Boolean({
+          description: "Close the pane and mark the child closed after the Escape (default false: pane and session are kept).",
+        }),
+      ),
     }),
     async execute(_toolCallId, params) {
       const target = findTarget(params);
-      if (!target?.paneId) {
+      if (!target) {
+        const stale = staleTarget(params);
+        if (stale) {
+          return text(
+            `No running child matched: "${stale.name}" [${stale.id}] is ${stale.status} (${stale.closeReason ?? "no reason recorded"}). `
+              + `Nothing was sent — a finished child is not a steering target.`,
+            { error: "stale-target", id: stale.id, status: stale.status, closeReason: stale.closeReason },
+          );
+        }
         return text(
-          `No running child matched. Running: ${describeRunning()}. A paused child cannot be interrupted — resume it with orch_resume.`,
+          `No child matched. Running: ${describeRunning()}. Tracked: ${describeTracked()}.`,
           { error: "no-target" },
         );
       }
+
+      // A row whose pane is already gone is not interruptible — reconcile it to
+      // closed instead of returning an error and leaving the ghost behind.
+      const liveness = target.paneId
+        ? await paneLiveness(target.paneId)
+        : ({ state: "gone", reason: "no pane recorded" } as const);
+      if (liveness.state === "unknown") {
+        return text(
+          `Cannot verify pane ${target.paneId} for "${target.name}" [${target.id}]: ${liveness.reason}. `
+            + `Nothing was sent and nothing was closed — an unreachable herdr is not a dead child.`,
+          { id: target.id, status: "unknown-liveness", error: liveness.reason },
+        );
+      }
+      if (liveness.state === "gone") {
+        const settled = await settleChild(target, "pane-gone");
+        return text(
+          `"${target.name}" [${target.id}] is already gone (${liveness.reason}). `
+            + (settled.ok ? `Row marked closed (${settled.paneState}). Nothing is parked.` : `Row could not be closed: ${settled.reason}.`),
+          { id: target.id, status: "already-gone", closed: settled.ok, paneState: settled.ok ? settled.paneState : "failed" },
+        );
+      }
+
       try {
         // Herdr key syntax is `esc`, not Pi's `Escape`. The previous spelling was
         // silently rejected, so "interrupt" never interrupted anything.
-        await client.paneSendKeys(target.paneId, ["esc"]);
-        return text(`Interrupted "${target.name}" [${target.id}] (scope: ${target.scope}). Pane and session kept.`, {
-          id: target.id,
-          status: "interrupted",
+        await client.paneSendKeys(target.paneId!, [INTERRUPT_KEY]);
+        registry.updateWatchdog(target.sessionFile, {
+          interruptSentAt: new Date(now()).toISOString(),
+          addInterrupt: true,
         });
       } catch (error: any) {
-        return text(`Failed to interrupt: ${error.message}`, { error: error.message });
+        const message = String(error?.message ?? error);
+        if (/pane_not_found|not found/i.test(message)) {
+          const settled = await settleChild(target, "pane-gone");
+          return text(
+            `"${target.name}" [${target.id}] vanished before the interrupt; the row is marked closed. Nothing is parked.`,
+            { id: target.id, status: "already-gone", closed: settled.ok },
+          );
+        }
+        return text(`Failed to interrupt: ${message}`, { error: message });
       }
+
+      if (params.close) {
+        const settled = await settleChild(target, "interrupted");
+        if (!settled.ok) {
+          return text(
+            `Interrupted "${target.name}" [${target.id}], but closing pane ${target.paneId} failed: ${settled.reason}. ` +
+              `The child is paused and still open; retry orch_close or resume it.`,
+            { id: target.id, status: "interrupted", closed: false, error: settled.reason },
+          );
+        }
+        return text(
+          `Interrupted "${target.name}" [${target.id}] (scope: ${target.scope}) and closed its pane (${settled.paneState}). Nothing is parked.`,
+          { id: target.id, status: "closed", paneState: settled.paneState, closeReason: "interrupted" },
+        );
+      }
+
+      persistState();
+      return text(
+        `Interrupted "${target.name}" [${target.id}] (scope: ${target.scope}). Pane and session kept; use orch_close to end it.`,
+        { id: target.id, status: "interrupted" },
+      );
+    },
+  });
+
+  // ── orch_close ─────────────────────────────────────────────────────────────
+  pi.registerTool({
+    name: "orch_close",
+    label: "Close Orchestrator Child",
+    description:
+      "Close a child's pane and mark it closed — the terminal transition for a paused, blocked, completed, or already-vanished child. Idempotent, and reports what it observed.",
+    parameters: Type.Object({
+      id: Type.Optional(Type.String({ description: "Target child id." })),
+      name: Type.Optional(Type.String({ description: "Target child name." })),
+      scope: Type.Optional(Type.String({ description: "Target child scope." })),
+      reason: Type.Optional(Type.String({ description: "Why it is being closed (recorded in the return details)." })),
+    }),
+    async execute(_toolCallId, params) {
+      // Close resolves against terminal rows too: cleaning up a ghost is the point.
+      const target = findClosable(params);
+      if (!target) {
+        return text(`No child matched. Tracked: ${describeTracked()}. Nothing was closed.`, { error: "no-target" });
+      }
+      if (target.status === "closed") {
+        return text(
+          `"${target.name}" [${target.id}] is already closed (${target.closeReason ?? "unknown reason"}). Nothing to do.`,
+          { id: target.id, status: "closed", paneState: "already-gone", closeReason: target.closeReason },
+        );
+      }
+
+      const settled = await settleChild(target, "user-closed");
+      if (!settled.ok) {
+        return text(
+          `Failed to close "${target.name}" [${target.id}]: ${settled.reason}. The row is unchanged, so nothing was hidden.`,
+          { error: settled.reason, id: target.id },
+        );
+      }
+
+      return text(
+        settled.paneState === "closed"
+          ? `Closed "${target.name}" [${target.id}] (scope: ${target.scope}): pane ${target.paneId} closed, row marked closed${params.reason ? ` (${params.reason})` : ""}.`
+          : `"${target.name}" [${target.id}] had no live pane; row marked closed${params.reason ? ` (${params.reason})` : ""}. Nothing was parked.`,
+        {
+          id: target.id,
+          status: "closed",
+          paneState: settled.paneState,
+          closeReason: "user-closed",
+          previousStatus: target.status,
+          ...(target.watchdog?.trip ? { watchdogTrip: target.watchdog.trip } : {}),
+        },
+      );
     },
   });
 
@@ -952,6 +2631,14 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
 
       const target = findTarget(params);
       if (!target?.paneId) {
+        const stale = staleTarget(params);
+        if (stale) {
+          return text(
+            `No running child matched: "${stale.name}" [${stale.id}] is ${stale.status} (${stale.closeReason ?? "no reason recorded"}). `
+              + `Use orch_resume to continue it, or orch_close to clean it up.`,
+            { status: "stale-target", error: "stale-target", id: stale.id, childStatus: stale.status },
+          );
+        }
         return text(
           `No running child matched. Running: ${describeRunning()}. Use orch_resume for an ended or paused child.`,
           { status: "not-running", error: "no-target" },
@@ -1014,6 +2701,10 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   pi.registerTool({
     name: "orch_route",
     label: "Route Steering v2",
+    // Declared in no request; `tool_search` can return it because it is deferred
+    // on purpose. Deferring is only safe for tools this package registers — a
+    // host tool un-declared elsewhere is undiscoverable, not deferred.
+    exposure: "deferred",
     description:
       "Deterministically resolve which work unit owns an update (scope token, declared lane, milestone file, artifact id) and optionally deliver it. Never guesses: ambiguous or unmatched updates escalate.",
     parameters: Type.Object({
@@ -1061,16 +2752,19 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     }),
     async execute(_toolCallId, params) {
       // Lazy zombie reconcile: a running/blocked child whose pane is gone is
-      // never coming back — its watcher already resolved, so nothing owns it,
-      // and reporting it sends the orchestrator into the same cleanup loop
-      // every session (observed live: 40 messages re-handling one dead child).
-      // Ping-blocked children are different: exiting the pane is how they wait
-      // for an answer, so their dead pane is their normal state, not a zombie.
+      // never coming back — reporting it sends the orchestrator into the same
+      // cleanup loop every session (observed live: 40 messages re-handling one
+      // dead child). Ping-blocked children are different: exiting the pane is how
+      // they wait for an answer, so their dead pane is normal, not a zombie.
+      //
+      // paneRead resolves null for a gone pane, so `.then(() => true)` could never
+      // fail; liveness must be read from the value.
       for (const child of registry.getRunningChildren()) {
         if (!child.paneId || child.pendingPing) continue;
-        const alive = await client.paneRead(child.paneId, 1).then(() => true).catch(() => false);
-        if (!alive) {
-          registry.updateStatus(child.sessionFile, "closed", { pendingPing: false });
+        const liveness = await paneLiveness(child.paneId);
+        if (liveness.state === "gone") {
+          registry.closeChild(child.sessionFile, "pane-gone");
+          detachWatcher(child.sessionFile);
           persistState();
         }
       }
@@ -1080,24 +2774,163 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
 
       const lines = filtered.map((child) => {
         const waiting = pending.filter((e) => e.childId === child.id);
-        return [
-          `- [${child.status}] ${child.name} (${child.id}) — scope: ${child.scope}${child.paneId ? ` — pane: ${child.paneId}` : ""}`,
-          `  Lane: ${child.laneFiles.join(", ") || "(none declared)"}`,
-          `  Handoff: ${child.handoffId ?? "(v1 child)"}`,
-          ...(waiting.length ? [`  WAITING ON YOU: ${waiting.map((e) => `${e.id}: ${e.question}`).join(" | ")}`] : []),
-        ].join("\n");
+        const watchdog = child.watchdog?.trip
+          ? ` · watchdog:${child.watchdog.trip}(${child.watchdog.interrupts})`
+          : "";
+        const budget = child.budgetMs && child.startedAt
+          ? ` ${Math.max(0, Math.round((Date.now() - child.startedAt) / 60_000))}m/${Math.round(child.budgetMs / 60_000)}m`
+          : "";
+        const lane = child.laneFiles.length ? ` lane:${child.laneFiles.join(",")}` : " lane:(none)";
+        const ping = waiting.length ? ` WAITING:${waiting.map((e) => e.id).join(",")}` : "";
+        return `- ${child.name} [${child.id}] ${child.scope} ${child.status}${budget}${lane}${watchdog}${ping}`;
       });
 
+      // One line per child. The previous form spent four lines each on facts the
+      // orchestrator reads once, and it is re-read on every tick of the loop.
       return text(
         [
-          filtered.length ? `Running children (${filtered.length}):` : "No running children.",
+          filtered.length ? `children (${filtered.length}):` : "no running children",
           ...lines,
           ...(pending.length
-            ? ["", `Escalations waiting on the orchestrator (${pending.length}):`, ...pending.map((e) => `- ${e.id} [${e.scope}] ${e.question}`)]
+            ? [`escalations (${pending.length}):`, ...pending.map((e) => `- ${e.id} [${e.scope}] ${e.question}`)]
             : []),
         ].join("\n"),
         { count: filtered.length, children: filtered, pendingEscalations: pending },
       );
+    },
+  });
+
+  // ── orch_brief — the review packet ─────────────────────────────────────────
+  pi.registerTool({
+    name: "orch_brief",
+    label: "Review Packet",
+    description:
+      "One bounded packet for reviewing a scope: frozen criteria, computed lane, diff hunks, and the child's last report. Cheaper than reading files to find out what changed. Pass `since` on a re-review to omit files it already sent.",
+    parameters: Type.Object({
+      scope: Type.String({ description: "The work unit to review." }),
+      since: Type.Optional(Type.Boolean({ description: "Incremental: omit files already sent for this scope by a previous brief." })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      let scope: string;
+      try {
+        scope = sanitizeScope(params.scope);
+      } catch (error: any) {
+        return text(`Invalid scope: ${error.message}`, { error: error.message });
+      }
+      const cwd = (ctx as any)?.cwd || process.cwd();
+      const handoff = [...handoffs.values()].find((entry) => entry.record.scope === scope)?.record;
+      const child = [...registry.getChildrenInScope(scope)].sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))[0];
+      if (!handoff && !child) {
+        return text(
+          `No handoff or child for scope "${scope}". Author one with orch_handoff, or check orch_running for the real scope name.`,
+          { error: "unknown-scope", scope },
+        );
+      }
+      const changed = (reviewSeams.changedFiles ?? gitChangedFiles)(cwd);
+      const diff = (reviewSeams.diffText ?? gitDiffText)(cwd);
+      const previous = params.since ? briefCursor.get(scope) : undefined;
+      const packet = buildReviewPacket({
+        scope,
+        changed,
+        diff,
+        handoff: handoff
+          ? {
+              id: handoff.id,
+              revision: handoff.revision,
+              acceptanceCriteria: handoff.acceptanceCriteria,
+              laneFiles: handoff.laneFiles,
+              verifyCommand: (handoff as any).verifyCommand,
+            }
+          : undefined,
+        child: child
+          ? {
+              id: child.id,
+              name: child.name,
+              status: child.status,
+              startedAt: child.startedAt,
+              budgetMs: child.budgetMs,
+              lastTail: child.lastTail,
+              frozenCriteria: child.frozenCriteria,
+              handoffRevision: child.handoffRevision,
+              laneFiles: child.laneFiles,
+            }
+          : undefined,
+        previousFiles: previous ? [...previous] : undefined,
+        now: Date.now(),
+      });
+      if (params.since) {
+        briefCursor.set(scope, new Set(packet.hunks.map((hunk) => hunk.file)));
+      }
+      return text(renderReviewPacket(packet), {
+        scope,
+        criteria: packet.criteria,
+        laneFiles: packet.laneFiles,
+        outOfLane: packet.outOfLane,
+        changed: packet.changed,
+        hunks: packet.hunks.length,
+        verifyCommand: verifyCommandProblem((handoff as any)?.verifyCommand) ? undefined : (handoff as any)?.verifyCommand,
+      });
+    },
+  });
+
+  // ── orch_check — the deterministic half of the review ──────────────────────
+  pi.registerTool({
+    name: "orch_check",
+    label: "Run Review Checks",
+    description:
+      "Compute lane compliance and run the verification command, returning evidenceRefs ready to cite in orch_review. Reports \"not run\" rather than inventing a result.",
+    parameters: Type.Object({
+      scope: Type.String({ description: "The work unit being checked." }),
+      command: Type.Optional(Type.String({ description: "Test/typecheck command. Defaults to the handoff's verifyCommand." })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      let scope: string;
+      try {
+        scope = sanitizeScope(params.scope);
+      } catch (error: any) {
+        return text(`Invalid scope: ${error.message}`, { error: error.message });
+      }
+      const cwd = (ctx as any)?.cwd || process.cwd();
+      const handoff = [...handoffs.values()].find((entry) => entry.record.scope === scope)?.record;
+      const child = [...registry.getChildrenInScope(scope)].sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))[0];
+      const laneFiles = child?.laneFiles?.length ? child.laneFiles : (handoff?.laneFiles ?? []);
+      const criteria = child?.frozenCriteria?.length ? child.frozenCriteria : (handoff?.acceptanceCriteria ?? []);
+      const command = params.command ?? (handoff as any)?.verifyCommand;
+      const changed = (reviewSeams.changedFiles ?? gitChangedFiles)(cwd);
+      let lastOutput: string | null = null;
+      const report = buildCheckReport({
+        scope,
+        laneFiles,
+        changed,
+        criteria,
+        command,
+        run: (cmd) => {
+          const result = (reviewSeams.runCommand ?? runVerifyCommand)(cmd, cwd);
+          lastOutput = result.output;
+          return result;
+        },
+      });
+      const diff = (reviewSeams.diffText ?? gitDiffText)(cwd);
+      const receipt: CheckReceipt = {
+        id: `cr-${scope}-${(checkReceipts.size + 1).toString(36)}${now().toString(36)}`,
+        scope,
+        command: report.tests.command ?? null,
+        exit: typeof report.tests.exit === "number" ? report.tests.exit : null,
+        outputDigest: outputDigestOf(lastOutput),
+        criteriaHash: criteriaHashOf(criteria),
+        specRevision: child?.handoffRevision ?? handoff?.revision ?? null,
+        treeDigest: treeDigestOf({ changed, diff }),
+        createdAt: new Date(now()).toISOString(),
+      };
+      checkReceipts.set(receipt.id, receipt);
+      return text(`${renderCheckReport(report)}\nreceipt: ${describeReceipt(receipt)}\nCite this in orch_review as checkRunId: "${receipt.id}".`, {
+        scope,
+        lane: report.lane,
+        tests: report.tests,
+        evidenceRefs: report.refs,
+        checkRunId: receipt.id,
+        receipt,
+      });
     },
   });
 
@@ -1134,6 +2967,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           const answer = await askUserFor(ctx, escalation, params.reason ?? "");
           if (answer === undefined) {
             escalations.cancel(params.id, "User dialog closed without an answer.");
+            publishDashboard();
             return text(
               `Escalation ${params.id} handed to the user, but they did not answer. It is CANCELLED, which is not consent. ` +
                 `Resume the child with action "cancel" so it reports the blocker instead of guessing.`,
@@ -1167,32 +3001,80 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     },
   });
 
+  /**
+   * Deliver a settled escalation by actually resuming the child.
+   *
+   * The old path marked the child closed and told the parent to call
+   * `orch_resume` itself. That manual step is what produced a second pi process
+   * on one session file and a fresh registry row per answer — the ghost factory.
+   */
   async function deliverAnswer(ctx: ExtensionContext, id: string) {
+    // The escalation stage (answered/cancelled) is dashboard-visible state.
+    publishDashboard();
     const escalation = escalations.get(id)!;
     const message = escalations.resumeMessage(id);
     const child = registry.getChildById(escalation.childId);
 
-    // Resume the paused child with the decision as its next prompt.
-    if (child) {
-      resetChildForResume(child.id);
+    // Ownership check before resuming: a stale escalation (its row was superseded
+    // by a resume) must not close the live pane and graft an old answer onto the
+    // current child. The session file is the identity that survives a resume.
+    const current = registry.getChildBySession(escalation.sessionFile);
+    const isCurrent =
+      current !== undefined &&
+      current.id === escalation.childId &&
+      current.status !== "closed" &&
+      current.status !== "completed";
+    if (!isCurrent) {
+      return text(
+        `Escalation ${id} belongs to child ${escalation.childId}, which is no longer the current row for `
+          + `${escalation.sessionFile}`
+          + (current ? ` (now ${current.id}, ${current.status})` : " (no row)")
+          + `. Nothing was resumed — answering a stale question would supersede the live child. `
+          + `Run orch_running for the current state; the decision text is below if you still want it.`,
+        {
+          error: "stale-escalation",
+          status: escalation.stage,
+          id,
+          childId: escalation.childId,
+          ...(current ? { currentChildId: current.id, currentStatus: current.status } : {}),
+          resumeMessage: message,
+          resumed: false,
+        },
+      );
     }
+    // Answering is not advice: attempt the resume here. If it cannot start (the
+    // session file is gone), say so and still hand over the decision text — but
+    // never claim the child is running when it is not.
+    const resumed = await startResume(ctx, {
+      sessionPath: escalation.sessionFile,
+      message,
+      name: child?.name ?? escalation.childName,
+      autoExit: child?.autoExit ?? true,
+    });
+    const resumeDetails = ((resumed as any)?.details ?? {}) as { error?: string; paneId?: string };
+    const resumedOk = !resumeDetails.error;
 
     return text(
       [
         `Escalation ${id} is ${escalation.stage}.`,
-        ``,
-        `Deliver this to the child with orch_resume({ sessionPath: "${escalation.sessionFile}", message: <below> }):`,
+        resumedOk
+          ? `The child was resumed with the decision in pane ${resumeDetails.paneId ?? "(unknown)"}.`
+          : `Automatic resume failed (${resumeDetails.error}); deliver it with ` +
+            `orch_resume({ sessionPath: "${escalation.sessionFile}", message: <below> }).`,
         ``,
         message,
       ].join("\n"),
-      { status: escalation.stage, id, sessionFile: escalation.sessionFile, resumeMessage: message },
+      {
+        status: escalation.stage,
+        id,
+        childId: escalation.childId,
+        sessionFile: escalation.sessionFile,
+        resumeMessage: message,
+        resumed: resumedOk,
+        ...(resumeDetails.paneId ? { paneId: resumeDetails.paneId } : {}),
+        ...(resumeDetails.error ? { resumeError: resumeDetails.error } : {}),
+      },
     );
-  }
-
-  function resetChildForResume(childId: string) {
-    const child = registry.getChildById(childId);
-    if (!child) return;
-    registry.updateStatus(child.sessionFile, "closed", { pendingPing: false });
   }
 
   /**
@@ -1256,16 +3138,50 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       criteriaNotes: Type.Array(
         Type.Object({
           criterion: Type.String(),
-          evidence: Type.String({ description: "What you checked yourself (file:line, command output). The child's claim is not evidence." }),
+          evidence: Type.Optional(
+            Type.String({ description: "Prose note. Not evidence on its own — an approval needs evidenceRefs." }),
+          ),
+          evidenceRefs: Type.Optional(
+            Type.Array(
+              Type.Union([
+                Type.Object({ kind: Type.Literal("file"), path: Type.String(), line: Type.Optional(Type.Number()) }),
+                Type.Object({ kind: Type.Literal("cmd"), cmd: Type.String(), exit: Type.Number() }),
+                Type.Object({ kind: Type.Literal("test"), name: Type.String(), pass: Type.Boolean() }),
+              ]),
+              { description: "References the gate verifies: an existing file, a command and its exit, or a test and its result." },
+            ),
+          ),
           passed: Type.Boolean(),
         }),
         { minItems: 1 },
       ),
-      laneCompliance: Type.Object({
-        inLane: Type.Boolean(),
-        violations: Type.Optional(Type.Array(Type.String())),
-      }),
+      laneCompliance: Type.Optional(
+        Type.Object({
+          inLane: Type.Optional(
+            Type.Boolean({
+              description: "Can only TIGHTEN the computed result. A computed out-of-lane diff is a violation even when this says true.",
+            }),
+          ),
+          violations: Type.Optional(Type.Array(Type.String())),
+        }),
+      ),
       summary: Type.String({ description: "Findings and why this verdict." }),
+      keepChild: Type.Optional(
+        Type.Boolean({
+          description: "Keep the child's pane open after the verdict (default false: a reviewed child is closed, so it cannot idle into its budget).",
+        }),
+      ),
+      userConfirmed: Type.Optional(
+        Type.Boolean({
+          description: "Set only after asking the user: required to approve a scope the orchestrator itself edited, or one whose spec was revised after spawn.",
+        }),
+      ),
+      checkRunId: Type.Optional(
+        Type.String({
+          description:
+            "Receipt id from orch_check. An approval citing one is refused if the command failed, the criteria changed, or the tree changed since it ran. Recommended whenever a verification command exists: without it, cmd/test evidence is attested, not authenticated.",
+        }),
+      ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       let scope: string;
@@ -1278,8 +3194,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       const handoff = [...handoffs.values()].find((h) => h.record.scope === scope)?.record;
 
       // The gate is only real if it can fail. An approved verdict with a failing
-      // criterion or an out-of-lane diff is a contradiction, so it is refused
-      // rather than recorded and quietly ignored later.
+      // criterion, unverifiable evidence, or an out-of-lane diff is a
+      // contradiction, so it is refused rather than recorded and quietly ignored.
       const failedCriteria = params.criteriaNotes.filter((c) => !c.passed);
       if (params.verdict === "approved" && failedCriteria.length > 0) {
         return text(
@@ -1289,11 +3205,139 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           { error: "contradictory-verdict", failed: failedCriteria.map((c) => c.criterion) },
         );
       }
-      if (params.verdict === "approved" && !params.laneCompliance.inLane) {
+
+      // ── the frozen spec, not the current one ──────────────────────────────
+      // Re-authoring a handoff bumps its revision. Judging the current revision
+      // would let a failing criterion be edited out after the child ran, so the
+      // review measures the criteria captured at spawn and reports the drift.
+      const frozenRow = registry
+        .getChildrenInScope(scope)
+        .filter((c) => c.frozenCriteria?.length)
+        .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))[0];
+      const criteriaUnderReview = frozenRow?.frozenCriteria ?? handoff?.acceptanceCriteria;
+      const specRevision = frozenRow?.handoffRevision ?? handoff?.revision;
+      const findings: string[] = [];
+      if (handoff && frozenRow?.handoffRevision && handoff.revision > frozenRow.handoffRevision) {
+        findings.push(
+          `handoff revised after spawn: the review judged revision ${frozenRow.handoffRevision}, current is ${handoff.revision}`,
+        );
+      }
+
+      // One base for evidence checks and for git: the session's cwd, or the
+      // process cwd when a tool context does not carry one.
+      const reviewCwd = (ctx as any)?.cwd || process.cwd();
+
+      // ── lane compliance is computed, not declared ─────────────────────────
+      const changed = (reviewSeams.changedFiles ?? gitChangedFiles)(reviewCwd);
+      const laneFiles = frozenRow?.laneFiles ?? handoff?.laneFiles ?? [];
+      const declared = params.laneCompliance;
+      let laneSource: "git" | "declared" = "declared";
+      let laneViolations: string[] = [];
+      let inLane = declared?.inLane ?? true;
+      if (changed) {
+        laneSource = "git";
+        laneViolations = changed.filter((file) => !pathMatchesAnyLane(laneFiles, file));
+        inLane = laneViolations.length === 0;
+      }
+      // A declaration can tighten the verdict, never loosen it.
+      if (declared?.inLane === false) inLane = false;
+      const violations = [...new Set([...laneViolations, ...(declared?.violations ?? [])])];
+      if (params.verdict === "approved" && !inLane) {
         return text(
-          `Refusing to approve ${scope}: the diff left its lane (${(params.laneCompliance.violations ?? []).join(", ") || "unspecified"}). ` +
-            `An outside-lane change is a violation regardless of quality. Use "revise" with findings for the owning scope.`,
-          { error: "out-of-lane", violations: params.laneCompliance.violations ?? [] },
+          `Refusing to approve ${scope}: the diff left its lane (${violations.join(", ") || "unspecified"}). ` +
+            `An outside-lane change is a violation regardless of quality` +
+            (laneSource === "git" ? " — this list was computed from git, so declaring inLane: true does not clear it." : ".") +
+            ` Use "revise" with findings for the owning scope.`,
+          { error: "out-of-lane", violations, laneSource },
+        );
+      }
+
+      // ── evidence must be checkable ────────────────────────────────────────
+      const evidenceRefs = params.criteriaNotes.flatMap((c) => c.evidenceRefs ?? []) as EvidenceRef[];
+      const evidenceCheck = checkEvidenceRefs(evidenceRefs, { cwd: reviewCwd });
+
+      // ── the receipt, when one is cited ────────────────────────────────────
+      // Verified-shape evidence (") a cmd ran and exited 0 (" ) is attestation. A
+      // receipt adds the two facts shape cannot carry: which definition of done it
+      // judged, and which tree it ran against. Optional because attestation is
+      // still legitimate when nothing can be executed, but never trusted silently
+      // once cited: a bad receipt is refused even for a `revise` verdict so a
+      // parent cannot cite a stale pass as support for its findings.
+      const receiptId = params.checkRunId?.trim();
+      let receiptProblems: string[] = [];
+      let receiptNote: string | undefined;
+      if (receiptId) {
+        const diffNow = (reviewSeams.diffText ?? gitDiffText)(reviewCwd);
+        receiptProblems = evaluateReceipt(checkReceipts.get(receiptId), {
+          scope,
+          criteriaHash: criteriaHashOf(criteriaUnderReview),
+          treeDigest: treeDigestOf({ changed, diff: diffNow }),
+        });
+        if (receiptProblems.length > 0) {
+          return text(
+            `Refusing to record ${scope} with checkRunId "${receiptId}":\n`
+              + receiptProblems.map((problem) => `- ${problem}`).join("\n")
+              + `\nRe-run orch_check after the last change and cite the new receipt, or drop checkRunId and treat the evidence as attested (allowed for \`revise\`, not for \`approved\` once a receipt is cited).`,
+            { error: "check-receipt-invalid", scope, checkRunId: receiptId, problems: receiptProblems },
+          );
+        }
+        receiptNote = receiptId;
+      } else if (params.verdict === "approved" && handoff?.verifyCommand) {
+        // Not a refusal: the existing contract (attested refs verify for real files
+        // and cmd/test shape) is unchanged. The note exists so the gap is visible
+        // in the audit trail instead of being indistinguishable from a real run.
+        receiptNote = "none cited — evidence is attested, not receipt-backed";
+      }
+      if (params.verdict === "approved") {
+        if (evidenceCheck.checked === 0) {
+          return text(
+            `Refusing to approve "${scope}" on prose alone: no evidenceRefs were supplied. ` +
+              `Give at least one { kind: "file" | "cmd" | "test" } reference per claim you rely on — the gate verifies them. ` +
+              `If the only support is your own description, the verdict is "revise", not "approved".`,
+            { error: "evidence-required", scope },
+          );
+        }
+        if (!evidenceCheck.ok) {
+          return text(
+            `Refusing to approve "${scope}": ${evidenceCheck.problems.length} evidence reference(s) could not be verified —\n`
+              + evidenceCheck.problems.map((problem) => `- ${problem}`).join("\n")
+              + `\nCite only what you actually inspected.`,
+            { error: "unverifiable-evidence", problems: evidenceCheck.problems },
+          );
+        }
+      }
+
+
+      // ── independence: did the orchestrator touch this work unit itself? ───
+      const since = frozenRow?.startedAt ? new Date(frozenRow.startedAt).toISOString() : undefined;
+      const touched = registry
+        .getAuthorWrites(since)
+        .filter(
+          (write) =>
+            pathMatchesAnyLane(laneFiles, write.path) ||
+            pathMatchesAnyLane(handoff?.outOfLaneFiles ?? [], write.path),
+        );
+      const independence: "clean" | "self-authored" = touched.length > 0 ? "self-authored" : "clean";
+      const needsConfirmation =
+        params.verdict === "approved" && (independence === "self-authored" || findings.length > 0);
+      if (needsConfirmation && params.userConfirmed !== true) {
+        const why = independence === "self-authored"
+          ? `the orchestrator itself wrote ${[...new Set(touched.map((write) => write.path))].join(", ")} inside this work unit`
+          : findings.join("; ");
+        return text(
+          `Approval for "${scope}" needs the user's confirmation: ${why}.\n\n`
+            + `Ask the user with ask_user — show the evidence you verified and the findings — then call orch_review again ` +
+            `with userConfirmed: true if they agree. A self-reviewed scope approved silently is not a review.\n\n`
+            + `Evidence checked: ${evidenceCheck.checked} reference(s). Lane: ${laneSource === "git" ? `computed from git (${violations.length ? violations.join(", ") : "clean"})` : "declared"}.`,
+          {
+            error: "confirmation-required",
+            independence,
+            touched: [...new Set(touched.map((write) => write.path))],
+            findings,
+            evidenceRefs: evidenceCheck.checked,
+            laneSource,
+            violations,
+          },
         );
       }
 
@@ -1316,13 +3360,50 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         verdict: params.verdict,
         summary: params.summary,
         failedCriteria: failedCriteria.map((c) => c.criterion),
-        inLane: params.laneCompliance.inLane,
+        inLane,
         timestamp: new Date().toISOString(),
+        independence,
+        verified: laneSource === "git" && evidenceCheck.ok,
+        laneSource,
+        evidenceRefs: evidenceCheck.checked,
+        userConfirmed: params.userConfirmed === true,
+        ...(specRevision !== undefined ? { specRevision } : {}),
+        ...(receiptId ? { checkRunId: receiptId } : {}),
+        ...(findings.length ? { findings } : {}),
       });
       persistState();
 
+      // A verdict is the end of the work unit. Leaving the child running is how a
+      // completed-and-approved row idled into its budget and became the ghost the
+      // watchdog then chased every 30s. `revise` keeps the child for the next round.
+      //
+      // Every active row in the scope is settled, not just the first: a leaked pane
+      // with a stale row is exactly how two agents end up in one lane.
+      const activeInScope = params.verdict === "revise" || params.keepChild
+        ? []
+        : registry
+            .getChildrenInScope(scope)
+            .filter((c) => c.status === "running" || c.status === "blocked");
+      const settlements: Array<{ child: ScopedChild; result: Awaited<ReturnType<typeof settleChild>> }> = [];
+      for (const active of activeInScope) {
+        settlements.push({
+          child: active,
+          result: await settleChild(active, params.verdict === "approved" ? "review-approved" : "review-rejected"),
+        });
+      }
+      const settlement = settlements[0]?.result ?? null;
+      const unsettled = settlements.filter((s) => !s.result.ok);
+
       const criteriaBlock = params.criteriaNotes
-        .map((c, i) => `${i + 1}. [${c.passed ? "PASS" : "FAIL"}] ${c.criterion}\n   Evidence: ${c.evidence}`)
+        .map(
+          (c, i) =>
+            `${i + 1}. [${c.passed ? "PASS" : "FAIL"}] ${c.criterion}\n`
+            + `   Note: ${c.evidence?.trim() || "(none)"}\n`
+            + `   References:\n${renderEvidence(c.evidenceRefs as EvidenceRef[] | undefined)
+              .split("\n")
+              .map((line) => `     ${line}`)
+              .join("\n")}`,
+        )
         .join("\n\n");
 
       const content = [
@@ -1333,11 +3414,18 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         `## Summary`,
         params.summary,
         ``,
+        `## Independence`,
+        `- Verdict source: ${independence === "clean" ? "clean (the orchestrator did not write this lane)" : "self-authored (the orchestrator wrote here)"}`,
+        ...(touched.length ? [`- Orchestrator writes:`, ...touched.map((w) => `  - ${w.path} (${w.tool} at ${w.at})`)] : []),
+        `- Evidence verified: ${evidenceCheck.ok ? `YES (${evidenceCheck.checked} reference(s))` : "NO"}`,
+        ...(params.userConfirmed ? [`- User confirmed: yes`] : []),
+        `- Spec revision judged: ${specRevision ?? "(none on record)"}`,
+        ``,
         `## Lane compliance`,
-        `- In lane: ${params.laneCompliance.inLane ? "YES" : "NO"}`,
-        ...(params.laneCompliance.violations?.length
-          ? [`- Violations:`, ...params.laneCompliance.violations.map((v) => `  - ${v}`)]
-          : []),
+        `- Source: ${laneSource === "git" ? "computed from git" : "declared by the orchestrator (git unavailable)"}`,
+        `- In lane: ${inLane ? "YES" : "NO"}`,
+        ...(violations.length ? [`- Violations:`, ...violations.map((v) => `  - ${v}`)] : []),
+        ...(findings.length ? [``, `## Findings`, ...findings.map((f) => `- ${f}`)] : []),
         ``,
         `## Acceptance criteria`,
         criteriaBlock,
@@ -1345,7 +3433,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           ? [
               ``,
               `## Criteria not addressed`,
-              ...(handoff.acceptanceCriteria.filter(
+              ...((criteriaUnderReview ?? []).filter(
                 (c) => !params.criteriaNotes.some((n) => n.criterion.trim() === c.trim()),
               ).map((c) => `- ${c}`) || []),
             ]
@@ -1367,19 +3455,63 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         saved = false;
       }
 
+      // The verdict document is saved as an artifact, so re-printing it here only
+      // spends the parent's attention budget on something it already decided. Three
+      // lines: what the verdict was, what happened to the child, where the record
+      // lives. Refusals above stay verbose on purpose — they carry the reason.
       return text(
-        [`Review recorded for "${scope}": ${params.verdict.toUpperCase()}.`, saved ? "" : `(artifact_save unavailable; verdict returned inline only)`, "", content]
+        [
+          `${params.verdict.toUpperCase()} · ${scope}${inLane ? "" : ` · ${violations.length} out of lane`} · ${evidenceCheck.checked} evidence ref(s)${laneSource === "git" ? " · lane from git" : ""}`,
+          settlements.length
+            ? settlements
+                .map((s) => `${s.child.name} [${s.child.id}] ${s.result.ok ? s.result.paneState : `NOT closed: ${s.result.reason}`}`)
+                .join("; ")
+            : settlement
+              ? settlement.ok
+                ? `child closed (${settlement.paneState === "closed" ? "pane closed" : "no live pane"})`
+                : `child NOT closed: ${settlement.reason} — orch_close before moving on`
+              : "no child open",
+          unsettled.length
+            ? `still under watchdog retry: ${unsettled.map((s) => s.child.name).join(", ")} — orch_close to force`
+            : saved
+              ? `saved artifact review-${scope}`
+              : "artifact_save unavailable — verdict recorded in this message only",
+        ]
           .filter(Boolean)
           .join("\n"),
-        { scope, verdict: params.verdict, inLane: params.laneCompliance.inLane, saved, handoffId: handoff?.id },
+        {
+          scope,
+          verdict: params.verdict,
+          inLane,
+          laneSource,
+          independence,
+          evidenceRefs: evidenceCheck.checked,
+          ...(specRevision !== undefined ? { specRevision } : {}),
+          ...(params.userConfirmed ? { userConfirmed: true } : {}),
+          saved,
+          handoffId: handoff?.id,
+          childClosed: settlement?.ok ?? false,
+          settled: settlements.map((s) => ({ id: s.child.id, ok: s.result.ok })),
+          ...(settlement && settlement.ok ? { paneState: settlement.paneState } : {}),
+        },
       );
     },
   });
 
   // ── helpers ───────────────────────────────────────────────────────────────
 
+  /**
+   * Steering/interrupt target: an addressable child only.
+   *
+   * A terminal row is not a target — acting on one revived work the parent had
+   * already reviewed and closed (the pane can outlive the row when a close failed).
+   * `findClosable` stays permissive on purpose: cleaning up a ghost is its job.
+   */
   function findTarget(params: { id?: string; name?: string; scope?: string }): ScopedChild | undefined {
-    if (params.id) return registry.getChildById(params.id);
+    if (params.id) {
+      const child = registry.getChildById(params.id);
+      return child && (child.status === "running" || child.status === "blocked") ? child : undefined;
+    }
     if (params.name) {
       const matches = registry.getRunningChildren().filter((c) => c.name.toLowerCase() === params.name!.toLowerCase());
       return matches.length === 1 ? matches[0] : undefined;
@@ -1392,9 +3524,46 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     return running.length === 1 ? running[0] : undefined;
   }
 
+  /** A terminal row matched by id: it exists, but it is finished. */
+  function staleTarget(params: { id?: string }): ScopedChild | undefined {
+    if (!params.id) return undefined;
+    const child = registry.getChildById(params.id);
+    return child && (child.status === "closed" || child.status === "completed" || child.status === "failed")
+      ? child
+      : undefined;
+  }
+
   function describeRunning(): string {
     const running = registry.getRunningChildren();
     return running.length ? running.map((c) => `${c.name} [${c.id}] (${c.scope})`).join(", ") : "(none)";
+  }
+
+  /**
+   * Close resolves against terminal rows too: cleaning up a ghost is the point.
+   * Names and scopes prefer an active row, then fall back to the newest row.
+   */
+  function findClosable(params: { id?: string; name?: string; scope?: string }): ScopedChild | undefined {
+    const all = registry.getAllChildren();
+    if (params.id) {
+      return all.find((c) => c.id === params.id || c.supersededIds?.includes(params.id!));
+    }
+    if (params.name) {
+      const matches = all.filter((c) => c.name.toLowerCase() === params.name!.toLowerCase());
+      const active = matches.filter((c) => c.status === "running" || c.status === "blocked");
+      return (active.length ? active : matches).at(-1);
+    }
+    if (params.scope) {
+      const inScope = all.filter((c) => c.scope === params.scope);
+      const active = inScope.filter((c) => c.status === "running" || c.status === "blocked");
+      return (active.length ? active : inScope).at(-1);
+    }
+    const active = registry.getActiveChildren();
+    return active.length === 1 ? active[0] : undefined;
+  }
+
+  function describeTracked(): string {
+    const all = registry.getAllChildren();
+    return all.length ? all.map((c) => `${c.name} [${c.id}] (${c.scope}, ${c.status})`).join(", ") : "(none)";
   }
 
   function formatResolution(resolution: SteerResolution & { applied?: boolean; deliveryTail?: string | null }): string {
@@ -1423,6 +3592,141 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   }
 
   // ── Commands ──────────────────────────────────────────────────────────────
+  // ── /orch-pause · /orch-resume ─────────────────────────────────────────────
+  /**
+   * Pausing is a lifecycle operation, not a mode.
+   *
+   * It closes every child, refuses new spawns, and keeps each row — with its
+   * session file, task, lane, handoff and agent — so the same run can be put
+   * back. Resume therefore replays what was actually paused instead of guessing
+   * a fresh plan; each child comes back on the conversation it already had.
+   */
+  function orchestratorMode(ctx: ExtensionContext): { ok: true; mode: string } | { ok: false; reason: string } {
+    if (isChildSession) return { ok: false, reason: "a delegated child owns no orchestrator to pause" };
+    const state = superviseModeFromBranch(ctx.sessionManager.getBranch());
+    if (state?.enabled !== true) return { ok: false, reason: "orchestrator mode is off" };
+    if (state.modeId !== "orchestrator" && state.modeId !== "supervise") {
+      return { ok: false, reason: `active supervisor mode is "${state.modeId ?? "supervise"}"` };
+    }
+    return { ok: true, mode: state.modeId };
+  }
+
+  /**
+   * `/orch-resume` also works outside orchestrator mode, but only to resolve a
+   * pause this session already owns. Otherwise a user who switched to normal to
+   * fix something would have to switch back just to bring the run up.
+   */
+  function resumable(ctx: ExtensionContext): { ok: true; mode: string | null } | { ok: false; reason: string } {
+    const status = orchestratorMode(ctx);
+    if (status.ok) return status;
+    if (registry.isPaused() || registry.getPausedChildren().length > 0) return { ok: true, mode: null };
+    return status;
+  }
+
+  function pauseSummary(closed: string[], stillLive: Array<{ name: string; reason: string }>, mode: string): string {
+    return [
+      `Orchestrator paused (${mode}). New spawns are refused until /orch-resume.`,
+      closed.length ? `Closed ${closed.length} child(ren):\n${closed.join("\n")}` : "No running children were open.",
+      stillLive.length
+        ? `Still live — close failed, so the watchdog keeps retrying (these are NOT paused):\n${stillLive.map((c) => `${c.name} — ${c.reason}`).join("\n")}`
+        : "",
+      closed.length ? "Every paused row keeps its session file, so /orch-resume continues the same conversation." : "",
+    ].filter(Boolean).join("\n\n");
+  }
+
+  async function pauseOrchestrator(ctx: ExtensionContext): Promise<void> {
+    const status = orchestratorMode(ctx);
+    if (!status.ok) {
+      ctx.ui.notify(`/orch-pause needs orchestrator mode (/mode orchestrator): ${status.reason}. Nothing was closed.`, "error");
+      return;
+    }
+
+    const active = registry.getAllChildren().filter((c) => c.status === "running" || c.status === "blocked");
+    const closed: string[] = [];
+    const stillLive: Array<{ name: string; reason: string }> = [];
+    for (const child of active) {
+      // Graceful first: stop the current turn before its pane disappears, so the
+      // child is not killed mid-write. Best effort — the close is what ends it.
+      await interruptPane(child);
+      const settled = await settleChild(child, "paused");
+      if (settled.ok) closed.push(`${child.name} [${child.id}] scope=${child.scope}`);
+      else stillLive.push({ name: `${child.name} [${child.id}]`, reason: settled.reason });
+    }
+
+    // Even with nothing open, the pause is the point: no new work starts while
+    // the user is away. A failed close is not paused — it stays ticked.
+    registry.setPaused(true);
+    persistState();
+    ctx.ui.notify(pauseSummary(closed, stillLive, status.mode), stillLive.length ? "warning" : "info");
+  }
+
+  function resumeNotice(child: ScopedChild): string {
+    return [
+      "The orchestrator paused this run with /orch-pause and has just resumed it with /orch-resume.",
+      child.task ? `Your assignment (unchanged):\n${child.task}` : "",
+      "Continue from where you stopped — same session, same lane. Do not redo finished work. "
+        + "Report what is done, what remains, and the evidence for each.",
+    ].filter(Boolean).join("\n\n");
+  }
+
+  async function resumeOrchestrator(ctx: ExtensionContext): Promise<void> {
+    const status = resumable(ctx);
+    if (!status.ok) {
+      ctx.ui.notify(`/orch-resume needs orchestrator mode (/mode orchestrator): ${status.reason}. Nothing was started.`, "error");
+      return;
+    }
+
+    const paused = registry.getPausedChildren()
+      .slice()
+      // Oldest first: the run should come back in the order it went down.
+      .sort((a, b) => (a.closedAt ?? "").localeCompare(b.closedAt ?? ""));
+    if (!paused.length) {
+      registry.setPaused(false);
+      persistState();
+      ctx.ui.notify("Nothing to resume: no child in this session was closed by /orch-pause.", "info");
+      return;
+    }
+
+    const resumed: string[] = [];
+    const gone: string[] = [];
+    const failed: Array<{ name: string; reason: string }> = [];
+    for (const child of paused) {
+      if (!existsSync(child.sessionFile)) {
+        // A paused row with no conversation cannot continue; marking it keeps
+        // every later /orch-resume from reporting the same phantom.
+        registry.markPausedMissing(child.sessionFile);
+        gone.push(`${child.name} [${child.id}] — ${child.sessionFile}`);
+        continue;
+      }
+      const result = await startResume(ctx, {
+        sessionPath: child.sessionFile,
+        name: child.name,
+        autoExit: child.autoExit,
+        message: resumeNotice(child),
+      });
+      const details = (result.details ?? {}) as any;
+      if (details.error) {
+        // The paused row is untouched, so a retry after fixing the cause is safe.
+        failed.push({
+          name: `${child.name} [${child.id}]`,
+          reason: `${details.error}${details.reason ? ` (${details.reason})` : ""}`,
+        });
+      } else {
+        resumed.push(`${child.name} [${child.id}] → pane ${details.paneId} (same session file)`);
+      }
+    }
+
+    registry.setPaused(false);
+    persistState();
+    const lines = [
+      resumed.length ? `Redeployed ${resumed.length} child(ren) on their previous sessions:\n${resumed.join("\n")}` : "No child was redeployed.",
+      gone.length ? `Session file missing — not resumable, marked paused-missing:\n${gone.join("\n")}` : "",
+      failed.length ? `Resume failed (the paused row is kept, so retrying is safe):\n${failed.map((c) => `${c.name} — ${c.reason}`).join("\n")}` : "",
+      resumed.length ? "Orchestrator is live again: spawns are allowed." : "",
+    ].filter(Boolean);
+    ctx.ui.notify(lines.join("\n\n"), failed.length || gone.length ? "warning" : "info");
+  }
+
   pi.registerCommand("orch", {
     description: "orchestrator status | list | handoffs | escalations",
     handler: async (arg, ctx) => {
@@ -1464,12 +3768,29 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         [
           `Orchestrator`,
           `Running: ${running.length} of ${all.length} tracked`,
+          registry.isPaused()
+            ? `Paused: yes — ${registry.getPausedChildren().length} child(ren) await /orch-resume`
+            : `Paused: no`,
           `Handoffs: ${handoffs.size}`,
           `Escalations: ${escalations.forOrchestrator().length} waiting on you, ${escalations.forUser().length} waiting on the user`,
           `Usage: /orch status | list | handoffs | escalations`,
         ].join("\n"),
         "info",
       );
+    },
+  });
+
+  pi.registerCommand("orch-pause", {
+    description: "Pause the orchestrator: close every child, keep the run, refuse new spawns until /orch-resume",
+    handler: async (_arg, ctx) => {
+      await pauseOrchestrator(ctx);
+    },
+  });
+
+  pi.registerCommand("orch-resume", {
+    description: "Resume a paused orchestrator: redeploy every paused child on its previous session",
+    handler: async (_arg, ctx) => {
+      await resumeOrchestrator(ctx);
     },
   });
 

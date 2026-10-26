@@ -38,6 +38,7 @@ import {
   resolveLaunchBehavior,
   resolveSubagentPaths,
 } from "./agents.ts";
+import { stampNewChildSessionFile } from "./session.ts";
 
 /** `subagent` tool params consulted by launch planning. */
 export interface SubagentLaunchParams {
@@ -53,6 +54,14 @@ export interface SubagentLaunchParams {
   interactive?: boolean;
   scope?: string;
   specPath?: string;
+  /**
+   * Execution policy for the child. `spec-only` marks an independent specification
+   * reviewer: no inherited conversation, no parent pointer, no parent-pull tools.
+   * Absent means an ordinary child, unchanged.
+   */
+  policy?: "spec-only";
+  /** Review-job identity, written into the child's environment when policy is spec-only. */
+  review?: { runId: string; lens: string; targetHash: string; dir: string; roots?: string[] };
 }
 
 export interface LaunchPlanContext {
@@ -148,6 +157,15 @@ export function shellEscape(s: string): string {
 const SUBAGENT_CONTROL_TOOLS = ["caller_ping", "subagent_done", "subagent_progress", "todo_plan", "todo_act", "todo_next", "workflow_todo", "artifact_save", "artifact_edit", "artifact_recall", "artifact_search"] as const;
 
 /**
+ * Control tools a spec-only reviewer may keep.
+ *
+ * The artifact tools are deliberately absent: a reviewer's snapshot is quoted in
+ * its ticket, so it needs no artifact reader, and it must not hold an artifact
+ * writer it could use to alter the document it is judging.
+ */
+const REVIEWER_CONTROL_TOOLS = ["caller_ping", "subagent_done", "subagent_progress", "todo_plan", "todo_act", "todo_next", "spec_review_submit"] as const;
+
+/**
  * Build the child --tools allowlist.
  *
  * Pi 0.70+ applies --tools to built-in, extension, and custom tools. If a
@@ -155,7 +173,10 @@ const SUBAGENT_CONTROL_TOOLS = ["caller_ping", "subagent_done", "subagent_progre
  * control tools from subagent-done.ts would otherwise be hidden, leaving a
  * manually resumed or user-touched subagent unable to call subagent_done.
  */
-export function buildSubagentToolAllowlist(effectiveTools?: string): string | null {
+export function buildSubagentToolAllowlist(
+  effectiveTools?: string,
+  extras: readonly string[] = SUBAGENT_CONTROL_TOOLS,
+): string | null {
   const requested = (effectiveTools ?? "")
     .split(",")
     .map((tool) => tool.trim())
@@ -164,7 +185,7 @@ export function buildSubagentToolAllowlist(effectiveTools?: string): string | nu
   if (requested.length === 0) return null;
 
   const allow = new Set(requested);
-  for (const tool of SUBAGENT_CONTROL_TOOLS) {
+  for (const tool of extras) {
     allow.add(tool);
   }
 
@@ -362,7 +383,28 @@ export function buildLaunchPlan(
   ].join("-");
   const sessionFile = join(childSessionDir, `${sessionTimestamp}_${uuid}.jsonl`);
 
-  const launchBehavior = resolveLaunchBehavior(params, agentDefs);
+  // ── Execution policy ──
+  // A spec-only reviewer is isolated structurally, not by instruction. Forcing
+  // `standalone` here is what stops an agent profile (or a `fork: true`) from
+  // handing it the author's transcript: the profile may narrow behaviour, never
+  // widen context beyond what the review was designed to see.
+  const specOnly = params.policy === "spec-only";
+  const reviewEnv = specOnly && params.review
+    ? [
+        `export PI_SUBAGENT_REVIEW_POLICY='spec-only'`,
+        `export PI_SUBAGENT_REVIEW_RUN=${shellEscape(params.review.runId)}`,
+        `export PI_SUBAGENT_REVIEW_LENS=${shellEscape(params.review.lens)}`,
+        `export PI_SUBAGENT_REVIEW_TARGET=${shellEscape(params.review.targetHash)}`,
+        `export PI_SUBAGENT_REVIEW_DIR=${shellEscape(params.review.dir)}`,
+        ...(params.review.roots?.length
+          ? [`export PI_SUBAGENT_REVIEW_ROOTS=${shellEscape(params.review.roots.join(","))}`]
+          : []),
+      ]
+    : [];
+
+  const launchBehavior = specOnly
+    ? { sessionMode: "standalone" as const, seededSessionMode: null, inheritsConversationContext: false, taskDelivery: "artifact" as const }
+    : resolveLaunchBehavior(params, agentDefs);
   const seedSession = launchBehavior.seededSessionMode
     ? {
         mode: launchBehavior.seededSessionMode,
@@ -390,7 +432,9 @@ export function buildLaunchPlan(
   // Children that did not inherit the parent's transcript still need to know the
   // pull channel exists; a digest child gets only a brief, and a fresh child gets
   // nothing, so both are told how to reach the parent on demand.
-  const contextNote = launchBehavior.inheritsConversationContext
+  const contextNote = specOnly
+    ? "You did not inherit your parent's conversation, and you have no tool that can read it. That is deliberate: you are an independent reviewer, and the document under review is quoted in this ticket. If you need something that is not in the document or the permitted paths, report it as missing context instead of guessing or looking for the author's intent."
+    : launchBehavior.inheritsConversationContext
     ? "The conversation above was copied from your parent at launch. It is a snapshot and may already be stale. If you need a decision, a file the parent touched, or anything the parent did after the snapshot, call parent_recall or parent_digest instead of guessing or re-reading the whole repository. Never modify the parent session."
     : launchBehavior.seededSessionMode === "digest"
       ? "You did not inherit your parent's conversation, but a brief of it is being attached to your first request. If you need more than the brief — a specific decision, a file the parent touched, or newer parent work — call parent_recall or parent_digest rather than guessing or re-reading the whole repository. Never modify the parent session."
@@ -402,6 +446,20 @@ export function buildLaunchPlan(
   const files: Array<{ path: string; content: string }> = [];
   const artifactTimestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const name = safeName(params.name);
+
+  // Birth stamp: a child that is not seeded from the parent gets a header naming
+  // its parent plus a `session_info` label, so `pi --resume` shows `child · …`
+  // instead of an anonymous conversation the user never started. Seeded children
+  // already carry `parentSession` (see seedSubagentSessionFile).
+  if (!seedSession) {
+    stampNewChildSessionFile({
+      sessionFile,
+      sessionId: uuid,
+      childCwd: targetCwd,
+      parentSessionFile: ctx.parentSessionFile,
+      label: [name, params.task].filter(Boolean).join(" · "),
+    });
+  }
 
   // ── pi argv ──
   const piBin = env.PI_HERDR_PI_BIN ?? (ctx.resolvePiBin ?? defaultResolvePiBin)(env);
@@ -430,7 +488,7 @@ export function buildLaunchPlan(
     );
   }
 
-  const toolAllowlist = buildSubagentToolAllowlist(effectiveTools);
+  const toolAllowlist = buildSubagentToolAllowlist(effectiveTools, specOnly ? REVIEWER_CONTROL_TOOLS : SUBAGENT_CONTROL_TOOLS);
   if (toolAllowlist) {
     piArgv.push("--tools", toolAllowlist);
   }
@@ -484,9 +542,12 @@ export function buildLaunchPlan(
   exports.push(`export PI_SUBAGENT_DEPTH=${currentSubagentDepth(env) + 1}`);
   // Authoritative parent pointer for child-side recall. A `fresh` child has no
   // parentSession header, so the environment is the only way it can reach back.
-  if (ctx.parentSessionFile) {
+  // A spec-only reviewer is never given one: the pull channel is the leak this
+  // policy exists to close.
+  if (ctx.parentSessionFile && !specOnly) {
     exports.push(`export PI_SUBAGENT_PARENT=${shellEscape(ctx.parentSessionFile)}`);
   }
+  exports.push(...reviewEnv);
   // The pane id is only known inside the pane — forward herdr's injected env.
   exports.push('export PI_SUBAGENT_PANE="${HERDR_PANE_ID:-}"');
 

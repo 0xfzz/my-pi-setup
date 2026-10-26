@@ -1,9 +1,63 @@
+/**
+ * Why a child stopped. Present iff its status is terminal, so an audit can tell
+ * a deliberate close from a crash without inferring it from pane liveness.
+ */
+export type CloseReason =
+  | "interrupted"
+  | "interrupt-failed"
+  | "review-approved"
+  | "review-rejected"
+  | "pane-gone"
+  | "user-closed"
+  | "watchdog-close"
+  | "watcher-error"
+  | "auto-close-terminal"
+  | "resume-superseded"
+  | "scope-cancelled"
+  /** Closed by /orch-pause, intact for /orch-resume to redeploy. */
+  | "paused"
+  /** Paused, but its session file is gone: nothing left to redeploy. */
+  | "paused-missing";
+
+/**
+ * Watchdog bookkeeping, persisted with the child.
+ *
+ * `trip` is the anti-storm guard: once a child has tripped for a reason, the
+ * same reason never notifies again. Without it the budget branch re-fired every
+ * 30s tick forever (observed live: 10+ notices for one child in five minutes,
+ * each with `elapsedMs` growing by exactly one interval).
+ */
+export interface WatchdogState {
+  trip: "budget-exceeded" | "stall-detected" | "close-failed" | null;
+  trippedAt?: string;
+  notifiedAt?: string;
+  interruptSentAt?: string;
+  interrupts: number;
+  /** Failed Escape deliveries; the watchdog ends the child after MAX attempts. */
+  interruptFailures?: number;
+  /** Why the last automatic close attempt failed, so the retry is diagnosable. */
+  lastFailure?: string;
+}
+
 export interface ScopedChild {
   id: string;
   name: string;
   agent?: string;
   scope: string;
   sessionFile: string;
+  /**
+   * What this child exists to do.
+   *
+   * Reviewers are readers of a pinned document, not writers of a lane, so they are
+   * registered with `laneFiles: []`. Keeping the purpose explicit is what lets
+   * steering, review, and status report the right thing instead of treating a
+   * missing lane as a malformed worker.
+   */
+  purpose?: "implementation" | "review";
+  /** Review metadata. Present iff `purpose` is `review`. */
+  reviewRunId?: string;
+  reviewLens?: string;
+  targetHash?: string;
   paneId?: string;
   status: "running" | "completed" | "blocked" | "failed" | "closed";
   /** Audit copy of the handoff spec. Orchestrator-side evidence, never handed to the child. */
@@ -28,7 +82,44 @@ export interface ScopedChild {
   /** Last captured token usage for the child (from the session file tail). */
   lastTokens?: number;
   lastContextWindow?: number;
+  /** Watchdog trip state — persisted so a restart cannot replay a notice. */
+  watchdog?: WatchdogState;
+  /** How the child ended; present iff status is terminal. */
+  closedAt?: string;
+  closeReason?: CloseReason;
+  /** Ids this row superseded (resume history), so an audit can follow the chain. */
+  supersededIds?: string[];
+  /** Launch shape, persisted so a child restored after a restart can be re-watched. */
+  interactive?: boolean;
+  autoExit?: boolean;
+  /**
+   * The acceptance criteria as they existed when this child was spawned.
+   *
+   * A review judges these, not the current handoff: re-authoring a spec after the
+   * child ran used to rewrite the criteria the verdict was measured against, so a
+   * failing criterion could be edited out and the approval would be "consistent".
+   */
+  frozenCriteria?: string[];
+  /** Handoff revision at spawn, so a later revision is visible in the review. */
+  handoffRevision?: number;
+  /** When the criteria above were captured. */
+  specFrozenAt?: string;
   updatedAt: string;
+}
+
+/**
+ * A write the orchestrator itself made through `write`/`edit`.
+ *
+ * Independence is a fact about who touched the lane, so it is recorded rather
+ * than asserted. `bash` is not recorded here on purpose: a shell command can
+ * write anywhere, and pretending a path list proves otherwise would be worse
+ * than saying so. The computed diff is the load-bearing evidence; this log is
+ * the exact part.
+ */
+export interface AuthorWrite {
+  path: string;
+  tool: string;
+  at: string;
 }
 
 export interface SteerRecord {
@@ -54,6 +145,22 @@ export interface ReviewRecord {
   failedCriteria: string[];
   inLane: boolean;
   timestamp: string;
+  /** Whether this answer can be trusted as an independent read of the work. */
+  independence?: "clean" | "self-authored";
+  /** True when the evidence was verified against the repository, not just quoted. */
+  verified?: boolean;
+  /** Where "in lane" came from: computed from git, or declared by the model. */
+  laneSource?: "git" | "declared";
+  /** How many evidence references the gate actually checked. */
+  evidenceRefs?: number;
+  /** The user was asked to overrule an `self-authored` scope. */
+  userConfirmed?: boolean;
+  /** Handoff revision the review judged (the frozen one). */
+  specRevision?: number;
+  /** Check receipt this verdict relied on, when one was cited. */
+  checkRunId?: string;
+  /** Non-fatal findings, e.g. "handoff was revised after spawn". */
+  findings?: string[];
 }
 
 export interface RegistrySnapshot {
@@ -62,6 +169,15 @@ export interface RegistrySnapshot {
   children: ScopedChild[];
   steers: SteerRecord[];
   reviews: ReviewRecord[];
+  /** Every pane this orchestrator ever opened, so orphans stay attributable. */
+  panes?: string[];
+  /**
+   * Set by /orch-pause, cleared by /orch-resume. A paused orchestrator refuses
+   * new spawns — "paused" that still accepts work is not a pause.
+   */
+  paused?: boolean;
+  /** Writes the orchestrator made itself, used to compute review independence. */
+  authorWrites?: AuthorWrite[];
 }
 
 export class ScopeRegistry {
@@ -70,11 +186,42 @@ export class ScopeRegistry {
   private readonly runScopes = new Map<string, string>(); // sessionFile -> scope
   private readonly steers: SteerRecord[] = [];
   private readonly reviews: ReviewRecord[] = [];
+  /** Pane ids opened by this parent. Attribution for the orphan sweep: a pane we
+   * cannot prove we started is never closed. */
+  private readonly knownPanes = new Set<string>();
+  /** Survives a restart with the sidecar, so a paused run does not silently reopen. */
+  private paused = false;
+  /** Bounded: independence only needs the recent history of a live scope. */
+  private readonly authorWrites: AuthorWrite[] = [];
 
-  public registerChild(child: ScopedChild): void {
+  /**
+   * Insert a child, keeping exactly ONE live row per session file.
+   *
+   * `orch_resume` mints a new id for an existing session file. The old code
+   * inserted the new row and left the old one in `childrenById` as a permanent
+   * "running" ghost that only the newest row's status updates could reach —
+   * which is how one child produced budget notices quoting three different ids
+   * and two different budgets. The superseded rows are returned so the caller
+   * can abort their watchers before installing the new one.
+   */
+  public registerChild(child: ScopedChild): ScopedChild[] {
+    const superseded: ScopedChild[] = [];
+    for (const [id, existing] of this.childrenById) {
+      if (id === child.id || existing.sessionFile !== child.sessionFile) continue;
+      existing.status = "closed";
+      existing.pendingPing = false;
+      existing.closedAt = new Date().toISOString();
+      existing.closeReason = "resume-superseded";
+      existing.stallStrikes = 0;
+      existing.watchdog = { trip: null, interrupts: existing.watchdog?.interrupts ?? 0 };
+      superseded.push(existing);
+      this.childrenById.delete(id);
+      child.supersededIds = [...(child.supersededIds ?? []), id];
+    }
     this.childrenById.set(child.id, child);
     this.childrenBySession.set(child.sessionFile, child);
     this.runScopes.set(child.sessionFile, child.scope);
+    return superseded;
   }
 
   public getChildById(id: string): ScopedChild | undefined {
@@ -83,6 +230,63 @@ export class ScopeRegistry {
 
   public getChildBySession(sessionFile: string): ScopedChild | undefined {
     return this.childrenBySession.get(sessionFile);
+  }
+
+  /**
+   * Drop every row that belongs to a session.
+   *
+   * The registry is a module singleton, and Pi replaces a session *inside* the
+   * same process (`/new`, `/resume`, `/fork`): `session_shutdown` persists the old
+   * session, then `session_start` fires again with a new id and the same module
+   * instance. Without this reset the new session adopted the previous session's
+   * children (observed: a fresh session showed three subagents from the run it
+   * replaced) and wrote them into its own sidecar on the first persist.
+   */
+  public reset(): void {
+    this.childrenById.clear();
+    this.childrenBySession.clear();
+    this.runScopes.clear();
+    this.steers.length = 0;
+    this.reviews.length = 0;
+    this.knownPanes.clear();
+    this.paused = false;
+    this.authorWrites.length = 0;
+  }
+
+  /** Test seam only: the registry is a module singleton shared by one file's cases. */
+  public resetForTests(): void {
+    this.reset();
+  }
+
+  public recordAuthorWrite(write: AuthorWrite): void {
+    this.authorWrites.push(write);
+    if (this.authorWrites.length > 500) this.authorWrites.splice(0, this.authorWrites.length - 500);
+  }
+
+  /** Writes at or after `sinceIso` (inclusive), optionally filtered to one path. */
+  public getAuthorWrites(sinceIso?: string, path?: string): AuthorWrite[] {
+    return this.authorWrites.filter((w) =>
+      (!sinceIso || w.at >= sinceIso) && (!path || w.path === path),
+    );
+  }
+
+  public setPaused(paused: boolean): void {
+    this.paused = paused;
+  }
+
+  public isPaused(): boolean {
+    return this.paused;
+  }
+
+  /**
+   * Children /orch-pause closed and /orch-resume can redeploy.
+   *
+   * Deliberately keyed on the close reason, not on a separate list: a resume
+   * supersedes the row it came from, so a failed redeploy leaves the marker in
+   * place and a later attempt is still possible.
+   */
+  public getPausedChildren(): ScopedChild[] {
+    return this.getAllChildren().filter((child) => child.status === "closed" && child.closeReason === "paused");
   }
 
   public getScopeForSession(sessionFile: string): string | undefined {
@@ -103,6 +307,12 @@ export class ScopeRegistry {
     }
     if (details?.paneId) {
       child.paneId = details.paneId;
+    }
+    if (status === "closed" && !child.closedAt) {
+      child.closedAt = child.updatedAt;
+      child.closeReason = child.closeReason ?? "scope-cancelled";
+      child.stallStrikes = 0;
+      child.watchdog = { trip: null, interrupts: child.watchdog?.interrupts ?? 0 };
     }
     return child;
   }
@@ -126,8 +336,120 @@ export class ScopeRegistry {
     return child;
   }
 
+  /** Merge watchdog bookkeeping. `addInterrupt` counts a delivered Escape. */
+  public updateWatchdog(
+    sessionFile: string,
+    patch: Partial<WatchdogState> & { addInterrupt?: boolean }
+  ): ScopedChild | undefined {
+    const child = this.childrenBySession.get(sessionFile);
+    if (!child) return undefined;
+    const { addInterrupt, ...rest } = patch;
+    const current = child.watchdog ?? { trip: null, interrupts: 0 };
+    child.watchdog = { ...current, ...rest };
+    if (addInterrupt) child.watchdog.interrupts = (child.watchdog.interrupts ?? 0) + 1;
+    child.updatedAt = new Date().toISOString();
+    return child;
+  }
+
+  /**
+   * Terminal transition. Closing is idempotent: closing an already-closed row
+   * keeps the first, truthful reason instead of overwriting it later.
+   */
+  public closeChild(sessionFile: string, reason: CloseReason): ScopedChild | undefined {
+    const child = this.childrenBySession.get(sessionFile);
+    if (!child) return undefined;
+    if (child.status === "closed") return child;
+    child.status = "closed";
+    child.pendingPing = false;
+    child.stallStrikes = 0;
+    child.closedAt = new Date().toISOString();
+    child.closeReason = reason;
+    child.watchdog = { trip: null, interrupts: child.watchdog?.interrupts ?? 0 };
+    child.updatedAt = child.closedAt;
+    return child;
+  }
+
+  /** Re-arm the budget clock and clear the trip after a resume. */
+  public resetWatchdog(
+    sessionFile: string,
+    opts?: { budgetMs?: number; startedAt?: number; status?: "running" }
+  ): ScopedChild | undefined {
+    const child = this.childrenBySession.get(sessionFile);
+    if (!child) return undefined;
+    child.watchdog = { trip: null, interrupts: 0 };
+    child.stallStrikes = 0;
+    child.lastTail = null;
+    child.startedAt = opts?.startedAt ?? Date.now();
+    if (opts?.budgetMs) child.budgetMs = opts.budgetMs;
+    child.status = opts?.status ?? "running";
+    child.pendingPing = false;
+    child.closedAt = undefined;
+    child.closeReason = undefined;
+    child.updatedAt = new Date().toISOString();
+    return child;
+  }
+
+  /**
+   * A paused row whose conversation is gone can never be redeployed.
+   *
+   * `closeChild` is idempotent and keeps the first reason, so this is the one
+   * transition allowed to rewrite a closed row's reason — from `paused` to
+   * `paused-missing`, never the other way.
+   */
+  public markPausedMissing(sessionFile: string): ScopedChild | undefined {
+    const child = this.childrenBySession.get(sessionFile);
+    if (!child || child.closeReason !== "paused") return child;
+    child.closeReason = "paused-missing";
+    child.updatedAt = new Date().toISOString();
+    return child;
+  }
+
   public recordSteer(steer: SteerRecord): void {
     this.steers.push(steer);
+  }
+
+  /**
+   * A terminal row whose pane was still alive was swept. The outcome stays
+   * (`completed`/`failed`), only the residue is recorded — rewriting it to
+   * `closed` would erase how the child actually ended.
+   */
+  public markPaneSwept(sessionFile: string, reason: CloseReason): ScopedChild | undefined {
+    const child = this.childrenBySession.get(sessionFile);
+    if (!child) return undefined;
+    child.closeReason = child.closeReason ?? reason;
+    child.closedAt = child.closedAt ?? new Date().toISOString();
+    child.updatedAt = new Date().toISOString();
+    return child;
+  }
+
+  /**
+   * Keep a live pane covered after a failed terminal transition.
+   *
+   * A row that stays `blocked` while its pane is alive is invisible to the
+   * watchdog (which only feeds `running`), so a failed close used to park a live
+   * agent forever. Re-arming `running` with a `close-failed` trip makes the next
+   * tick retry the close instead of forgetting the child.
+   */
+  public rearmForRetry(
+    sessionFile: string,
+    reason: string,
+    at: string = new Date().toISOString()
+  ): ScopedChild | undefined {
+    const child = this.childrenBySession.get(sessionFile);
+    if (!child) return undefined;
+    if (child.status === "closed") return child;
+    child.status = "running";
+    child.pendingPing = false;
+    child.watchdog = {
+      ...(child.watchdog ?? { interrupts: 0 }),
+      trip: "close-failed",
+      // Caller-supplied so retry backoff uses the same clock as the watchdog;
+      // a wall-clock stamp against an injected `now()` never expires.
+      trippedAt: at,
+      lastFailure: reason,
+    };
+    child.updatedAt = new Date().toISOString();
+    return child;
   }
 
   /** Newest review first. */
@@ -178,17 +500,63 @@ export class ScopeRegistry {
       children: this.getAllChildren(),
       steers: [...this.steers],
       reviews: [...this.reviews],
+      panes: [...this.knownPanes],
+      paused: this.paused,
+      authorWrites: [...this.authorWrites],
     };
   }
 
+  /**
+   * Restore, keeping ONE row per session file (the newest).
+   *
+   * Older sidecars contain the ghost rows described in `registerChild`; loading
+   * them verbatim resurrected every one of them on the next start.
+   */
   public loadSnapshot(snapshot: RegistrySnapshot): void {
+    this.paused = snapshot.paused === true;
+    this.authorWrites.length = 0;
+    for (const write of snapshot.authorWrites ?? []) {
+      if (write?.path && write?.at) this.authorWrites.push(write);
+    }
+    const newest = new Map<string, ScopedChild>();
     for (const child of snapshot.children ?? []) {
+      const current = newest.get(child.sessionFile);
+      if (!current) {
+        newest.set(child.sessionFile, child);
+        continue;
+      }
+      const keep = (child.updatedAt ?? "") >= (current.updatedAt ?? "") ? child : current;
+      const drop = keep === child ? current : child;
+      keep.supersededIds = [...(keep.supersededIds ?? []), ...(drop.supersededIds ?? []), drop.id]
+        .filter((id, index, all) => all.indexOf(id) === index && id !== keep.id);
+      if (drop.status !== "closed") {
+        drop.status = "closed";
+        drop.closeReason = drop.closeReason ?? "resume-superseded";
+        drop.closedAt = drop.closedAt ?? new Date().toISOString();
+      }
+      newest.set(child.sessionFile, keep);
+    }
+    for (const child of newest.values()) {
       this.childrenById.set(child.id, child);
       this.childrenBySession.set(child.sessionFile, child);
       this.runScopes.set(child.sessionFile, child.scope);
     }
     for (const steer of snapshot.steers ?? []) this.steers.push(steer);
     for (const review of snapshot.reviews ?? []) this.reviews.push(review);
+    for (const pane of snapshot.panes ?? []) this.knownPanes.add(pane);
+  }
+
+  /** Remember a pane this parent opened, so the orphan sweep can attribute it. */
+  public recordPane(paneId: string | undefined): void {
+    if (paneId) this.knownPanes.add(paneId);
+  }
+
+  public forgetPane(paneId: string): void {
+    this.knownPanes.delete(paneId);
+  }
+
+  public getKnownPanes(): string[] {
+    return [...this.knownPanes];
   }
 
   public getSteers(childId?: string): SteerRecord[] {
@@ -196,14 +564,42 @@ export class ScopeRegistry {
     return this.steers.filter((s) => s.childId === childId);
   }
 
+  /**
+   * Children that a parent can still address: running, plus ping-paused ones
+   * (a blocked child is how a child waits for an answer, so it is not gone).
+   */
   public getRunningChildren(): ScopedChild[] {
+    return this.getActiveChildren();
+  }
+
+  public getActiveChildren(): ScopedChild[] {
     return Array.from(this.childrenById.values()).filter(
       (c) => c.status === "running" || c.status === "blocked"
     );
   }
 
+  /**
+   * The watchdog's input: only children that still own a live turn.
+   *
+   * A tripped child is `blocked` and awaiting a parent decision, and a
+   * ping-paused child has already exited its pane on purpose. Feeding either
+   * back into the budget/stall loop is what made the watchdog repeat forever.
+   */
+  public getWatchdogChildren(): ScopedChild[] {
+    return Array.from(this.childrenById.values()).filter(
+      (c) => c.status === "running" && !c.pendingPing
+    );
+  }
+
   public getAllChildren(): ScopedChild[] {
     return Array.from(this.childrenById.values());
+  }
+
+  /** Rows that claim to be finished but may still own a pane (sweep input). */
+  public getTerminalChildren(): ScopedChild[] {
+    return Array.from(this.childrenById.values()).filter(
+      (c) => c.status === "completed" || c.status === "failed"
+    );
   }
 
   public getChildrenInScope(scope: string): ScopedChild[] {

@@ -47,6 +47,7 @@ function fixture(opts: { tail?: string } = {}) {
   const notices: string[] = [];
   const sent: any[] = [];
   const paneReads: string[] = [];
+  const paneGets: string[] = [];
   const interrupts: string[] = [];
   const pi: any = {
     on(name: string, fn: Function) { hooks.set(name, [...(hooks.get(name) ?? []), fn]); },
@@ -60,7 +61,11 @@ function fixture(opts: { tail?: string } = {}) {
     events: { on() {}, emit() {} },
   };
   const client: any = {
+    // Existence is decided by `pane get`; `pane read` is only the diagnostic tail.
+    paneGet: async (paneId: string) => { paneGets.push(paneId); return { pane_id: paneId }; },
     paneRead: async (paneId: string) => { paneReads.push(paneId); return opts.tail ?? "working"; },
+    paneList: async () => [],
+    paneClose: async () => {},
     paneSendKeys: async (paneId: string) => { interrupts.push(paneId); },
     paneStart: async () => ({ paneId: "pane-new" }),
   };
@@ -70,7 +75,7 @@ function fixture(opts: { tail?: string } = {}) {
     for (const hook of hooks.get(name) ?? []) results.push(await hook(event, ctx));
     return results.filter(Boolean);
   };
-  return { emit, tools, notices, sent, paneReads, interrupts };
+  return { emit, tools, notices, sent, paneReads, paneGets, interrupts };
 }
 
 function ctxFor(dir: string, params: { sessionId: string; branch?: any[]; sessionFile?: string }) {
@@ -134,6 +139,7 @@ test("a delegated child never restores, watches, or writes the orchestrator regi
 
     assert.equal(registry.getChildrenInScope("sibling-only").length, 0,
       "a child must not adopt the parent's running children");
+    assert.equal(f.paneGets.length, 0, "a child must not probe sibling panes at startup");
     assert.equal(f.paneReads.length, 0, "a child must not read sibling panes at startup");
     assert.ok(!notices.some(text => text.includes("orchestrator active")),
       "a child must not be told it is the orchestrator");
@@ -181,6 +187,7 @@ test("only the owning session restores and writes its own registry sidecar", asy
     assert.equal(registry.getChildrenInScope("legacy-only").length, 0,
       "another session's unkeyed sidecar is not adopted");
     assert.ok(notices.some(text => text.includes("orchestrator active")));
+    assert.deepEqual(f.paneGets, ["pane-own"], "reconciliation only touches its own children");
     assert.deepEqual(f.paneReads, ["pane-own"], "reconciliation only touches its own children");
 
     await f.emit("session_shutdown", {}, ctx);
@@ -192,6 +199,39 @@ test("only the owning session restores and writes its own registry sidecar", asy
     const own = JSON.parse(await readFile(join(dir, "orchestrator-registry-parent-2.json"), "utf8"));
     assert.equal(own.children.filter((entry: any) => entry.scope === "owner-only").length, 1);
   } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a new session in the same process does not inherit the replaced session's children", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-orch-session-switch-"));
+  try {
+    await writeFile(join(dir, "orchestrator-registry-session-a.json"), JSON.stringify(snapshot([
+      child({
+        id: "old-a", name: "old-child", scope: "old-scope",
+        sessionFile: join(dir, "old.jsonl"), paneId: "pane-old", status: "completed",
+      }),
+    ])));
+
+    const f = fixture();
+    const ctxA = ctxFor(dir, { sessionId: "session-a", branch: [] }).ctx;
+    await f.emit("session_start", { type: "session_start" }, ctxA);
+    assert.equal(registry.getChildrenInScope("old-scope").length, 1, "session A restores its own child");
+    await f.emit("session_shutdown", { type: "session_shutdown", reason: "new" }, ctxA);
+
+    // Pi replaces the session *inside* the same process (`/new`), so the next
+    // session_start sees a new id on the same extension instance and no sidecar
+    // of its own. The replaced session's rows must not follow it.
+    const ctxB = ctxFor(dir, { sessionId: "session-b", branch: [] }).ctx;
+    await f.emit("session_start", { type: "session_start", reason: "new" }, ctxB);
+    assert.equal(registry.getChildrenInScope("old-scope").length, 0,
+      "the new session inherited the replaced session's child");
+
+    await f.emit("session_shutdown", { type: "session_shutdown", reason: "quit" }, ctxB);
+    const own = JSON.parse(await readFile(join(dir, "orchestrator-registry-session-b.json"), "utf8"));
+    assert.deepEqual(own.children, [], "the new session's sidecar contains only its own work");
+  } finally {
+    registry.resetForTests();
     await rm(dir, { recursive: true, force: true });
   }
 });
