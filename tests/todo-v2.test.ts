@@ -158,17 +158,17 @@ test("a committed plan injects one line; a scratch plan injects nothing", async 
   assert.equal(quiet.messages.filter((m: any) => m.customType === "workflow-todo-guidance").length, 0);
 });
 
-test("subagent_done is refused while a committed plan is unfinished, and allowed otherwise", async () => {
+test("orch_done is refused while a committed plan is unfinished, and allowed otherwise", async () => {
   const s = await setup();
-  assert.equal(await s.fire("tool_call", { toolName: "subagent_done" }), undefined, "nothing to report against");
+  assert.equal(await s.fire("tool_call", { toolName: "orch_done" }), undefined, "nothing to report against");
   const planned = await s.call(PLAN_TOOL, { goal: "g", tasks: [{ title: "A" }] });
-  const blocked = await s.fire("tool_call", { toolName: "subagent_done" });
+  const blocked = await s.fire("tool_call", { toolName: "orch_done" });
   assert.equal(blocked.block, true);
   assert.match(blocked.reason, new RegExp(planned.details.tasks[0].id));
   await s.call(ACT_TOOL, {
     id: planned.details.tasks[0].id, transition: "done", evidence: [{ kind: "file", path: "package.json" }],
   });
-  assert.equal(await s.fire("tool_call", { toolName: "subagent_done" }), undefined);
+  assert.equal(await s.fire("tool_call", { toolName: "orch_done" }), undefined);
 });
 
 test("the v1 shim still answers, without the gate and without pretending prose is evidence", async () => {

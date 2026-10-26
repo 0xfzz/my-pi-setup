@@ -39,7 +39,7 @@ export function isMcpTool(name: string): boolean {
  * `reachesTools` is Pi's own signal for this and is exactly what the shipping
  * dispatchers declare: the `mcp` gateway (reaches every MCP tool), each namespace
  * proxy (`mcp__<server>`), the codemode bridge, and even `ask_user` (reaches
- * `caller_ping` when a child cannot ask directly). It may be a function returning
+ * `orch_ping` when a child cannot ask directly). It may be a function returning
  * target names, or a literal like "all"; both mean the same thing here — invoking
  * this tool invokes something else, so the caller cannot judge the real effect
  * from this tool's own name or annotations.
@@ -61,7 +61,7 @@ export function isDispatcherTool(tool: PolicyTool | undefined): boolean {
  *
  *  - `subagent` spawns work, so it must pass the workflow assessment.
  *  - `subagent_resume` restarts real work in a child.
- *  - `subagent_done` reports completion, and the todo guard must see it to refuse a
+ *  - `orch_done` reports completion, and the todo guard must see it to refuse a
  *    report while todos are unresolved. Exempting it would make that guard unreachable,
  *    because an exempt tool returns before the guard runs.
  *

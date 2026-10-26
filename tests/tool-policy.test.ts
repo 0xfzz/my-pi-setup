@@ -34,21 +34,21 @@ test("every MCP tool shape is recognised, and nothing else is", () => {
 test("dispatchers are identified by Pi's own reachesTools marker, not by name", () => {
   assert.equal(isDispatcherTool({ name: "mcp", reachesTools: "all" }), true, "literal marker");
   assert.equal(isDispatcherTool({ name: "mcp__local_mcp", reachesTools: () => ["mcp__local_mcp"] }), true, "function marker");
-  assert.equal(isDispatcherTool({ name: "ask_user", reachesTools: () => ["caller_ping"] }), true);
+  assert.equal(isDispatcherTool({ name: "ask_user", reachesTools: () => ["orch_ping"] }), true);
   assert.equal(isDispatcherTool({ name: "brand_new_gateway", reachesTools: () => [] }), true, "a gateway we have never heard of");
   assert.equal(isDispatcherTool({ name: "read" }), false);
   assert.equal(isDispatcherTool(undefined), false, "an unregistered tool cannot be classified");
 });
 
 test("admin tools are matched by shape so a new lifecycle tool needs no code change", () => {
-  for (const name of ["subagent_interrupt", "subagent_progress", "caller_ping", "ask_user", "tool_search", "subagent_abort", "subagent_steer"]) {
+  for (const name of ["subagent_interrupt", "orch_progress", "orch_ping", "ask_user", "tool_search", "subagent_abort", "subagent_steer"]) {
     assert.equal(isAdminTool(name), true, name);
   }
   // These DO work, or own a dedicated guard, and must therefore still reach the
   // tool_call logic below the gate. Getting this list wrong is not cosmetic:
-  // `subagent_done` is guarded later in the hook, so exempting it made that guard
+  // `orch_done` is guarded later in the hook, so exempting it made that guard
   // unreachable dead code (caught by tests/todo.test.ts).
-  for (const name of ["subagent", "subagent_resume", "subagent_done", "bash", "edit", "workflow_todo"]) {
+  for (const name of ["subagent", "subagent_resume", "orch_done", "bash", "edit", "workflow_todo"]) {
     assert.equal(isAdminTool(name), false, name);
   }
 });
@@ -80,7 +80,7 @@ test("gate exemption covers configured capabilities but never turns unknown name
   assert.equal(isGateExempt({ name: "ask_user" }), true);
   assert.equal(isGateExempt({ name: "subagent_interrupt" }), true);
   // Exempting these would disable a guard that runs later in the tool_call hook.
-  assert.equal(isGateExempt({ name: "subagent_done" }), false, "completion reporting stays guarded");
+  assert.equal(isGateExempt({ name: "orch_done" }), false, "completion reporting stays guarded");
   // Real work still has to be assessed — this is the point of the gate.
   for (const name of ["bash", "read", "edit", "write", "subagent"]) {
     assert.equal(isGateExempt({ name }), false, name);
@@ -116,7 +116,7 @@ test("Plan mode trusts a read-only MCP tool but refuses a dispatcher claiming re
 
   // An explicit allowlist entry still wins, which is why `ask_user` (a dispatcher)
   // remains available for clarifying questions in Plan mode.
-  const askUser = { name: "ask_user", annotations: {}, reachesTools: () => ["caller_ping"] };
+  const askUser = { name: "ask_user", annotations: {}, reachesTools: () => ["orch_ping"] };
   assert.equal(isPlanTool(askUser.name, askUser), true, "allowlisted dispatcher stays usable");
 });
 
@@ -137,7 +137,7 @@ function todoFixture(branch: any[] = []) {
   const registry = [
     { name: "read" }, { name: "bash" }, { name: "edit" }, { name: "write" },
     { name: "workflow_todo" }, { name: "artifact_save" }, { name: "subagent" },
-    { name: "ask_user", reachesTools: () => ["caller_ping"] },
+    { name: "ask_user", reachesTools: () => ["orch_ping"] },
     { name: "mcp", reachesTools: "all" },
     { name: "mcp__github__create_issue" }, { name: "mcp__github__list_repos" },
   ];

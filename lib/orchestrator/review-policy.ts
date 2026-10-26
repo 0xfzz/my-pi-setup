@@ -77,7 +77,7 @@ export function reviewPolicyFromEnv(env: NodeJS.ProcessEnv | Record<string, stri
 export const SPEC_ONLY_TOOLS: ReadonlySet<string> = new Set([
   "read", "grep", "find", "ls", "ffgrep", "fffind",
   "todo_plan", "todo_act", "todo_next", "workflow_todo",
-  "caller_ping", "subagent_done", "orch_progress",
+  "orch_ping", "orch_done", "orch_progress",
   "orch_spec_review_submit",
 ]);
 

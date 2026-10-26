@@ -306,7 +306,7 @@ export function matchOwner(
       target,
       candidates,
       evidence,
-      reason: `Target subagent ${target.name} (${target.id}) is blocked or awaiting a caller_ping response.`,
+      reason: `Target subagent ${target.name} (${target.id}) is blocked or awaiting an orch_ping response.`,
       suggestedAction: "Ask user to resolve pending blocker before issuing steering.",
       inventory,
     };

@@ -117,7 +117,7 @@ export interface PlanToolInfo {
 export function isPlanTool(name: string, tool?: PlanToolInfo): boolean {
   if (UNSAFE_TOOLS.has(name) || tool?.annotations?.destructiveHint === true) return false;
   // Explicit allowlisting wins, so `ask_user` stays usable even though it is a
-  // dispatcher (it reaches `caller_ping` when a child cannot ask directly).
+  // dispatcher (it reaches `orch_ping` when a child cannot ask directly).
   if (PLAN_TOOLS.has(name)) return true;
   // A dispatcher invokes tools whose behaviour is not visible from here, so a
   // read-only claim on the dispatcher says nothing about what it actually runs.

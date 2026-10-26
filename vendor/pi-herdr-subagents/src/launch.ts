@@ -87,7 +87,7 @@ export interface LaunchPlanContext {
   /** Override pi binary resolution (default: scan env.PATH for an executable `pi`). */
   resolvePiBin?: (env: Record<string, string | undefined>) => string;
   /** Override the child extension path (default: <package root>/subagent-done.ts). */
-  subagentDonePath?: string;
+  orchChildPath?: string;
 }
 
 export interface LaunchPlan {
@@ -154,7 +154,7 @@ export function shellEscape(s: string): string {
 // Use those instead", so children ran todo-less and published no milestones.
 // `workflow_todo` stays reachable for one release so a manually resumed child with
 // an older transcript keeps working. test/launch.test.ts pins this set.
-const SUBAGENT_CONTROL_TOOLS = ["caller_ping", "subagent_done", "orch_progress", "todo_plan", "todo_act", "todo_next", "workflow_todo", "artifact_save", "artifact_edit", "artifact_recall", "artifact_search"] as const;
+const SUBAGENT_CONTROL_TOOLS = ["orch_ping", "orch_done", "orch_progress", "todo_plan", "todo_act", "todo_next", "workflow_todo", "artifact_save", "artifact_edit", "artifact_recall", "artifact_search"] as const;
 
 /**
  * Control tools a spec-only reviewer may keep.
@@ -163,7 +163,7 @@ const SUBAGENT_CONTROL_TOOLS = ["caller_ping", "subagent_done", "orch_progress",
  * its ticket, so it needs no artifact reader, and it must not hold an artifact
  * writer it could use to alter the document it is judging.
  */
-const REVIEWER_CONTROL_TOOLS = ["caller_ping", "subagent_done", "orch_progress", "todo_plan", "todo_act", "todo_next", "orch_spec_review_submit"] as const;
+const REVIEWER_CONTROL_TOOLS = ["orch_ping", "orch_done", "orch_progress", "todo_plan", "todo_act", "todo_next", "orch_spec_review_submit"] as const;
 
 /**
  * Build the child --tools allowlist.
@@ -171,7 +171,7 @@ const REVIEWER_CONTROL_TOOLS = ["caller_ping", "subagent_done", "orch_progress",
  * Pi 0.70+ applies --tools to built-in, extension, and custom tools. If a
  * subagent definition restricts tools to e.g. "read,bash,write", the child
  * control tools from subagent-done.ts would otherwise be hidden, leaving a
- * manually resumed or user-touched subagent unable to call subagent_done.
+ * manually resumed or user-touched subagent unable to call orch_done.
  */
 export function buildSubagentToolAllowlist(
   effectiveTools?: string,
@@ -421,10 +421,10 @@ export function buildLaunchPlan(
   // protocol, so dropping the wrapper there produced unsummarized fork children.
   const modeHint = autoExit
     ? "Complete your task autonomously."
-    : "Complete your task. When finished, call the subagent_done tool. The user can interact with you at any time.";
+    : "Complete your task. When finished, call the orch_done tool. The user can interact with you at any time.";
   const summaryInstruction = autoExit
     ? "Your FINAL assistant message should summarize what you accomplished."
-    : "Your FINAL assistant message (before calling subagent_done or before the user exits) should summarize what you accomplished.";
+    : "Your FINAL assistant message (before calling orch_done or before the user exits) should summarize what you accomplished.";
   const identity = agentDefs?.body ?? params.systemPrompt ?? null;
   const systemPromptMode = agentDefs?.systemPromptMode;
   const identityInSystemPrompt = Boolean(systemPromptMode && identity);
@@ -465,8 +465,8 @@ export function buildLaunchPlan(
   const piBin = env.PI_HERDR_PI_BIN ?? (ctx.resolvePiBin ?? defaultResolvePiBin)(env);
   const piArgv: string[] = [piBin, "--session", sessionFile];
 
-  const subagentDonePath = ctx.subagentDonePath ?? join(PACKAGE_ROOT, "subagent-done.ts");
-  piArgv.push("-e", subagentDonePath);
+  const orchChildPath = ctx.orchChildPath ?? join(PACKAGE_ROOT, "orch-child.ts");
+  piArgv.push("-e", orchChildPath);
 
   if (effectiveModel) {
     const modelArg =
@@ -667,8 +667,8 @@ export function buildResumeLaunchPlan(
 
   // ── pi argv ──
   const piBin = env.PI_HERDR_PI_BIN ?? (ctx.resolvePiBin ?? defaultResolvePiBin)(env);
-  const subagentDonePath = ctx.subagentDonePath ?? join(PACKAGE_ROOT, "subagent-done.ts");
-  const piArgv: string[] = [piBin, "--session", params.sessionPath, "-e", subagentDonePath];
+  const orchChildPath = ctx.orchChildPath ?? join(PACKAGE_ROOT, "orch-child.ts");
+  const piArgv: string[] = [piBin, "--session", params.sessionPath, "-e", orchChildPath];
 
   let resumeMessageFile: string | null = null;
   if (params.message) {

@@ -373,7 +373,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
     message: {
       customType: "subagent-progress-guidance", display: false,
       content: [
-        "Report meaningful milestones using orch_progress when available: findings, changed files, verification, next steps, and blockers. Do not report each tool call. Workflow todo changes also publish checkpoints automatically. Progress is not completion; keep Herdr's existing subagent_done/caller_ping protocol.",
+        "Report meaningful milestones using orch_progress when available: findings, changed files, verification, next steps, and blockers. Do not report each tool call. Workflow todo changes also publish checkpoints automatically. Progress is not completion; keep Herdr's existing orch_done/orch_ping protocol.",
         specOnlyReviewer
           ? "You are an independent reviewer with no parent history. Judge only the pinned document in your ticket and the permitted paths. Missing context is a finding, not a reason to reconstruct the author's intent."
           : "",
@@ -461,7 +461,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
 
   if (childSession && childRun) pi.registerTool({
     name: "orch_progress", label: "Report Milestone", executionMode: "sequential",
-    description: "Publish one meaningful milestone to the parent dashboard without ending the child or waking the parent model. Progress is not completion; use caller_ping for questions requiring an answer.",
+    description: "Publish one meaningful milestone to the parent dashboard without ending the child or waking the parent model. Progress is not completion; use orch_ping for questions requiring an answer.",
     parameters: Type.Object({
       summary: Type.String({ minLength: 1, maxLength: 1200 }),
       files: Type.Optional(Type.Array(Type.String({ maxLength: 300 }), { maxItems: 20 })),

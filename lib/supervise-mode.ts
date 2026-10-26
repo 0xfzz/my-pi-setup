@@ -151,7 +151,7 @@ export const SUPERVISOR_TOOLS: ReadonlySet<string> = new Set([
   "orch_progress",
   "orch_parent_recall",
   "orch_parent_digest",
-  "caller_ping",
+  "orch_ping",
 ]);
 
 /** Alias kept for callers that used the older name. */

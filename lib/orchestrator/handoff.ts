@@ -260,7 +260,7 @@ understand the code; write only inside your lane.
 
 ## If you are unsure — escalate, never guess
 Two routes, in order:
-1. **Ask the orchestrator** with \`caller_ping\`: state the question, what you
+1. **Ask the orchestrator** with \`orch_ping\`: state the question, what you
    already checked, and the options you see. This pauses your session; the
    orchestrator resumes you with an answer.
 2. **If the orchestrator cannot answer**, it escalates to the user and resumes
@@ -339,7 +339,7 @@ your goal, the acceptance criteria the review will check, the files you own (you
 lane), the files you must not touch, and the interfaces you must honour.
 
 It is the only spec you have. If the recall fails or returns something for a
-different scope, do NOT guess your lane — escalate with \`caller_ping\`.
+different scope, do NOT guess your lane — escalate with \`orch_ping\`.
 
 ${assignment}
 ## Boundaries
@@ -348,7 +348,7 @@ understand the code; write only inside your lane.
 
 ## If you are unsure — escalate, never guess
 Two routes, in order:
-1. **Ask the orchestrator** with \`caller_ping\`: state the question, what you
+1. **Ask the orchestrator** with \`orch_ping\`: state the question, what you
    already checked, and the options you see. This pauses your session; the
    orchestrator resumes you with an answer.
 2. **If the orchestrator cannot answer**, it escalates to the user and resumes

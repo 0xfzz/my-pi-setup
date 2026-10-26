@@ -86,6 +86,7 @@ import { buildOutcomeMessage } from "../vendor/pi-herdr-subagents/src/messages.t
 import { loadAgentDefaults } from "../vendor/pi-herdr-subagents/src/agents.ts";
 import { loadSubagentSettings } from "../vendor/pi-herdr-subagents/src/settings.ts";
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";
+import { isDelegationTool, mayUseDelegationTool } from "../lib/delegation-tools.ts";
 import { CHECKPOINT_TYPE } from "../lib/subagent-state.ts";
 import {
   artifactFromRecord,
@@ -1177,11 +1178,15 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       }
       return;
     }
+    const parentOnly = `${event.toolName} is parent-only: this session is a delegated child. Report back with orch_ping or orch_done instead.`;
+    // A child owns its reporting/pull tools (orch_done, orch_ping, …) but never a
+    // parent-role delegation tool. This is the call-time half of the capability
+    // table; the `--tools` allowlist is the first half.
+    if (isDelegationTool(event.toolName)) {
+      return mayUseDelegationTool(event.toolName, "child") ? undefined : { block: true, reason: parentOnly };
+    }
     if (!event.toolName.startsWith("orch_")) return;
-    return {
-      block: true,
-      reason: `${event.toolName} is parent-only: this session is a delegated child. Report back with caller_ping or subagent_done instead.`,
-    };
+    return { block: true, reason: parentOnly };
   });
 
   /** Tools whose input names a filesystem path a reviewer might read. */
@@ -2285,7 +2290,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           ``,
           `The child holds this handoff only. It cannot see any other work unit.`,
           `The scope (${scope}) is the identity: use it in orch_steer, orch_check and orch_review.`,
-          `Do NOT guess results. The outcome (or a caller_ping escalation) arrives automatically.`,
+          `Do NOT guess results. The outcome (or an orch_ping escalation) arrives automatically.`,
         ].join("\n"),
         {
           id: running.id,

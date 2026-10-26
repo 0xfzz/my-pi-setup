@@ -57,7 +57,7 @@ describe("artifact-scope helpers", () => {
     assert.ok(content.includes("- `src/auth/jwt.ts`"));
     // The two escalation routes are stated, in order, on every handoff.
     assert.ok(content.includes("## If you are unsure — escalate, never guess"));
-    assert.ok(content.includes("`caller_ping`"));
+    assert.ok(content.includes("`orch_ping`"));
     assert.ok(content.includes("it escalates to the user"));
     assert.ok(content.includes("Never resolve an ambiguity by picking the interpretation"));
     // Lane ownership is stated as a boundary, not a suggestion.

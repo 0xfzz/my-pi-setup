@@ -93,7 +93,7 @@ test("Integration: Scoped spec handoff and directory security permissions", asyn
     assert.match(content, /src\/storage\/wal\.ts/);
     assert.match(content, /Implement append-only WAL/);
     // Every handoff carries both escalation routes.
-    assert.match(content, /caller_ping/);
+    assert.match(content, /orch_ping/);
     assert.match(content, /escalates to the user/);
 
     const laneFiles = parseSpecLaneFiles(content);

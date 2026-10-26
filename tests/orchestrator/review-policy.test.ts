@@ -50,7 +50,7 @@ test("reviewers cannot reach the author, the network, or a writer", () => {
   for (const name of ["bash", "write", "edit", "orch_parent_recall", "orch_parent_digest", "orch_history", "browser", "mcp", "codemode", "web_read", "artifact_save", "artifact_edit", "orch_spawn", "orch_review", "tool_search"]) {
     assert.equal(isSpecOnlyDeniedTool(name), true, `${name} must be denied`);
   }
-  for (const name of ["read", "grep", "find", "ls", "ffgrep", "fffind", "orch_spec_review_submit", "caller_ping", "subagent_done"]) {
+  for (const name of ["read", "grep", "find", "ls", "ffgrep", "fffind", "orch_spec_review_submit", "orch_ping", "orch_done"]) {
     assert.equal(isSpecOnlyDeniedTool(name), false, `${name} must be allowed`);
   }
   // Fail closed: an unknown third-party or gateway tool is not in the allowlist.

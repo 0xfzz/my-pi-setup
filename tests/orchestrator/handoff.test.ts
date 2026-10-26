@@ -77,7 +77,7 @@ describe("handoff spec", () => {
 
     // Rule 3: the ladder is declared, in order, on every handoff.
     assert.match(doc, /## If you are unsure — escalate, never guess/);
-    assert.match(doc, /caller_ping/);
+    assert.match(doc, /orch_ping/);
     assert.match(doc, /it escalates to the user/);
     assert.match(doc, /You do not contact the user yourself/);
     assert.match(doc, /Never resolve an ambiguity by picking the interpretation/);

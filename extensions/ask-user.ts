@@ -14,8 +14,8 @@ const parentGuidance =
   "Otherwise ask the user with ask_user. Resume that child with subagent_resume using the supplied session path and the answer. " +
   "Cancellation is unanswered, never consent: report that explicitly when resuming; do not invent an answer.";
 const childGuidance =
-  "In a Herdr child (PI_SUBAGENT_SESSION), never open user UI. Prefer calling caller_ping directly with your question, context, and options. " +
-  "caller_ping notifies the parent and shuts down this child until the parent uses subagent_resume; " +
+  "In a Herdr child (PI_SUBAGENT_SESSION), never open user UI. Prefer calling orch_ping directly with your question, context, and options. " +
+  "orch_ping notifies the parent and shuts down this child until the parent uses subagent_resume; " +
   "direct invocation avoids nested-tool shutdown interrupting ask_user's result. ask_user forwards through the same protocol, not a synchronous answer. " +
   "If forwarding is unavailable or denied, report the blocker; never fall back to user UI.";
 
@@ -57,7 +57,7 @@ export default function askUser(pi: ExtensionAPI) {
       "A cancelled dialog is unanswered, never approval. In Herdr children this forwards to the parent and exits, not a synchronous user answer.",
     exposure: "model-only",
     executionMode: "sequential",
-    reachesTools: () => ["caller_ping"],
+    reachesTools: () => ["orch_ping"],
     parameters: Type.Object({
       question: Type.String({ minLength: 1, description: "The single question to ask." }),
       context: Type.Optional(Type.String({ description: "Brief context needed to answer." })),
@@ -81,10 +81,10 @@ export default function askUser(pi: ExtensionAPI) {
       if (isSubagentChildSession(ctx)) {
         const unavailable = (reason: string) => result({
           status: "unavailable", question,
-          message: `Unanswered: ${reason}. Ensure the Herdr caller_ping tool is loaded and permitted in this child, then call caller_ping directly. No user UI was opened.`,
+          message: `Unanswered: ${reason}. Ensure the Herdr orch_ping tool is loaded and permitted in this child, then call orch_ping directly. No user UI was opened.`,
         });
-        if (typeof ctx.executeTool !== "function" || !ctx.tools.some(tool => tool.name === "caller_ping")) {
-          return unavailable("caller_ping is not callable");
+        if (typeof ctx.executeTool !== "function" || !ctx.tools.some(tool => tool.name === "orch_ping")) {
+          return unavailable("orch_ping is not callable");
         }
         const message = [
           `Question: ${question}`,
@@ -93,9 +93,9 @@ export default function askUser(pi: ExtensionAPI) {
           "Answer from known context or ask the user, then resume this child with subagent_resume. Cancellation is unanswered, not consent.",
         ].filter(Boolean).join("\n\n");
         try {
-          const outcome = await ctx.executeTool("caller_ping", { message }, { signal });
+          const outcome = await ctx.executeTool("orch_ping", { message }, { signal });
           if (outcome.isError || outcome.result.isError) {
-            return unavailable("caller_ping failed or was denied");
+            return unavailable("orch_ping failed or was denied");
           }
           // Success means handed to Herdr, not answered. Herdr owns sidecars and shutdown.
           return result({
@@ -104,7 +104,7 @@ export default function askUser(pi: ExtensionAPI) {
           });
         } catch (error) {
           if (signal?.aborted) return cancelled();
-          return unavailable(`caller_ping could not complete (${error instanceof Error ? error.message : String(error)})`);
+          return unavailable(`orch_ping could not complete (${error instanceof Error ? error.message : String(error)})`);
         }
       }
 

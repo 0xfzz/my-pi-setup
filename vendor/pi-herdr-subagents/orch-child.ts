@@ -1,8 +1,8 @@
 /**
  * Extension loaded into every subagent child pi (via `-e <this file>`).
  * - Shows agent identity + available tools as a styled widget above the editor (toggle with Ctrl+J)
- * - Provides a `subagent_done` tool for autonomous agents to self-terminate
- * - Provides a `caller_ping` tool to ask the parent orchestrator for help
+ * - Provides an `orch_done` tool for autonomous agents to self-terminate
+ * - Provides an `orch_ping` tool to ask the parent orchestrator for help
  *
  * Ported from pi-interactive-subagents (MIT, HazAT)
  * pi-extension/subagents/subagent-done.ts @ fix/launch-verify-retry, with the
@@ -329,8 +329,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "caller_ping",
-    label: "Caller Ping",
+    name: "orch_ping",
+    label: "Ping Orchestrator",
     description:
       "Send a help request to the parent agent and exit this session. " +
       "The parent will be notified with your message and can resume this session with a response. " +
@@ -342,7 +342,7 @@ export default function (pi: ExtensionAPI) {
       const sessionFile = process.env.PI_SUBAGENT_SESSION;
       if (!sessionFile) {
         throw new Error(
-          "caller_ping is only available in subagent contexts. " +
+          "orch_ping is only available in subagent contexts. " +
             "PI_SUBAGENT_SESSION environment variable is not set.",
         );
       }
@@ -365,8 +365,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "subagent_done",
-    label: "Subagent Done",
+    name: "orch_done",
+    label: "Finish Subagent",
     description:
       "Call this tool when you have completed your task. " +
       "It will close this session and return your results to the main session. " +
