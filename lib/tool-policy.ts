@@ -11,6 +11,8 @@
  * such below.
  */
 
+import { delegationTool } from "./delegation-tools.ts";
+
 /** Minimal shape the policy needs; satisfied by Pi's registered tool objects. */
 export interface PolicyTool {
   name: string;
@@ -62,21 +64,35 @@ export function isDispatcherTool(tool: PolicyTool | undefined): boolean {
  *  - `subagent_done` reports completion, and the todo guard must see it to refuse a
  *    report while todos are unresolved. Exempting it would make that guard unreachable,
  *    because an exempt tool returns before the guard runs.
+ *
+ * The same rule follows the canonical names through `delegation-tools.ts`: renaming
+ * `subagent_history` to `orch_history` must not silently turn a coordination tool
+ * into gated work, and `orch_spawn`/`orch_resume`/`orch_done` must stay gated
+ * exactly like their predecessors.
  */
 const NOT_ADMIN: ReadonlySet<string> = new Set(["subagent", "subagent_resume", "subagent_done"]);
+
+/** Delegation verbs that perform real work, or own a guard further down the hook. */
+const WORK_DELEGATION_VERBS: ReadonlySet<string> = new Set(["spawn", "resume", "done"]);
+
+function isWorkDelegation(name: string): boolean {
+  const tool = delegationTool(name);
+  return tool ? WORK_DELEGATION_VERBS.has(tool.verb) : false;
+}
 
 /**
  * A tool that is callable but is NOT itself work: it clarifies, discovers, monitors,
  * or steers.
  *
- * Matched by SHAPE rather than a fixed list, so a delegation extension adding
- * `subagent_abort` tomorrow is classified without a code change. `NOT_ADMIN` names the
- * exceptions, all of which are covered by tests, because getting this wrong either
- * blocks real work or silently disables a guard.
+ * Matched by SHAPE rather than a fixed list, so a delegation extension adding a new
+ * lifecycle tool is classified without a code change. The work verbs are named
+ * explicitly, and covered by tests, because getting this wrong either blocks real
+ * work or silently disables a guard.
  */
 export function isAdminTool(name: string): boolean {
-  if (NOT_ADMIN.has(name)) return false;
+  if (NOT_ADMIN.has(name) || isWorkDelegation(name)) return false;
   if (/^subagents?_/.test(name)) return true;
+  if (delegationTool(name)) return true; // orch_* coordination and reporting verbs
   return /^(caller_ping|ask_user|tool_search|mcpScript)$/.test(name);
 }
 

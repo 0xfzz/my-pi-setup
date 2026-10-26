@@ -7,7 +7,7 @@ import modesExtension from "../extensions/modes.ts";
 
 test("isSupervisorTool permits supervisor controls, read-only tools, and orch_* suite", () => {
   // Navigation & Inspection
-  for (const name of ["read", "grep", "find", "ls", "ffgrep", "fffind", "vcc_recall", "web_read", "google_search", "tool_search", "subagent_history"]) {
+  for (const name of ["read", "grep", "find", "ls", "ffgrep", "fffind", "vcc_recall", "web_read", "google_search", "tool_search", "orch_history"]) {
     assert.equal(isSupervisorTool(name), true, `expected ${name} to be allowed`);
   }
 
@@ -207,7 +207,7 @@ test("the debug-session loadout survives the gate: orch_handoff and orch_escalat
   // would silently re-enable the v1 escape hatch this test forbids.
   const debugLoadout = [
     "read", "grep", "find", "ls", "bash", "artifact_save", "artifact_recall", "artifact_list",
-    "workflow_todo", "ask_user", "subagents_list", "subagent_history", "tool_search",
+    "workflow_todo", "ask_user", "subagents_list", "orch_history", "tool_search",
     "orch_handoff", "orch_spawn", "orch_resume", "orch_interrupt", "orch_steer",
     "orch_route", "orch_running", "orch_brief", "orch_check", "orch_review", "orch_spec_review", "orch_escalate", "orch_close",
     "subagent", "subagent_resume",

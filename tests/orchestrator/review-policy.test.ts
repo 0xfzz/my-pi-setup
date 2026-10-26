@@ -47,7 +47,7 @@ test("a complete policy resolves roots absolutely", () => {
 });
 
 test("reviewers cannot reach the author, the network, or a writer", () => {
-  for (const name of ["bash", "write", "edit", "parent_recall", "parent_digest", "subagent_history", "browser", "mcp", "codemode", "web_read", "artifact_save", "artifact_edit", "orch_spawn", "orch_review", "tool_search"]) {
+  for (const name of ["bash", "write", "edit", "parent_recall", "parent_digest", "orch_history", "browser", "mcp", "codemode", "web_read", "artifact_save", "artifact_edit", "orch_spawn", "orch_review", "tool_search"]) {
     assert.equal(isSpecOnlyDeniedTool(name), true, `${name} must be denied`);
   }
   for (const name of ["read", "grep", "find", "ls", "ffgrep", "fffind", "spec_review_submit", "caller_ping", "subagent_done"]) {

@@ -72,7 +72,7 @@ export const PLAN_TOOLS: ReadonlySet<string> = new Set([
   // `google_search` carries no readOnlyHint, so its explicit entry is load-bearing.
   // `fetch_content`/`source_check` are deliberately absent: they write page caches
   // and clone repositories, so their non-read-only annotation is honoured.
-  "google_search", "web_search", "web_read", "vcc_recall", "subagent_history", "subagents_list", "tool_search",
+  "google_search", "web_search", "web_read", "vcc_recall", "orch_history", "subagents_list", "tool_search",
   // The MCP resource tools are NOT listed: Pi declares all three with
 
   // `readOnlyHint: true`, so they pass through the annotation path, and they are

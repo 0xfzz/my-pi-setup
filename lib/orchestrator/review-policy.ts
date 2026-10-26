@@ -71,7 +71,7 @@ export function reviewPolicyFromEnv(env: NodeJS.ProcessEnv | Record<string, stri
  * and `edit` (it must not be able to change the document it judges), `browser`,
  * `mcp`, `codemode` and `web_read` (open-world inputs that are not pinned),
  * every `orch_*` (it owns no children), `parent_recall`/`parent_digest` and
- * `subagent_history` (the author's reasoning), and the artifact writers (the
+ * `orch_history` (the author's reasoning), and the artifact writers (the
  * snapshot is already inside its ticket).
  */
 export const SPEC_ONLY_TOOLS: ReadonlySet<string> = new Set([
@@ -88,7 +88,7 @@ export const SPEC_ONLY_TOOLS: ReadonlySet<string> = new Set([
  */
 export const SPEC_ONLY_DENIED_TOOLS: ReadonlySet<string> = new Set([
   "bash", "write", "edit", "multi_edit", "multiedit", "apply_patch", "applypatch", "patch",
-  "parent_recall", "parent_digest", "subagent_history", "subagents_list",
+  "parent_recall", "parent_digest", "orch_history", "subagents_list",
   "subagent", "subagent_resume", "subagent_interrupt",
   "browser", "browser_download", "browser_login",
   "mcp", "mcpScript", "codemode", "tool_search",

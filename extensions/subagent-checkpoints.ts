@@ -474,7 +474,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "subagent_history", label: "Subagent History", annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    name: "orch_history", label: "Delegated Work History", annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     description: "Review durable delegated-work checkpoints, run VCC-compiled digests, or perform targeted VCC searches over a child's session. Avoids full transcript dumps and saves tokens.",
     parameters: Type.Object({
       sessionPath: Type.Optional(Type.String({ description: "Target child session path" })),

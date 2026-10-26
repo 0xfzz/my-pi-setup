@@ -53,6 +53,25 @@ test("admin tools are matched by shape so a new lifecycle tool needs no code cha
   }
 });
 
+test("canonical orch_* classification matches the v1 verbs it replaced", () => {
+  // Coordination, inspection and reporting verbs are gate-exempt.
+  for (const name of [
+    "orch_handoff", "orch_spec_review", "orch_interrupt", "orch_close", "orch_steer",
+    "orch_route", "orch_running", "orch_brief", "orch_check", "orch_review",
+    "orch_escalate", "orch_history", "orch_progress", "orch_ping",
+    "orch_parent_recall", "orch_parent_digest", "orch_spec_review_submit",
+  ]) {
+    assert.equal(isAdminTool(name), true, name);
+  }
+  // Spawning, resuming and completion reporting perform work (or own a later guard).
+  for (const name of ["orch_spawn", "orch_resume", "orch_done"]) {
+    assert.equal(isAdminTool(name), false, name);
+    assert.equal(isGateExempt({ name }), false, `${name} stays assessed/guarded`);
+  }
+  assert.equal(isGateExempt({ name: "orch_history" }), true, "history is a read instrument");
+  assert.equal(isGateExempt({ name: "orch_progress" }), true, "progress is not work");
+});
+
 test("gate exemption covers configured capabilities but never turns unknown names into permissions", () => {
   const mcpTool = { name: "mcp__github__create_issue" };
   const gateway = { name: "some_gateway", reachesTools: () => ["a", "b"] };

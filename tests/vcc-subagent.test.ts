@@ -142,7 +142,7 @@ test("recallSubagentHistory searches child session and expands specific entry in
   }
 });
 
-test("subagent_history tool supports vccSummary, query, and expand parameters", async () => {
+test("orch_history tool supports vccSummary, query, and expand parameters", async () => {
   const tmp = await mkdtemp(join(tmpdir(), "pi-vcc-subagent-"));
   try {
     const sessionFile = join(tmp, "child.jsonl");
@@ -183,8 +183,8 @@ test("subagent_history tool supports vccSummary, query, and expand parameters", 
     })!;
     entries.push({ type: "custom", customType: CHECKPOINT_TYPE, data: childRecord });
 
-    const tool = tools.get("subagent_history");
-    assert.ok(tool, "subagent_history tool is registered");
+    const tool = tools.get("orch_history");
+    assert.ok(tool, "orch_history tool is registered");
 
     // 1. vccSummary request
     const vccSummaryRes = await tool.execute("c1", {

@@ -156,7 +156,7 @@ test("runtime handlers inject checkpoints after compaction without duplicates; r
     h.entries.length = 0;
     await h.emit("session_tree");
     assert.equal((await h.emit("context", { messages: compacted })).messages.length, 1);
-    const tool = h.tools.get("subagent_history");
+    const tool = h.tools.get("orch_history");
     await assert.rejects(() => tool.execute("x", { sessionPath: "/arbitrary/private/file" }, undefined, undefined, h.context), /not recorded/);
   } finally { await h.emit("session_shutdown"); }
 });
