@@ -286,5 +286,5 @@ test("the reviewer ticket embeds the pinned revision and the isolation facts", (
   assert.match(ticket, /spec_review_submit/);
   assert.match(ticket, /blocker \| major \| nit/);
   // No author reasoning, no sibling scope, no parent path.
-  assert.doesNotMatch(ticket, /parent_recall/);
+  assert.doesNotMatch(ticket, /orch_parent_recall/);
 });

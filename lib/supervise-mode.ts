@@ -149,8 +149,8 @@ export const SUPERVISOR_TOOLS: ReadonlySet<string> = new Set([
   "ask_user",
   "orch_history",
   "orch_progress",
-  "parent_recall",
-  "parent_digest",
+  "orch_parent_recall",
+  "orch_parent_digest",
   "caller_ping",
 ]);
 

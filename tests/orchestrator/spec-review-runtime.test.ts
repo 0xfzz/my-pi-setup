@@ -157,7 +157,7 @@ test("start pins the design, launches one isolated reviewer per lens, and leaks 
       assert.match(script, /PI_SUBAGENT_REVIEW_POLICY='spec-only'/);
       const toolsLine = script.split("\n").find((line) => line.includes("--tools")) ?? "";
       assert.ok(toolsLine, "the reviewer is launched with an explicit tool allowlist");
-      for (const forbidden of ["bash", "write", "edit", "artifact_save", "parent_recall", "parent_digest"]) {
+      for (const forbidden of ["bash", "write", "edit", "artifact_save", "orch_parent_recall", "orch_parent_digest"]) {
         assert.ok(
           !new RegExp(`(^|[,='\"\\s])${forbidden}([,='\"\\s]|$)`).test(toolsLine),
           `reviewer tool allowlist must not include ${forbidden}: ${toolsLine}`,

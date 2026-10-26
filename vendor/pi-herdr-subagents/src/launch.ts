@@ -435,10 +435,10 @@ export function buildLaunchPlan(
   const contextNote = specOnly
     ? "You did not inherit your parent's conversation, and you have no tool that can read it. That is deliberate: you are an independent reviewer, and the document under review is quoted in this ticket. If you need something that is not in the document or the permitted paths, report it as missing context instead of guessing or looking for the author's intent."
     : launchBehavior.inheritsConversationContext
-    ? "The conversation above was copied from your parent at launch. It is a snapshot and may already be stale. If you need a decision, a file the parent touched, or anything the parent did after the snapshot, call parent_recall or parent_digest instead of guessing or re-reading the whole repository. Never modify the parent session."
+    ? "The conversation above was copied from your parent at launch. It is a snapshot and may already be stale. If you need a decision, a file the parent touched, or anything the parent did after the snapshot, call orch_parent_recall or orch_parent_digest instead of guessing or re-reading the whole repository. Never modify the parent session."
     : launchBehavior.seededSessionMode === "digest"
-      ? "You did not inherit your parent's conversation, but a brief of it is being attached to your first request. If you need more than the brief — a specific decision, a file the parent touched, or newer parent work — call parent_recall or parent_digest rather than guessing or re-reading the whole repository. Never modify the parent session."
-      : "You did not inherit your parent's conversation. If the task depends on context you do not have — a decision the parent made, a file it touched, or work it did earlier — call parent_recall or parent_digest instead of guessing or re-reading the whole repository. Never modify the parent session.";
+      ? "You did not inherit your parent's conversation, but a brief of it is being attached to your first request. If you need more than the brief — a specific decision, a file the parent touched, or newer parent work — call orch_parent_recall or orch_parent_digest rather than guessing or re-reading the whole repository. Never modify the parent session."
+      : "You did not inherit your parent's conversation. If the task depends on context you do not have — a decision the parent made, a file it touched, or work it did earlier — call orch_parent_recall or orch_parent_digest instead of guessing or re-reading the whole repository. Never modify the parent session.";
   const fullTask = [roleBlock, modeHint, contextNote, params.task, summaryInstruction]
     .filter(Boolean)
     .join("\n\n");

@@ -3,7 +3,7 @@
  *
  * The EGM method depends on one property: a reviewer must not inherit the
  * author's reasoning. A persona prompt cannot deliver that. A child in this
- * harness can reach its parent's transcript (`parent_recall`), inherit a forked
+ * harness can reach its parent's transcript (`orch_parent_recall`), inherit a forked
  * or digested branch, see every *global* artifact, or shell out to the session
  * state directory. So the policy is data, resolved from the environment the
  * launcher writes, and every consumer (launch planning, the child-side tool
@@ -70,7 +70,7 @@ export function reviewPolicyFromEnv(env: NodeJS.ProcessEnv | Record<string, stri
  * Deliberately absent and load-bearing: `bash` (arbitrary interpreter), `write`
  * and `edit` (it must not be able to change the document it judges), `browser`,
  * `mcp`, `codemode` and `web_read` (open-world inputs that are not pinned),
- * every `orch_*` (it owns no children), `parent_recall`/`parent_digest` and
+ * every `orch_*` (it owns no children), `orch_parent_recall`/`orch_parent_digest` and
  * `orch_history` (the author's reasoning), and the artifact writers (the
  * snapshot is already inside its ticket).
  */
@@ -88,7 +88,7 @@ export const SPEC_ONLY_TOOLS: ReadonlySet<string> = new Set([
  */
 export const SPEC_ONLY_DENIED_TOOLS: ReadonlySet<string> = new Set([
   "bash", "write", "edit", "multi_edit", "multiedit", "apply_patch", "applypatch", "patch",
-  "parent_recall", "parent_digest", "orch_history", "subagents_list",
+  "orch_parent_recall", "orch_parent_digest", "orch_history", "subagents_list",
   "subagent", "subagent_resume", "subagent_interrupt",
   "browser", "browser_download", "browser_login",
   "mcp", "mcpScript", "codemode", "tool_search",

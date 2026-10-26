@@ -112,8 +112,8 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
   // resolving it needs a synchronous read of the child's own seed record.
   //
   // A spec-only reviewer never resolves one. Its whole value is that it judges a
-  // document without the author's reasoning, so the pull channel (`parent_recall`,
-  // `parent_digest`) and the digest brief are not registered and not injected.
+  // document without the author's reasoning, so the pull channel (`orch_parent_recall`,
+  // `orch_parent_digest`) and the digest brief are not registered and not injected.
   // Absence, not instruction, is what makes that hold.
   const specOnlyReviewer = process.env.PI_SUBAGENT_REVIEW_POLICY === "spec-only";
   const parentContext = childSession && !specOnlyReviewer ? resolveParentContext(childSession) : undefined;
@@ -127,7 +127,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
     try {
       const compiled = await compileSubagentSession(parentContext.sessionFile);
       if (compiled) parentBrief = clip(compiled, PARENT_BRIEF_MAX_CHARS);
-    } catch { /* fall back to no brief; parent_recall still works */ }
+    } catch { /* fall back to no brief; orch_parent_recall still works */ }
     return parentBrief;
   }
 
@@ -378,7 +378,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
           ? "You are an independent reviewer with no parent history. Judge only the pinned document in your ticket and the permitted paths. Missing context is a finding, not a reason to reconstruct the author's intent."
           : "",
         parentContext
-          ? `Your parent session is ${parentContext.sessionFile} (your context: ${parentContext.provenance?.mode ?? "unknown"}). When you need context you do not have — a decision your parent made, a file it touched, or parent work newer than your snapshot — use parent_recall (search) or parent_digest (structured brief) instead of guessing or re-reading the repository. Both are read-only and never modify the parent session.`
+          ? `Your parent session is ${parentContext.sessionFile} (your context: ${parentContext.provenance?.mode ?? "unknown"}). When you need context you do not have — a decision your parent made, a file it touched, or parent work newer than your snapshot — use orch_parent_recall (search) or orch_parent_digest (structured brief) instead of guessing or re-reading the repository. Both are read-only and never modify the parent session.`
           : "",
       ].filter(Boolean).join(" "),
     },
@@ -389,7 +389,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
   // gain no dead tools. Both tools are read-only over the parent session file.
   if (parentContext) {
     pi.registerTool({
-      name: "parent_recall", label: "Recall From Parent",
+      name: "orch_parent_recall", label: "Recall From Parent",
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       description:
         "Search your PARENT's session for context you were not seeded with: decisions it made, files it touched, or work it did after your snapshot. " +
@@ -420,16 +420,16 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
     });
 
     pi.registerTool({
-      name: "parent_digest", label: "Parent Digest",
+      name: "orch_parent_digest", label: "Parent Digest",
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       description:
         "Get a compact structured brief of your PARENT's session (goal, files and changes, commits, key signals) compiled without any model call. " +
-        "Cheaper than parent_recall when you need the shape of the parent's work rather than a specific detail. Read-only.",
+        "Cheaper than orch_parent_recall when you need the shape of the parent's work rather than a specific detail. Read-only.",
       parameters: Type.Object({}),
       async execute() {
         const brief = await compileSubagentSession(parentContext.sessionFile);
         if (!brief) {
-          throw new Error("Could not compile a parent brief (pi-vcc unavailable or the parent session is unreadable). Use parent_recall instead, or proceed with your own context.");
+          throw new Error("Could not compile a parent brief (pi-vcc unavailable or the parent session is unreadable). Use orch_parent_recall instead, or proceed with your own context.");
         }
         const bounded = boundPull(`${parentPullHeader(parentContext, false)}\n\n${clip(brief, PARENT_BRIEF_MAX_CHARS)}`);
         return {

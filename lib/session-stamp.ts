@@ -155,8 +155,8 @@ export function readSessionFacts(text: string): SessionFacts {
  * neighbours.
  */
 const WRAPPER_PATTERNS = [
-  /call parent_recall/i,
-  /call parent_digest/i,
+  /call orch_parent_recall/i,
+  /call orch_parent_digest/i,
   /Never modify the parent session/i,
   /Your FINAL assistant message/i,
   /The user can interact with you at any time/i,

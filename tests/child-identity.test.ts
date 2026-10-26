@@ -187,7 +187,7 @@ async function boot(opts: { env: Record<string, string>; argv: string[]; session
       sessionFile,
       request,
       childGuidance: request.includes("In a Herdr child"),
-      parentRecall: created.session.getActiveToolNames().includes("parent_recall"),
+      parentRecall: created.session.getActiveToolNames().includes("orch_parent_recall"),
       progressTool: created.session.getActiveToolNames().includes("orch_progress"),
       dispose: () => created.session.dispose(),
     };
