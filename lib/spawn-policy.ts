@@ -15,7 +15,7 @@
  *      not implementation; delegating work that writes files is.
  */
 
-import type { SpawnPurpose } from "./delegation-tools.ts";
+import { MAX_DELEGATION_DEPTH, type SpawnPurpose } from "./delegation-tools.ts";
 
 export type SpawnMode = "normal" | "plan" | "supervise" | "orchestrator";
 
@@ -105,4 +105,45 @@ export function registryPurpose(purpose: SpawnPurpose): "implementation" | "revi
 export function laneDeclaration(purpose: SpawnPurpose, laneFiles: readonly string[]): "declared" | "not-declared" {
   if (laneFiles.length > 0) return "declared";
   return purpose === "research" || purpose === "adhoc" ? "not-declared" : "declared";
+}
+
+/** Default breadth cap for one parent. */
+export const DEFAULT_MAX_CHILDREN = 8;
+
+type Env = Readonly<Record<string, string | undefined>>;
+
+function positiveInt(value: string | undefined): number | undefined {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+/** How many delegation hops above this process; the top-level session is 0. */
+export function currentSpawnDepth(env: Env = process.env): number {
+  return positiveInt(env.PI_SUBAGENT_DEPTH) ?? 0;
+}
+
+/** `PI_SUBAGENT_MAX_DEPTH`, then the capability table's default. */
+export function maxSpawnDepth(env: Env = process.env): number {
+  return positiveInt(env.PI_SUBAGENT_MAX_DEPTH) ?? MAX_DELEGATION_DEPTH;
+}
+
+/** `PI_SUBAGENT_MAX_CHILDREN`, then 8. */
+export function maxChildren(env: Env = process.env): number {
+  return positiveInt(env.PI_SUBAGENT_MAX_CHILDREN) ?? DEFAULT_MAX_CHILDREN;
+}
+
+/** A hard stop before any registry row or pane exists. */
+export function depthProblem(
+  depth: number = currentSpawnDepth(),
+  max: number = maxSpawnDepth(),
+): string | undefined {
+  if (depth < max) return undefined;
+  return `Delegation depth limit reached (this session is ${depth} hops deep, max-depth ${max}). `
+    + `A delegated child may not spawn again; do this work yourself.`;
+}
+
+/** Breadth is a stop, not a queue: the parent must finish or close a child first. */
+export function capacityProblem(running: number, max: number = maxChildren()): string | undefined {
+  if (running < max) return undefined;
+  return `Child limit reached (${running}/${max}). Finish or close a child before spawning another.`;
 }

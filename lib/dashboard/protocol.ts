@@ -17,7 +17,7 @@ export interface DashboardChild {
   name: string;
   scope: string;
   status: "running" | "completed" | "blocked" | "failed" | "closed";
-  purpose?: "implementation" | "review";
+  purpose?: "implementation" | "review" | "research" | "adhoc";
   task?: string;
   handoffId?: string;
   reviewRunId?: string;

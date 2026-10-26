@@ -113,8 +113,12 @@ import {
 import { superviseModeFromBranch } from "../lib/supervise-mode.ts";
 import { planModeFromBranch } from "../lib/plan-mode.ts";
 import {
+  capacityProblem,
   childToolsForPurpose,
+  currentSpawnDepth,
   defaultSpawnPurpose,
+  depthProblem,
+  maxChildren,
   registryPurpose,
   spawnRefusal,
 } from "../lib/spawn-policy.ts";
@@ -2175,6 +2179,19 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           { error: "orchestrator-paused", paused: registry.getPausedChildren().map((c) => c.id) },
         );
       }
+      // ── depth and breadth are hard stops ─────────────────────────────────
+      // Checked before the mode/purpose gate, so a nested or over-capacity call
+      // cannot leave a row, a pane, a watcher or a ticket behind.
+      const depthRefusal = depthProblem();
+      if (depthRefusal) {
+        return text(depthRefusal, { error: "depth-limit", depth: currentSpawnDepth() });
+      }
+      const runningCount = registry.getRunningChildren().length;
+      const capacityRefusal = capacityProblem(runningCount);
+      if (capacityRefusal) {
+        return text(capacityRefusal, { error: "child-limit", running: runningCount, max: maxChildren() });
+      }
+
       // ── mode × purpose, resolved before any row exists ───────────────────
       // A refused spawn must leave no registry row, pane, watcher or ticket.
       const branch = branchOf(ctx);

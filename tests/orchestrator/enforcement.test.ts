@@ -310,6 +310,43 @@ test("concept 1: Plan admits research but refuses ad-hoc and implementation befo
   }
 });
 
+test("concept 4: a delegated child may not spawn again, and the refusal writes nothing", async () => {
+  const h = await harness();
+  const previous = process.env.PI_SUBAGENT_DEPTH;
+  process.env.PI_SUBAGENT_DEPTH = "1";
+  try {
+    const refused = await h.call("orch_spawn", { name: uniqueScope("nested"), task: "nest", purpose: "adhoc" });
+    assert.equal(refused.details.error, "depth-limit");
+    assert.match(refused.content[0].text, /Delegation depth limit reached/);
+    assert.equal(h.spawned.length, 0, "no pane below the depth limit");
+  } finally {
+    if (previous === undefined) delete process.env.PI_SUBAGENT_DEPTH;
+    else process.env.PI_SUBAGENT_DEPTH = previous;
+    handoffs.clear();
+    await h.detach();
+  }
+});
+
+test("concept 4: the child cap refuses the next spawn before a pane exists", async () => {
+  const h = await harness();
+  const previous = process.env.PI_SUBAGENT_MAX_CHILDREN;
+  process.env.PI_SUBAGENT_MAX_CHILDREN = "1";
+  try {
+    const first = await h.call("orch_spawn", { name: uniqueScope("cap-a"), task: "a", purpose: "adhoc" });
+    assert.equal(first.details.status, "started");
+
+    const second = await h.call("orch_spawn", { name: uniqueScope("cap-b"), task: "b", purpose: "adhoc" });
+    assert.equal(second.details.error, "child-limit");
+    assert.match(second.content[0].text, /Child limit reached \(1\/1\)/);
+    assert.equal(h.spawned.length, 1, "the refused spawn did not start a pane");
+  } finally {
+    if (previous === undefined) delete process.env.PI_SUBAGENT_MAX_CHILDREN;
+    else process.env.PI_SUBAGENT_MAX_CHILDREN = previous;
+    handoffs.clear();
+    await h.detach();
+  }
+});
+
 test("concept 2: a child's delivered ticket carries its own handoff and no sibling identity", async () => {
   const h = await harness();
   const netScope = uniqueScope("net-retry");

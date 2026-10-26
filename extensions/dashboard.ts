@@ -72,6 +72,15 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
   let verifiedParent = false;
   let mode = "normal";
   let reportedError = false;
+  /**
+   * One-way latch: delegated work exists, so the graph must exist too.
+   *
+   * A Normal-mode `orch_spawn` never passes through an Orchestrator transition,
+   * which used to be the only thing that started the producer. The latch is not
+   * reset when the mode changes: leaving the mode keeps the lease and publishes
+   * `mode: "normal"`, because the children are still running.
+   */
+  let registeredForWork = false;
 
   const bridge = new DashboardBridge({
     producerFactory: options.producerFactory ?? defaultDashboardProducerFactory,
@@ -190,6 +199,13 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
     const notice = data as Partial<DashboardStateNotice> | undefined;
     if (!notice?.orchestrator) return;
     bridge.observeOrchestrator(notice.orchestrator, notice.childSessions);
+    // The first child is the signal, not the mode. A Normal-mode spawn is still
+    // delegated work and must appear in the graph; a second publish reuses the
+    // lease rather than creating another producer.
+    if (!registeredForWork && notice.orchestrator.children.length > 0) {
+      registeredForWork = true;
+      void bridge.start();
+    }
   }
 
   function onArtifacts(data: unknown): void {
@@ -234,6 +250,7 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
 
   pi.on("session_shutdown", () => {
     verifiedParent = false;
+    registeredForWork = false;
     ctx = undefined;
     void bridge.close().catch(() => {});
   });

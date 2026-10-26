@@ -404,6 +404,41 @@ test("dashboard starts only for a successful parent Orchestrator entry, not refu
   assert.equal(producer.closeCalls, 1, "shutdown releases this producer");
 });
 
+test("a Normal-mode spawn registers the dashboard on the first child and reuses the lease", async () => {
+  const bus = createBus();
+  const producer = createFakeProducer();
+  const entries: any[] = [];
+  const { pi, emit } = createPi(bus, entries);
+  modesExtension(pi);
+  dashboardExtension(pi, { producerFactory: producer.factory, coalesceMs: 1 });
+  const context = createContext(entries);
+
+  await emit("session_start", {}, context);
+  assert.equal(producer.factoryCalls, 0, "Normal with no children does not register");
+
+  const child = (id: string) => ({
+    id, name: "Bima", scope: "net-retry", status: "running",
+    purpose: "adhoc", laneFiles: [], lastMilestoneFiles: [],
+  });
+  bus.emit(DASHBOARD_STATE_EVENT, {
+    orchestrator: { ...emptyOrchestrator(), children: [child("child-1")] },
+    at: Date.now(),
+  });
+  await waitFor(() => producer.factoryCalls === 1, "dashboard start on first child");
+  assert.equal(producer.latest!.session.mode, "normal");
+  assert.equal(producer.latest!.orchestrator.children[0].purpose, "adhoc");
+
+  const snapshotsBefore = producer.snapshots.length;
+  bus.emit(DASHBOARD_STATE_EVENT, {
+    orchestrator: { ...emptyOrchestrator(), children: [child("child-1"), child("child-2")] },
+    at: Date.now(),
+  });
+  await waitFor(() => producer.snapshots.length > snapshotsBefore, "second child publish");
+  assert.equal(producer.factoryCalls, 1, "a second child reuses the lease");
+
+  await emit("session_shutdown", {}, context);
+});
+
 test("a branch restore into Orchestrator reconnects; a seeded child never registers", async () => {
   // Restore path: the transcript says Orchestrator before session_start runs.
   const restoreEntries: any[] = [{

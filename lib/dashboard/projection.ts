@@ -59,7 +59,7 @@ export interface ProjectArtifactsOptions {
 }
 
 const STATUSES = new Set(["running", "completed", "blocked", "failed", "closed"]);
-const PURPOSES = new Set(["implementation", "review"]);
+const PURPOSES = new Set(["implementation", "review", "research", "adhoc"]);
 
 function text(value: unknown, max = 4096): string {
   if (typeof value !== "string") return "";

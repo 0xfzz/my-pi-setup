@@ -3,9 +3,14 @@ import assert from "node:assert/strict";
 
 import {
   allowedSpawnPurposes,
+  capacityProblem,
   childToolsForPurpose,
+  currentSpawnDepth,
   defaultSpawnPurpose,
+  depthProblem,
   laneDeclaration,
+  maxChildren,
+  maxSpawnDepth,
   normalizeSpawnMode,
   registryPurpose,
   spawnRefusal,
@@ -76,4 +81,21 @@ test("an unknown or absent mode id is Normal, never a bypass", () => {
   assert.equal(normalizeSpawnMode(undefined), "normal");
   assert.equal(normalizeSpawnMode("off"), "normal");
   assert.equal(normalizeSpawnMode("plan"), "plan");
+});
+
+test("depth and breadth are hard stops with an explicit reason", () => {
+  assert.equal(depthProblem(0, 1), undefined, "a top-level session may spawn");
+  assert.match(depthProblem(1, 1) ?? "", /Delegation depth limit reached/);
+
+  assert.equal(capacityProblem(7, 8), undefined);
+  assert.match(capacityProblem(8, 8) ?? "", /Child limit reached \(8\/8\)/);
+
+  assert.equal(currentSpawnDepth({}), 0);
+  assert.equal(currentSpawnDepth({ PI_SUBAGENT_DEPTH: "2" }), 2);
+  assert.equal(currentSpawnDepth({ PI_SUBAGENT_DEPTH: "nope" }), 0);
+  assert.equal(maxSpawnDepth({}), 1);
+  assert.equal(maxSpawnDepth({ PI_SUBAGENT_MAX_DEPTH: "2" }), 2);
+  assert.equal(maxChildren({}), 8);
+  assert.equal(maxChildren({ PI_SUBAGENT_MAX_CHILDREN: "2" }), 2);
+  assert.equal(maxChildren({ PI_SUBAGENT_MAX_CHILDREN: "0" }), 8, "a nonsense cap falls back, never to 0");
 });
