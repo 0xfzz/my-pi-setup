@@ -17,7 +17,7 @@ test("isSupervisorTool permits supervisor controls, read-only tools, and orch_* 
   }
 
   // Workflow
-  for (const name of ["workflow_todo", "ask_user", "subagents_list", "subagent_progress"]) {
+  for (const name of ["workflow_todo", "ask_user", "subagents_list", "orch_progress"]) {
     assert.equal(isSupervisorTool(name), true, `expected ${name} to be allowed`);
   }
 

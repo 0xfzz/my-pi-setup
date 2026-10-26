@@ -154,7 +154,7 @@ export function shellEscape(s: string): string {
 // Use those instead", so children ran todo-less and published no milestones.
 // `workflow_todo` stays reachable for one release so a manually resumed child with
 // an older transcript keeps working. test/launch.test.ts pins this set.
-const SUBAGENT_CONTROL_TOOLS = ["caller_ping", "subagent_done", "subagent_progress", "todo_plan", "todo_act", "todo_next", "workflow_todo", "artifact_save", "artifact_edit", "artifact_recall", "artifact_search"] as const;
+const SUBAGENT_CONTROL_TOOLS = ["caller_ping", "subagent_done", "orch_progress", "todo_plan", "todo_act", "todo_next", "workflow_todo", "artifact_save", "artifact_edit", "artifact_recall", "artifact_search"] as const;
 
 /**
  * Control tools a spec-only reviewer may keep.
@@ -163,7 +163,7 @@ const SUBAGENT_CONTROL_TOOLS = ["caller_ping", "subagent_done", "subagent_progre
  * its ticket, so it needs no artifact reader, and it must not hold an artifact
  * writer it could use to alter the document it is judging.
  */
-const REVIEWER_CONTROL_TOOLS = ["caller_ping", "subagent_done", "subagent_progress", "todo_plan", "todo_act", "todo_next", "spec_review_submit"] as const;
+const REVIEWER_CONTROL_TOOLS = ["caller_ping", "subagent_done", "orch_progress", "todo_plan", "todo_act", "todo_next", "spec_review_submit"] as const;
 
 /**
  * Build the child --tools allowlist.

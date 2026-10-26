@@ -103,7 +103,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
   let childQueue = Promise.resolve();
   // Verified against this process's own session file: an inherited
   // `PI_SUBAGENT_SESSION` from a Herdr pane's shell must not turn a normal `pi`
-  // into that pane's child, which registered `subagent_progress` and injected the
+  // into that pane's child, which registered the child progress tool and injected the
   // parent-pull guidance into an unrelated session.
   const verifiedChild = isSubagentChildProcess();
   const childSession = verifiedChild ? process.env.PI_SUBAGENT_SESSION : undefined;
@@ -373,7 +373,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
     message: {
       customType: "subagent-progress-guidance", display: false,
       content: [
-        "Report meaningful milestones using subagent_progress when available: findings, changed files, verification, next steps, and blockers. Do not report each tool call. Workflow todo changes also publish checkpoints automatically. Progress is not completion; keep Herdr's existing subagent_done/caller_ping protocol.",
+        "Report meaningful milestones using orch_progress when available: findings, changed files, verification, next steps, and blockers. Do not report each tool call. Workflow todo changes also publish checkpoints automatically. Progress is not completion; keep Herdr's existing subagent_done/caller_ping protocol.",
         specOnlyReviewer
           ? "You are an independent reviewer with no parent history. Judge only the pinned document in your ticket and the permitted paths. Missing context is a finding, not a reason to reconstruct the author's intent."
           : "",
@@ -460,7 +460,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
   }
 
   if (childSession && childRun) pi.registerTool({
-    name: "subagent_progress", label: "Report Milestone", executionMode: "sequential",
+    name: "orch_progress", label: "Report Milestone", executionMode: "sequential",
     description: "Publish one meaningful milestone to the parent dashboard without ending the child or waking the parent model. Progress is not completion; use caller_ping for questions requiring an answer.",
     parameters: Type.Object({
       summary: Type.String({ minLength: 1, maxLength: 1200 }),

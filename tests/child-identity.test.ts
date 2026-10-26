@@ -22,7 +22,7 @@ import {
  * session with its own session file was treated as the child named by a foreign
  * env var: it lost its sidebar and `/provider`, refused to ask the user and told
  * the model to answer "the parent" instead, took the child artifact path, and
- * registered `subagent_progress` for a run id that was not its own.
+ * registered the child progress tool for a run id that was not its own.
  *
  * A real child is always launched as `pi --session <its own file>` (both the
  * launch and resume paths in pi-herdr-subagents), so the env var alone is not
@@ -65,7 +65,7 @@ test("identity needs positive evidence at every stage, including load time", () 
   const env = { PI_SUBAGENT_SESSION: "/s/child.jsonl" };
   // At extension load there is no context, so argv is the only evidence; a real
   // child always has --session. This is what stops a plain `pi` from registering
-  // child-only tools such as subagent_progress.
+  // child-only tools such as orch_progress.
   assert.equal(isSubagentChildProcess({ env, argv: ["node", "pi"] }), false);
   assert.equal(isSubagentChildProcess({ env, argv: ["node", "pi", "--session", "/s/child.jsonl"] }), true);
   // No session file at all cannot be a Herdr child either, because Herdr passes
@@ -188,7 +188,7 @@ async function boot(opts: { env: Record<string, string>; argv: string[]; session
       request,
       childGuidance: request.includes("In a Herdr child"),
       parentRecall: created.session.getActiveToolNames().includes("parent_recall"),
-      progressTool: created.session.getActiveToolNames().includes("subagent_progress"),
+      progressTool: created.session.getActiveToolNames().includes("orch_progress"),
       dispose: () => created.session.dispose(),
     };
   } finally {

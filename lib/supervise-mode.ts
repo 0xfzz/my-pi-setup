@@ -148,7 +148,7 @@ export const SUPERVISOR_TOOLS: ReadonlySet<string> = new Set([
   "session_goal", // Conversation metadata, not a source-code mutation.
   "ask_user",
   "orch_history",
-  "subagent_progress",
+  "orch_progress",
   "parent_recall",
   "parent_digest",
   "caller_ping",

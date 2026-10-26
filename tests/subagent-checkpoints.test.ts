@@ -268,7 +268,7 @@ test("child publishes explicit and todo milestones; restricted Herdr profiles re
     // what proves the inherited env belongs to this process.
     process.argv = [...process.argv, "--session", file];
     h = harness();
-    const tool = h.tools.get("subagent_progress");
+    const tool = h.tools.get("orch_progress");
     assert.ok(tool);
     await tool.execute("m1", { summary: "Implemented input validation", files: ["src/auth.ts"], verification: "3 tests pass", next: "Review" });
     assert.equal((await readMilestone(file))?.verification, "3 tests pass");
@@ -280,7 +280,7 @@ test("child publishes explicit and todo milestones; restricted Herdr profiles re
     if (!root) throw new Error("Could not find the vendored pi-herdr-subagents source");
     const { buildSubagentToolAllowlist } = await import(root + "/src/launch.ts");
     const allow = buildSubagentToolAllowlist("read,bash")!.split(",");
-    assert.ok(allow.includes("subagent_progress"));
+    assert.ok(allow.includes("orch_progress"));
     assert.ok(allow.includes("workflow_todo"), "restricted children can settle a v1 transcript");
     for (const tool of ["todo_plan", "todo_act", "todo_next"]) {
       assert.ok(allow.includes(tool), `restricted children keep the v2 todo surface (${tool})`);
