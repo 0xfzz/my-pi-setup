@@ -32,7 +32,7 @@ describe("the orchestrator has exactly one capability", () => {
   });
 
   it("the delegate switch still wins", () => {
-    assert.equal(isSupervisorTool("subagent", undefined, { disabledDelegates: new Set(["subagent"]) }), false);
+    assert.equal(isSupervisorTool("orch_spawn", undefined, { disabledDelegates: new Set(["orch_spawn"]) }), false);
   });
 
   it("a stale `capability: full` entry cannot resurrect the removal", () => {

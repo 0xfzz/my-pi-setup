@@ -21,17 +21,17 @@
  * `orch_escalate`; nothing imported it, so the live gate below was the one that
  * ran, and it was missing exactly those two tools. The orchestrator was handed
  * `orch_spawn` (whose `handoffId` is mandatory) while `orch_handoff` — the only
- * producer of a `handoffId` — was filtered out of its toolset. It then routed
- * around v2 entirely through the v1 `subagent` tool. `supervisorAllowlistGaps`
+ * producer of a `handoffId` — was filtered out of its toolset. `supervisorAllowlistGaps`
  * exists so a registered-but-unreachable delegation tool can never be silent
- * again.
+ * again. The v1 bypass that incident used (`subagent`) has since been removed;
+ * the delegation surface is `orch_*` only.
  *
  * Reading is deliberately generous. A reviewer that cannot run `git diff` can only
  * trust the child's self-report, which defeats the point of having a reviewer.
  */
 import { PLAN_TOOLS, type PlanToolInfo } from "./plan-mode.ts";
 import { isDispatcherTool } from "./tool-policy.ts";
-import { V1_TOOLS, V2_TOOLS } from "./delegate-switch.ts";
+import { parentDelegationToolNames } from "./delegation-tools.ts";
 
 export const SUPERVISOR_MODE_ID = "supervise";
 export const SUPERVISOR_MODE_TYPE = "input-supervise-mode:v1";
@@ -118,12 +118,6 @@ export const SUPERVISOR_TOOLS: ReadonlySet<string> = new Set([
   "orch_review",
   // Independent specification review — the gate that runs before a worker exists.
   "orch_spec_review",
-  // ── Delegation (v1) ────────────────────────────────────────────────────
-  // Coexistence is supported, so v1 stays reachable while it is switched on.
-  // `isSupervisorTool` additionally honours the session's delegate switch, so
-  // `/subagents v2-only` removes these here too instead of leaving a v1 bypass
-  // of handoff specs, lane isolation, and the escalation ladder.
-  ...V1_TOOLS,
   // ── Review instruments and coordination ────────────────────────────────
   "read",
   "grep",
@@ -266,40 +260,6 @@ export interface SupervisorToolOptions {
    * not consent to undo it.
    */
   disabledDelegates?: ReadonlySet<string>;
-  /**
-   * Whether the full v2 delegation surface is available for this session.
-   *
-   * When it is, v1 delegation is withheld in supervise mode. Otherwise v1 is a
-   * permanent bypass of everything this mode is for: a v1 child gets a bare
-   * `task` string (no handoff spec, no lane), sits in a shared artifact catalog
-   * (no scope isolation), and has no escalation ladder back to the orchestrator.
-   * That is not hypothetical — the debug session that motivated this rule
-   * side-stepped the broken v2 surface by calling v1 `subagent`, and the spec
-   * ended up in the global catalog precisely as concept isolation forbids.
-   *
-   * Withholding is conditional so v1 remains usable when v2 is not installed, or
-   * when the user deliberately selects it (`/subagents v1-only`, `v2-off`).
-   */
-  v2DelegationAvailable?: boolean;
-}
-
-/** Delegation tool sets, so the mode can reason about which version it is gating. */
-export const V1_DELEGATE_TOOLS: ReadonlySet<string> = new Set(V1_TOOLS);
-export const V2_DELEGATE_TOOLS: ReadonlySet<string> = new Set(V2_TOOLS);
-
-/**
- * Whether v2 delegation is fully usable: every v2 tool is registered and none has
- * been switched off.
- *
- * Derived from registration plus the switch decision rather than from the active
- * set, because the active set is itself being rewritten by this mode.
- */
-export function v2DelegationInForce(
-  registered: Iterable<string>,
-  disabled?: ReadonlySet<string>,
-): boolean {
-  const present = new Set(registered);
-  return V2_TOOLS.every((name) => present.has(name) && !disabled?.has(name));
 }
 
 export function isSupervisorTool(
@@ -314,8 +274,6 @@ export function isSupervisorTool(
   if (DISPATCHER_NAMES.has(name)) return false;
   // Opaque gateways dispatch to tools this policy never sees.
   if (name.startsWith("browser_") || name.startsWith("mcp__")) return false;
-  // v1 delegation is withheld while v2 is fully available; see the option's doc.
-  if (V1_DELEGATE_TOOLS.has(name)) return options?.v2DelegationAvailable !== true;
   if (SUPERVISOR_TOOLS.has(name)) return true;
   if (isDispatcherTool(tool)) return false;
   // Trust an explicit read-only claim for tools this package does not know about
@@ -365,7 +323,7 @@ export function declaredSuperviseTools(
  */
 export function supervisorAllowlistGaps(
   registered: Iterable<string>,
-  delegationTools: readonly string[] = [...V2_TOOLS, ...V1_TOOLS],
+  delegationTools: readonly string[] = parentDelegationToolNames(),
   allowed: ReadonlySet<string> = SUPERVISOR_TOOLS,
 ): string[] {
   const present = new Set(registered);

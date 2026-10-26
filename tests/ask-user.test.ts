@@ -165,7 +165,7 @@ test("child forwards full question through orch_ping with signal, never direct U
   assert.match(calls[0][2].message, /Question: Proceed\?/);
   assert.match(calls[0][2].message, /Context: Destructive operation/);
   assert.match(calls[0][2].message, /1\. yes\n2\. no/);
-  assert.match(calls[0][2].message, /subagent_resume/);
+  assert.match(calls[0][2].message, /orch_resume/);
   assert.deepEqual(calls[0][3], { signal });
 }));
 
@@ -225,7 +225,7 @@ test("a child always gets its guidance, and it composes without replacing the pr
     assert.deepEqual(Object.keys(out), ["message"]);
     assert.equal(event.systemPrompt, "Other extension instructions");
     assert.equal(out.message.display, false);
-    assert.match(out.message.content, /subagent_resume/);
+    assert.match(out.message.content, /orch_resume/);
     assert.match(out.message.content, /Prefer calling orch_ping directly/);
     assert.match(out.message.content, /nested-tool shutdown/);
     assert.match(out.message.content, /never open user UI/);
@@ -239,7 +239,7 @@ test("the parent gets ping guidance only on a ping, not on every turn", async ()
     assert.equal(out.message.display, false);
     assert.match(out.message.content, /Herdr child is waiting on you/);
     assert.match(out.message.content, /Otherwise ask the user/);
-    assert.match(out.message.content, /subagent_resume/);
+    assert.match(out.message.content, /orch_resume/);
     assert.match(out.message.content, /Cancellation is unanswered/);
   });
 });

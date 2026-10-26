@@ -16,6 +16,8 @@
  * that are only registered when a server advertises resources.
  */
 
+import { delegationTool } from "./delegation-tools.ts";
+
 export type PromptMode = "replace" | "append" | "off";
 
 export interface PromptTool {
@@ -179,7 +181,7 @@ export function capabilityFacts(tools: readonly PromptTool[]): string[] {
   if ([...present].some((name) => /search|fetch|source_check/i.test(name))) {
     facts.push("The web can be searched or fetched from.");
   }
-  if ([...present].some((name) => /^subagent|^subagents_/.test(name))) {
+  if ([...present].some((name) => delegationTool(name)?.verb === "spawn")) {
     facts.push("Work can be delegated to sub-agents running in parallel.");
   }
   if ([...present].some((name) => /^ask_user$/.test(name))) facts.push("The user can be asked a blocking question.");
@@ -218,7 +220,7 @@ export function derivedRules(tools: readonly PromptTool[], options: { includeToo
   if (has(/^ask_user$/)) {
     rules.push("Ask only when a decision is genuinely the user's to make or required information is unavailable; otherwise use your judgement.");
   }
-  if (has(/^subagent/)) {
+  if ([...present].some((name) => delegationTool(name)?.verb === "spawn")) {
     rules.push("Delegate self-contained work to sub-agents instead of doing everything serially when it is safe to parallelize.");
   }
   if (has(/^todo_(plan|act|next)$/)) {

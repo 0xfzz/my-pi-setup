@@ -803,7 +803,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
 
   pi.on("tool_execution_end", async (event, context) => {
     ctx = context;
-    if (!event.isError && ["subagent", "subagent_resume", "orch_spawn", "orch_resume"].includes(event.toolName)) {
+    if (!event.isError && ["orch_spawn", "orch_resume"].includes(event.toolName)) {
       const d = event.result?.details;
       const file = d?.sessionFile ?? d?.sessionPath;
       const scope = d?.scope ? sanitizeScope(d.scope) : undefined;

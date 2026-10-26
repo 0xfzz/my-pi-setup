@@ -26,7 +26,7 @@ test("every MCP tool shape is recognised, and nothing else is", () => {
     assert.equal(isMcpTool(name), true, name);
   }
   // Near-misses must not be swept in: a tool that merely starts with "mc" is not MCP.
-  for (const name of ["read", "bash", "mcproxy", "mcpX", "subagent", "codemode"]) {
+  for (const name of ["read", "bash", "mcproxy", "mcpX", "orch_spawn", "codemode"]) {
     assert.equal(isMcpTool(name), false, name);
   }
 });
@@ -41,14 +41,14 @@ test("dispatchers are identified by Pi's own reachesTools marker, not by name", 
 });
 
 test("admin tools are matched by shape so a new lifecycle tool needs no code change", () => {
-  for (const name of ["subagent_interrupt", "orch_progress", "orch_ping", "ask_user", "tool_search", "subagent_abort", "subagent_steer"]) {
+  for (const name of ["orch_interrupt", "orch_progress", "orch_ping", "ask_user", "tool_search"]) {
     assert.equal(isAdminTool(name), true, name);
   }
   // These DO work, or own a dedicated guard, and must therefore still reach the
   // tool_call logic below the gate. Getting this list wrong is not cosmetic:
   // `orch_done` is guarded later in the hook, so exempting it made that guard
   // unreachable dead code (caught by tests/todo.test.ts).
-  for (const name of ["subagent", "subagent_resume", "orch_done", "bash", "edit", "workflow_todo"]) {
+  for (const name of ["orch_spawn", "orch_resume", "orch_done", "bash", "edit", "workflow_todo"]) {
     assert.equal(isAdminTool(name), false, name);
   }
 });
@@ -78,11 +78,11 @@ test("gate exemption covers configured capabilities but never turns unknown name
   assert.equal(isGateExempt(mcpTool), true, "user-connected MCP tool");
   assert.equal(isGateExempt(gateway), true, "dispatcher");
   assert.equal(isGateExempt({ name: "ask_user" }), true);
-  assert.equal(isGateExempt({ name: "subagent_interrupt" }), true);
+  assert.equal(isGateExempt({ name: "orch_interrupt" }), true);
   // Exempting these would disable a guard that runs later in the tool_call hook.
   assert.equal(isGateExempt({ name: "orch_done" }), false, "completion reporting stays guarded");
   // Real work still has to be assessed — this is the point of the gate.
-  for (const name of ["bash", "read", "edit", "write", "subagent"]) {
+  for (const name of ["bash", "read", "edit", "write", "orch_spawn"]) {
     assert.equal(isGateExempt({ name }), false, name);
   }
   // Nothing registered and nothing matched: do not invent permission.
@@ -136,7 +136,7 @@ function todoFixture(branch: any[] = []) {
   // a dispatcher that declares itself through reachesTools.
   const registry = [
     { name: "read" }, { name: "bash" }, { name: "edit" }, { name: "write" },
-    { name: "workflow_todo" }, { name: "artifact_save" }, { name: "subagent" },
+    { name: "workflow_todo" }, { name: "artifact_save" }, { name: "orch_spawn" },
     { name: "ask_user", reachesTools: () => ["orch_ping"] },
     { name: "mcp", reachesTools: "all" },
     { name: "mcp__github__create_issue" }, { name: "mcp__github__list_repos" },
@@ -170,7 +170,7 @@ function todoFixture(branch: any[] = []) {
 test("no assessment gate: real work and MCP capabilities all run immediately", async () => {
   const s = todoFixture();
   // The whole point of v2: nothing needs to be "assessed" before it can run.
-  for (const name of ["bash", "read", "edit", "write", "subagent", "mcp__github__create_issue", "mcp__github__list_repos", "mcp", "ask_user"]) {
+  for (const name of ["bash", "read", "edit", "write", "orch_spawn", "mcp__github__create_issue", "mcp__github__list_repos", "mcp", "ask_user"]) {
     assert.equal(await s.toolCall(name), undefined, `${name} must run without a todo round-trip`);
   }
 });

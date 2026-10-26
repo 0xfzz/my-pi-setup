@@ -55,7 +55,7 @@ export function pendingPlanDeferredTools(branch: readonly any[]): string[] {
  *
  * Membership here is an ALLOWLIST, not an assertion of presence. Plenty of these
  * tools are registered conditionally — `tool_search` by the MCP gateway,
- * `subagents_list` only inside Herdr, `google_search` only with the Antigravity
+ * `orch_running` only while the orchestrator extension is loaded, `google_search` only with the Antigravity
  * provider, and so on — so an absent name usually means "that feature is off",
  * not "someone renamed a tool". See `EXPECTED_PLAN_TOOLS` for the subset whose
  * absence really is a bug.
@@ -72,7 +72,7 @@ export const PLAN_TOOLS: ReadonlySet<string> = new Set([
   // `google_search` carries no readOnlyHint, so its explicit entry is load-bearing.
   // `fetch_content`/`source_check` are deliberately absent: they write page caches
   // and clone repositories, so their non-read-only annotation is honoured.
-  "google_search", "web_search", "web_read", "vcc_recall", "orch_history", "subagents_list", "tool_search",
+  "google_search", "web_search", "web_read", "vcc_recall", "orch_history", "orch_running", "tool_search",
   // The MCP resource tools are NOT listed: Pi declares all three with
 
   // `readOnlyHint: true`, so they pass through the annotation path, and they are
@@ -106,7 +106,7 @@ export function missingPlanTools(available: Iterable<string>): string[] {
 // Names Pi always registers are listed here for defence in depth; a name that is
 // NOT listed is covered by the dispatcher rule in `isPlanTool` below, so a new
 // third-party gateway cannot slip through by declaring itself read-only.
-const UNSAFE_TOOLS = new Set(["write", "edit", "powershell", "codemode", "mcp", "mcpScript", "browser", "browser_download", "browser_login", "generate_image", "subagent", "subagent_resume", "subagent_interrupt"]);
+const UNSAFE_TOOLS = new Set(["write", "edit", "powershell", "codemode", "mcp", "mcpScript", "browser", "browser_download", "browser_login", "generate_image"]);
 export interface PlanToolInfo {
   name: string;
   exposure?: string;

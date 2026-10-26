@@ -24,7 +24,7 @@ test("real Pi preserves delegated work across native compaction and a saved-sess
     captured.push(JSON.stringify(context.messages));
     const stream = createAssistantMessageEventStream();
     const tool = calls === 1;
-    const message: any = { role: "assistant", api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), content: tool ? [{ type: "toolCall", id: "child-launch", name: "subagent", arguments: { task: "Inspect login regression" } }] : [{ type: "text", text: "Acknowledged." }], stopReason: tool ? "toolUse" : "stop", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
+    const message: any = { role: "assistant", api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), content: tool ? [{ type: "toolCall", id: "child-launch", name: "orch_spawn", arguments: { task: "Inspect login regression" } }] : [{ type: "text", text: "Acknowledged." }], stopReason: tool ? "toolUse" : "stop", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
     stream.push({ type: "start", partial: message }); stream.push({ type: "done", reason: message.stopReason, message });
     return stream;
   };
@@ -32,7 +32,7 @@ test("real Pi preserves delegated work across native compaction and a saved-sess
     const loader = new DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager: settings, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
       extensionFactories: [checkpoints, pi => {
         pi.registerProvider("checkpoint-test", { api: model.api, baseUrl: model.baseUrl, apiKey: "local-test-not-a-secret", models: [model], streamSimple: scripted });
-        pi.registerTool({ name: "subagent", label: "Fixture child", description: "Fixture", parameters: Type.Object({ task: Type.String() }), async execute(_id, input) {
+        pi.registerTool({ name: "orch_spawn", label: "Fixture child", description: "Fixture", parameters: Type.Object({ task: Type.String() }), async execute(_id, input) {
           return { content: [{ type: "text", text: "Child started" }], details: { id: "fixture-run", status: "started", name: "Fixture child", task: input.task, sessionFile: file } };
         } });
         // Native compaction API with an offline summary fixture: no inference.

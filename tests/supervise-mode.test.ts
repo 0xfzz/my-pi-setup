@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isSupervisorTool, SUPERVISOR_TOOLS, v2DelegationInForce, supervisorAllowlistGaps } from "../lib/supervise-mode.ts";
-import { V1_TOOLS, V2_TOOLS } from "../lib/delegate-switch.ts";
+import { isSupervisorTool, SUPERVISOR_TOOLS, supervisorAllowlistGaps } from "../lib/supervise-mode.ts";
+import { PARENT_DELEGATION_TOOLS } from "../lib/delegation-tools.ts";
 import { MODES, ModeRegistry } from "../lib/modes.ts";
 import modesExtension from "../extensions/modes.ts";
 
@@ -17,7 +17,7 @@ test("isSupervisorTool permits supervisor controls, read-only tools, and orch_* 
   }
 
   // Workflow
-  for (const name of ["workflow_todo", "ask_user", "subagents_list", "orch_progress"]) {
+  for (const name of ["workflow_todo", "ask_user", "orch_running", "orch_progress"]) {
     assert.equal(isSupervisorTool(name), true, `expected ${name} to be allowed`);
   }
 
@@ -45,8 +45,8 @@ test("every delegation tool the v2 package registers is reachable in supervise m
   // live allowlist was missing `orch_handoff` and `orch_escalate`, because nothing
   // compared "tools v2 registers" against "tools supervise allows". A rename in
   // either package reopens the hole silently, so it is asserted as a set relation.
-  assert.deepEqual(supervisorAllowlistGaps(V2_TOOLS), [], "v2 registers only tools supervise allows");
-  assert.deepEqual(supervisorAllowlistGaps([...V1_TOOLS, ...V2_TOOLS]), [], "both delegation surfaces are reachable");
+  const parentTools = [...PARENT_DELEGATION_TOOLS];
+  assert.deepEqual(supervisorAllowlistGaps(parentTools), [], "every parent delegation tool is reachable");
 
   // The detector must be able to FAIL, or the assertions above are vacuous. Drive
   // it against the historical bug: a delegation surface that omits the two tools
@@ -55,7 +55,7 @@ test("every delegation tool the v2 package registers is reachable in supervise m
   historical.delete("orch_handoff");
   historical.delete("orch_escalate");
   assert.deepEqual(
-    supervisorAllowlistGaps(V2_TOOLS, undefined, historical),
+    supervisorAllowlistGaps([...PARENT_DELEGATION_TOOLS], undefined, historical),
     ["orch_escalate", "orch_handoff"],
     "the exact production regression must be reported",
   );
@@ -71,46 +71,24 @@ test("every delegation tool the v2 package registers is reachable in supervise m
   assert.equal(SUPERVISOR_TOOLS.has("orch_escalate"), true);
 });
 
-test("supervise mode withholds v1 delegation while v2 is fully available", () => {
-  const all = [...V1_TOOLS, ...V2_TOOLS];
-  // v2 present and switched on: v1 must not be a bypass of handoff specs, lane
-  // isolation and the escalation ladder.
-  assert.equal(v2DelegationInForce(all), true);
-  for (const name of V1_TOOLS) {
-    assert.equal(
-      isSupervisorTool(name, undefined, { v2DelegationAvailable: true }),
-      false,
-      `${name} must be withheld while v2 is in force`,
-    );
+test("the canonical delegation surface is the only delegation surface", () => {
+  for (const name of PARENT_DELEGATION_TOOLS) {
+    assert.equal(isSupervisorTool(name), true, `${name} must be reachable`);
   }
-  // ...but the v2 surface stays reachable.
-  for (const name of V2_TOOLS) {
-    assert.equal(isSupervisorTool(name, undefined, { v2DelegationAvailable: true }), true);
-  }
-
-  // v2 not installed, or switched off: v1 stays usable rather than leaving the
-  // orchestrator with no delegation surface at all.
-  const v1Only = [...V1_TOOLS];
-  assert.equal(v2DelegationInForce(v1Only), false);
-  assert.equal(isSupervisorTool("subagent", undefined, { v2DelegationAvailable: false }), true);
-
-  const v2Disabled = new Set([...V2_TOOLS]);
-  assert.equal(v2DelegationInForce(all, v2Disabled), false);
-  assert.equal(
-    isSupervisorTool("subagent", undefined, { v2DelegationAvailable: false, disabledDelegates: new Set() }),
-    true,
-  );
+  // A retired v1 name is not in the table, so it can never be the escape hatch.
+  assert.equal(isSupervisorTool("subagent"), false);
+  assert.equal(isSupervisorTool("subagent_resume"), false);
 });
 
 test("a delegate tool the user switched off stays off even in supervise mode", () => {
-  const disabled = new Set(["subagent"]);
+  const disabled = new Set(["orch_spawn"]);
   assert.equal(
-    isSupervisorTool("subagent", undefined, { disabledDelegates: disabled, v2DelegationAvailable: false }),
+    isSupervisorTool("orch_spawn", undefined, { disabledDelegates: disabled }),
     false,
     "the switch decision is not undone by entering a mode",
   );
   assert.equal(
-    isSupervisorTool("orch_handoff", undefined, { disabledDelegates: disabled, v2DelegationAvailable: true }),
+    isSupervisorTool("orch_handoff", undefined, { disabledDelegates: disabled }),
     true,
   );
 });
@@ -207,10 +185,9 @@ test("the debug-session loadout survives the gate: orch_handoff and orch_escalat
   // would silently re-enable the v1 escape hatch this test forbids.
   const debugLoadout = [
     "read", "grep", "find", "ls", "bash", "artifact_save", "artifact_recall", "artifact_list",
-    "workflow_todo", "ask_user", "subagents_list", "orch_history", "tool_search",
+    "workflow_todo", "ask_user", "orch_running", "orch_history", "tool_search",
     "orch_handoff", "orch_spawn", "orch_resume", "orch_interrupt", "orch_steer",
     "orch_route", "orch_running", "orch_brief", "orch_check", "orch_review", "orch_spec_review", "orch_escalate", "orch_close",
-    "subagent", "subagent_resume",
   ];
   const events = new Map<string, Function>();
   const commands = new Map<string, any>();
@@ -253,17 +230,17 @@ test("the debug-session loadout survives the gate: orch_handoff and orch_escalat
   assert.ok(activeTools.has("orch_spawn"), "orch_spawn must survive the gate");
   assert.ok(activeTools.has("read"), "read must survive the gate");
 
-  // And v1 must not be the escape hatch. v2 is fully registered here, so v1
-  // `subagent` is withheld rather than left as a bypass of handoff/isolation/ladder.
-  assert.equal(activeTools.has("subagent"), false, "v1 subagent must be withheld while v2 is in force");
-  assert.equal(activeTools.has("subagent_resume"), false, "v1 subagent_resume must be withheld too");
+  // A retired v1 name is not part of the surface at all, so it cannot be the
+  // escape hatch the debug session used.
+  assert.equal(activeTools.has("subagent"), false, "the v1 subagent name is gone");
+  assert.equal(activeTools.has("subagent_resume"), false, "the v1 resume name is gone");
 
   // The same answers from the per-call gate, so a stale active set cannot reopen it.
   const toolCallHook = events.get("tool_call")!;
   assert.equal(toolCallHook({ toolName: "orch_handoff", input: {} }, ctx), undefined);
   assert.equal(toolCallHook({ toolName: "orch_escalate", input: {} }, ctx), undefined);
   const v1 = toolCallHook({ toolName: "subagent", input: {} }, ctx);
-  assert.ok(v1?.block, "calling v1 subagent in supervise mode must be blocked");
+  assert.ok(v1?.block, "a removed v1 name is blocked in supervise mode");
 
   // Direct implementation is still blocked — the mode's whole point.
   assert.ok(toolCallHook({ toolName: "edit", input: { path: "a.txt" } }, ctx)?.block);

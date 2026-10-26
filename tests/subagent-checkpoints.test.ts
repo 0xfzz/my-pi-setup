@@ -50,7 +50,7 @@ function harness() {
 test("launch, branch replay, custom results, interrupted exits and questions are durable", () => {
   const a = launch();
   const entries: any[] = [{ type: "custom", customType: CHECKPOINT_TYPE, data: a }];
-  const msg = { role: "toolResult", toolName: "subagent", details: { id: "run1", status: "started", sessionFile: a.sessionFile, name: "Scout" } };
+  const msg = { role: "toolResult", toolName: "orch_spawn", details: { id: "run1", status: "started", sessionFile: a.sessionFile, name: "Scout" } };
   entries.push({ type: "message", message: msg, timestamp: time });
   assert.equal(recordsFromBranch(entries).get(a.sessionFile)?.task, "Inspect auth");
   entries.push({ type: "custom_message", customType: "subagent_result", details: { sessionFile: a.sessionFile, name: "Scout", disposition: "completed", summary: "Fixed it" }, content: "result", timestamp: time });
@@ -139,8 +139,8 @@ test("runtime handlers inject checkpoints after compaction without duplicates; r
   const h = harness();
   try {
     await h.emit("session_start");
-    await h.emit("tool_execution_start", { toolName: "subagent", toolCallId: "a", args: { task: "Inspect auth" } });
-    await h.emit("tool_execution_end", { toolName: "subagent", toolCallId: "a", result: { details: { status: "started", id: "run1", name: "Scout", sessionFile: "/missing/child.jsonl" } } });
+    await h.emit("tool_execution_start", { toolName: "orch_spawn", toolCallId: "a", args: { task: "Inspect auth" } });
+    await h.emit("tool_execution_end", { toolName: "orch_spawn", toolCallId: "a", result: { details: { status: "started", id: "run1", name: "Scout", sessionFile: "/missing/child.jsonl" } } });
     assert.equal(h.entries.length, 1);
     assert.equal(h.entries[0].data.task, "Inspect auth");
     const compacted: any[] = [{ role: "user", content: "Compacted summary with no child detail", timestamp: 1 }];

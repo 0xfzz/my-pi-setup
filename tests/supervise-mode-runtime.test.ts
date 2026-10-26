@@ -7,7 +7,7 @@ import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsMana
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import modes from "../extensions/modes.ts";
-import { V1_TOOLS, V2_TOOLS } from "../lib/delegate-switch.ts";
+import { DELEGATION_TOOLS, RETIRED_V1_TOOLS } from "../lib/delegation-tools.ts";
 import { CORE_REVIEW_TOOLS, DEFERRED_ORCH_TOOLS, isSupervisorTool } from "../lib/supervise-mode.ts";
 
 /**
@@ -47,7 +47,7 @@ test("real Pi supervise mode keeps orch_handoff/orch_escalate and refuses v1 del
       extensionFactories: [modes, pi => {
         // A loadout shaped like the failing session's: read-only inspection, both
         // delegation surfaces, and the direct-implementation tools the mode forbids.
-        for (const name of ["read", "bash", "edit", "write", "artifact_save", "artifact_edit", "artifact_search", "artifact_recall", "artifact_list", ...V1_TOOLS, ...V2_TOOLS]) {
+        for (const name of ["read", "bash", "edit", "write", "artifact_save", "artifact_edit", "artifact_search", "artifact_recall", "artifact_list", ...DELEGATION_TOOLS.map(tool => tool.name)]) {
           pi.registerTool({
             name, label: name, description: name, parameters: Type.Object({}),
             async execute() { return { content: [{ type: "text", text: `${name} ran` }], details: {} }; },
@@ -62,8 +62,8 @@ test("real Pi supervise mode keeps orch_handoff/orch_escalate and refuses v1 del
               // The orchestrator's real first move: author the spec, then delegate.
               ? [
                   call("handoff", "orch_handoff", { scope: "net-retry", goal: "g", acceptanceCriteria: ["a"], laneFiles: ["src/net/client.ts"] }),
-                  // The historical escape hatch, attempted on purpose.
-                  call("sneak", "subagent", { agent: "worker", name: "sneaky" }),
+                  // A direct write, attempted on purpose: the mode must refuse it.
+                  call("sneak", "write", { path: "sneaky.txt", content: "x" }),
                 ]
               : [{ type: "text", text: "Supervise turn complete" }];
             const message: any = {
@@ -116,11 +116,11 @@ test("real Pi supervise mode keeps orch_handoff/orch_escalate and refuses v1 del
     // `tests/orchestrator/loadout-budget.test.ts` against the real registration.
     const declared = ["orch_handoff", "orch_spawn", "orch_running", "orch_brief", "orch_check", "orch_review", "orch_escalate"];
     for (const name of declared) {
-      assert.ok(V2_TOOLS.includes(name as any), `${name} is asserted here but this fixture does not register it`);
+      assert.ok(DELEGATION_TOOLS.some(tool => tool.name === name), `${name} is asserted here but this fixture does not register it`);
       assert.ok(active.includes(name), `${name} must be declared, not deferred`);
     }
-    for (const name of [...V1_TOOLS]) {
-      assert.equal(active.includes(name), false, `${name} must be withheld while v2 is in force`);
+    for (const name of RETIRED_V1_TOOLS) {
+      assert.equal(active.includes(name), false, `${name} must never be registered`);
     }
     for (const name of ["edit", "write"]) {
       assert.equal(active.includes(name), false, `${name} must be blocked in supervise mode`);
@@ -150,15 +150,15 @@ test("real Pi supervise mode keeps orch_handoff/orch_escalate and refuses v1 del
     assert.notEqual(handoff.isError, true, JSON.stringify(handoff.content));
     assert.match(JSON.stringify(handoff.content), /orch_handoff ran/);
 
-    // ...and the v1 escape hatch was refused. Because v1 is withheld from the
-    // loadout, Pi rejects it as unknown rather than reaching the mode guard — an
-    // even earlier refusal than the tool_call block. Accept either, but require
-    // that the call did NOT execute.
+    // ...and a direct write was refused: supervise never implements. Because
+    // `write` is absent from the declared loadout, Pi may reject it as unknown
+    // rather than reaching the mode guard — an even earlier refusal. Accept either,
+    // but require that the call did NOT execute.
     const sneak = results.find((result: any) => result.toolCallId === "sneak");
-    assert.ok(sneak, "the v1 attempt must be recorded");
+    assert.ok(sneak, "the write attempt must be recorded");
     assert.equal(sneak.isError, true, JSON.stringify(sneak.content));
-    assert.match(JSON.stringify(sneak.content), /Tool subagent not found|Supervise mode: .* is blocked/i);
-    assert.doesNotMatch(JSON.stringify(sneak.content), /subagent ran/, "v1 must not have executed");
+    assert.match(JSON.stringify(sneak.content), /Tool write not found|Supervise mode: .* (blocked|not available)/i);
+    assert.doesNotMatch(JSON.stringify(sneak.content), /write ran/, "the write must not have executed");
 
     assert.deepEqual(errors, []);
   } finally {

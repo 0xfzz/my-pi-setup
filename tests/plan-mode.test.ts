@@ -62,7 +62,7 @@ for (const order of [[modes, artifacts], [artifacts, modes]]) {
     assert.equal(event.systemPromptOptions.sections.existing, "Keep me");
     assert.match((event.systemPromptOptions.sections as any).plan_mode, /Challenge assumptions/);
     assert.ok(event.systemPromptOptions.selectedTools.every(isPlanTool));
-    for (const toolName of ["write", "edit", "powershell", "browser", "mcp", "codemode", "subagent", "subagent_resume", "late_browser", "artifact_save_fake"]) {
+    for (const toolName of ["write", "edit", "powershell", "browser", "mcp", "codemode", "late_browser", "artifact_save_fake"]) {
       const result = await f.emit("tool_call", { toolName, parentToolCallId: "nested", input: {} });
       assert.equal(result[0].block, true, toolName);
     }

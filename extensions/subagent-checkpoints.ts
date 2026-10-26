@@ -37,14 +37,15 @@ import {
 } from "../lib/subagent-retention.ts";
 import {
   parseSubagentsCommand,
-  isVersionSwitchCommand,
-  isToggleAction,
-  getSubagentVersionStatus,
-  formatVersionStatus,
-  applyVersionToggle,
-  saveSubagentVersion,
-} from "../lib/version-switch.ts";
-import { DELEGATE_SWITCH_TYPE, switchStateFromBranch } from "../lib/delegate-switch.ts";
+  isSwitchCommand,
+  getDelegationStatus,
+  formatDelegationStatus,
+  applyDelegationToggle,
+  saveDelegationDefault,
+  DELEGATE_SWITCH_TYPE,
+  switchStateFromBranch,
+} from "../lib/delegation-switch.ts";
+import { delegationTool } from "../lib/delegation-tools.ts";
 
 /** Digest briefs are a starting point, not a transcript dump. */
 const PARENT_BRIEF_MAX_CHARS = 12_000;
@@ -311,12 +312,17 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
     }
   });
 
+  const isLaunchTool = (name: string) => {
+    const verb = delegationTool(name)?.verb;
+    return verb === "spawn" || verb === "resume";
+  };
+
   pi.on("tool_execution_start", event => {
-    if (["subagent", "subagent_resume"].includes(event.toolName)) launchInputs.set(event.toolCallId, event.args);
+    if (isLaunchTool(event.toolName)) launchInputs.set(event.toolCallId, event.args);
   });
   pi.on("tool_execution_end", async (event, context) => {
     ctx = context;
-    if (!event.isError && ["subagent", "subagent_resume"].includes(event.toolName)) {
+    if (!event.isError && isLaunchTool(event.toolName)) {
       const d = event.result?.details;
       const file = d?.sessionFile ?? d?.sessionPath;
       const record = launched(d, launchInputs.get(event.toolCallId), records.get(file));
@@ -715,7 +721,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
         context.ui.notify("This child changed while the dialog was open. Inspect its current pane/history before resuming.", "warning");
         return;
       }
-      pi.sendUserMessage(`Resume this ended Herdr child using subagent_resume with these exact arguments: ${JSON.stringify({ sessionPath: record.sessionFile, name: record.name, message })}. Do not start a second writer if the original child is still running; verify that prerequisite first.`);
+      pi.sendUserMessage(`Resume this ended Herdr child using orch_resume with these exact arguments: ${JSON.stringify({ sessionPath: record.sessionFile, name: record.name, message })}. Do not start a second writer if the original child is still running; verify that prerequisite first.`);
     }
   }
 
@@ -760,7 +766,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
     );
   }
 
-  async function handleVersionSwitch(
+  async function handleDelegationSwitch(
     args: string,
     piInstance: ExtensionAPI,
     context: ExtensionContext,
@@ -772,50 +778,33 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
     const branchDisabled = () => switchStateFromBranch(registryEntries(context)).disabled;
     switch (parsed.action) {
       case "status": {
-        const status = getSubagentVersionStatus(piInstance);
-        const text = formatVersionStatus(status);
-        context.ui.notify(text, "info");
+        context.ui.notify(formatDelegationStatus(getDelegationStatus(piInstance)), "info");
         break;
       }
       case "help": {
         const helpText =
-          "Subagent version switch commands:\n" +
-          "  /subagents status    - show v1 and v2 active status\n" +
-          "  /subagents off       - turn v1 OFF for this session\n" +
-          "  /subagents on        - turn v1 ON for this session\n" +
-          "  /subagents v2 off    - turn v2 OFF for this session\n" +
-          "  /subagents v2 on     - turn v2 ON for this session\n" +
-          "  /subagents v2 only   - turn v1 OFF and v2 ON\n" +
-          "  /subagents v1 only   - turn v2 OFF and v1 ON\n" +
-          "  /subagents all on    - turn every subagent tool back ON (reset)\n" +
-          "  /subagents save      - persist the current preference to settings.json\n" +
-          "  /subagents gc        - offer old fork copies for collection\n" +
-          "\nThe switch never touches unrelated tools: bash, MCP servers and other\n" +
-          "extensions keep their loadout. It is a session decision and it survives\n" +
-          "entering and leaving Plan/Supervise mode.";
+          "Delegation switch commands:\n" +
+          "  /subagents status  - show the orch_* surface and what is switched off\n" +
+          "  /subagents on      - turn the delegation tools ON for this session\n" +
+          "  /subagents off     - turn the delegation tools OFF for this session\n" +
+          "  /subagents save    - persist the current preference to settings.json\n" +
+          "  /subagents gc      - offer old fork copies for collection\n" +
+          "\nThere is one namespace (orch_*) and one switch. The v1 subagent surface\n" +
+          "no longer exists. The switch never touches unrelated tools: bash, MCP\n" +
+          "servers and other extensions keep their loadout. It is a session decision\n" +
+          "and it survives entering and leaving Plan/Supervise mode.";
         context.ui.notify(helpText, "info");
         break;
       }
       case "save": {
-        const status = getSubagentVersionStatus(piInstance);
-        const target = status.v1Active && status.v2Active
-          ? "both"
-          : status.v2Active
-          ? "v2"
-          : "v1";
-        const result = saveSubagentVersion(target);
+        const status = getDelegationStatus(piInstance);
+        const result = saveDelegationDefault(status.enabled);
         context.ui.notify(result.message, result.success ? "info" : "error");
         break;
       }
-      case "v1-on":
-      case "v1-off":
-      case "v2-on":
-      case "v2-off":
-      case "v1-only":
-      case "v2-only":
-      case "all-on": {
-        if (!isToggleAction(parsed.action)) break;
-        const result = applyVersionToggle(piInstance, parsed.action, branchDisabled());
+      case "on":
+      case "off": {
+        const result = applyDelegationToggle(piInstance, parsed.action === "on", branchDisabled());
         // Persist the decision so a mode exit, reload, or tree move derives the
         // same loadout instead of undoing the switch.
         piInstance.appendEntry(DELEGATE_SWITCH_TYPE, { disabled: result.disabled });
@@ -828,14 +817,14 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
   }
 
   pi.registerCommand("subagents", {
-    description: "Browse delegated work, milestones, results and saved transcripts; `/subagents on|off|v2 ...` to switch versions; `/subagents gc` for collection.",
+    description: "Browse delegated work, milestones, results and saved transcripts; `/subagents on|off|status` to switch the delegation surface; `/subagents gc` for collection.",
     handler: async (args, context) => {
       const trimmed = (args ?? "").trim();
       if (/^gc(?:\s|$)/.test(trimmed)) {
         return collectSubagents(context, trimmed);
       }
-      if (isVersionSwitchCommand(trimmed)) {
-        return handleVersionSwitch(trimmed, pi, context);
+      if (isSwitchCommand(trimmed)) {
+        return handleDelegationSwitch(trimmed, pi, context);
       }
       return browseSubagents(context);
     },

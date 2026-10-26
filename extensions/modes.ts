@@ -6,9 +6,9 @@ import { recordsFromBranch as childRecords } from "../lib/subagent-state.ts";
 import { childContextState, isSubagentChildSession, ownEntries } from "../lib/subagent-context.ts";
 import { readOnlyShellCommand } from "../lib/plan-shell.ts";
 import { INPUT_MODE_CONTEXT_TYPE, inputModeGuidance, isPlanTool, missingPlanTools, pendingPlanDeferredTools, pendingPlanExitTools, PLAN_MODE_GUIDANCE, PLAN_MODE_TYPE, planModeFromBranch } from "../lib/plan-mode.ts";
-import { declaredSuperviseTools, isSupervisorTool, v2DelegationInForce, SUPERVISOR_MODE_GUIDANCE, SUPERVISOR_MODE_TYPE, superviseModeFromBranch } from "../lib/supervise-mode.ts";
+import { declaredSuperviseTools, isSupervisorTool, SUPERVISOR_MODE_GUIDANCE, SUPERVISOR_MODE_TYPE, superviseModeFromBranch } from "../lib/supervise-mode.ts";
 import { isControlPlanePath } from "../lib/orchestrator/control-plane.ts";
-import { reconcileLoadout, switchStateFromBranch } from "../lib/delegate-switch.ts";
+import { reconcileLoadout, switchStateFromBranch } from "../lib/delegation-switch.ts";
 import { RETIRED_V1_TOOLS, isRetiredDelegationTool, stripRetiredTools } from "../lib/delegation-tools.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardMode } from "../lib/dashboard/integration.ts";
 
@@ -41,20 +41,14 @@ export default function modesExtension(pi: ExtensionAPI) {
   /**
    * Branch-derived options for supervise mode.
    *
-   * Both come from the session's own switch decision, not from the live active
-   * set — that set is what this mode is in the middle of rewriting. Without the
-   * `v2` flag, supervise mode leaves the v1 `subagent` tool enabled, and v1 is a
-   * complete bypass of the handoff/isolation/escalation contract: no spec, no
-   * lane, one shared artifact catalog, and no ladder back to the orchestrator.
+   * Derived from the session's own switch decision, not from the live active
+   * set — that set is what this mode is in the middle of rewriting. The v1
+   * `subagent` bypass this comment used to guard against has been removed from
+   * the package, so the decision alone is sufficient.
    */
-  const superviseOptions = (ctx: ExtensionContext) => {
-    const disabled = switchStateFromBranch(policyEntries(ctx)).disabled;
-    const registered = pi.getAllTools().map(tool => tool.name);
-    return {
-      disabledDelegates: disabled,
-      v2DelegationAvailable: v2DelegationInForce(registered, disabled),
-    };
-  };
+  const superviseOptions = (ctx: ExtensionContext) => ({
+    disabledDelegates: switchStateFromBranch(policyEntries(ctx)).disabled,
+  });
   const allowedSuperviseTool = (ctx: ExtensionContext, name: string) =>
     isSupervisorTool(name, pi.getAllTools().find(tool => tool.name === name), superviseOptions(ctx));
   const restrictPlanTools = () => pi.setActiveTools(pi.getAllTools()
@@ -145,8 +139,8 @@ export default function modesExtension(pi: ExtensionAPI) {
     // A restored snapshot is a *record of the previous loadout*, not an authority
     // override. Re-apply the session's switch decision so leaving a restricted
     // mode cannot resurrect a delegate tool the user switched off while inside it.
-    // Retired v1 names are dropped here, not in `reconcileLoadout`: the v1 toggle
-    // still needs to re-enable them until it is deleted.
+    // Retired v1 names are dropped by reconcileLoadout; the explicit strip here
+    // also covers pendingTools, which is not routed through it.
     const kept = stripRetiredTools(names);
     const disabled = switchStateFromBranch(policyEntries(ctx)).disabled;
     pi.setActiveTools(reconcileLoadout(kept, disabled));

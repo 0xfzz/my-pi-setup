@@ -56,23 +56,14 @@ export function isDispatcherTool(tool: PolicyTool | undefined): boolean {
 }
 
 /**
- * Tools that LOOK administrative but are not, because each one either performs real
- * work or owns a dedicated guard later in the tool_call hook.
+ * Delegation verbs that perform real work, or own a dedicated guard later in the
+ * tool_call hook.
  *
- *  - `subagent` spawns work, so it must pass the workflow assessment.
- *  - `subagent_resume` restarts real work in a child.
- *  - `orch_done` reports completion, and the todo guard must see it to refuse a
- *    report while todos are unresolved. Exempting it would make that guard unreachable,
- *    because an exempt tool returns before the guard runs.
- *
- * The same rule follows the canonical names through `delegation-tools.ts`: renaming
- * `subagent_history` to `orch_history` must not silently turn a coordination tool
- * into gated work, and `orch_spawn`/`orch_resume`/`orch_done` must stay gated
- * exactly like their predecessors.
+ * `orch_spawn` and `orch_resume` make progress, so they must pass the workflow
+ * assessment. `orch_done` reports completion, and the todo guard must see it to
+ * refuse a report while todos are unresolved. Exempting it would make that guard
+ * unreachable, because an exempt tool returns before the guard runs.
  */
-const NOT_ADMIN: ReadonlySet<string> = new Set(["subagent", "subagent_resume", "subagent_done"]);
-
-/** Delegation verbs that perform real work, or own a guard further down the hook. */
 const WORK_DELEGATION_VERBS: ReadonlySet<string> = new Set(["spawn", "resume", "done"]);
 
 function isWorkDelegation(name: string): boolean {
@@ -84,16 +75,13 @@ function isWorkDelegation(name: string): boolean {
  * A tool that is callable but is NOT itself work: it clarifies, discovers, monitors,
  * or steers.
  *
- * Matched by SHAPE rather than a fixed list, so a delegation extension adding a new
- * lifecycle tool is classified without a code change. The work verbs are named
- * explicitly, and covered by tests, because getting this wrong either blocks real
- * work or silently disables a guard.
+ * Matched by SHAPE from the capability table, so a new lifecycle tool is
+ * classified without a code change. The work verbs are named explicitly.
  */
 export function isAdminTool(name: string): boolean {
-  if (NOT_ADMIN.has(name) || isWorkDelegation(name)) return false;
-  if (/^subagents?_/.test(name)) return true;
+  if (isWorkDelegation(name)) return false;
   if (delegationTool(name)) return true; // orch_* coordination and reporting verbs
-  return /^(caller_ping|ask_user|tool_search|mcpScript)$/.test(name);
+  return /^(ask_user|tool_search|mcpScript)$/.test(name);
 }
 
 /**

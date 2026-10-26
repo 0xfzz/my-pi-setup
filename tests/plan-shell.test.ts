@@ -73,7 +73,7 @@ test("read-only tool annotations allow research but do not reopen opaque executi
   assert.equal(isPlanTool("unknown"), false);
   assert.equal(isPlanTool("mcp__docs__write", { name: "mcp__docs__write", annotations: { destructiveHint: false } }), false);
   assert.equal(isPlanTool("mcp__docs__broken", { name: "mcp__docs__broken", annotations: { readOnlyHint: true, destructiveHint: true } }), false);
-  for (const name of ["write", "edit", "browser", "codemode", "mcp", "mcpScript", "subagent", "subagent_resume"]) {
+  for (const name of ["write", "edit", "browser", "codemode", "mcp", "mcpScript"]) {
     assert.equal(isPlanTool(name, { name, annotations: { readOnlyHint: true } }), false, name);
   }
 });

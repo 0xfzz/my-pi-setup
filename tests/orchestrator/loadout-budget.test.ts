@@ -106,9 +106,9 @@ test("the declaration rule withholds nothing but deferred tools", () => {
     // stay undeclared. This is the only legitimate non-own deferral.
     { name: "artifact_recall", exposure: "deferred" },
   ];
-  const declared = new Set(declaredSuperviseTools(universe, { v2DelegationAvailable: true }));
+  const declared = new Set(declaredSuperviseTools(universe));
   for (const tool of universe) {
-    if (!isSupervisorTool(tool.name, tool, { v2DelegationAvailable: true })) continue;
+    if (!isSupervisorTool(tool.name, tool)) continue;
     if (tool.exposure === "deferred" || tool.exposure === "hidden") {
       assert.equal(declared.has(tool.name), false, `${tool.name} is deferred and must not be declared`);
       continue;

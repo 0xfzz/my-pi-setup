@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { DELEGATE_SWITCH_TYPE, reconcileLoadout, switchStateFromBranch } from "../lib/delegate-switch.ts";
+import { DELEGATE_SWITCH_TYPE, reconcileLoadout, switchStateFromBranch } from "../lib/delegation-switch.ts";
 import { RETIRED_V1_TOOLS, stripRetiredTools } from "../lib/delegation-tools.ts";
 
 /**

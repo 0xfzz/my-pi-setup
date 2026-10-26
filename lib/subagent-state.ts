@@ -119,7 +119,7 @@ export function recordsFromBranch(entries: readonly any[]): Map<string, ChildRec
     if (msg?.role === "assistant" && Array.isArray(msg.content)) {
       for (const part of msg.content) if (part.type === "toolCall") inputs.set(part.id, part.arguments);
     }
-    if (msg?.role === "toolResult" && ["subagent", "subagent_resume", "orch_spawn", "orch_resume"].includes(msg.toolName)) {
+    if (msg?.role === "toolResult" && ["orch_spawn", "orch_resume"].includes(msg.toolName)) {
       const path = msg.details?.sessionFile ?? msg.details?.sessionPath;
       const record = launched(msg.details, inputs.get(msg.toolCallId), records.get(path), entry.timestamp);
       if (record) records.set(record.sessionFile, record);

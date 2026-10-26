@@ -88,8 +88,7 @@ export const SPEC_ONLY_TOOLS: ReadonlySet<string> = new Set([
  */
 export const SPEC_ONLY_DENIED_TOOLS: ReadonlySet<string> = new Set([
   "bash", "write", "edit", "multi_edit", "multiedit", "apply_patch", "applypatch", "patch",
-  "orch_parent_recall", "orch_parent_digest", "orch_history", "subagents_list",
-  "subagent", "subagent_resume", "subagent_interrupt",
+  "orch_parent_recall", "orch_parent_digest", "orch_history",
   "browser", "browser_download", "browser_login",
   "mcp", "mcpScript", "codemode", "tool_search",
   "web_read", "google_search", "web_search", "fetch_content", "source_check",

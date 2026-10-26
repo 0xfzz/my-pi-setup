@@ -15,11 +15,14 @@ import { ScopeRegistry } from "../../lib/orchestrator/scope-registry.ts";
 import { routeUpdate, matchOwner } from "../../lib/orchestrator/steer-router.ts";
 import { isSupervisorTool, SUPERVISOR_TOOLS } from "../../lib/supervise-mode.ts";
 import {
-  applyVersionToggle,
+  DELEGATE_SWITCH_TYPE,
+  applyDelegationToggle,
+  getDelegationStatus,
   parseSubagentsCommand,
-  saveSubagentVersion,
-  getSubagentVersionStatus,
-} from "../../lib/version-switch.ts";
+  saveDelegationDefault,
+  switchStateFromBranch,
+} from "../../lib/delegation-switch.ts";
+import { DELEGATION_TOOLS } from "../../lib/delegation-tools.ts";
 import {
   visibleToScope,
   type Artifact,
@@ -103,13 +106,9 @@ test("Integration: Scoped spec handoff and directory security permissions", asyn
   }
 });
 
-test("Integration: Version toggles session state and settings persistence", async () => {
-  const allTools = [
-    "read", "write", "edit", "bash",
-    "subagent", "subagent_resume", "subagent_interrupt",
-    "orch_spawn", "orch_resume", "orch_interrupt", "orch_steer", "orch_route", "orch_running", "orch_review",
-  ];
-
+test("Integration: the delegation switch is one reversible session decision", async () => {
+  const canonical = DELEGATION_TOOLS.map(tool => tool.name);
+  const allTools = ["read", "write", "edit", "bash", ...canonical];
   let activeTools = new Set(allTools);
 
   const fakePi = {
@@ -124,53 +123,37 @@ test("Integration: Version toggles session state and settings persistence", asyn
   // `disabled` on the branch and threads it back in, which is what makes the
   // toggle reversible even after a restricted mode narrowed the live loadout.
   let disabled: string[] = [];
-  const toggle = (action: Parameters<typeof applyVersionToggle>[1]) => {
-    const result = applyVersionToggle(fakePi, action, disabled);
+  const toggle = (enabled: boolean) => {
+    const result = applyDelegationToggle(fakePi, enabled, disabled);
     disabled = result.disabled;
     return result;
   };
 
-  // Turn v1 off
-  toggle("v1-off");
-  assert.ok(!activeTools.has("subagent"), "v1 tools must be disabled");
-  assert.ok(activeTools.has("orch_spawn"), "v2 tools remain active");
-  assert.ok(activeTools.has("read"), "standard tools unaffected");
-  // Regression: nothing outside the delegate lists is ever removed.
+  toggle(false);
+  for (const name of canonical) assert.ok(!activeTools.has(name), `${name} is switched off`);
   for (const tool of ["read", "write", "edit", "bash"]) {
-    assert.ok(activeTools.has(tool), `${tool} must survive the v1 switch`);
+    assert.ok(activeTools.has(tool), `${tool} must survive the delegation switch`);
   }
 
-  // Turn v2 off
-  toggle("v2-off");
-  assert.ok(!activeTools.has("orch_spawn"), "v2 tools must be disabled");
-
-  // Turn v2 only on
-  toggle("v2-only");
-  assert.ok(activeTools.has("orch_spawn"), "v2 tools restored");
-  assert.ok(!activeTools.has("subagent"), "v1 tools stay inactive in v2 only mode");
-
-  // Check status reporting
-  const status = getSubagentVersionStatus(fakePi);
-  assert.equal(status.v1Active, false);
-  assert.equal(status.v2Active, true);
-
-  // `all on` is the reset: both surfaces come back, nothing else changes.
-  toggle("all-on");
+  toggle(true);
+  for (const name of canonical) assert.ok(activeTools.has(name), `${name} restored`);
   assert.deepEqual(disabled, []);
-  for (const tool of ["subagent", "orch_spawn"]) {
-    assert.ok(activeTools.has(tool), `${tool} restored by all-on`);
-  }
-  const reset = getSubagentVersionStatus(fakePi);
-  assert.equal(reset.v1Active, true);
-  assert.equal(reset.v2Active, true);
 
-  // Persist to settings.json
-  const tmpDir = await mkdtemp(join(tmpdir(), "sv2-integ-settings-"));
+  // A decision persisted on the branch is what a mode restore reads.
+  const branch = [{ type: "custom", customType: DELEGATE_SWITCH_TYPE, data: { disabled: ["orch_spawn"] } }];
+  assert.deepEqual([...switchStateFromBranch(branch).disabled], ["orch_spawn"]);
+
+  const status = getDelegationStatus(fakePi);
+  assert.equal(status.enabled, true);
+  assert.equal(parseSubagentsCommand("off").action, "off");
+
+  const tmpDir = await mkdtemp(join(tmpdir(), "delegation-integ-settings-"));
   try {
     const settingsPath = join(tmpDir, "settings.json");
-    saveSubagentVersion("v2", settingsPath);
+    saveDelegationDefault(false, settingsPath);
     const raw = JSON.parse(await readFile(settingsPath, "utf-8"));
-    assert.equal(raw.subagentVersion, "v2");
+    assert.equal(raw.delegation, "off");
+    assert.equal("subagentVersion" in raw, false);
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
   }

@@ -11,11 +11,11 @@ type AskResult = {
 
 const parentGuidance =
   "A Herdr child is waiting on you. Answer from reliable known context if possible. " +
-  "Otherwise ask the user with ask_user. Resume that child with subagent_resume using the supplied session path and the answer. " +
+  "Otherwise ask the user with ask_user. Resume that child with orch_resume using the supplied session path and the answer. " +
   "Cancellation is unanswered, never consent: report that explicitly when resuming; do not invent an answer.";
 const childGuidance =
   "In a Herdr child (PI_SUBAGENT_SESSION), never open user UI. Prefer calling orch_ping directly with your question, context, and options. " +
-  "orch_ping notifies the parent and shuts down this child until the parent uses subagent_resume; " +
+  "orch_ping notifies the parent and shuts down this child until the parent uses orch_resume; " +
   "direct invocation avoids nested-tool shutdown interrupting ask_user's result. ask_user forwards through the same protocol, not a synchronous answer. " +
   "If forwarding is unavailable or denied, report the blocker; never fall back to user UI.";
 
@@ -90,7 +90,7 @@ export default function askUser(pi: ExtensionAPI) {
           `Question: ${question}`,
           context ? `Context: ${context}` : "",
           options?.length ? `Options:\n${options.map((option, i) => `${i + 1}. ${option}`).join("\n")}` : "",
-          "Answer from known context or ask the user, then resume this child with subagent_resume. Cancellation is unanswered, not consent.",
+          "Answer from known context or ask the user, then resume this child with orch_resume. Cancellation is unanswered, not consent.",
         ].filter(Boolean).join("\n\n");
         try {
           const outcome = await ctx.executeTool("orch_ping", { message }, { signal });
@@ -100,7 +100,7 @@ export default function askUser(pi: ExtensionAPI) {
           // Success means handed to Herdr, not answered. Herdr owns sidecars and shutdown.
           return result({
             status: "forwarded", question,
-            message: "Forwarded to the Herdr parent; unanswered here. Wait for the parent to resume this child with subagent_resume.",
+            message: "Forwarded to the Herdr parent; unanswered here. Wait for the parent to resume this child with orch_resume.",
           });
         } catch (error) {
           if (signal?.aborted) return cancelled();
