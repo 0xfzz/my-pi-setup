@@ -1053,7 +1053,14 @@ test("a failed heartbeat re-arms discovery instead of leaving the producer dead"
   });
   try {
     producer.publish(makeSnapshot("session-heartbeat"));
-    await waitFor(async () => transport.ensureCalls() === 1 && transport.requests.length === 1, "initial publish");
+    // Monotonic: a heartbeat request (heartbeatMs: 20) can land before this check
+    // runs, so an exact `requests.length === 1` would race the producer it is
+    // testing. Assert that discovery ran and a publish was actually sent.
+    await waitFor(
+      async () => transport.ensureCalls() >= 1
+        && transport.requests.some(request => request.url.endsWith("/api/producer/publish")),
+      "initial publish",
+    );
     await waitFor(async () => heartbeats > 0, "heartbeat attempt", 3_000);
     await waitFor(async () => transport.ensureCalls() >= 2, "discovery re-armed after heartbeat failure", 4_000);
     await waitFor(
