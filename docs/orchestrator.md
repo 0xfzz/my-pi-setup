@@ -4,6 +4,37 @@
 
 Mode: **Orchestrator** (`/mode orchestrator`). The supervisor decomposes a large request into work units, delegates each to a cheap-model child with a handoff spec, runs them in parallel, reviews the results with evidence, and escalates only what it cannot decide.
 
+## Lifecycle: product manager → workers → QA
+
+The orchestrator is a product manager, not a reviewer career. Three phases, then it
+waits:
+
+1. **Spec — orchestrator + one devil's advocate, once.** Investigate with at most one
+   research child. Author the spec as a workspace artifact. Run `orch_spec_review`
+   once (the `single` preset: one merged `gate` lens); `quick` and `architecture` are
+   explicit, expensive opt-ins. Resolve every finding (fix / accept with rationale /
+   contest), re-author the handoff with `designRef`, and move on. A round must dispose
+   of the previous round's findings; at most two non-ready rounds per target and three
+   per session, cancelled rounds included. Past that the decision is the user's.
+2. **Execute — workers in parallel lanes.** One `orch_handoff` per work unit, then
+   `orch_spawn`. The spec is frozen here; it is never re-reviewed.
+3. **QA — parallel result review with immediate defect routing.** On each worker
+   completion, one QA child judges the RESULT against the frozen criteria
+   (`orch_spawn({ purpose: "review", qaFor: "<scope>" })`). A defect pings the
+   orchestrator at once; the orchestrator opens a ticket on the todo ledger
+   (`todo_plan`, resource = the defective file), claims it, spawns a defect-scoped
+   fix unit, and resumes the QA. QA pass → `todo_act done` with evidence; still
+   failing → `todo_act failed` (reopen; twice → the user). Other results keep being
+   reviewed in the meantime.
+
+## Waiting: triggers, not timers
+
+After a spawn, a review start, an escalation answer or a ticket transition, the
+parent **ends its turn**. It is re-triggered by the child's completion report, its
+question (escalation), or a watchdog budget/stall notice. It never sleeps and never
+polls: `bash sleep` is not in the read-only grammar, and a repeated status/collect
+call with no new event is answered with one line. Idle is the normal state.
+
 **The loop:**
 
 1. **Author** — `orch_handoff` writes one spec per work unit (scope slug, goal, acceptance criteria, lane files, out-of-lane files, interfaces, guidance) and publishes it as a **scoped artifact**. A child recalls its spec by id and sees nothing else: no sibling scope, no sibling path.
