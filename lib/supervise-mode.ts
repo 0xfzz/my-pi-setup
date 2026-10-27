@@ -152,6 +152,23 @@ export const SUPERVISOR_TOOLS: ReadonlySet<string> = new Set([
 export const SUPERVISOR_ALLOWED_TOOLS = SUPERVISOR_TOOLS;
 
 /**
+ * The Orchestrator/Supervise parent may run arbitrary review scripts.
+ *
+ * Bash/Python/Node are available for inspection, parsing and verification. This
+ * is the requested trust model, not a sandbox: a script can still write files.
+ * The boundary is the absent write/edit tools, the prompt, and the review gate's
+ * evidence rules. Plan keeps `readOnlyShellCommand`; Goldfish reviewers have no
+ * bash at all.
+ *
+ * Only a non-string/empty/NUL command is refused. Parsing commands to guess
+ * safety would create the false impression of enforcement.
+ */
+export function superviseShellCommand(command: unknown): string | undefined {
+  if (typeof command !== "string" || !command.trim() || command.includes("\u0000")) return undefined;
+  return command;
+}
+
+/**
  * The hot path: the tools the review loop calls, which are never deferred.
  *
  * This is NOT the declared set. Declaration is "everything allowed, except the
@@ -366,8 +383,9 @@ Loop: orch_spec_review → orch_handoff → orch_spawn → orch_brief → orch_c
 
 - One spec per unit: goal, testable criteria, lane (files it owns). No whole-repo lane; two children never share a scope or a lane. A child sees only its own spec.
 - Criteria are frozen at spawn. Revising them later makes the review need the user.
-- orch_brief is the review packet: criteria, lane, diff hunks, what the child last said. Read only what it flags; it is cheaper than finding out yourself.
+- orch_brief is the review packet: criteria, lane, diff hunks, what the child last said. Read only what it flags.
 - orch_check runs the declared command and returns evidenceRefs you can cite. If it says "not run", you have no test evidence — say so in the findings.
-- Verify, don't trust. Prose is not evidence; a citation that does not exist is refused. Lane drift is a violation however good the code: verdict "revise" with findings, never "approved".
+- Verify, don't trust. Prose is not evidence; a citation that does not exist is refused. Lane drift is a violation: verdict "revise" with findings, never "approved".
+- bash/python/node inspect only: no edits, formatting, installs, commits, or control-plane writes. Delegate changes.
 - Stuck child: orch_steer (queue) or orch_interrupt; end it with orch_close. Unsure: orch_escalate, then ask_user. A cancelled dialog is not consent.
 - Approve only when every criterion passes on evidence you gathered yourself. /mode normal to implement.`;

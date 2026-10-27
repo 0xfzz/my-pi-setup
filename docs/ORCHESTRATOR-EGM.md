@@ -23,6 +23,18 @@ will use **trusted scripts with prompt-enforced review intent**, not an OS
 sandbox. Bash/Python/Node can write files; hidden write/edit tools do not change
 that. Plan retains its conservative shell grammar. Goldfish get no shell.
 
+### Shell trust boundary
+
+- Orchestrator/Supervise parent: arbitrary bash/python/node for inspection,
+  parsing and verification. Direct write/edit/patch tools remain unavailable.
+- Plan: the existing read-only command grammar (`lib/plan-shell.ts`).
+- Goldfish reviewer: no bash at all (denied by policy and the launch allowlist).
+- The Orchestrator shell is **not sandboxed**. A script can write. The prompt
+  forbids repair, formatting, installs, commits/resets and control-plane writes,
+  and changes must be delegated to a worker. Evidence gathered only through the
+  shell is attested, not authenticated; `orch_check` receipts are the stronger
+  form. Never label this shell "read-only enforced".
+
 Regression tests accompany each fix (rather than committing a deliberately red
 suite). Each coherent unit is verified and committed before the next.
 

@@ -1,9 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isSupervisorTool, SUPERVISOR_TOOLS, supervisorAllowlistGaps } from "../lib/supervise-mode.ts";
+import { isSupervisorTool, superviseShellCommand, SUPERVISOR_TOOLS, supervisorAllowlistGaps } from "../lib/supervise-mode.ts";
 import { PARENT_DELEGATION_TOOLS } from "../lib/delegation-tools.ts";
 import { MODES, ModeRegistry } from "../lib/modes.ts";
 import modesExtension from "../extensions/modes.ts";
+
+test("the supervisor shell accepts real scripts and refuses only an empty command", () => {
+  assert.equal(superviseShellCommand("python3 - <<'PY'\nprint(1)\nPY"), "python3 - <<'PY'\nprint(1)\nPY");
+  assert.equal(superviseShellCommand("node -e 'console.log(1)'"), "node -e 'console.log(1)'");
+  // No fake command parsing: the trust model is prompt-enforced, not a parser.
+  assert.equal(superviseShellCommand("rm -rf build"), "rm -rf build");
+  assert.equal(superviseShellCommand("   "), undefined);
+  assert.equal(superviseShellCommand(undefined), undefined);
+  assert.equal(superviseShellCommand("echo\u0000"), undefined);
+});
 
 test("isSupervisorTool permits supervisor controls, read-only tools, and orch_* suite", () => {
   // Navigation & Inspection
@@ -164,12 +174,20 @@ test("supervise mode command and tool execution policy in modesExtension", async
   const allowedRead = toolCallHook({ toolName: "read", input: { path: "a.txt" } }, ctx);
   assert.equal(allowedRead, undefined, "read must not be blocked");
 
-  // Bash gating: read-only command allowed, write command blocked
+  // Trusted review shell: inspection and scripts are allowed; the boundary is
+  // the absent write/edit tools and the prompt, not command parsing.
   const allowedBash = toolCallHook({ toolName: "bash", input: { command: "git status" } }, ctx);
   assert.equal(allowedBash, undefined, "git status must be allowed");
 
-  const blockedBash = toolCallHook({ toolName: "bash", input: { command: "rm -rf foo" } }, ctx);
-  assert.ok(blockedBash?.block, "rm -rf must be blocked in supervise mode");
+  const reviewScript = toolCallHook({ toolName: "bash", input: { command: "python3 -c 'print(1)'" } }, ctx);
+  assert.equal(reviewScript, undefined, "a review script must be allowed in supervise mode");
+
+  const emptyBash = toolCallHook({ toolName: "bash", input: { command: "   " } }, ctx);
+  assert.ok(emptyBash?.block, "an empty bash command is refused");
+
+  const native = events.get("user_bash")!({ command: "node -e 'console.log(1)'" }, ctx);
+  assert.ok(native?.operations, "native shell runs review scripts in supervise mode");
+  assert.equal(native?.result, undefined, "native shell is not replaced with a refusal");
 
   // Switch off via /supervise off
   await commands.get("supervise").handler("off", ctx);

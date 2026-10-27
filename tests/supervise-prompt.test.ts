@@ -20,7 +20,7 @@ test("the brief stays inside the prompt budget", () => {
 });
 
 test("the brief names the loop, the review tools and the verifiable-evidence rule", () => {
-  for (const needle of ["orch_handoff", "orch_spawn", "orch_brief", "orch_check", "orch_review", "evidenceRefs", "lane", "revise"]) {
+  for (const needle of ["orch_handoff", "orch_spawn", "orch_brief", "orch_check", "orch_review", "evidenceRefs", "lane", "revise", "bash/python/node"]) {
     assert.ok(SUPERVISOR_MODE_GUIDANCE.includes(needle), `prompt must mention ${needle}`);
   }
 });

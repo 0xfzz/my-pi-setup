@@ -6,7 +6,7 @@ import { recordsFromBranch as childRecords } from "../lib/subagent-state.ts";
 import { childContextState, isSubagentChildSession, ownEntries } from "../lib/subagent-context.ts";
 import { readOnlyShellCommand } from "../lib/plan-shell.ts";
 import { INPUT_MODE_CONTEXT_TYPE, inputModeGuidance, isPlanTool, missingPlanTools, pendingPlanDeferredTools, pendingPlanExitTools, PLAN_MODE_GUIDANCE, PLAN_MODE_TYPE, planModeFromBranch } from "../lib/plan-mode.ts";
-import { declaredSuperviseTools, isSupervisorTool, SUPERVISOR_MODE_GUIDANCE, SUPERVISOR_MODE_TYPE, superviseModeFromBranch } from "../lib/supervise-mode.ts";
+import { declaredSuperviseTools, isSupervisorTool, superviseShellCommand, SUPERVISOR_MODE_GUIDANCE, SUPERVISOR_MODE_TYPE, superviseModeFromBranch } from "../lib/supervise-mode.ts";
 import { isControlPlanePath } from "../lib/orchestrator/control-plane.ts";
 import { reconcileLoadout, switchStateFromBranch } from "../lib/delegation-switch.ts";
 import { RETIRED_V1_TOOLS, isRetiredDelegationTool, stripRetiredTools } from "../lib/delegation-tools.ts";
@@ -496,8 +496,8 @@ export default function modesExtension(pi: ExtensionAPI) {
         }
       }
       if (event.toolName === "bash") {
-        const command = readOnlyShellCommand(event.input?.command);
-        if (command === undefined) return { block: true, reason: "Supervise mode: that shell command is not read-only, so it is refused. Use orch_brief for the diff, read/grep for the files it flags, or orch_check to run the declared verification. /mode normal to run it yourself." };
+        const command = superviseShellCommand(event.input?.command);
+        if (command === undefined) return { block: true, reason: "Supervise mode: bash needs a non-empty command. Use orch_brief/read for inspection, or /mode normal." };
         event.input.command = command;
       }
       return;
@@ -524,16 +524,22 @@ export default function modesExtension(pi: ExtensionAPI) {
     const superviseActive = isSupervise(ctx);
     const planActive = isPlan(ctx);
     if (!planActive && !superviseActive) return;
-    // The user's own shell follows the same read-only grammar: an orchestrator
-    // that can run arbitrary commands is an orchestrator that can edit files.
+    if (superviseActive) {
+      // Trusted review shell: arbitrary scripts run unchanged. It is not a
+      // sandbox; the prompt and the absent write/edit tools are the boundary.
+      const command = superviseShellCommand(event.command);
+      if (command === undefined) {
+        return { result: { output: "Supervise mode blocks an empty shell command. Use /mode normal for a real one.",
+          exitCode: 1, cancelled: false, truncated: false } };
+      }
+      return { operations: { exec: (_command, cwd, options) => createLocalBashOperations().exec(command, cwd, options) } };
+    }
+    // Plan keeps the conservative read-only grammar.
     const command = readOnlyShellCommand(event.command);
     if (command === undefined) {
-      const modeLabel = superviseActive ? "Supervise mode" : "Plan mode";
-      return { result: { output: `${modeLabel} blocks shell commands that are not supported read-only inspection. Use /mode normal to make changes.`,
+      return { result: { output: "Plan mode blocks shell commands that are not supported read-only inspection. Use /mode normal to make changes.",
         exitCode: 1, cancelled: false, truncated: false } };
     }
-    // user_bash cannot rewrite the input. Return local operations that execute
-    // only the normalized command rather than passing raw shell text onward.
     return { operations: { exec: (_command, cwd, options) => createLocalBashOperations().exec(command, cwd, options) } };
   });
 
