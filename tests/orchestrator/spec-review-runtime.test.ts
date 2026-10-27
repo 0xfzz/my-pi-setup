@@ -827,3 +827,113 @@ test("reviewers receive the devil-advocate role prompt", async () => {
     await h.detach();
   }
 });
+
+test("the sixth concurrent worker is refused, and only running children hold a slot", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    for (let i = 1; i <= 5; i += 1) {
+      registry.registerChild({
+        id: `w-${i}`,
+        name: `Worker ${i}`,
+        scope: `unit-${i}`,
+        sessionFile: join(h.dir, `w-${i}.jsonl`),
+        paneId: `pane-${i}`,
+        status: "running",
+        laneFiles: ["src/x.ts"],
+        lastMilestoneFiles: [],
+        updatedAt: new Date().toISOString(),
+        purpose: "adhoc",
+      });
+    }
+
+    const refused = await h.call("orch_spawn", {
+      name: "Sixth",
+      task: "Do more work.",
+      purpose: "adhoc",
+      laneFiles: ["src/y.ts"],
+    });
+    assert.equal(refused.details.error, "worker-limit", refused.content[0].text);
+    assert.match(refused.content[0].text, /cap is 5/);
+    assert.equal(h.started.length, 0, "a refused spawn launches nothing");
+
+    // Completion frees the slot: the cap is concurrency, not a lifetime quota.
+    registry.updateStatus(join(h.dir, "w-1.jsonl"), "completed");
+    const admitted = await h.call("orch_spawn", {
+      name: "Sixth",
+      task: "Do more work.",
+      purpose: "adhoc",
+      laneFiles: ["src/y.ts"],
+    });
+    assert.equal(admitted.details.status, "started", admitted.content[0].text);
+  } finally {
+    await h.detach();
+  }
+});
+
+test("a fourth QA reviewer is refused, and a running spec reviewer is not a QA slot", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    const authored = await h.call("orch_handoff", {
+      scope: "qa-target",
+      goal: "Ship it.",
+      acceptanceCriteria: ["it works"],
+      laneFiles: ["src/a.ts"],
+    });
+    registry.registerChild({
+      id: "w-1",
+      name: "Worker",
+      scope: "qa-target",
+      sessionFile: join(h.dir, "w-1.jsonl"),
+      paneId: "pane-w",
+      status: "completed",
+      laneFiles: ["src/a.ts"],
+      lastMilestoneFiles: [],
+      updatedAt: new Date().toISOString(),
+      handoffId: authored.details.id,
+      purpose: "implementation",
+    });
+    for (let i = 1; i <= 3; i += 1) {
+      registry.registerChild({
+        id: `qa-${i}`,
+        name: `QA ${i}`,
+        scope: `qa-${i}`,
+        sessionFile: join(h.dir, `qa-${i}.jsonl`),
+        paneId: `pane-qa-${i}`,
+        status: "running",
+        laneFiles: [],
+        lastMilestoneFiles: [],
+        updatedAt: new Date().toISOString(),
+        purpose: "review",
+        qaForScope: "qa-target",
+      });
+    }
+
+    const refused = await h.call("orch_spawn", { name: "QA 4", task: "Judge.", purpose: "review", qaFor: "qa-target" });
+    assert.equal(refused.details.error, "qa-limit", refused.content[0].text);
+    assert.match(refused.content[0].text, /cap is 3/);
+
+    // A spec reviewer also has purpose "review"; it must not consume a QA slot.
+    registry.updateStatus(join(h.dir, "qa-1.jsonl"), "completed");
+    registry.registerChild({
+      id: "spec-1",
+      name: "Spec gate",
+      scope: "spec-gate",
+      sessionFile: join(h.dir, "spec-1.jsonl"),
+      paneId: "pane-spec",
+      status: "running",
+      laneFiles: [],
+      lastMilestoneFiles: [],
+      updatedAt: new Date().toISOString(),
+      purpose: "review",
+      reviewRunId: "run-1",
+    });
+    const admitted = await h.call("orch_spawn", { name: "QA 4", task: "Judge.", purpose: "review", qaFor: "qa-target" });
+    assert.equal(admitted.details.status, "started", admitted.content[0].text);
+  } finally {
+    await h.detach();
+  }
+});

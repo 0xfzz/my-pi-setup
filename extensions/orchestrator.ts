@@ -134,6 +134,12 @@ import {
   type RoleBinding,
 } from "../lib/orchestrator/role-models.ts";
 import {
+  MAX_ACTIVE_QA,
+  MAX_ACTIVE_WORKERS,
+  qaLimitRefusal,
+  workerLimitRefusal,
+} from "../lib/orchestrator/qa-groups.ts";
+import {
   capacityProblem,
   childToolsForPurpose,
   currentSpawnDepth,
@@ -2664,6 +2670,20 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       const refusal = spawnRefusal(modeId, purpose, false, Boolean(handoff));
       if (refusal) return text(refusal, { error: "purpose-refused", mode: modeId, purpose });
 
+      // ── breadth caps: a wave must stay reviewable ───────────────────────
+      // Counted before any row, pane or ticket exists, so a refused spawn leaves
+      // no trace. Only running children hold a slot; a completed one frees it.
+      const runningChildren = registry.getAllChildren().filter((child) => child.status === "running");
+      const runningWorkers = runningChildren
+        .filter((child) => child.purpose !== "review" && child.purpose !== "research")
+        .map((child) => child.scope);
+      if (purpose !== "review" && purpose !== "research") {
+        const workerCap = workerLimitRefusal(runningWorkers);
+        if (workerCap) {
+          return text(workerCap, { error: "worker-limit", running: runningWorkers, cap: MAX_ACTIVE_WORKERS });
+        }
+      }
+
       if (purpose === "review" && !params.qaFor) {
         return text(
           "A review spawn needs a pinned document and an isolated reviewer: start it with orch_spec_review, which creates the reviewer and its ticket. "
@@ -2693,6 +2713,14 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       let qaHandoff: HandoffRecord | undefined;
       let qaWorker: ScopedChild | undefined;
       if (purpose === "review") {
+        // QA slots are QA only: a running specification reviewer is a different
+        // role, and counting it here would silently halve the QA capacity.
+        const runningQa = runningChildren
+          .filter((child) => child.purpose === "review" && !child.reviewRunId)
+          .map((child) => child.scope);
+        const qaCap = qaLimitRefusal(runningQa);
+        if (qaCap) return text(qaCap, { error: "qa-limit", running: runningQa, cap: MAX_ACTIVE_QA });
+
         const qaFor = String(params.qaFor ?? "").trim();
         qaWorker = registry.getAllChildren().find((child) => child.scope === qaFor && child.status === "completed");
         if (!qaWorker) {
