@@ -146,6 +146,9 @@ import { codeMap, codeRead } from "../lib/orchestrator/code-tools.ts";
 import { createExecRunner, runSearch } from "../lib/orchestrator/search-engine.ts";
 import { shellReadCommand } from "../lib/orchestrator/shell-read.ts";
 import { webFetch, webResearch, type WebFetchPort, type WebSearchPort } from "../lib/orchestrator/web-research.ts";
+import { ensureScratch, resolveScratchRoot } from "../lib/orchestrator/scratch.ts";
+import { readPageCache, writePageCache } from "../lib/orchestrator/page-cache.ts";
+import { consumeBudget, createBudget } from "../lib/orchestrator/research-budget.ts";
 import {
   capacityProblem,
   childToolsForPurpose,
@@ -3373,6 +3376,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   // tree: the artifact tool is the only durable write, scoped separately.
 
   const researchRunner = createExecRunner();
+  /** Per process = per delegated child: a reviewer cannot outspend its review. */
+  const researchBudget = createBudget();
 
   function researchScope(ctx: ExtensionContext): { cwd: string; roots: string[]; deny: string[] } {
     const policy = reviewPolicyFromEnv(process.env);
@@ -3428,6 +3433,31 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     };
   }
 
+  function researchWebCache(ctx: ExtensionContext): string | undefined {
+    const resolved = resolveScratchRoot({ cwd: researchScope(ctx).cwd });
+    if (!resolved.ok) return undefined;
+    try {
+      return ensureScratch(resolved.root).root;
+    } catch {
+      return undefined;
+    }
+  }
+
+  function cachedWebFetchPort(root?: string): WebFetchPort {
+    const base = webFetchPort();
+    return {
+      async fetch(url, options) {
+        if (root) {
+          const hit = readPageCache(root, url);
+          if (hit) return { ok: true, status: 200, text: hit.text, finalUrl: url };
+        }
+        const response = await base.fetch(url, options);
+        if (root && response.ok) writePageCache(root, url, response.text, { maxBytes: options.maxBytes });
+        return response;
+      },
+    };
+  }
+
   pi.registerTool({
     name: "code_map",
     label: "Code Map",
@@ -3475,6 +3505,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       caseSensitive: Type.Optional(Type.Boolean()),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
+      const refusal = consumeBudget(researchBudget, "code_search");
+      if (refusal) return text(refusal, { error: "budget" });
       const scope = researchScope(ctx);
       if (params.path) {
         const problem = researchGuard(ctx)(params.path);
@@ -3505,6 +3537,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       maxBytes: Type.Optional(Type.Number({ description: "Byte cap (default 80k)." })),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
+      const refusal = consumeBudget(researchBudget, "code_read");
+      if (refusal) return text(refusal, { error: "budget" });
       try {
         const read = codeRead(params, {
           cwd: researchScope(ctx).cwd,
@@ -3512,7 +3546,12 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           guard: researchGuard(ctx),
         });
         const body = read.lines.map((line) => `${line.n}\t${line.text}`).join("\n");
-        return text(`${read.path} (${read.language}, sha256:${read.digest.slice(0, 12)}…)\n${body}`, read);
+        const bytes = read.lines.reduce((sum, line) => sum + Buffer.byteLength(line.text, "utf8"), 0);
+        const note = consumeBudget(researchBudget, "code_bytes", bytes);
+        return text(
+          [...(note ? [`Warning: ${note}`] : []), `${read.path} (${read.language}, sha256:${read.digest.slice(0, 12)}…)\n${body}`].join("\n"),
+          read,
+        );
       } catch (error: any) {
         return text(error?.message ?? String(error), { error: "read-refused" });
       }
@@ -3535,7 +3574,17 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       void ctx;
-      const result = await webResearch(params, { search: hostWebSearch(), fetch: webFetchPort() });
+      const refusal = consumeBudget(researchBudget, "web_research");
+      if (refusal) return text(refusal, { error: "budget" });
+      const result = await webResearch(params, {
+        search: hostWebSearch(),
+        fetch: cachedWebFetchPort(researchWebCache(ctx)),
+      });
+      const pageNote = consumeBudget(researchBudget, "web_page", result.sources.length);
+      if (pageNote) result.warnings.push(pageNote);
+      const chars = result.sources.reduce((sum, source) => sum + (source.text?.length ?? 0), 0);
+      const charNote = consumeBudget(researchBudget, "web_chars", chars);
+      if (charNote) result.warnings.push(charNote);
       if (result.error) {
         return text(`Web research unavailable: ${result.warnings.join("; ")}`, { error: result.error, warnings: result.warnings });
       }

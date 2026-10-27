@@ -180,6 +180,10 @@ Search is engine-backed, never a JavaScript directory walk: host `ffgrep` index 
 returns partial results. `code_read` returns a line-numbered window plus a whole-file digest, so a
 review can cite the exact revision it read.
 
+Budgets are per child: 6 web searches, 20 pages and 200k characters; 50 code searches, 100 reads
+and 2 MB. Fetched pages are cached in scratch for 10 minutes, so a re-read costs no network call and
+deleting the scratch directory is always safe.
+
 Research may write scratch (page cache, index) only under `.pi/orch-research/<run>/` — `.pi/` is
 gitignored — falling back to `$TMPDIR/orch-research/<run>/` when it is not, and `PI_ORCH_SCRATCH`
 may relocate it. The repository itself is never a write target, and scratch is bounded (50 MB,
