@@ -121,6 +121,9 @@ import {
   sddPlan,
   sddSpecify,
   sddStatus,
+  sddTaskSelection,
+  sddTaskSelectionProblem,
+  sddTaskSnapshot,
   sddTasks,
   type SddTaskInput,
 } from "../lib/orchestrator/sdd.ts";
@@ -2149,15 +2152,15 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       scope: Type.String({
         description: "Work-unit slug, unique among concurrent children (e.g. 'net-retry', 'db-pool'). This is the isolation key.",
       }),
-      goal: Type.String({ description: "One line: what this work unit achieves." }),
-      acceptanceCriteria: Type.Array(Type.String(), {
+      goal: Type.Optional(Type.String({ description: "One line: what this work unit achieves. Required unless sdd.taskIds are supplied." })),
+      acceptanceCriteria: Type.Optional(Type.Array(Type.String(), {
         minItems: 1,
-        description: "What 'done' means. The review gate requires evidence for each one, gathered by the reviewer.",
-      }),
-      laneFiles: Type.Array(Type.String(), {
+        description: "What 'done' means. Required unless sdd.taskIds are supplied; then derived from the tasks.",
+      })),
+      laneFiles: Type.Optional(Type.Array(Type.String(), {
         minItems: 1,
-        description: "Files this work unit owns. Required: an empty lane means the child owns the whole repo, which makes steering and review impossible.",
-      }),
+        description: "Files this work unit owns. Required unless sdd.taskIds are supplied; then derived from the tasks.",
+      })),
       outOfLaneFiles: Type.Optional(Type.Array(Type.String(), { description: "Files it must not modify even if it thinks it should." })),
       interfaces: Type.Optional(Type.Array(Type.String(), { description: "Contracts another work unit consumes; changing them silently breaks it." })),
       guidance: Type.Optional(Type.String({ description: "Conventions, prior decisions, or notes from the orchestrator." })),
@@ -2175,11 +2178,44 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           targetHash: Type.String({ description: "The reviewed content hash, from orch_spec_review status." }),
         }, { description: "Bind this work unit to an independent specification review. orch_spawn refuses a run that is not ready or whose document changed." }),
       ),
+      sdd: Type.Optional(Type.Object({
+        featureDir: Type.String({ description: "SDD feature directory, e.g. specs/retry-policy." }),
+        taskIds: Type.Array(Type.String(), { minItems: 1, description: "Task ids from tasks.md to freeze into this handoff." }),
+      }, { description: "SDD task slice; only available in /orch-mode sdd. Lane, criteria and verify are derived from tasks.md." })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const workflow = orchestratorWorkflow(branchOf(ctx));
+      if (params.sdd && workflow !== "sdd") {
+        return text("SDD task handoffs require /orch-mode sdd.", { error: "sdd-workflow-required" });
+      }
+
+      let laneFiles = params.laneFiles ?? [];
+      let acceptanceCriteria = params.acceptanceCriteria ?? [];
+      let goal = params.goal ?? "";
+      let verifyCommand = params.verifyCommand;
+      let sddSelection: ReturnType<typeof sddTaskSelection> | undefined;
+      if (params.sdd) {
+        try {
+          sddSelection = sddTaskSelection((ctx as any).cwd || process.cwd(), params.sdd.featureDir, params.sdd.taskIds);
+        } catch (error: any) {
+          return text(`SDD task selection refused: ${error?.message ?? error}`, { error: "sdd-task-selection" });
+        }
+        if (params.laneFiles?.length) {
+          const supplied = [...params.laneFiles].map(String).sort().join("\u0000");
+          const derived = [...sddSelection.laneFiles].sort().join("\u0000");
+          if (supplied !== derived) {
+            return text(`Handoff lane must match the selected tasks' files. Derived lane: ${sddSelection.laneFiles.join(", ")}.`, { error: "sdd-lane-mismatch" });
+          }
+        }
+        laneFiles = sddSelection.laneFiles;
+        acceptanceCriteria = sddSelection.acceptanceCriteria;
+        if (!goal.trim()) goal = sddSelection.tasks.map((task) => task.title).join("; ");
+        if (!verifyCommand) verifyCommand = sddSelection.verifyCommand;
+      }
+
       // A `**/*`-style lane is the whole repo: steering and review cannot be
       // precise against it, and it conflicts with every concurrent child.
-      const wholeRepoLanes = params.laneFiles.filter((f) => /^(\*\*\/\*)?\*?$/.test(String(f).trim()) || String(f).trim() === "**/*");
+      const wholeRepoLanes = laneFiles.filter((f) => /^(\*\*\/\*)?\*?$/.test(String(f).trim()) || String(f).trim() === "**/*");
       if (wholeRepoLanes.length > 0) {
         return text(
           `Refusing whole-repo lane (${wholeRepoLanes.join(", ")}). Name the files this work unit owns — ` +
@@ -2188,7 +2224,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         );
       }
 
-      const laneConflicts = registry.findLaneConflicts(params.laneFiles);
+      const laneConflicts = registry.findLaneConflicts(laneFiles);
       if (laneConflicts.length > 0) {
         return text(
           `Refused: lane overlaps ${laneConflicts.map((c) => `"${c.name}" (scope: ${c.scope})`).join(", ")}. ` +
@@ -2220,17 +2256,24 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         }
         const written = writeHandoff(artifactsBase(ctx), ctx.sessionManager.getSessionId(), {
           scope: params.scope,
-          goal: params.goal,
-          acceptanceCriteria: params.acceptanceCriteria,
-          laneFiles: params.laneFiles,
+          goal,
+          acceptanceCriteria,
+          laneFiles,
           outOfLaneFiles: params.outOfLaneFiles,
           interfaces: params.interfaces,
           guidance: params.guidance,
           reportShape: params.reportShape,
-          verifyCommand: params.verifyCommand,
+          verifyCommand,
           vision: params.vision,
           designRef: params.designRef
             ? { runId: String(params.designRef.runId).trim(), targetHash: String(params.designRef.targetHash).trim().toLowerCase() }
+            : undefined,
+          sdd: sddSelection
+            ? {
+                featureDir: sddSelection.featureRef,
+                taskIds: sddSelection.tasks.map((task) => task.id),
+                tasks: sddSelection.tasks.map(sddTaskSnapshot),
+              }
             : undefined,
         } as HandoffSpec);
         record = written.record;
@@ -2297,6 +2340,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           scope: record.scope,
           revision: record.revision,
           laneFiles: record.laneFiles,
+          ...(record.sdd ? { sdd: record.sdd } : {}),
         },
       );
     },
@@ -2402,6 +2446,15 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
 
       // SDD implementation requires an independent review; General does not.
       const workflow = orchestratorWorkflow(branchOf(ctx));
+      if (handoff?.sdd && workflow !== "sdd") {
+        return text("SDD task handoffs require /orch-mode sdd.", { error: "sdd-workflow-required" });
+      }
+      if (handoff?.sdd) {
+        const problem = sddTaskSelectionProblem((ctx as any).cwd || process.cwd(), handoff.sdd);
+        if (problem) {
+          return text(`Refusing to spawn: ${problem}. Re-author the handoff against the current task slice.`, { error: "sdd-task-changed", handoffId: handoff.id });
+        }
+      }
       if (requiresReviewedSpec(modeId, workflow)
         && (purpose === "spec" || purpose === "implementation")
         && !handoff?.designRef) {

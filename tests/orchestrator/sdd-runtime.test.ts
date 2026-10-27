@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,6 +9,7 @@ import subagentV2, { handoffs, registry, specReviews } from "../../extensions/or
 import { SUPERVISOR_MODE_TYPE } from "../../lib/supervise-mode.ts";
 import { ORCHESTRATOR_WORKFLOW_TYPE } from "../../lib/orchestrator/workflow.ts";
 import { PLAN_MODE_TYPE } from "../../lib/plan-mode.ts";
+import { openReviewRun, pinTarget } from "../../lib/orchestrator/spec-review.ts";
 
 async function harness(options: { workflow?: "sdd" | "general"; plan?: boolean } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "sdd-runtime-"));
@@ -26,6 +27,7 @@ async function harness(options: { workflow?: "sdd" | "general"; plan?: boolean }
 
   const tools = new Map<string, any>();
   const hooks = new Map<string, Function[]>();
+  const started: any[] = [];
   const pi: any = {
     registerTool(tool: any) { tools.set(tool.name, tool); },
     registerCommand() {},
@@ -35,7 +37,7 @@ async function harness(options: { workflow?: "sdd" | "general"; plan?: boolean }
     sendMessage() {},
   };
   const client: any = {
-    async paneStart() { return { paneId: "pane" }; },
+    async paneStart(pane: any) { started.push(pane); return { paneId: "pane" }; },
     async paneRename() {},
     async paneGet(paneId: string) { return { pane_id: paneId }; },
     async paneRead() { return null; },
@@ -55,7 +57,11 @@ async function harness(options: { workflow?: "sdd" | "general"; plan?: boolean }
       getBranch: () => branch,
     },
     ui: { notify() {}, async input() { return ""; }, async select() { return ""; }, async confirm() { return false; } },
-    async executeTool() {
+    async executeTool(name: string, args: any) {
+      // `orch_handoff` publishes its scoped artifact through the artifact tool.
+      if (name === "artifact_save") {
+        return { isError: false, result: { content: [{ type: "text", text: `saved ${args.id}` }] } };
+      }
       return { isError: true, result: { content: [{ type: "text", text: "unused" }] } };
     },
   };
@@ -63,6 +69,12 @@ async function harness(options: { workflow?: "sdd" | "general"; plan?: boolean }
   async function call(params: any) {
     const tool = tools.get("orch_sdd");
     assert.ok(tool, "orch_sdd is registered");
+    return tool.execute("call-id", params, undefined, undefined, ctx);
+  }
+
+  async function callTool(name: string, params: any) {
+    const tool = tools.get(name);
+    assert.ok(tool, `${name} is registered`);
     return tool.execute("call-id", params, undefined, undefined, ctx);
   }
 
@@ -74,7 +86,7 @@ async function harness(options: { workflow?: "sdd" | "general"; plan?: boolean }
     await rm(dir, { recursive: true, force: true });
   }
 
-  return { dir, branch, call, detach };
+  return { dir, branch, call, callTool, started, ctx, detach };
 }
 
 test("orch_sdd drives the SDD lifecycle in the SDD workflow", async () => {
@@ -173,6 +185,113 @@ test("orch_sdd rejects traversal before writing", async () => {
     assert.equal(refused.details.error, "sdd-error");
     assert.match(refused.content[0].text, /Invalid feature/);
     assert.equal(existsSync(join(h.dir, "escape")), false);
+  } finally {
+    await h.detach();
+  }
+});
+
+test("a task handoff spawns one scoped worker and refuses a stale slice", async () => {
+  const h = await harness({ workflow: "sdd" });
+  try {
+    await h.call({
+      action: "specify",
+      feature: "retry-policy",
+      title: "Retry policy",
+      problem: "Transient failures surface immediately.",
+      goals: ["Retry transient failures"],
+      requirements: ["Retry transient failures with backoff."],
+      acceptance: ["Given a failure, when retried, then it backs off."],
+      openQuestions: ["Which statuses are retryable?"],
+    });
+    await h.call({
+      action: "clarify",
+      feature: "retry-policy",
+      question: "Which statuses are retryable?",
+      answer: "429 and 5xx.",
+    });
+    await h.call({ action: "plan", feature: "retry-policy", approach: "A", testStrategy: ["T"] });
+    await h.call({
+      action: "tasks",
+      feature: "retry-policy",
+      tasks: [{ id: "T001", title: "Add retry helper", files: ["src/retry.ts"], maps: ["FR-001", "AC-001"], verify: "npm test -- retry" }],
+    });
+    const analyzed = await h.call({ action: "analyze", feature: "retry-policy" });
+    assert.match(analyzed.content[0].text, /Clean: no SDD consistency findings/);
+
+    const specFile = join(h.dir, "specs/retry-policy/spec.md");
+    const target = pinTarget({
+      kind: "file",
+      ref: "specs/retry-policy/spec.md",
+      title: "Retry policy",
+      content: readFileSync(specFile, "utf8"),
+    });
+    const run = openReviewRun({ target, preset: "quick", salt: "sdd-e2e" });
+    const report = (lens: "comprehension" | "readiness") => ({
+      version: 1 as const,
+      runId: run.id,
+      lens,
+      targetHash: target.contentHash,
+      summary: "Clean.",
+      findings: [],
+      verdict: "clean" as const,
+      submittedAt: new Date().toISOString(),
+    });
+    run.reports = { comprehension: report("comprehension"), readiness: report("readiness") };
+    run.reviewers = run.reviewers.map((slot) => ({ ...slot, status: "submitted" as const }));
+    run.status = "ready";
+    run.readiness = {
+      ready: true,
+      decidedAt: new Date().toISOString(),
+      reasons: [],
+      counts: { blocker: 0, major: 0, nit: 0, open: 0 },
+    };
+    specReviews.set(run.id, run);
+
+    const handoff = await h.callTool("orch_handoff", {
+      scope: "retry-t001",
+      sdd: { featureDir: "specs/retry-policy", taskIds: ["T001"] },
+      designRef: { runId: run.id, targetHash: target.contentHash },
+    });
+    assert.equal(handoff.details.error, undefined, handoff.content[0].text);
+    assert.deepEqual(handoff.details.laneFiles, ["src/retry.ts"]);
+    assert.deepEqual(handoff.details.sdd?.taskIds, ["T001"]);
+
+    const spawned = await h.callTool("orch_spawn", {
+      handoffId: handoff.details.id,
+      name: "Retry Worker",
+      task: "Implement T001.",
+    });
+    assert.equal(spawned.details.error, undefined, spawned.content[0].text);
+    assert.equal(h.started.length, 1, "one pane for one task slice");
+    const script = h.started[0]?.launchScriptFile ? readFileSync(h.started[0].launchScriptFile, "utf8") : "";
+    assert.match(script, /T001/, "the child ticket carries the selected task id");
+
+    // Completing the task after authoring invalidates the frozen slice.
+    const tasksFile = join(h.dir, "specs/retry-policy/tasks.md");
+    const tasks = readFileSync(tasksFile, "utf8");
+    await writeFile(tasksFile, tasks.replace("- [ ] T001", "- [X] T001"), "utf8");
+
+    const stale = await h.callTool("orch_spawn", {
+      handoffId: handoff.details.id,
+      name: "Retry Worker",
+      task: "Implement T001 again.",
+    });
+    assert.equal(stale.details.error, "sdd-task-changed");
+    assert.equal(h.started.length, 1, "a refused spawn leaves no second pane");
+  } finally {
+    await h.detach();
+  }
+});
+
+test("General refuses an SDD task handoff", async () => {
+  const h = await harness({ workflow: "general" });
+  try {
+    const refused = await h.callTool("orch_handoff", {
+      scope: "retry-t001",
+      sdd: { featureDir: "specs/retry-policy", taskIds: ["T001"] },
+    });
+    assert.equal(refused.details.error, "sdd-workflow-required");
+    assert.match(refused.content[0].text, /SDD task handoffs require \/orch-mode sdd/);
   } finally {
     await h.detach();
   }

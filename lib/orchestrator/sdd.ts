@@ -137,6 +137,97 @@ export interface SddStatus {
   findings: SddFinding[];
 }
 
+export interface SddHandoffTask {
+  id: string;
+  title: string;
+  maps: string[];
+  files: string[];
+  verify?: string;
+}
+
+export interface SddHandoffRef {
+  featureDir: string;
+  taskIds: string[];
+  tasks?: SddHandoffTask[];
+}
+
+export interface SddTaskSelection {
+  featureDir: string;
+  featureRef: string;
+  tasks: SddTask[];
+  laneFiles: string[];
+  acceptanceCriteria: string[];
+  verifyCommand?: string;
+}
+
+export function sddTaskSnapshot(task: SddTask): SddHandoffTask {
+  return {
+    id: task.id,
+    title: task.title,
+    maps: [...task.maps],
+    files: [...task.files],
+    ...(task.verify ? { verify: task.verify } : {}),
+  };
+}
+
+/**
+ * Freeze the selected tasks into a handoff slice.
+ *
+ * The handoff is the authority for the child; tasks.md is re-read at spawn so a
+ * task completed or edited after authoring cannot be implemented twice against a
+ * stale ticket.
+ */
+export function sddTaskSelection(
+  cwd: string,
+  feature: unknown,
+  taskIds: readonly string[],
+): SddTaskSelection {
+  const ids = [...new Set(taskIds.map((id) => String(id).trim()).filter(Boolean))];
+  if (!ids.length) throw new SddError("sdd.taskIds needs at least one task id.");
+  for (const id of ids) {
+    if (!TASK_ID.test(id)) throw new SddError(`Task id "${id}" must look like T001.`);
+  }
+  const { featureDir, slug } = sddFeatureDir(cwd, feature);
+  const tasks = readSddTasks(cwd, feature);
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  const selected = ids.map((id) => {
+    const task = byId.get(id);
+    if (!task) throw new SddError(`Task ${id} is not in tasks.md.`);
+    if (task.done) throw new SddError(`Task ${id} is already done.`);
+    return task;
+  });
+  for (const task of selected) {
+    for (const dep of task.dependsOn) {
+      const dependency = byId.get(dep);
+      if (!dependency) throw new SddError(`Task ${task.id} depends on unknown ${dep}.`);
+      if (!dependency.done) throw new SddError(`Task ${task.id} depends on ${dep}, which is not done.`);
+    }
+  }
+  const laneFiles = [...new Set(selected.flatMap((task) => task.files))];
+  if (!laneFiles.length) throw new SddError("The selected tasks have no files, so there is no lane.");
+  const criteria = selected.map((task) => `${task.id}: ${task.title} — maps ${task.maps.join(", ")}`);
+  const verifyCommand = selected.every((task) => task.verify && task.verify === selected[0]!.verify)
+    ? selected[0]!.verify
+    : undefined;
+  return { featureDir, featureRef: `specs/${slug}`, tasks: selected, laneFiles, acceptanceCriteria: criteria, verifyCommand };
+}
+
+/** Revalidate a handoff's frozen slice against the current tasks.md. */
+export function sddTaskSelectionProblem(cwd: string, ref: SddHandoffRef): string | undefined {
+  try {
+    const selection = sddTaskSelection(cwd, ref.featureDir, ref.taskIds);
+    if (ref.tasks?.length) {
+      const current = selection.tasks.map(sddTaskSnapshot);
+      if (JSON.stringify(current) !== JSON.stringify(ref.tasks)) {
+        return "the SDD task slice changed since this handoff was authored; re-author the handoff";
+      }
+    }
+    return undefined;
+  } catch (error: any) {
+    return error instanceof SddError ? error.message : (error?.message ?? String(error));
+  }
+}
+
 const SPEC_SECTIONS = [
   "Problem",
   "Goals",
