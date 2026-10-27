@@ -16,7 +16,6 @@
  */
 
 import { MAX_DELEGATION_DEPTH, type SpawnPurpose } from "./delegation-tools.ts";
-import type { OrchestratorWorkflow } from "./orchestrator/workflow.ts";
 
 export type SpawnMode = "normal" | "plan" | "supervise" | "orchestrator";
 
@@ -103,19 +102,15 @@ export function registryPurpose(purpose: SpawnPurpose): "implementation" | "revi
 }
 
 /**
- * Orchestrator/Supervise implementation is spec-driven only in the SDD workflow.
+ * Orchestrator/Supervise implementation is spec-driven.
  *
- * Normal and Plan keep their existing delegation policy. General Orchestrator
- * still requires a handoff (lane and criteria), but does not require an
- * independent specification review. `workflow` defaults to SDD so callers that
- * only know the mode keep the existing safety behavior.
+ * Normal and Plan keep their existing delegation policy. In the two supervisor
+ * modes a worker may only be admitted or resumed when its handoff carries a
+ * ready, unchanged independent specification review.
  */
-export function requiresReviewedSpec(
-  modeId: string | undefined,
-  workflow: OrchestratorWorkflow = "sdd",
-): boolean {
+export function requiresReviewedSpec(modeId: string | undefined): boolean {
   const mode = normalizeSpawnMode(modeId);
-  return (mode === "orchestrator" || mode === "supervise") && workflow === "sdd";
+  return mode === "orchestrator" || mode === "supervise";
 }
 
 /** What `orch_brief` and `orch_check` should say when no lane was declared. */

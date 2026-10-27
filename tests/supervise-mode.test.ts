@@ -1,10 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { declaredSuperviseTools, isSupervisorTool, superviseShellCommand, SUPERVISOR_TOOLS, supervisorAllowlistGaps } from "../lib/supervise-mode.ts";
+import { isSupervisorTool, superviseShellCommand, SUPERVISOR_TOOLS, supervisorAllowlistGaps } from "../lib/supervise-mode.ts";
 import { PARENT_DELEGATION_TOOLS } from "../lib/delegation-tools.ts";
 import { MODES, ModeRegistry } from "../lib/modes.ts";
 import modesExtension from "../extensions/modes.ts";
-import { workflowFromBranch } from "../lib/orchestrator/workflow.ts";
 
 test("the supervisor shell accepts real scripts and refuses only an empty command", () => {
   assert.equal(superviseShellCommand("python3 - <<'PY'\nprint(1)\nPY"), "python3 - <<'PY'\nprint(1)\nPY");
@@ -37,19 +36,9 @@ test("isSupervisorTool permits supervisor controls, read-only tools, and orch_* 
   // the spawn tool has an unreachable mandatory precondition. `orch_escalate` is the
   // ladder's middle rung. A production session lost all three and worked around v2
   // with the v1 `subagent` tool, so they are asserted by name, not just in bulk.
-  for (const name of ["orch_handoff", "orch_escalate", "orch_spawn", "orch_resume", "orch_interrupt", "orch_steer", "orch_route", "orch_running", "orch_review", "orch_sdd"]) {
+  for (const name of ["orch_handoff", "orch_escalate", "orch_spawn", "orch_resume", "orch_interrupt", "orch_steer", "orch_route", "orch_running", "orch_review"]) {
     assert.equal(isSupervisorTool(name), true, `expected ${name} to be allowed`);
   }
-});
-
-test("SDD is a workflow-scoped tool, not a General-orchestrator surface", () => {
-  assert.equal(SUPERVISOR_TOOLS.has("orch_sdd"), true);
-  assert.equal(isSupervisorTool("orch_sdd", undefined, { workflow: "sdd" }), true);
-  assert.equal(isSupervisorTool("orch_sdd", undefined, { workflow: "general" }), false);
-
-  const tools = [{ name: "orch_sdd" }, { name: "orch_handoff" }];
-  assert.deepEqual(declaredSuperviseTools(tools, { workflow: "sdd" }), ["orch_sdd", "orch_handoff"]);
-  assert.deepEqual(declaredSuperviseTools(tools, { workflow: "general" }), ["orch_handoff"]);
 });
 
 test("isSupervisorTool denies direct file modifications, browser tools, and opaque gateways", () => {
@@ -162,7 +151,6 @@ test("supervise mode command and tool execution policy in modesExtension", async
 
   assert.ok(commands.has("supervise"), "/supervise command must be registered");
   assert.ok(commands.has("mode"), "/mode command must be registered");
-  assert.ok(commands.has("orch-mode"), "/orch-mode command must be registered");
 
   const ctx: any = {
     mode: "tui",
@@ -200,16 +188,6 @@ test("supervise mode command and tool execution policy in modesExtension", async
   const native = events.get("user_bash")!({ command: "node -e 'console.log(1)'" }, ctx);
   assert.ok(native?.operations, "native shell runs review scripts in supervise mode");
   assert.equal(native?.result, undefined, "native shell is not replaced with a refusal");
-
-  // The workflow is a branch-local policy inside Orchestrator, not a new mode.
-  await commands.get("orch-mode").handler("general", ctx);
-  assert.equal(workflowFromBranch(branch), "general");
-  await commands.get("orch-mode").handler("sdd", ctx);
-  assert.equal(workflowFromBranch(branch), "sdd");
-  await commands.get("orch-mode").handler("regular", ctx);
-  assert.equal(workflowFromBranch(branch), "general", "regular is an alias for general");
-  await commands.get("orch-mode").handler("nonsense", ctx);
-  assert.equal(workflowFromBranch(branch), "general", "an invalid workflow does not change the decision");
 
   // Switch off via /supervise off
   await commands.get("supervise").handler("off", ctx);

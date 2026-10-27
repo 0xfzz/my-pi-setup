@@ -67,13 +67,10 @@ describe("orchestrator extension registration", () => {
 
     const handoff = registeredTools.find((t) => t.name === "orch_handoff");
     assert.ok(handoff, "orch_handoff registered");
-    for (const field of ["scope", "goal", "acceptanceCriteria", "laneFiles", "sdd"]) {
+    for (const field of ["scope", "goal", "acceptanceCriteria", "laneFiles"]) {
       assert.ok(handoff.parameters.properties[field], `orch_handoff declares ${field}`);
     }
-    // A handoff can now derive its goal, criteria and lane from sdd.taskIds, so
-    // only the scope is required at the schema level; the runtime still rejects a
-    // handoff with no goal, criteria or lane when sdd is absent.
-    assert.deepEqual(handoff.parameters.required?.sort(), ["scope"]);
+    assert.deepEqual(handoff.parameters.required?.sort(), ["acceptanceCriteria", "goal", "laneFiles", "scope"]);
 
     const spawn = registeredTools.find((t) => t.name === "orch_spawn");
     assert.ok(spawn, "orch_spawn registered");

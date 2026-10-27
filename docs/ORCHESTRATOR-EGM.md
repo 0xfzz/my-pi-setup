@@ -95,11 +95,3 @@ All audit targets below are implemented and covered by regression tests:
 
 Review-ready is not human execution approval. Ordinary user authorization to
 implement is still required; a model-authored boolean is not proof of consent.
-
-## SDD workflow
-
-The orchestrator now has two workflows inside the one Orchestrator mode:
-`/orch-mode sdd` (default) and `/orch-mode general`. SDD adds durable
-`specs/<feature>/spec.md`, `plan.md`, and `tasks.md`, a create-only flow-forward
-rule, and a task-to-handoff bridge. See [SDD](SDD.md) for the full workflow.
-

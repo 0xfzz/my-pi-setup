@@ -42,7 +42,6 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { DesignRef } from "./spec-review.ts";
-import type { SddHandoffRef } from "./sdd.ts";
 
 export class HandoffError extends Error {}
 
@@ -92,14 +91,6 @@ export interface HandoffSpec {
   interfaces?: string[];
   /** Global vision this scope refines. Never contradicts it. */
   vision?: string;
-  /**
-   * The frozen SDD task slice this handoff implements, if any.
-   *
-   * `tasks` is a snapshot taken at authoring time. `orch_spawn` re-reads
-   * tasks.md and refuses if the slice changed, so a completed or edited task
-   * cannot be implemented twice against a stale ticket.
-   */
-  sdd?: SddHandoffRef;
   /**
    * The independent specification review backing this work unit.
    *
@@ -184,25 +175,6 @@ export function validateHandoff(spec: HandoffSpec): HandoffRecord & { revision: 
     designRef = { runId, targetHash };
   }
 
-  let sdd: SddHandoffRef | undefined;
-  if (spec.sdd) {
-    const featureDir = String(spec.sdd.featureDir ?? "").trim();
-    if (!/^specs\/[a-z0-9][a-z0-9-]*$/.test(featureDir)) {
-      throw new HandoffError("sdd.featureDir must be specs/<slug>.");
-    }
-    const taskIds = [...new Set((spec.sdd.taskIds ?? []).map(String).map((id) => id.trim()).filter(Boolean))];
-    if (!taskIds.length) throw new HandoffError("sdd.taskIds needs at least one task id.");
-    if (taskIds.some((id) => !/^T\d{3,}$/.test(id))) throw new HandoffError("sdd.taskIds entries must look like T001.");
-    const tasks = (spec.sdd.tasks ?? []).map((task) => ({
-      id: String(task.id).trim(),
-      title: String(task.title).trim(),
-      maps: (task.maps ?? []).map(String),
-      files: (task.files ?? []).map(String),
-      ...(task.verify ? { verify: String(task.verify).trim() } : {}),
-    }));
-    sdd = { featureDir, taskIds, ...(tasks.length ? { tasks } : {}) };
-  }
-
   return {
     id: handoffIdFor(scope),
     artifactId: handoffArtifactId({ id: handoffIdFor(scope) }),
@@ -216,7 +188,6 @@ export function validateHandoff(spec: HandoffSpec): HandoffRecord & { revision: 
     ...(spec.interfaces?.length ? { interfaces: spec.interfaces.map(String) } : {}),
     ...(spec.vision ? { vision: String(spec.vision).trim() } : {}),
     ...(designRef ? { designRef } : {}),
-    ...(sdd ? { sdd } : {}),
     revision: 1,
     authoredAt: new Date().toISOString(),
     parentSessionId: "",
@@ -265,10 +236,6 @@ export function renderHandoffForChild(spec: HandoffRecord): string {
     ? `\n## Reviewed design you implement\nSpec review \`${spec.designRef.runId}\`, revision \`${spec.designRef.targetHash.slice(0, 12)}\`.\nThat review judged a document, not your task: it does not pre-approve your diff.\nYour acceptance criteria below are what the implementation review checks.\nIf this document contradicts the reviewed design, escalate — do not invent a third interpretation.\n`
     : "";
 
-  const sdd = spec.sdd?.tasks?.length
-    ? `\n## SDD task slice (only these tasks)\nFeature: \`${spec.sdd.featureDir}\`. Do not implement another task from this feature.\n${spec.sdd.tasks.map((task) => `- ${task.id}: ${task.title}\n  Maps: ${task.maps.join(", ")}\n  Files: ${task.files.join(", ")}\n  Verify: ${task.verify ?? "(per task)"}`).join("\n")}\n`
-    : "";
-
   const reportShape = spec.reportShape
     ? spec.reportShape
     : "A short summary, then for EACH acceptance criterion: what you changed (file:line) and how you verified it. Say plainly what you did not do and why.";
@@ -277,7 +244,7 @@ export function renderHandoffForChild(spec: HandoffRecord): string {
 
 ## Goal
 ${spec.goal}
-${vision}${design}${sdd}${outOfLane}${interfaces}${guidance}
+${vision}${design}${outOfLane}${interfaces}${guidance}
 ## Files you own (your lane)
 ${lane}
 
@@ -363,10 +330,6 @@ export function buildChildTicket(spec: HandoffRecord, task: string): string {
     ? `## Your assignment for this handoff\n${trimmed}\n`
     : "";
 
-  const sddSlice = spec.sdd
-    ? `\n## SDD task slice\nThis handoff covers ${spec.sdd.taskIds.join(", ")}. Implement only those tasks; do not pick up another task from this feature.\n`
-    : "";
-
   return `# Work handoff: ${spec.scope}
 
 ## Read your spec first
@@ -378,7 +341,7 @@ lane), the files you must not touch, and the interfaces you must honour.
 It is the only spec you have. If the recall fails or returns something for a
 different scope, do NOT guess your lane — escalate with \`orch_ping\`.
 
-${assignment}${sddSlice}
+${assignment}
 ## Boundaries
 You own the files in your lane and nothing else. Read whatever you need to
 understand the code; write only inside your lane.

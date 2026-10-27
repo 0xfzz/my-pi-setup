@@ -86,15 +86,6 @@ test("Orchestrator and Supervise require a reviewed spec for implementation", ()
   assert.equal(requiresReviewedSpec(undefined), false);
 });
 
-test("the reviewed-spec gate is SDD-only, not a property of the orchestrator mode", () => {
-  assert.equal(requiresReviewedSpec("orchestrator", "sdd"), true);
-  assert.equal(requiresReviewedSpec("supervise", "sdd"), true);
-  assert.equal(requiresReviewedSpec("orchestrator", "general"), false);
-  assert.equal(requiresReviewedSpec("supervise", "general"), false);
-  assert.equal(requiresReviewedSpec("normal", "sdd"), false);
-  assert.equal(requiresReviewedSpec("plan", "sdd"), false);
-});
-
 test("depth and breadth are hard stops with an explicit reason", () => {
   assert.equal(depthProblem(0, 1), undefined, "a top-level session may spawn");
   assert.match(depthProblem(1, 1) ?? "", /Delegation depth limit reached/);

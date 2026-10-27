@@ -113,20 +113,6 @@ import {
 } from "../lib/orchestrator/brief.ts";
 import { superviseModeFromBranch } from "../lib/supervise-mode.ts";
 import { planModeFromBranch } from "../lib/plan-mode.ts";
-import { orchestratorWorkflow } from "../lib/orchestrator/workflow.ts";
-import {
-  SddError,
-  sddAnalyze,
-  sddClarify,
-  sddPlan,
-  sddSpecify,
-  sddStatus,
-  sddTaskSelection,
-  sddTaskSelectionProblem,
-  sddTaskSnapshot,
-  sddTasks,
-  type SddTaskInput,
-} from "../lib/orchestrator/sdd.ts";
 import {
   capacityProblem,
   childToolsForPurpose,
@@ -1692,129 +1678,6 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     },
   });
 
-  // ── orch_sdd — lean SDD artifacts (SDD workflow only) ──────────────────────
-  pi.registerTool({
-    name: "orch_sdd",
-    label: "Spec-Driven Development",
-    description:
-      "Create and inspect durable SDD artifacts under specs/<feature>/. Actions: specify | clarify | plan | tasks | analyze | status. Artifacts are create-only; changed contracts use <feature>-v2. status/analyze are read-only and available in Plan mode.",
-    parameters: Type.Object({
-      action: Type.Union([
-        Type.Literal("specify"),
-        Type.Literal("clarify"),
-        Type.Literal("plan"),
-        Type.Literal("tasks"),
-        Type.Literal("analyze"),
-        Type.Literal("status"),
-      ]),
-      feature: Type.String({ description: "Feature slug (or specs/<slug>) under the repository's specs/ directory." }),
-      title: Type.Optional(Type.String({ description: "specify: feature title." })),
-      problem: Type.Optional(Type.String({ description: "specify: problem / why." })),
-      goals: Type.Optional(Type.Array(Type.String())),
-      nonGoals: Type.Optional(Type.Array(Type.String())),
-      requirements: Type.Optional(Type.Array(Type.String(), { description: "specify: requirements; FR-### ids are assigned." })),
-      acceptance: Type.Optional(Type.Array(Type.String(), { description: "specify: Given/When/Then scenarios; AC-### ids are assigned." })),
-      constraints: Type.Optional(Type.Array(Type.String())),
-      outOfScope: Type.Optional(Type.Array(Type.String())),
-      openQuestions: Type.Optional(Type.Array(Type.String())),
-      parentRoadmap: Type.Optional(Type.String({ description: "Optional roadmap path for a slice." })),
-      sliceId: Type.Optional(Type.String({ description: "Optional roadmap entry id (R#)." })),
-      question: Type.Optional(Type.String({ description: "clarify: open question to resolve." })),
-      answer: Type.Optional(Type.String({ description: "clarify: answer to record." })),
-      approach: Type.Optional(Type.String({ description: "plan: implementation approach." })),
-      files: Type.Optional(Type.Array(Type.String())),
-      interfaces: Type.Optional(Type.Array(Type.String())),
-      testStrategy: Type.Optional(Type.Array(Type.String())),
-      risks: Type.Optional(Type.Array(Type.String())),
-      taskMapping: Type.Optional(Type.String()),
-      tasks: Type.Optional(Type.Array(Type.Object({
-        id: Type.Optional(Type.String()),
-        title: Type.String(),
-        dependsOn: Type.Optional(Type.Array(Type.String())),
-        parallel: Type.Optional(Type.Boolean()),
-        maps: Type.Optional(Type.Array(Type.String())),
-        files: Type.Optional(Type.Array(Type.String())),
-        verify: Type.Optional(Type.String()),
-        phase: Type.Optional(Type.String()),
-      }))),
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const branch = branchOf(ctx);
-      const workflow = orchestratorWorkflow(branch);
-      if (workflow !== "sdd") {
-        return text("orch_sdd is available only in the SDD workflow. Run /orch-mode sdd.", { error: "sdd-workflow-required" });
-      }
-      if (planModeFromBranch(branch)?.enabled && params.action !== "status" && params.action !== "analyze") {
-        return text("Plan mode: orch_sdd may only run status or analyze. Leave Plan mode to author specs.", { error: "plan-read-only" });
-      }
-      const cwd = (ctx as any).cwd || process.cwd();
-      try {
-        if (params.action === "specify") {
-          const result = sddSpecify(cwd, {
-            feature: params.feature,
-            title: params.title ?? "",
-            problem: params.problem ?? "",
-            goals: params.goals ?? [],
-            nonGoals: params.nonGoals ?? [],
-            requirements: params.requirements ?? [],
-            acceptance: params.acceptance ?? [],
-            constraints: params.constraints ?? [],
-            outOfScope: params.outOfScope ?? [],
-            openQuestions: params.openQuestions ?? [],
-            parentRoadmap: params.parentRoadmap,
-            sliceId: params.sliceId,
-          });
-          return text(`SDD spec created: ${result.file}`, { featureDir: result.featureDir, file: result.file });
-        }
-        if (params.action === "clarify") {
-          const result = sddClarify(cwd, { feature: params.feature, question: params.question ?? "", answer: params.answer ?? "" });
-          return text(`SDD clarification recorded in ${result.file}`, { featureDir: result.featureDir, file: result.file });
-        }
-        if (params.action === "plan") {
-          const result = sddPlan(cwd, {
-            feature: params.feature,
-            approach: params.approach ?? "",
-            files: params.files ?? [],
-            interfaces: params.interfaces ?? [],
-            testStrategy: params.testStrategy ?? [],
-            risks: params.risks ?? [],
-            taskMapping: params.taskMapping,
-          });
-          return text(`SDD plan created: ${result.file}`, { featureDir: result.featureDir, file: result.file });
-        }
-        if (params.action === "tasks") {
-          const result = sddTasks(cwd, { feature: params.feature, tasks: (params.tasks ?? []) as SddTaskInput[] });
-          return text(`SDD tasks created: ${result.file}`, { featureDir: result.featureDir, file: result.file });
-        }
-        if (params.action === "analyze") {
-          const result = sddAnalyze(cwd, params.feature);
-          const lines = result.findings.length
-            ? result.findings.map((finding) => `- ${finding.code} ${finding.location}: ${finding.message}`)
-            : ["- Clean: no SDD consistency findings."];
-          return text([`SDD analyze: ${result.featureDir}`, ...lines].join("\n"), result);
-        }
-        const result = sddStatus(cwd, params.feature);
-        const specPath = join(result.featureDir, "spec.md");
-        const reviews = [...specReviews.values()]
-          .filter((run) => run.target.kind === "file" && resolve(cwd, run.target.ref) === specPath)
-          .map((run) => ({ runId: run.id, ready: evaluateReadiness(run).ready, targetHash: run.target.contentHash }));
-        const lines = [
-          `SDD feature: ${result.featureDir}`,
-          `Files: spec=${result.files.spec} plan=${result.files.plan} tasks=${result.files.tasks}`,
-          `Spec status: ${result.specStatus ?? "missing"}`,
-          `Tasks: ${result.doneCount}/${result.taskCount} done`,
-          `Ready: ${result.ready.map((task) => task.id).join(", ") || "none"}`,
-          `Parallel groups: ${result.parallelGroups.map((group) => group.map((task) => task.id).join("+")).join(" | ") || "none"}`,
-          `Findings: ${result.findings.length}`,
-          `Spec reviews: ${reviews.map((review) => `${review.runId}${review.ready ? " ready" : " not-ready"}`).join(", ") || "none"}`,
-        ];
-        return text(lines.join("\n"), { ...result, reviews });
-      } catch (error: any) {
-        return text(`SDD rejected: ${error instanceof SddError ? error.message : (error?.message ?? String(error))}`, { error: "sdd-error" });
-      }
-    },
-  });
-
   // ── orch_spec_review — the parent's side of the same contract ───────────────
   pi.registerTool({
     name: "orch_spec_review",
@@ -2152,15 +2015,15 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       scope: Type.String({
         description: "Work-unit slug, unique among concurrent children (e.g. 'net-retry', 'db-pool'). This is the isolation key.",
       }),
-      goal: Type.Optional(Type.String({ description: "One line: what this work unit achieves. Required unless sdd.taskIds are supplied." })),
-      acceptanceCriteria: Type.Optional(Type.Array(Type.String(), {
+      goal: Type.String({ description: "One line: what this work unit achieves." }),
+      acceptanceCriteria: Type.Array(Type.String(), {
         minItems: 1,
-        description: "What 'done' means. Required unless sdd.taskIds are supplied; then derived from the tasks.",
-      })),
-      laneFiles: Type.Optional(Type.Array(Type.String(), {
+        description: "What 'done' means. The review gate requires evidence for each one, gathered by the reviewer.",
+      }),
+      laneFiles: Type.Array(Type.String(), {
         minItems: 1,
-        description: "Files this work unit owns. Required unless sdd.taskIds are supplied; then derived from the tasks.",
-      })),
+        description: "Files this work unit owns. Required: an empty lane means the child owns the whole repo, which makes steering and review impossible.",
+      }),
       outOfLaneFiles: Type.Optional(Type.Array(Type.String(), { description: "Files it must not modify even if it thinks it should." })),
       interfaces: Type.Optional(Type.Array(Type.String(), { description: "Contracts another work unit consumes; changing them silently breaks it." })),
       guidance: Type.Optional(Type.String({ description: "Conventions, prior decisions, or notes from the orchestrator." })),
@@ -2178,44 +2041,11 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           targetHash: Type.String({ description: "The reviewed content hash, from orch_spec_review status." }),
         }, { description: "Bind this work unit to an independent specification review. orch_spawn refuses a run that is not ready or whose document changed." }),
       ),
-      sdd: Type.Optional(Type.Object({
-        featureDir: Type.String({ description: "SDD feature directory, e.g. specs/retry-policy." }),
-        taskIds: Type.Array(Type.String(), { minItems: 1, description: "Task ids from tasks.md to freeze into this handoff." }),
-      }, { description: "SDD task slice; only available in /orch-mode sdd. Lane, criteria and verify are derived from tasks.md." })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const workflow = orchestratorWorkflow(branchOf(ctx));
-      if (params.sdd && workflow !== "sdd") {
-        return text("SDD task handoffs require /orch-mode sdd.", { error: "sdd-workflow-required" });
-      }
-
-      let laneFiles = params.laneFiles ?? [];
-      let acceptanceCriteria = params.acceptanceCriteria ?? [];
-      let goal = params.goal ?? "";
-      let verifyCommand = params.verifyCommand;
-      let sddSelection: ReturnType<typeof sddTaskSelection> | undefined;
-      if (params.sdd) {
-        try {
-          sddSelection = sddTaskSelection((ctx as any).cwd || process.cwd(), params.sdd.featureDir, params.sdd.taskIds);
-        } catch (error: any) {
-          return text(`SDD task selection refused: ${error?.message ?? error}`, { error: "sdd-task-selection" });
-        }
-        if (params.laneFiles?.length) {
-          const supplied = [...params.laneFiles].map(String).sort().join("\u0000");
-          const derived = [...sddSelection.laneFiles].sort().join("\u0000");
-          if (supplied !== derived) {
-            return text(`Handoff lane must match the selected tasks' files. Derived lane: ${sddSelection.laneFiles.join(", ")}.`, { error: "sdd-lane-mismatch" });
-          }
-        }
-        laneFiles = sddSelection.laneFiles;
-        acceptanceCriteria = sddSelection.acceptanceCriteria;
-        if (!goal.trim()) goal = sddSelection.tasks.map((task) => task.title).join("; ");
-        if (!verifyCommand) verifyCommand = sddSelection.verifyCommand;
-      }
-
       // A `**/*`-style lane is the whole repo: steering and review cannot be
       // precise against it, and it conflicts with every concurrent child.
-      const wholeRepoLanes = laneFiles.filter((f) => /^(\*\*\/\*)?\*?$/.test(String(f).trim()) || String(f).trim() === "**/*");
+      const wholeRepoLanes = params.laneFiles.filter((f) => /^(\*\*\/\*)?\*?$/.test(String(f).trim()) || String(f).trim() === "**/*");
       if (wholeRepoLanes.length > 0) {
         return text(
           `Refusing whole-repo lane (${wholeRepoLanes.join(", ")}). Name the files this work unit owns — ` +
@@ -2224,7 +2054,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         );
       }
 
-      const laneConflicts = registry.findLaneConflicts(laneFiles);
+      const laneConflicts = registry.findLaneConflicts(params.laneFiles);
       if (laneConflicts.length > 0) {
         return text(
           `Refused: lane overlaps ${laneConflicts.map((c) => `"${c.name}" (scope: ${c.scope})`).join(", ")}. ` +
@@ -2256,24 +2086,17 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         }
         const written = writeHandoff(artifactsBase(ctx), ctx.sessionManager.getSessionId(), {
           scope: params.scope,
-          goal,
-          acceptanceCriteria,
-          laneFiles,
+          goal: params.goal,
+          acceptanceCriteria: params.acceptanceCriteria,
+          laneFiles: params.laneFiles,
           outOfLaneFiles: params.outOfLaneFiles,
           interfaces: params.interfaces,
           guidance: params.guidance,
           reportShape: params.reportShape,
-          verifyCommand,
+          verifyCommand: params.verifyCommand,
           vision: params.vision,
           designRef: params.designRef
             ? { runId: String(params.designRef.runId).trim(), targetHash: String(params.designRef.targetHash).trim().toLowerCase() }
-            : undefined,
-          sdd: sddSelection
-            ? {
-                featureDir: sddSelection.featureRef,
-                taskIds: sddSelection.tasks.map((task) => task.id),
-                tasks: sddSelection.tasks.map(sddTaskSnapshot),
-              }
             : undefined,
         } as HandoffSpec);
         record = written.record;
@@ -2340,7 +2163,6 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           scope: record.scope,
           revision: record.revision,
           laneFiles: record.laneFiles,
-          ...(record.sdd ? { sdd: record.sdd } : {}),
         },
       );
     },
@@ -2444,25 +2266,17 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         );
       }
 
-      // SDD implementation requires an independent review; General does not.
-      const workflow = orchestratorWorkflow(branchOf(ctx));
-      if (handoff?.sdd && workflow !== "sdd") {
-        return text("SDD task handoffs require /orch-mode sdd.", { error: "sdd-workflow-required" });
-      }
-      if (handoff?.sdd) {
-        const problem = sddTaskSelectionProblem((ctx as any).cwd || process.cwd(), handoff.sdd);
-        if (problem) {
-          return text(`Refusing to spawn: ${problem}. Re-author the handoff against the current task slice.`, { error: "sdd-task-changed", handoffId: handoff.id });
-        }
-      }
-      if (requiresReviewedSpec(modeId, workflow)
+      // Orchestrator/Supervise implementation is spec-driven: a handoff without
+      // an independent review is a plan, not an authorised work unit. Checked
+      // before naming, the design gate, or any row/pane exists.
+      if (requiresReviewedSpec(modeId)
         && (purpose === "spec" || purpose === "implementation")
         && !handoff?.designRef) {
         return text(
-          `SDD Orchestrator implementation requires an independent, ready specification review. `
+          `Orchestrator implementation requires an independent, ready specification review. `
             + `This handoff has no designRef, so nothing authorises the work. Run orch_spec_review on the design until it is ready, `
-            + `then re-author the handoff with designRef { runId, targetHash }, or switch to /orch-mode general. Research and ad-hoc delegation do not need a spec review.`,
-          { error: "design-review-required", mode: modeId, workflow, scope: handoff?.scope },
+            + `then re-author the handoff with designRef { runId, targetHash }. Research and ad-hoc delegation do not need a spec review.`,
+          { error: "design-review-required", mode: modeId, scope: handoff?.scope },
         );
       }
 
@@ -2709,8 +2523,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     // Orchestrator/Supervise continuation is implementation too. A worker cannot
     // resume past the spec gate by using resume instead of spawn.
     const resumeMode = currentModeId(ctx);
-    const resumeWorkflow = orchestratorWorkflow(branchOf(ctx));
-    if (requiresReviewedSpec(resumeMode, resumeWorkflow) && child) {
+    if (requiresReviewedSpec(resumeMode) && child) {
       const handoff = child.handoffId
         ? handoffs.get(child.handoffId)?.record
         : [...handoffs.values()].find((entry) => entry.record.scope === child.scope)?.record;
@@ -2721,9 +2534,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       if (problem) {
         return text(
           `Refused to resume "${child.name}": ${problem}. `
-            + `SDD Orchestrator implementation needs a ready, unchanged specification review; `
-            + `switch to Normal (/mode normal) or /orch-mode general to continue an unreviewed run, or start a fresh reviewed handoff.`,
-          { error: "design-review-required", childId: child.id, mode: resumeMode, workflow: resumeWorkflow },
+            + `Orchestrator/Supervise implementation needs a ready, unchanged specification review; `
+            + `switch to Normal (/mode normal) to continue an unreviewed run, or start a fresh reviewed handoff.`,
+          { error: "design-review-required", childId: child.id, mode: resumeMode },
         );
       }
     }
