@@ -497,7 +497,7 @@ export default function modesExtension(pi: ExtensionAPI) {
       }
       if (event.toolName === "bash") {
         const command = superviseShellCommand(event.input?.command);
-        if (command === undefined) return { block: true, reason: "Supervise mode: bash needs a non-empty command. Use orch_brief/read for inspection, or /mode normal." };
+        if (command === undefined) return { block: true, reason: "Supervise mode: bash is read-only. Delegate writes with orch_handoff then orch_spawn, or /mode normal to implement." };
         event.input.command = command;
       }
       return;
@@ -525,11 +525,12 @@ export default function modesExtension(pi: ExtensionAPI) {
     const planActive = isPlan(ctx);
     if (!planActive && !superviseActive) return;
     if (superviseActive) {
-      // Trusted review shell: arbitrary scripts run unchanged. It is not a
-      // sandbox; the prompt and the absent write/edit tools are the boundary.
+      // Read-only review shell: the same closed grammar Plan mode uses. The
+      // orchestrator declares that it does not implement; a general shell made
+      // that declaration false.
       const command = superviseShellCommand(event.command);
       if (command === undefined) {
-        return { result: { output: "Supervise mode blocks an empty shell command. Use /mode normal for a real one.",
+        return { result: { output: "Supervise mode blocks shell commands that are not supported read-only inspection. Delegate writes with orch_handoff then orch_spawn, or /mode normal to implement.",
           exitCode: 1, cancelled: false, truncated: false } };
       }
       return { operations: { exec: (_command, cwd, options) => createLocalBashOperations().exec(command, cwd, options) } };

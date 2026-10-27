@@ -30,6 +30,7 @@
  * trust the child's self-report, which defeats the point of having a reviewer.
  */
 import { PLAN_TOOLS, type PlanToolInfo } from "./plan-mode.ts";
+import { readOnlyShellCommand } from "./plan-shell.ts";
 import { isDispatcherTool } from "./tool-policy.ts";
 import { parentDelegationToolNames } from "./delegation-tools.ts";
 
@@ -152,20 +153,23 @@ export const SUPERVISOR_TOOLS: ReadonlySet<string> = new Set([
 export const SUPERVISOR_ALLOWED_TOOLS = SUPERVISOR_TOOLS;
 
 /**
- * The Orchestrator/Supervise parent may run arbitrary review scripts.
+ * The Orchestrator/Supervise parent gets the same read-only shell grammar as Plan.
  *
- * Bash/Python/Node are available for inspection, parsing and verification. This
- * is the requested trust model, not a sandbox: a script can still write files.
- * The boundary is the absent write/edit tools, the prompt, and the review gate's
- * evidence rules. Plan keeps `readOnlyShellCommand`; Goldfish reviewers have no
- * bash at all.
+ * The header of this module says the orchestrator does not implement, and
+ * `extensions/orchestrator.ts` says it "has no edit/write tool". Both were false
+ * while bash accepted any command: session `01a17cb6` wrote
+ * `docs/refactor/phase-1-contract.md` with a bash heredoc and then reviewed its
+ * own document. A mode that claims not to implement cannot hand itself a
+ * general shell.
  *
- * Only a non-string/empty/NUL command is refused. Parsing commands to guess
- * safety would create the false impression of enforcement.
+ * `readOnlyShellCommand` is a closed command grammar (no redirection, heredoc,
+ * expansion, executable pipelines or unknown commands), not a sandbox. It is the
+ * same boundary Plan mode already relies on, and it is the boundary the review
+ * loop actually needs: `orch_check` runs the verification command itself, and
+ * `git`/`rg`/`cat`/`find` cover inspection.
  */
 export function superviseShellCommand(command: unknown): string | undefined {
-  if (typeof command !== "string" || !command.trim() || command.includes("\u0000")) return undefined;
-  return command;
+  return readOnlyShellCommand(command);
 }
 
 /**
