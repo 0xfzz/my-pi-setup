@@ -66,11 +66,11 @@ test("a complete policy resolves roots absolutely", () => {
   assert.deepEqual(reviewPolicyFromEnv(env())!.roots, []);
 });
 
-test("reviewers cannot reach the author, the network, or a writer", () => {
-  for (const name of ["bash", "write", "edit", "orch_parent_recall", "orch_parent_digest", "orch_history", "browser", "mcp", "codemode", "web_read", "artifact_save", "artifact_edit", "orch_spawn", "orch_review", "tool_search"]) {
+test("reviewers can research, but cannot reach the author, a writer, a provider, or another scope", () => {
+  for (const name of ["bash", "write", "edit", "orch_parent_recall", "orch_parent_digest", "orch_history", "browser", "mcp", "codemode", "google_search", "web_search", "fetch_content", "source_check", "artifact_search", "artifact_list", "orch_spawn", "orch_review", "tool_search"]) {
     assert.equal(isSpecOnlyDeniedTool(name), true, `${name} must be denied`);
   }
-  for (const name of ["read", "grep", "find", "ls", "ffgrep", "fffind", "orch_spec_review_submit", "orch_ping", "orch_done"]) {
+  for (const name of ["read", "grep", "find", "ls", "ffgrep", "fffind", "web_read", "web_research", "web_fetch", "code_map", "code_search", "code_read", "shell_read", "artifact_save", "artifact_edit", "artifact_recall", "orch_spec_review_submit", "orch_ping", "orch_done"]) {
     assert.equal(isSpecOnlyDeniedTool(name), false, `${name} must be allowed`);
   }
   // Fail closed: an unknown third-party or gateway tool is not in the allowlist.

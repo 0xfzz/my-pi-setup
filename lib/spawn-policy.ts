@@ -112,8 +112,10 @@ export function spawnRefusal(
  */
 const RESEARCH_TOOLS: readonly string[] = [
   "read", "grep", "find", "ls", "ffgrep", "fffind", "bash",
-  "web_read", "web_search", "google_search", "vcc_recall",
-  "artifact_recall", "artifact_list", "artifact_search",
+  "code_map", "code_search", "code_read", "shell_read",
+  "web_read", "web_search", "google_search", "web_research", "web_fetch", "vcc_recall",
+  // Evidence artifacts only, scoped to the research unit; discovery stays denied.
+  "artifact_save", "artifact_edit", "artifact_recall",
 ];
 
 export function childToolsForPurpose(purpose: SpawnPurpose): string | undefined {

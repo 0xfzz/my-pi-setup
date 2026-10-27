@@ -201,7 +201,7 @@ test("start pins the design, launches one devil's advocate by default, and leaks
       assert.match(script, /PI_SUBAGENT_REVIEW_POLICY='spec-only'/);
       const toolsLine = script.split("\n").find((line) => line.includes("--tools")) ?? "";
       assert.ok(toolsLine, "the reviewer is launched with an explicit tool allowlist");
-      for (const forbidden of ["bash", "write", "edit", "artifact_save", "orch_parent_recall", "orch_parent_digest"]) {
+      for (const forbidden of ["bash", "write", "edit", "artifact_search", "artifact_list", "orch_parent_recall", "orch_parent_digest"]) {
         assert.ok(
           !new RegExp(`(^|[,='\"\\s])${forbidden}([,='\"\\s]|$)`).test(toolsLine),
           `reviewer tool allowlist must not include ${forbidden}: ${toolsLine}`,
@@ -209,6 +209,11 @@ test("start pins the design, launches one devil's advocate by default, and leaks
       }
       assert.match(toolsLine, /orch_spec_review_submit/);
       assert.match(toolsLine, /read/);
+      // Research is part of the reviewer surface; only the writer and discovery
+      // tools are absent.
+      assert.match(toolsLine, /artifact_save/, "scoped evidence is allowed");
+      assert.match(toolsLine, /web_research/);
+      assert.match(toolsLine, /shell_read/);
     }
 
     // A panel remains available, explicitly and expensively.
@@ -1035,6 +1040,39 @@ test("a QA batch that would exceed the reviewer cap is refused before any pane o
     assert.equal(result.details.error, "qa-limit", result.content[0].text);
     assert.equal(h.started.length, 0, "a partially spawned batch is not acceptable");
   } finally {
+    await h.detach();
+  }
+});
+
+test("the research surface is registered for the orchestrator", async () => {
+  const h = await harness();
+  try {
+    for (const name of ["code_map", "code_search", "code_read", "web_research", "web_fetch", "shell_read"]) {
+      assert.ok(h.tools.has(name), `${name} is registered`);
+    }
+  } finally {
+    await h.detach();
+  }
+});
+
+test("a research child's evidence artifact is scoped to its unit", async () => {
+  const h = await harness();
+  process.env.PI_SUBAGENT_SCOPE = "unit-x";
+  try {
+    const blocked = await h.emit("tool_call", {
+      toolName: "artifact_save",
+      input: { id: "research-unit-x-note", type: "scratchpad", scope: "global", content: "evidence" },
+    });
+    assert.equal(blocked?.block, true, "a global artifact is not a research artifact");
+    assert.match(String(blocked?.reason), /scope must be "orch-research:unit-x"/);
+
+    const allowed = await h.emit("tool_call", {
+      toolName: "artifact_save",
+      input: { id: "research-unit-x-note", type: "scratchpad", scope: "orch-research:unit-x", content: "evidence" },
+    });
+    assert.equal(allowed?.block, undefined, "its own scoped evidence is allowed");
+  } finally {
+    delete process.env.PI_SUBAGENT_SCOPE;
     await h.detach();
   }
 });

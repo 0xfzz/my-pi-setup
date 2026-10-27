@@ -163,6 +163,28 @@ An empty file falls through instead of silencing the role. Worker prompts apply 
 
 Candidates come from the live model registry, so a provider added in pi appears with no code change. Bindings persist in `subagents.json` as `{ provider, model }` (project wins over global) and are read tolerantly: one malformed role never discards the rest. Precedence is explicit `model` argument → role binding → agent profile → global default; `inherit` passes no `--model` at all. A binding whose model vanished from the registry falls back to the next pool member, then to inherit, and every spawn/review result names the model and why it was chosen. Worker bindings cover `spec`, `implementation` and `adhoc` children; `research` readers keep the default and stay cheap.
 
+### Research surface (read-only)
+
+The orchestrator and the devil's advocate can research the web and learn the codebase without a
+writer. The tool surface is deliberately narrow on the write side and wide on the read side:
+
+| Concern | Tools | Guarantee |
+| --- | --- | --- |
+| Web | `web_research`, `web_fetch`, `web_read` | every source carries `url`, `fetchedAt`, `sha256`, excerpt; content is untrusted data |
+| Codebase | `code_map`, `code_search`, `code_read`, `read/grep/find/ls`, `ffgrep/fffind` | path-scoped; control-plane state stays denied |
+| History | `shell_read` | closed grammar (`git status/log/diff/show`, `rg`, `find`, `cat`, `wc`); no redirection, heredoc, `$()`, or unknown commands |
+| Evidence | `artifact_save/edit/recall` | scoped to `review:<runId>:<lens>` or `orch-research:<scope>`; `artifact_search/list` stay denied for reviewers |
+
+Search is engine-backed, never a JavaScript directory walk: host `ffgrep` index → `rg --json` →
+`git grep` → `grep -r`, spawned with an argv array at most two at a time, with a 10 s timeout that
+returns partial results. `code_read` returns a line-numbered window plus a whole-file digest, so a
+review can cite the exact revision it read.
+
+Research may write scratch (page cache, index) only under `.pi/orch-research/<run>/` — `.pi/` is
+gitignored — falling back to `$TMPDIR/orch-research/<run>/` when it is not, and `PI_ORCH_SCRATCH`
+may relocate it. The repository itself is never a write target, and scratch is bounded (50 MB,
+10-minute cache TTL, 24-hour stale GC).
+
 ### v1 removal and cut-over
 
 The old `subagent*`, `caller_ping` and `parent_*` names are **removed**, not aliased. Everything is `orch_*`; `/subagents on|off|status` is the single switch, and `lib/delegation-tools.ts` is the single capability table. A stale global install that registers a v1 name is stripped from the active set and refused at call time. A v1 child launched before the migration must be finished or closed before reloading: resuming it would call a tool that no longer exists.

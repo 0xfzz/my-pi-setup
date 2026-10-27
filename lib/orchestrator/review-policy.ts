@@ -102,13 +102,21 @@ export function reviewPolicyFromEnv(env: NodeJS.ProcessEnv | Record<string, stri
  *
  * Deliberately absent and load-bearing: `bash` (arbitrary interpreter), `write`
  * and `edit` (it must not be able to change the document it judges), `browser`,
- * `mcp`, `codemode` and `web_read` (open-world inputs that are not pinned),
- * every `orch_*` (it owns no children), `orch_parent_recall`/`orch_parent_digest` and
- * `orch_history` (the author's reasoning), and the artifact writers (the
- * snapshot is already inside its ticket).
+ * `mcp`, `codemode`, every `orch_*` (it owns no children),
+ * `orch_parent_recall`/`orch_parent_digest` and `orch_history` (the author's
+ * reasoning), and artifact discovery (`artifact_search`/`artifact_list`). It may
+ * research the web and the codebase read-only, and write *evidence* artifacts
+ * scoped to its own review — never a user artifact, never the work tree.
  */
 export const SPEC_ONLY_TOOLS: ReadonlySet<string> = new Set([
   "read", "grep", "find", "ls", "ffgrep", "fffind",
+  // Read-only research: engine-backed code views, cited web evidence, and a
+  // closed grammar for repository history. None can write the work tree.
+  "code_map", "code_search", "code_read",
+  "web_read", "web_research", "web_fetch",
+  "shell_read",
+  // Evidence is an artifact, scoped to this review (see review-artifact-scope).
+  "artifact_save", "artifact_edit", "artifact_recall",
   "todo_plan", "todo_act", "todo_next", "workflow_todo",
   "orch_ping", "orch_done", "orch_progress",
   "orch_spec_review_submit",
@@ -124,8 +132,11 @@ export const SPEC_ONLY_DENIED_TOOLS: ReadonlySet<string> = new Set([
   "orch_parent_recall", "orch_parent_digest", "orch_history",
   "browser", "browser_download", "browser_login",
   "mcp", "mcpScript", "codemode", "tool_search",
-  "web_read", "google_search", "web_search", "fetch_content", "source_check",
-  "artifact_save", "artifact_edit", "generate_image",
+  // The search providers are reached through `web_research`, not directly, so a
+  // reviewer cannot use a provider's own side effects or pagination.
+  "google_search", "web_search", "fetch_content", "source_check",
+  // Discovery across scopes is what leaks another run's evidence.
+  "artifact_search", "artifact_list", "generate_image",
 ]);
 
 /** Any `orch_` tool is parent-only by definition, so the prefix is a blanket rule. */
