@@ -124,6 +124,18 @@ export function childToolsForPurpose(purpose: SpawnPurpose): string | undefined 
   return purpose === "research" || purpose === "review" ? RESEARCH_TOOLS.join(",") : undefined;
 }
 
+/**
+ * The reading role a purpose implies, for the launcher's environment marker.
+ *
+ * A separate function keeps the comparison honest at call sites where the
+ * compiler has already narrowed the local `purpose` (for example after the
+ * `review` redirect), which would otherwise make `purpose === "review"` look
+ * unreachable to TypeScript.
+ */
+export function readerPurpose(purpose: SpawnPurpose): "research" | "review" | undefined {
+  return purpose === "research" || purpose === "review" ? purpose : undefined;
+}
+
 /** The value stored on the registry row. `spec` is implemented by a worker. */
 export function registryPurpose(purpose: SpawnPurpose): "implementation" | "review" | "research" | "adhoc" {
   return purpose === "spec" ? "implementation" : purpose;

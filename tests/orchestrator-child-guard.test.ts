@@ -295,3 +295,43 @@ test("watchdog notices carry the facts that justify the interrupt", () => {
   assert.match(stall, /Inspect its pane/);
   assert.doesNotMatch(stall, /progress for It/);
 });
+
+test("a research or QA child's shell is read-only even when the pane holds bash", async () => {
+  const previous = process.env.PI_SUBAGENT_PURPOSE;
+  try {
+    const f = fixture();
+    const ctx: any = {
+      cwd: process.cwd(),
+      sessionManager: {
+        getSessionDir: () => "/tmp",
+        getSessionId: () => "reading-child",
+        getBranch: () => [],
+        getSessionFile: () => "/tmp/reading-child.jsonl",
+        getHeader: () => undefined,
+      },
+      ui: { notify() {} },
+    };
+
+    // The role travels in the launcher-written environment, so a resumed or
+    // user-touched pane cannot widen itself back into a writer.
+    process.env.PI_SUBAGENT_PURPOSE = "research";
+    const writeEvent = { toolName: "bash", input: { command: "echo x > f" } };
+    const [writeResult] = await f.emit("tool_call", writeEvent, ctx);
+    assert.ok(writeResult?.block, "a research child cannot write through bash");
+    assert.match(writeResult.reason, /Research child: bash is read-only/);
+
+    const readEvent = { toolName: "bash", input: { command: "git status" } };
+    const [readResult] = await f.emit("tool_call", readEvent, ctx);
+    assert.equal(readResult, undefined, "read-only inspection is still allowed");
+    assert.match(readEvent.input.command, /status/, "the grammar re-quotes the command");
+
+    process.env.PI_SUBAGENT_PURPOSE = "review";
+    const qaWrite = { toolName: "bash", input: { command: "tee f" } };
+    const [qaResult] = await f.emit("tool_call", qaWrite, ctx);
+    assert.ok(qaResult?.block, "a QA child cannot write through bash");
+    assert.match(qaResult.reason, /QA child: bash is read-only/);
+  } finally {
+    if (previous === undefined) delete process.env.PI_SUBAGENT_PURPOSE;
+    else process.env.PI_SUBAGENT_PURPOSE = previous;
+  }
+});

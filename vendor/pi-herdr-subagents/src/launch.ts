@@ -62,6 +62,12 @@ export interface SubagentLaunchParams {
   policy?: "spec-only";
   /** Review-job identity, written into the child's environment when policy is spec-only. */
   review?: { runId: string; lens: string; targetHash: string; dir: string; roots?: string[] };
+  /**
+   * Read-only reading role. `research` investigates and `review` judges a result.
+   * Exported as `PI_SUBAGENT_PURPOSE` so the child session can enforce its own
+   * read-only shell instead of trusting the ticket's prose.
+   */
+  purpose?: "research" | "review";
 }
 
 export interface LaunchPlanContext {
@@ -528,6 +534,9 @@ export function buildLaunchPlan(
   }
   if (params.scope) {
     exports.push(`export PI_SUBAGENT_SCOPE=${shellEscape(params.scope)}`);
+  }
+  if (params.purpose) {
+    exports.push(`export PI_SUBAGENT_PURPOSE=${shellEscape(params.purpose)}`);
   }
   if (params.specPath) {
     exports.push(`export PI_SUBAGENT_SPEC=${shellEscape(params.specPath)}`);

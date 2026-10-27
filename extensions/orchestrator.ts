@@ -113,6 +113,7 @@ import {
 } from "../lib/orchestrator/brief.ts";
 import { superviseModeFromBranch } from "../lib/supervise-mode.ts";
 import { planModeFromBranch } from "../lib/plan-mode.ts";
+import { readOnlyShellCommand } from "../lib/plan-shell.ts";
 import {
   capacityProblem,
   childToolsForPurpose,
@@ -120,6 +121,7 @@ import {
   defaultSpawnPurpose,
   depthProblem,
   maxChildren,
+  readerPurpose,
   registryPurpose,
   requiresReviewedSpec,
   spawnRefusal,
@@ -187,6 +189,19 @@ export const specReviews = new Map<string, ReviewRun>();
  * make honestly.
  */
 export const checkReceipts = new Map<string, CheckReceipt>();
+
+/**
+ * The reading role a child declared for itself, from the launcher-written env.
+ *
+ * A research or QA child is a reader by contract. The `--tools` allowlist is the
+ * first line, but a resumed or user-touched child can hold a wider set, and bash
+ * is a writer whatever the ticket says. Resolving the role from the environment
+ * keeps that claim enforceable in the child's own process.
+ */
+export function childPurposeFromEnv(env: NodeJS.ProcessEnv = process.env): "research" | "review" | undefined {
+  const value = env.PI_SUBAGENT_PURPOSE;
+  return value === "research" || value === "review" ? value : undefined;
+}
 
 export interface OrchestratorDeps {
   client?: HerdrClient;
@@ -1271,6 +1286,25 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           if (problem) return { block: true, reason: problem };
         }
       }
+      return;
+    }
+
+    // ── read-only reading roles ────────────────────────────────────────────
+    // research/review children are declared read-only. A resumed or user-touched
+    // child can still hold bash, and bash can write; narrow it to the same closed
+    // grammar Plan uses. A QA child that could write could also "fix" the defect
+    // it is judging, which ends the independence the review exists to provide.
+    const readingRole = childPurposeFromEnv();
+    if (readingRole && event.toolName === "bash") {
+      const command = readOnlyShellCommand(event.input?.command);
+      if (command === undefined) {
+        return {
+          block: true,
+          reason: `${readingRole === "review" ? "QA" : "Research"} child: bash is read-only. `
+            + `Report what you need with orch_ping; you never fix or write.`,
+        };
+      }
+      event.input.command = command;
       return;
     }
 
@@ -2570,6 +2604,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             tools: params.tools ?? childToolsForPurpose(purpose),
             cwd: params.cwd,
             scope,
+            // A reader's role travels in the environment so the child session can
+            // enforce its own read-only shell instead of trusting the ticket text.
+            purpose: readerPurpose(purpose),
             // Deliberately NOT passing specPath: a path is a promise the child
             // shares a UID with its siblings and cannot keep.
           },
