@@ -1,5 +1,7 @@
 # VCC auto-compaction
 
+> Part of [pi-workflow-extensions](../README.md). The compaction policy, its calibration and rollback; the checkpoint side is in [checkpoints.md](checkpoints.md).
+
 | Field | Value |
 | --- | --- |
 | **Status** | current policy |

@@ -1,12 +1,14 @@
 # Orchestrator web dashboard
 
+> Part of [pi-workflow-extensions](../README.md). The live graph, artifact views, server bounds and trust model.
+
 | Field | Value |
 | --- | --- |
 | **Status** | current operator guide |
 | **Detail for** | [README § Orchestrator web dashboard](../README.md) |
 | **Scope** | `web/dashboard/`, `extensions/dashboard.ts`, `lib/dashboard/` |
 | **Verified against** | `tests/dashboard-*.test.ts`, `tests/dashboard-host-runtime.test.ts` |
-| **Related** | [Orchestrator mode](ORCHESTRATOR-EGM.md) |
+| **Related** | [Orchestrator](orchestrator.md) |
 
 ## Summary
 

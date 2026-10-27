@@ -3,10 +3,10 @@
 | Field | Value |
 | --- | --- |
 | **Status** | install + test record |
-| **Detail for** | [README § Delegated-work checkpoints](../../README.md) |
+| **Detail for** | [README](../../../README.md) |
 | **Scope** | installed `pi-vcc` 0.4.1 sources |
 | **Verified against** | `node --test docs/patches/vcc-tests/regression.mjs` |
-| **Related** | [Verification](VERIFICATION.md) |
+| **Related** | [Verification](../VERIFICATION.md) |
 
 ## Summary
 

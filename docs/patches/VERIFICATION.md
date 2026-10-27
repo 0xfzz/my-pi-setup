@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | **Status** | verification record |
-| **Detail for** | [README § Patches](../README.md) |
+| **Detail for** | [README](../../README.md) |
 | **Scope** | `docs/patches/` |
 | **Verified against** | as recorded below (installed Pi 1.3.0 / Node 22) |
 | **Related** | [VCC test notes](vcc-tests/README.md) |
