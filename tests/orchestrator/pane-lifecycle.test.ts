@@ -16,6 +16,7 @@ import orchestratorExtension, {
 // lifecycle, so they supply an empty change list instead of depending on the
 // repository the suite happens to run in.
 reviewSeams.changedFiles = () => [];
+reviewSeams.diffText = () => "";
 import type { ScopedChild } from "../../lib/orchestrator/scope-registry.ts";
 
 interface Harness {

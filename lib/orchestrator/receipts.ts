@@ -28,6 +28,21 @@ export interface CheckReceipt {
   scope: string;
   /** The verification command, or null when the check ran no command at all. */
   command: string | null;
+  /**
+   * The command the HANDOFF declared, or null when it declared none.
+   *
+   * Without this, `orch_check` could be pointed at any allowed test runner and a
+   * receipt from `npm run typecheck` would approve a work unit whose declared
+   * check was `npm test` — the exact substitution that declaring the command at
+   * authoring time exists to prevent.
+   */
+  declaredCommand: string | null;
+  /**
+   * Tail of the command's output, so a cited `test` reference can be checked
+   * against what actually printed. Bounded, and in-memory only like the rest of
+   * the receipt.
+   */
+  outputTail: string | null;
   /** Process exit code, or null when nothing ran. */
   exit: number | null;
   /** sha256 of the command's (tail-bounded) output, so the evidence is identifiable. */
@@ -54,20 +69,27 @@ export function criteriaHashOf(criteria: readonly string[] | undefined): string 
 /**
  * Stable digest of the working tree as git reported it.
  *
- * `null` is not "clean": it means git could not be read, and it is hashed as such
- * so a receipt taken while git was unavailable can never match a later successful
- * read. Unknown must not equal empty.
+ * `null` is not "clean", and it is not a digest either: an unreadable tree yields
+ * `null`, so a caller cannot mint a receipt that describes nothing and two
+ * unreadable readings can never look equal. Unknown must not equal empty, and it
+ * must not equal unknown.
  */
-export function treeDigestOf(input: { changed: readonly string[] | null; diff: string | null }): string {
-  const changed = input.changed === null ? "<unknown>" : [...input.changed].map((file) => file.trim()).sort().join("\n");
-  const diff = input.diff === null ? "<unknown>" : input.diff;
-  return digest(`${changed}\u0000${diff}`);
+export function treeDigestOf(input: {
+  changed: readonly string[] | null;
+  diff: string | null;
+}): string | null {
+  if (input.changed === null || input.diff === null) return null;
+  const changed = [...input.changed].map((file) => file.trim()).sort().join("\n");
+  return digest(`${changed}\u0000${input.diff}`);
 }
 
 export interface ReceiptExpectation {
   scope: string;
   criteriaHash: string;
-  treeDigest: string;
+  /** null when the tree could not be read: that is a refusal, not a wildcard. */
+  treeDigest: string | null;
+  /** The handoff's declared check. `undefined` means the handoff declared none. */
+  declaredCommand?: string | null;
 }
 
 /**
@@ -85,8 +107,16 @@ export function evaluateReceipt(receipt: CheckReceipt | undefined, expected: Rec
   if (receipt.criteriaHash !== expected.criteriaHash) {
     problems.push("the acceptance criteria changed after the check ran, so it judged a different definition of done");
   }
-  if (receipt.treeDigest !== expected.treeDigest) {
+  if (expected.treeDigest === null) {
+    problems.push("the working tree could not be read, so what this receipt describes cannot be confirmed");
+  } else if (receipt.treeDigest !== expected.treeDigest) {
     problems.push("the working tree changed after the check ran, so its result no longer describes this diff");
+  }
+  if (expected.declaredCommand !== undefined && receipt.command !== expected.declaredCommand) {
+    problems.push(
+      `the check ran ${receipt.command ? `"${receipt.command}"` : "no command"} but the handoff declared `
+        + `${expected.declaredCommand ? `"${expected.declaredCommand}"` : "none"}: a substituted check does not verify the declared one`,
+    );
   }
   if (receipt.command === null) {
     problems.push("the check ran no verification command");
@@ -107,7 +137,10 @@ export function outputDigestOf(output: string | null | undefined): string | null
 /** Short human line for the parent's summary. Not a substitute for the receipt. */
 export function describeReceipt(receipt: CheckReceipt): string {
   const command = receipt.command ?? "(no command)";
-  return `${receipt.id} · ${receipt.scope} · ${command} → ${
+  const swapped = receipt.declaredCommand && receipt.declaredCommand !== receipt.command
+    ? ` · substituted for ${receipt.declaredCommand}`
+    : "";
+  return `${receipt.id} · ${receipt.scope} · ${command}${swapped} → ${
     receipt.command === null ? "not run" : receipt.exit === 0 ? "pass" : `exit ${receipt.exit}`
   } · criteria ${receipt.criteriaHash.slice(0, 10)} · tree ${receipt.treeDigest.slice(0, 10)}`;
 }

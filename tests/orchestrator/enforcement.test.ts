@@ -13,7 +13,7 @@ import { mkdtemp, rm, readFile, readdir, stat, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import subagentV2, { escalations, handoffs, registry } from "../../extensions/orchestrator.ts";
+import subagentV2, { escalations, handoffs, registry, reviewSeams } from "../../extensions/orchestrator.ts";
 import { SUPERVISOR_MODE_TYPE } from "../../lib/supervise-mode.ts";
 import { visibleToScope, type Artifact } from "../../lib/artifact-state.ts";
 
@@ -147,6 +147,11 @@ async function harness(opts: { inputAnswer?: string } = {}): Promise<Harness> {
   };
 
   subagentV2(pi, { client, stream: { watch: () => () => {}, onReconcile: () => () => {} } });
+
+  // The gate now refuses an approval it could not observe, so a test worktree
+  // (a tmpdir, not a repo) must supply the change list and a diff explicitly.
+  reviewSeams.changedFiles = () => [];
+  reviewSeams.diffText = () => "";
 
   return {
     dir,

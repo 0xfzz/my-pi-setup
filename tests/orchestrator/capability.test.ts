@@ -211,6 +211,7 @@ describe("review gate: evidence, computed lane, independence", () => {
     registry.resetForTests();
     handoffs.clear();
     reviewSeams.changedFiles = () => [];
+    reviewSeams.diffText = () => "";
   });
 
   it("refuses an approval supported only by prose", async () => {

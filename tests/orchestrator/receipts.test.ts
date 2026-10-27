@@ -12,17 +12,20 @@ import {
 
 const CRITERIA = ["parse rejects unknown keys", "no allocation in the hot path"];
 const TREE = { changed: ["src/a.ts", "src/b.ts"], diff: "diff --git a/src/a.ts b/src/a.ts\n+1" };
+const TREE_DIGEST = treeDigestOf(TREE)!;
 
 function receipt(overrides: Partial<CheckReceipt> = {}): CheckReceipt {
   return {
     id: "cr-scope-1",
     scope: "net",
     command: "npm test",
+    declaredCommand: "npm test",
     exit: 0,
     outputDigest: outputDigestOf("ok"),
+    outputTail: "ok",
     criteriaHash: criteriaHashOf(CRITERIA),
     specRevision: 2,
-    treeDigest: treeDigestOf(TREE),
+    treeDigest: TREE_DIGEST,
     createdAt: new Date(0).toISOString(),
     ...overrides,
   };
@@ -31,7 +34,8 @@ function receipt(overrides: Partial<CheckReceipt> = {}): CheckReceipt {
 const EXPECTED = {
   scope: "net",
   criteriaHash: criteriaHashOf(CRITERIA),
-  treeDigest: treeDigestOf(TREE),
+  treeDigest: TREE_DIGEST,
+  declaredCommand: "npm test",
 };
 
 test("criteria hash ignores surrounding whitespace but not meaning or order", () => {
@@ -51,12 +55,27 @@ test("tree digest is order-insensitive over files but sensitive to content", () 
   assert.notEqual(treeDigestOf({ changed: ["a"], diff: "d" }), treeDigestOf({ changed: ["a", "b"], diff: "d" }));
 });
 
-test("an unreadable tree never equals a clean one", () => {
-  // Unknown must not hash like empty: a receipt taken while git was unavailable
-  // cannot be allowed to match a later successful read that found no changes.
-  assert.notEqual(treeDigestOf({ changed: null, diff: null }), treeDigestOf({ changed: [], diff: "" }));
-  assert.notEqual(treeDigestOf({ changed: null, diff: "x" }), treeDigestOf({ changed: [], diff: "x" }));
-  assert.notEqual(treeDigestOf({ changed: [], diff: null }), treeDigestOf({ changed: [], diff: "" }));
+test("an unreadable tree is not a digest at all", () => {
+  // Unknown must not hash like empty, and it must not hash like unknown either:
+  // two receipts taken while git was broken used to compare equal. Returning null
+  // makes "could not look" unrepresentable as a value the gate can accept.
+  assert.equal(treeDigestOf({ changed: null, diff: null }), null);
+  assert.equal(treeDigestOf({ changed: null, diff: "x" }), null);
+  assert.equal(treeDigestOf({ changed: [], diff: null }), null);
+  assert.equal(treeDigestOf({ changed: [], diff: "" }), typeof TREE_DIGEST === "string" ? treeDigestOf({ changed: [], diff: "" }) : null);
+});
+
+test("a receipt cannot describe a tree the reviewer could not read", () => {
+  const problems = evaluateReceipt(receipt(), { ...EXPECTED, treeDigest: null });
+  assert.ok(problems.some((p) => /working tree could not be read/.test(p)), problems.join(" | "));
+});
+
+test("a substituted check command cannot back the declared one", () => {
+  // Declaring `npm test` at authoring time and checking `npm run typecheck` at
+  // review time is the exact substitution the declaration exists to prevent.
+  const problems = evaluateReceipt(receipt({ command: "npm run typecheck" }), EXPECTED);
+  assert.equal(problems.length, 1, problems.join(" | "));
+  assert.match(problems[0]!, /substituted|declared/);
 });
 
 test("a matching receipt has no problems", () => {
@@ -74,7 +93,7 @@ test("every reason the receipt cannot back this approval is reported at once", (
     scope: "other",
     exit: 1,
     criteriaHash: criteriaHashOf(["something else"]),
-    treeDigest: treeDigestOf({ changed: ["src/a.ts"], diff: "changed" }),
+    treeDigest: treeDigestOf({ changed: ["src/a.ts"], diff: "changed" })!,
   });
   const problems = evaluateReceipt(stale, EXPECTED);
   assert.equal(problems.length, 4, problems.join(" | "));
@@ -85,12 +104,19 @@ test("every reason the receipt cannot back this approval is reported at once", (
 });
 
 test("a check that ran no command cannot be the evidence for a verified pass", () => {
-  const notRun = receipt({ command: null, exit: null, outputDigest: null });
-  const problems = evaluateReceipt(notRun, EXPECTED);
+  // Nothing declared, nothing run: the only complaint is the missing command.
+  const nothing = receipt({ command: null, declaredCommand: null, exit: null, outputDigest: null });
+  const problems = evaluateReceipt(nothing, { ...EXPECTED, declaredCommand: null });
   assert.ok(problems.some((p) => /ran no verification command/.test(p)));
-  // It is only the command that is missing: the run still identified a tree and
-  // a definition of done, so it is not reported as stale on those axes.
   assert.equal(problems.length, 1, problems.join(" | "));
+
+  // Declared but not run is two separate faults: the declared check was skipped
+  // AND the receipt cannot back "the declared command passed".
+  const skipped = receipt({ command: null, exit: null, outputDigest: null });
+  const skippedProblems = evaluateReceipt(skipped, EXPECTED);
+  assert.ok(skippedProblems.some((p) => /ran no verification command/.test(p)));
+  assert.ok(skippedProblems.some((p) => /declared/.test(p)));
+  assert.equal(skippedProblems.length, 2, skippedProblems.join(" | "));
 });
 
 test("a receipt with an exit but no command is still incoherent", () => {

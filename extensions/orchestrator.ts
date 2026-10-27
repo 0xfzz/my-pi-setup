@@ -295,6 +295,19 @@ function tail(value: string, lines: number): string {
 }
 
 /**
+ * Did the check's own output contain this test reference?
+ *
+ * `buildCheckReport` emits `<command> (suite)` for a passing run, which is a
+ * statement about the command rather than a printed test name, so it is accepted
+ * only when it names the command the receipt actually ran.
+ */
+function testRefObserved(ref: { name: string }, receipt: CheckReceipt): boolean {
+  const output = receipt.outputTail ?? "";
+  if (output.includes(ref.name)) return true;
+  return Boolean(receipt.command) && ref.name === `${receipt.command} (suite)`;
+}
+
+/**
  * Files already sent for a scope, so a second review does not re-read them.
  *
  * Nothing is persisted: this is a request-level convenience. A restart simply
@@ -3146,15 +3159,39 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         },
       });
       const diff = (reviewSeams.diffText ?? gitDiffText)(cwd);
+      // A receipt describes a tree. If the tree could not be read there is nothing
+      // to describe, and minting one anyway would make "unknown" a value that a
+      // later unknown read compares equal to — the collision this replaces.
+      const treeDigest = treeDigestOf({ changed, diff });
+      if (!treeDigest) {
+        return text(
+          `${renderCheckReport(report)}\n`
+            + `No receipt minted: the working tree could not be read (git unavailable, or this is not a repository). `
+            + `A receipt is a claim about a specific tree, so there is nothing honest to sign. `
+            + `Restore git access and re-run; until then any verdict is attested, not authenticated.`,
+          {
+            scope,
+            lane: report.lane,
+            tests: report.tests,
+            evidenceRefs: report.refs,
+            checkRunId: null,
+            error: "tree-unreadable",
+          },
+        );
+      }
       const receipt: CheckReceipt = {
         id: `cr-${scope}-${(checkReceipts.size + 1).toString(36)}${now().toString(36)}`,
         scope,
         command: report.tests.command ?? null,
+        declaredCommand: (handoff as any)?.verifyCommand ?? null,
         exit: typeof report.tests.exit === "number" ? report.tests.exit : null,
         outputDigest: outputDigestOf(lastOutput),
+        // Bounded for the same reason the digest truncates: a suite's summary is at
+        // the end, and a cited test name has to be checkable against what printed.
+        outputTail: lastOutput === null ? null : tail(lastOutput, 400),
         criteriaHash: criteriaHashOf(criteria),
         specRevision: child?.handoffRevision ?? handoff?.revision ?? null,
-        treeDigest: treeDigestOf({ changed, diff }),
+        treeDigest,
         createdAt: new Date(now()).toISOString(),
       };
       checkReceipts.set(receipt.id, receipt);
@@ -3386,6 +3423,12 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
               { description: "References the gate verifies: an existing file, a command and its exit, or a test and its result." },
             ),
           ),
+          attested: Type.Optional(
+            Type.Boolean({
+              description:
+                "The criterion cannot be evidenced by any reference (e.g. \"no behaviour change\"). Requires userConfirmed: true on an approval.",
+            }),
+          ),
           passed: Type.Boolean(),
         }),
         { minItems: 1 },
@@ -3481,6 +3524,22 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       // A declaration can tighten the verdict, never loosen it.
       if (declared?.inLane === false) inLane = false;
       const violations = [...new Set([...laneViolations, ...(declared?.violations ?? [])])];
+
+      // Unknown is not clean. With git unreadable there is no computed lane and no
+      // tree the evidence can be checked against, so an approval would be
+      // self-attestation wearing the gate's name. The old default (`inLane = true`)
+      // let a broken worktree silently re-open the cheap path.
+      if (laneDeclared && changed === null) {
+        if (params.verdict === "approved") {
+          return text(
+            `Refusing to approve ${scope}: the working tree could not be read (git unavailable, or not a repository), `
+              + `so lane compliance was NOT verified. \"No violations\" and \"could not look\" are different facts, and only one of them licenses an approval. `
+              + `Fix git/worktree access and re-run, or record \"revise\" with this gap as a finding.`,
+            { error: "tree-unreadable", scope },
+          );
+        }
+        findings.push("lane compliance NOT verified: git could not read the working tree");
+      }
       if (params.verdict === "approved" && !inLane) {
         return text(
           `Refusing to approve ${scope}: the diff left its lane (${violations.join(", ") || "unspecified"}). ` +
@@ -3507,10 +3566,15 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       let receiptNote: string | undefined;
       if (receiptId) {
         const diffNow = (reviewSeams.diffText ?? gitDiffText)(reviewCwd);
-        receiptProblems = evaluateReceipt(checkReceipts.get(receiptId), {
+        const citedReceipt = checkReceipts.get(receiptId);
+        receiptProblems = evaluateReceipt(citedReceipt, {
           scope,
           criteriaHash: criteriaHashOf(criteriaUnderReview),
           treeDigest: treeDigestOf({ changed, diff: diffNow }),
+          // The handoff's declared check is the contract. A receipt from a
+          // different runner is a substituted check, which is exactly what
+          // declaring the command at authoring time exists to prevent.
+          declaredCommand: handoff?.verifyCommand ?? null,
         });
         if (receiptProblems.length > 0) {
           return text(
@@ -3521,6 +3585,20 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           );
         }
         receiptNote = receiptId;
+        // A cited test must have printed. The receipt keeps the output tail for
+        // this one purpose: "test X passed" is a claim about output, and the gate
+        // can read the output it stored rather than trusting the claim.
+        const unobserved = evidenceRefs.filter(
+          (ref) => ref.kind === "test" && !testRefObserved(ref, citedReceipt!),
+        ) as Array<{ kind: "test"; name: string }>;
+        if (unobserved.length > 0) {
+          return text(
+            `Refusing to record ${scope} with checkRunId "${receiptId}": the receipt's output does not contain `
+              + `${unobserved.map((ref) => `"${ref.name}"`).join(", ")}. `
+              + `Cite the test names the check actually printed, or drop checkRunId and treat the evidence as attested.`,
+            { error: "test-ref-unobserved", scope, unobserved: unobserved.map((ref) => ref.name) },
+          );
+        }
       } else if (params.verdict === "approved" && handoff?.verifyCommand) {
         // Not a refusal: the existing contract (attested refs verify for real files
         // and cmd/test shape) is unchanged. The note exists so the gap is visible
@@ -3528,12 +3606,36 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         receiptNote = "none cited — evidence is attested, not receipt-backed";
       }
       if (params.verdict === "approved") {
+        // Prose-only first: "you supplied no references at all" is a clearer
+        // refusal than enumerating every criterion that consequently lacks one.
         if (evidenceCheck.checked === 0) {
           return text(
             `Refusing to approve "${scope}" on prose alone: no evidenceRefs were supplied. ` +
               `Give at least one { kind: "file" | "cmd" | "test" } reference per claim you rely on — the gate verifies them. ` +
               `If the only support is your own description, the verdict is "revise", not "approved".`,
             { error: "evidence-required", scope },
+          );
+        }
+        // One verified reference can otherwise carry six unrelated criteria. A
+        // passing criterion is a claim, and a claim needs its own way to be wrong.
+        const unevidenced = params.criteriaNotes.filter(
+          (note) => note.passed && !(note.evidenceRefs?.length) && note.attested !== true,
+        );
+        if (unevidenced.length > 0) {
+          return text(
+            `Refusing to approve "${scope}": ${unevidenced.length} passing criterion/criteria carry no evidenceRefs —\n`
+              + unevidenced.map((note) => `- ${note.criterion}`).join("\n")
+              + `\nGive each passing criterion at least one { kind: "file" | "cmd" | "test" } reference, `
+              + `or mark it attested: true (which requires the user's confirmation, because attested stops being checkable).`,
+            { error: "evidence-missing-per-criterion", criteria: unevidenced.map((note) => note.criterion) },
+          );
+        }
+        const attested = params.criteriaNotes.filter((note) => note.attested === true);
+        if (attested.length > 0 && params.userConfirmed !== true) {
+          return text(
+            `Approval for "${scope}" needs the user's confirmation: ${attested.length} criterion/criteria are attested rather than evidenced `
+              + `(${attested.map((note) => note.criterion).join("; ")}). Attestation is the one path the gate cannot check.`,
+            { error: "attestation-requires-user", scope, criteria: attested.map((note) => note.criterion) },
           );
         }
         if (!evidenceCheck.ok) {
@@ -3725,6 +3827,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           laneSource,
           independence,
           evidenceRefs: evidenceCheck.checked,
+          ...(findings.length ? { findings } : {}),
           ...(specRevision !== undefined ? { specRevision } : {}),
           ...(params.userConfirmed ? { userConfirmed: true } : {}),
           saved,
