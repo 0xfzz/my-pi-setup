@@ -20,7 +20,9 @@ waits:
    `orch_spawn`. The spec is frozen here; it is never re-reviewed.
 3. **QA — parallel result review with immediate defect routing.** On each worker
    completion, one QA child judges the RESULT against the frozen criteria
-   (`orch_spawn({ purpose: "review", qaFor: "<scope>" })`). A defect pings the
+   (`orch_spawn({ purpose: "review", qaFor: "<scope>" })`), or the whole wave is
+   fanned out at once with `orch_qa({ scopes: [...] })` — at most 3 reviewers,
+   3 units each (see [waves](#waves-worker-and-qa-concurrency)). A defect pings the
    orchestrator at once; the orchestrator opens a ticket on the todo ledger
    (`todo_plan`, resource = the defective file), claims it, spawns a defect-scoped
    fix unit, and resumes the QA. QA pass → `todo_act done` with evidence; still
@@ -119,7 +121,7 @@ stateDiagram-v2
 | `purpose` | Normal | Plan | Child policy |
 |---|---|---|---|
 | `research` (Plan default) | ✅ | ✅ | read-only tools + `bash`/web inspection; no `write`/`edit`/patch |
-| `review` | via `orch_spec_review` | via `orch_spec_review` | isolated reviewer, no shell, no writer |
+| `review` | `orch_qa` / `qaFor` | `orch_qa` / `qaFor` | isolated reviewer: read-only research, `shell_read`, scoped evidence; no write/edit |
 | `spec` (`handoffId`) | ✅ | ✅ | worker allowlist, lane frozen |
 | `adhoc` (Normal default) | ✅ | ❌ | worker allowlist; no lane unless declared |
 | `implementation` | ✅ | ❌ without an execution approval | worker allowlist |
@@ -175,10 +177,12 @@ writer. The tool surface is deliberately narrow on the write side and wide on th
 | History | `shell_read` | closed grammar (`git status/log/diff/show`, `rg`, `find`, `cat`, `wc`); no redirection, heredoc, `$()`, or unknown commands |
 | Evidence | `artifact_save/edit/recall` | scoped to `review:<runId>:<lens>` or `orch-research:<scope>`; `artifact_search/list` stay denied for reviewers |
 
-Search is engine-backed, never a JavaScript directory walk: host `ffgrep` index → `rg --json` →
-`git grep` → `grep -r`, spawned with an argv array at most two at a time, with a 10 s timeout that
-returns partial results. `code_read` returns a line-numbered window plus a whole-file digest, so a
-review can cite the exact revision it read.
+Search is engine-backed, never a JavaScript directory walk: `rg --json` → `git grep` → `grep -r`,
+spawned with an argv array at most two at a time, with a 10 s timeout that returns partial results.
+`ffgrep`/`fffind` remain available directly for fast interactive lookups; `code_search` prefers the
+structured engine because it needs context and stable `path:line:column` citations. `code_read`
+returns a line-numbered window plus a whole-file digest, so a review can cite the exact revision it
+read.
 
 Budgets are per child: 6 web searches, 20 pages and 200k characters; 50 code searches, 100 reads
 and 2 MB. Fetched pages are cached in scratch for 10 minutes, so a re-read costs no network call and
@@ -187,13 +191,16 @@ deleting the scratch directory is always safe.
 Research may write scratch (page cache, index) only under `.pi/orch-research/<run>/` — `.pi/` is
 gitignored — falling back to `$TMPDIR/orch-research/<run>/` when it is not, and `PI_ORCH_SCRATCH`
 may relocate it. The repository itself is never a write target, and scratch is bounded (50 MB,
-10-minute cache TTL, 24-hour stale GC).
+10-minute cache TTL, 24-hour stale GC). Scratch is created lazily on the first cached fetch: a
+session that only searches code never writes disk at all. Artifacts are the durable channel; scratch
+is disposable.
 
 ### v1 removal and cut-over
 
 The old `subagent*`, `caller_ping` and `parent_*` names are **removed**, not aliased. Everything is `orch_*`; `/subagents on|off|status` is the single switch, and `lib/delegation-tools.ts` is the single capability table. A stale global install that registers a v1 name is stripped from the active set and refused at call time. A v1 child launched before the migration must be finished or closed before reloading: resuming it would call a tool that no longer exists.
 
-**Status:** `/orch status | list | handoffs | escalations`.
+**Commands:** `/orch status | list | handoffs | escalations`, `/orch-model`, `/orch-prompts`.
+`orch_qa` is a tool, not a command: the parent calls it to fan a wave out to QA.
 
 ### Independent specification review (opt-in)
 
@@ -208,7 +215,7 @@ orch_spec_review({ action: "resolve", runId, dispositions: [...] })
   → records how each finding was handled; readiness settles only when no blocker is open
 ```
 
-Presets: `quick` (comprehension + readiness) and `architecture` (zoom-out, comprehension, critic, readiness). A reviewer gets a snapshot quoted into its ticket, `read`, named-path search, the todo tools, and `orch_spec_review_submit` — **no** shell, **no** write tool, **no** artifact writer, **no** parent transcript pointer, and it is forced to `standalone` so an agent profile cannot widen its context. Broad search without a path and control-plane reads are refused; checkpoint and parent-brief injection are suppressed. That is enforced by the launcher and the parent's `tool_call` guard, not by prompt text. Review-ready is not human approval: the user still authorizes implementation. See [the role contract](#role-contract).
+Presets: `quick` (comprehension + readiness) and `architecture` (zoom-out, comprehension, critic, readiness). A reviewer gets a snapshot quoted into its ticket, `read`, named-path search, the todo tools, and `orch_spec_review_submit`, plus the read-only research surface: `code_map`/`code_search`/`code_read`, `web_read`/`web_research`/`web_fetch`, and `shell_read` (the closed grammar). It may write **evidence artifacts** scoped to `review:<runId>:<lens>` (`artifact_save/edit/recall`) — never a user artifact, never the work tree. It has **no** write/edit/patch, **no** general shell, **no** artifact discovery (`artifact_search`/`artifact_list`), **no** parent transcript pointer, and it is forced to `standalone` so an agent profile cannot widen its context. Broad search without a path and control-plane reads are refused; checkpoint and parent-brief injection are suppressed. That is enforced by the launcher and the parent's `tool_call` guard, not by prompt text. Review-ready is not human approval: the user still authorizes implementation. See [the role contract](#role-contract).
 
 Bind the result to the work unit with `designRef`, and the gate refuses a stale approval at both ends:
 
@@ -228,8 +235,9 @@ Tests: `node --test tests/orchestrator/*.test.ts`.
 | Role | Context | May change | Purpose |
 | --- | --- | --- | --- |
 | Elephant (Orchestrator parent) | full session, artifacts, repository | specs and control plane; no product code in Supervise | decompose, delegate, verify |
-| Goldfish (spec reviewer) | pinned snapshot plus named permitted paths | its report only | independent judgement |
+| Goldfish (spec reviewer) | pinned snapshot, permitted paths, read-only web/code research | its report and scoped evidence artifacts | independent judgement |
 | Worker | exactly one handoff/ticket | its lane | implement and verify |
+| QA reviewer | completed units, frozen criteria, read-only research | verdicts and scoped evidence artifacts | judge the result, not the spec |
 
 An ordinary Normal or Plan child is a worker, not a Goldfish. Goldfish is a
 mechanism — a fresh `standalone` session with a spec-only policy and no author
@@ -258,8 +266,11 @@ Not ported: upstream skills/commands, the staged scheduler and review UI,
 bootstrap/drift machinery, and every upstream persona. The four lenses are
 implemented here as rubrics plus prompts; adding a lens is not a framework port.
 
-Reviewer context is the ticket's pinned text and explicitly named references.
-Reviewers get `read`, named-path search, todo tools, and the submit tool. A
+Reviewer context is the ticket's pinned text, explicitly named references, and
+the read-only research surface (`code_map`/`code_search`/`code_read`,
+`web_read`/`web_research`/`web_fetch`, `shell_read`). Reviewers get `read`,
+named-path search, todo tools, the submit tool, and scoped evidence artifacts
+(`artifact_save/edit/recall`); `artifact_search`/`artifact_list` stay denied. A
 search with no path is refused because it can walk control-plane state; a
 reviewer cannot read the registry sidecar even when it lives under the working
 tree. Checkpoint snapshots and parent briefs are suppressed for spec-only
@@ -277,6 +288,11 @@ All audit targets below are implemented and covered by regression tests:
   including resume; Normal delegation is unchanged.
 - Inspect real reviewer context and filesystem search boundaries; no parent
   pointer, no checkpoint injection, no broad search, no control-plane reads.
+- Research tools are path-scoped and engine-backed; a search never walks the
+  tree in JavaScript, and a timed-out engine returns partials with a warning.
+- Reviewer writes are artifact-only and scope-checked (`review:<runId>:<lens>`);
+  the work tree has no writer, and foreign/unknown artifact ids are refused
+  identically.
 
 Review-ready is not human execution approval. Ordinary user authorization to
 implement is still required; a model-authored boolean is not proof of consent.
