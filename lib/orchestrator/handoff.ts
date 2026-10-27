@@ -514,3 +514,55 @@ A verdict, then per criterion: what you checked, the evidence, and pass/fail.
 Say plainly what you could not verify.
 `;
 }
+
+/**
+ * A QA reviewer can judge several completed units, but each verdict stays
+ * independent: the batch is a scheduling unit, not a merged judgement. Every
+ * unit keeps its own criteria, lane and verify command, and a defect names the
+ * unit it belongs to so the parent can open one ticket per failure.
+ */
+export function buildQaGroupTicket(input: {
+  label: string;
+  members: Array<{ handoff: HandoffRecord; workerName: string }>;
+  task: string;
+}): string {
+  const assignment = String(input.task ?? "").trim();
+  const sections = input.members
+    .map(({ handoff, workerName }, index) => {
+      const criteria = handoff.acceptanceCriteria.map((criterion, i) => `   ${i + 1}. ${criterion}`).join("\n");
+      const lane = handoff.laneFiles.map((file) => `   - \`${file}\``).join("\n") || "   (not declared)";
+      const verify = handoff.verifyCommand
+        ? `   verify: \`${handoff.verifyCommand}\` (a failing orch_check receipt is a defect)`
+        : "   no verify command declared: judge the evidence and the lane diff";
+      return `### ${index + 1}. \`${handoff.scope}\` (worker: ${workerName})\n\nAcceptance criteria:\n${criteria}\n\nLane:\n${lane}\n\n${verify}`;
+    })
+    .join("\n\n");
+
+  return `# QA review batch: ${input.label} — ${input.members.length} units
+
+## What you are judging
+You judge ${input.members.length} completed work units independently. The batch is a
+scheduling unit, not a merged verdict: each unit gets its own verdict, and a defect
+in one says nothing about the others.
+
+${assignment ? `## The orchestrator's focus\n${assignment}\n` : ""}## Units in this batch
+${sections}
+
+## What to do
+- Judge each unit against ITS acceptance criteria, in the order above.
+- **Satisfied** → call \`orch_done\` with one section per unit: the verdict, then
+  per criterion what you checked and the evidence.
+- **Defect** → call \`orch_ping\` IMMEDIATELY, naming the unit's scope, the failing
+  criterion, the file and line, and the smallest fix you would accept. The
+  orchestrator opens one defect ticket per failing unit and resumes you to
+  re-verify that unit. Do not wait until the whole batch is finished.
+- Never carry a finding from one unit into another unit's verdict.
+
+You are read-only: no write/edit tool and a read-only shell. If you cannot verify
+something for a unit, say so for that unit rather than guessing.
+
+## What to report back
+One verdict per unit, then per criterion: what you checked, the evidence, and
+pass/fail. Say plainly what you could not verify.
+`;
+}

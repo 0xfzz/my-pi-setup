@@ -32,6 +32,7 @@ import {
   HandoffError,
   buildAdhocTicket,
   buildChildTicket,
+  buildQaGroupTicket,
   buildQaTicket,
   handoffArtifactPayload,
   handoffIdFor,
@@ -136,6 +137,7 @@ import {
 import {
   MAX_ACTIVE_QA,
   MAX_ACTIVE_WORKERS,
+  planQaGroups,
   qaLimitRefusal,
   workerLimitRefusal,
 } from "../lib/orchestrator/qa-groups.ts";
@@ -1481,7 +1483,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
      * would reintroduce the ghost-row class of bug this registry was rewritten to
      * remove.
      */
-    meta?: Pick<ScopedChild, "purpose" | "reviewRunId" | "reviewLens" | "targetHash" | "qaForScope">,
+    meta?: Pick<ScopedChild, "purpose" | "reviewRunId" | "reviewLens" | "targetHash" | "qaForScope" | "qaForScopes">,
   ) {
     // One row per session file: a resume supersedes the previous row instead of
     // forking a second "running" ghost that only the newest row can update.
@@ -1704,6 +1706,18 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     } catch {
       return "adhoc";
     }
+  }
+
+  /** A batch label like `qa-1` may already exist from an earlier wave. */
+  function uniqueScope(base: string, taken: Set<string>): string {
+    let candidate = base.slice(0, 64);
+    let suffix = 2;
+    while (taken.has(candidate)) {
+      const tag = `-${suffix}`;
+      suffix += 1;
+      candidate = `${base.slice(0, 64 - tag.length)}${tag}`;
+    }
+    return candidate;
   }
 
   /** The branch, when the context has one. A minimal test context may not. */
@@ -2603,7 +2617,13 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       task: Type.String({ description: "The specific assignment. For an ad-hoc spawn this is the whole brief; for a spec spawn it must stay inside the handoff's lane." }),
       handoffId: Type.Optional(Type.String({ description: "Handoff id returned by orch_handoff (its scope is accepted too). Omit it for an ad-hoc spawn." })),
       qaFor: Type.Optional(
-        Type.String({ description: "QA spawns only: the completed work-unit scope whose result this child judges. Used with purpose \"review\"." }),
+        Type.Union(
+          [Type.String(), Type.Array(Type.String())],
+          { description: "QA spawns only: the completed work-unit scope(s) whose results this child judges. Used with purpose \"review\"; an array makes one reviewer judge a batch. Prefer orch_qa for a whole wave." },
+        ),
+      ),
+      qaScope: Type.Optional(
+        Type.String({ description: "QA batch label/scope, e.g. 'qa-1'. Defaults to qa-<unit> for one unit and qa-batch-<first> for a group." }),
       ),
       purpose: Type.Optional(
         Type.Union(
@@ -2712,6 +2732,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       // second review loop.
       let qaHandoff: HandoffRecord | undefined;
       let qaWorker: ScopedChild | undefined;
+      let qaMembers: Array<{ handoff: HandoffRecord; workerName: string; scope: string }> = [];
       if (purpose === "review") {
         // QA slots are QA only: a running specification reviewer is a different
         // role, and counting it here would silently halve the QA capacity.
@@ -2721,23 +2742,49 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         const qaCap = qaLimitRefusal(runningQa);
         if (qaCap) return text(qaCap, { error: "qa-limit", running: runningQa, cap: MAX_ACTIVE_QA });
 
-        const qaFor = String(params.qaFor ?? "").trim();
-        qaWorker = registry.getAllChildren().find((child) => child.scope === qaFor && child.status === "completed");
-        if (!qaWorker) {
+        const requestedScopes = (Array.isArray(params.qaFor) ? params.qaFor : [params.qaFor])
+          .map((scope: unknown) => String(scope ?? "").trim())
+          .filter(Boolean)
+          .filter((scope: string, index: number, all: string[]) => all.indexOf(scope) === index);
+        if (!requestedScopes.length) {
           return text(
-            `No completed work unit "${qaFor}" to review. A QA child judges a finished result: wait for the worker's completion trigger, then pass qaFor with its scope.`,
-            { error: "no-completed-work", scope: qaFor },
+            `A QA spawn needs at least one completed work-unit scope in qaFor.`,
+            { error: "no-completed-work", scopes: [] },
           );
         }
-        qaHandoff = qaWorker.handoffId
-          ? handoffs.get(qaWorker.handoffId)?.record
-          : [...handoffs.values()].find((entry) => entry.record.scope === qaFor)?.record;
-        if (!qaHandoff) {
+
+        const completed = registry.getAllChildren().filter((child) => child.status === "completed");
+        const missing = requestedScopes.filter((scope) => !completed.some((child) => child.scope === scope));
+        if (missing.length) {
           return text(
-            `Work unit "${qaFor}" has no handoff spec, so there are no acceptance criteria to judge. Resume or re-spawn it with a handoff.`,
-            { error: "no-handoff", scope: qaFor },
+            `No completed work unit ${missing.map((scope) => `"${scope}"`).join(", ")} to review. `
+              + `A QA child judges finished results: wait for the completion trigger, then pass qaFor with its scope(s).`,
+            { error: "no-completed-work", scopes: missing },
           );
         }
+
+        const withoutHandoff: string[] = [];
+        for (const scope of requestedScopes) {
+          const worker = completed.find((child) => child.scope === scope)!;
+          const spec = worker.handoffId
+            ? handoffs.get(worker.handoffId)?.record
+            : [...handoffs.values()].find((entry) => entry.record.scope === scope)?.record;
+          if (!spec) {
+            withoutHandoff.push(scope);
+            continue;
+          }
+          qaMembers.push({ handoff: spec, workerName: worker.name, scope });
+        }
+        if (withoutHandoff.length) {
+          return text(
+            `Work unit${withoutHandoff.length > 1 ? "s" : ""} ${withoutHandoff.map((scope) => `"${scope}"`).join(", ")} `
+              + `${withoutHandoff.length > 1 ? "have" : "has"} no handoff spec, so there are no acceptance criteria to judge. Resume or re-spawn with a handoff.`,
+            { error: "no-handoff", scopes: withoutHandoff },
+          );
+        }
+
+        qaWorker = completed.find((child) => child.scope === requestedScopes[0]);
+        qaHandoff = qaMembers[0]?.handoff;
       }
 
       // Orchestrator/Supervise implementation is spec-driven: a handoff without
@@ -2754,9 +2801,22 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         );
       }
 
-      const scope = qaHandoff ? `qa-${qaHandoff.scope}`.slice(0, 64) : handoff?.scope ?? adhocScope(params);
-      const laneFiles = qaHandoff ? [] : handoff?.laneFiles ?? [...(params.laneFiles ?? [])];
-      const acceptanceCriteria = qaHandoff ? qaHandoff.acceptanceCriteria : handoff?.acceptanceCriteria ?? [...(params.acceptanceCriteria ?? [])];
+      // Only addressable children reserve a scope. A closed or failed child is
+      // history: reusing `qa-1` for the next wave is the point of the label.
+      const takenScopes = new Set(
+        registry
+          .getAllChildren()
+          .filter((child) => child.status !== "closed" && child.status !== "failed")
+          .map((child) => child.scope),
+      );
+      const requestedQaScope = typeof params.qaScope === "string" ? params.qaScope.trim() : "";
+      const qaLabel = requestedQaScope
+        || (qaMembers.length === 1 ? `qa-${qaMembers[0]!.scope}` : qaMembers.length ? `qa-batch-${qaMembers[0]!.scope}` : "");
+      const scope = qaMembers.length ? uniqueScope(qaLabel, takenScopes) : handoff?.scope ?? adhocScope(params);
+      const laneFiles = qaMembers.length ? [] : handoff?.laneFiles ?? [...(params.laneFiles ?? [])];
+      const acceptanceCriteria = qaMembers.length
+        ? [...new Set(qaMembers.flatMap((member) => member.handoff.acceptanceCriteria))]
+        : handoff?.acceptanceCriteria ?? [...(params.acceptanceCriteria ?? [])];
       const handoffId = handoff?.id;
 
       // ── human naming ─────────────────────────────────────────────────────
@@ -2869,9 +2929,15 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       // touching v1's launch planner.
       const childArtifactSessionId = `${parentSessionId}-${handoffId ?? `adhoc-${scope}`}`;
 
-      const ticket = qaHandoff
-        ? buildQaTicket({ handoff: qaHandoff, workerName: qaWorker?.name ?? qaHandoff.scope, task: params.task })
-        : handoff
+      const ticket = qaMembers.length > 1
+        ? buildQaGroupTicket({
+            label: qaLabel || scope,
+            members: qaMembers.map((member) => ({ handoff: member.handoff, workerName: member.workerName })),
+            task: params.task,
+          })
+        : qaHandoff
+          ? buildQaTicket({ handoff: qaHandoff, workerName: qaWorker?.name ?? qaHandoff.scope, task: params.task })
+          : handoff
           ? buildChildTicket(handoff, params.task)
           : buildAdhocTicket({
               scope,
@@ -2887,7 +2953,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       const siblingScopes = [...handoffs.values()]
         .map((entry) => entry.record.scope)
         .filter((sibling) => sibling !== scope && sibling !== qaHandoff?.scope);
-      const leaked = leakedSiblingScopes(ticket, scope, siblingScopes);
+      // A QA child is a reader: its ticket must name the unit(s) it judges, so the
+      // one-handoff rule (a worker may not see a sibling's lane) does not apply.
+      const leaked = purpose === "review" ? [] : leakedSiblingScopes(ticket, scope, siblingScopes);
       if (leaked.length > 0) {
         return text(
           `Refused to spawn: this child's ticket names other work units (${leaked.join(", ")}). ` +
@@ -2962,7 +3030,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         handoffId,
         params.budgetMinutes ? params.budgetMinutes * 60_000 : undefined,
         { criteria: acceptanceCriteria, revision: handoff?.revision ?? 1 },
-        { purpose: registryPurpose(purpose), ...(qaHandoff ? { qaForScope: qaHandoff.scope } : {}) },
+        { purpose: registryPurpose(purpose), ...(qaMembers.length ? { qaForScope: qaMembers.map((member) => member.scope).join(","), qaForScopes: qaMembers.map((member) => member.scope) } : {}) },
       );
 
       return text(
@@ -2974,8 +3042,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           ...(rolePrompt
             ? [`Role prompt: ${rolePrompt.source}${rolePrompt.path ? ` (${relative(ctx.cwd, rolePrompt.path)})` : ""}.`]
             : []),
-          ...(qaHandoff
-            ? [`QA target: ${qaHandoff.scope} (${qaWorker?.name ?? "worker"}). A defect pings you; open a ticket, spawn a fix unit, and resume this QA to re-verify.`]
+          ...(qaMembers.length
+            ? [`QA target: ${qaMembers.map((member) => `${member.scope} (${member.workerName})`).join(", ")}. A defect pings you naming its unit; open a ticket, spawn a fix unit, and resume this QA to re-verify.`]
             : []),
           ``,
           handoffId
@@ -3190,6 +3258,87 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       status: "started",
     });
   }
+
+  // ── orch_qa: fan a finished wave out to QA reviewers ───────────────────────
+  pi.registerTool({
+    name: "orch_qa",
+    label: "Batch QA",
+    description:
+      "Spawn QA reviewers over a batch of completed work units, partitioned so each reviewer judges at most 3 units (up to 3 reviewers). Use after a wave of workers completes.",
+    parameters: Type.Object({
+      scopes: Type.Array(Type.String(), { description: "Completed work-unit scopes to judge." }),
+      task: Type.Optional(
+        Type.String({ description: "Shared focus for every reviewer; each still judges its own units independently." }),
+      ),
+      reviewers: Type.Optional(
+        Type.Number({ description: "Ask for more reviewers than the minimum (never beyond the cap of 3)." }),
+      ),
+      budgetMinutes: Type.Optional(
+        Type.Number({ description: "Wall-clock budget per reviewer (default 30)." }),
+      ),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const plan = planQaGroups(params.scopes, { reviewers: params.reviewers });
+      if (!plan.ok) {
+        return text(`Refused:\n${plan.problems.map((problem) => `- ${problem}`).join("\n")}`, {
+          error: "invalid-batch",
+          problems: plan.problems,
+        });
+      }
+
+      // Capacity is checked for the whole batch up front: spawning the first
+      // group and refusing the second would leave a half-reviewed wave.
+      const runningQa = registry
+        .getAllChildren()
+        .filter((child) => child.status === "running" && child.purpose === "review" && !child.reviewRunId)
+        .map((child) => child.scope);
+      const cap = qaLimitRefusal(runningQa, plan.groups.length);
+      if (cap) return text(cap, { error: "qa-limit", running: runningQa, cap: MAX_ACTIVE_QA });
+
+      // The single-child spawn owns admission, tickets, naming and the registry
+      // row; duplicating that here would let the two paths drift.
+      const spawn = pi.getAllTools().find((tool) => tool.name === "orch_spawn") as any;
+      if (!spawn?.execute) {
+        return text("orch_spawn is not available, so QA cannot be fanned out.", { error: "spawn-missing" });
+      }
+
+      const spawned: Array<{ label: string; scopes: string[]; paneId?: string; scope?: string }> = [];
+      const failed: string[] = [];
+      for (const group of plan.groups) {
+        const focus = String(params.task ?? "").trim()
+          || `Judge the ${group.scopes.length} unit(s) in this batch independently.`;
+        const result: any = await spawn.execute(
+          `qa-${group.label}`,
+          {
+            purpose: "review",
+            qaFor: group.scopes,
+            qaScope: group.label,
+            task: focus,
+            ...(params.budgetMinutes ? { budgetMinutes: params.budgetMinutes } : {}),
+          },
+          undefined,
+          undefined,
+          ctx,
+        );
+        const details = result?.details ?? {};
+        if (details.status === "started") {
+          spawned.push({ label: group.label, scopes: group.scopes, paneId: details.paneId, scope: details.scope });
+        } else {
+          failed.push(`${group.label} (${group.scopes.join(", ")}): ${result?.content?.[0]?.text ?? "failed"}`);
+        }
+      }
+
+      return text(
+        [
+          `QA batch: ${params.scopes.length} unit(s) across ${plan.groups.length} reviewer(s).`,
+          ...spawned.map((entry) => `${entry.label} → ${entry.scopes.join(", ")} (scope ${entry.scope}, pane ${entry.paneId})`),
+          ...(failed.length ? [`Failed: ${failed.join("; ")}`] : []),
+          `Each reviewer judges only its own units; a defect pings you naming the unit. ${RETRIGGER_CONTRACT}`,
+        ].join("\n"),
+        { groups: plan.groups, spawned, failed },
+      );
+    },
+  });
 
   // ── orch_resume ────────────────────────────────────────────────────────────
   pi.registerTool({

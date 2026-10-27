@@ -128,6 +128,18 @@ Plan is read-only for the **parent**; delegating research, review or spec work i
 
 A delegated child may not spawn again (`PI_SUBAGENT_DEPTH`, default max-depth 1), and one parent may hold at most 8 running children (`PI_SUBAGENT_MAX_CHILDREN`). Both are hard stops before a pane exists and both are overridable.
 
+### Waves: worker and QA concurrency
+
+A wave runs in two tiers: at most **5 concurrent workers** (`spec`, `implementation`, `adhoc`), then at most **3 QA reviewers**, each judging at most **3 units**. These caps are concurrency, not lifetime quotas — a completed child frees its slot, which is what makes wave → review → next wave work. Research readers are not workers and hold no slot; a running specification reviewer is not QA and holds no QA slot, so a live spec review cannot silently halve QA capacity.
+
+```text
+orch_qa({ scopes: ["a", "b", "c", "d", "e"] })
+  → qa-1 judges a, b
+  → qa-2 judges c, d, e
+```
+
+The split is balanced with the remainder on later groups, and each reviewer gets a batch ticket naming only its own units, criteria, lanes and verify commands — a finding never crosses verdicts. Capacity is checked for the whole batch before the first pane opens, so a wave is never half-reviewed. `orch_spawn({ purpose: "review", qaFor: [...] })` is the manual single-reviewer form; `orch_qa` is the wave form. Labels are `qa-1…qa-K` and are reused once an earlier reviewer is closed.
+
 ### Which model and system prompt a child runs on
 
 Three child roles can be bound to a model: `devil-advocate`, `worker`, and `qa-review`. A binding is `inherit` (follow the parent), one provider-qualified model, or a pool rolled **once per spawned child** — a pooled panel is diverse by construction, and a resume replays the recorded roll instead of switching mid-task.

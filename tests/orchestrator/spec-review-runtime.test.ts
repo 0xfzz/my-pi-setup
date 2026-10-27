@@ -937,3 +937,104 @@ test("a fourth QA reviewer is refused, and a running spec reviewer is not a QA s
     await h.detach();
   }
 });
+
+/** A completed unit with a handoff: the only shape QA admits. */
+async function completeWorker(h: Harness, scope: string): Promise<void> {
+  const authored = await h.call("orch_handoff", {
+    scope,
+    goal: `Ship ${scope}.`,
+    acceptanceCriteria: [`${scope} works`],
+    laneFiles: [`src/${scope}.ts`],
+  });
+  registry.registerChild({
+    id: `w-${scope}`,
+    name: `Worker ${scope}`,
+    scope,
+    sessionFile: join(h.dir, `${scope}.jsonl`),
+    paneId: `pane-${scope}`,
+    status: "completed",
+    laneFiles: [`src/${scope}.ts`],
+    lastMilestoneFiles: [],
+    updatedAt: new Date().toISOString(),
+    handoffId: authored.details.id,
+    purpose: "implementation",
+  });
+}
+
+/** The ticket the launcher attached as `@<path>`. */
+async function ticketText(script: string): Promise<string> {
+  const match = script.match(/@'([^']+)'/) ?? script.match(/@(\S+\.md)/);
+  return match ? readFile(match[1]!, "utf8") : "";
+}
+
+test("orch_qa fans five completed units out to two reviewers as 2 + 3", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    const scopes = ["unit-a", "unit-b", "unit-c", "unit-d", "unit-e"];
+    for (const scope of scopes) await completeWorker(h, scope);
+
+    const result = await h.call("orch_qa", { scopes });
+    assert.deepEqual(result.details.groups, [
+      { label: "qa-1", scopes: ["unit-a", "unit-b"] },
+      { label: "qa-2", scopes: ["unit-c", "unit-d", "unit-e"] },
+    ]);
+    assert.equal(result.details.spawned.length, 2, result.content[0].text);
+    assert.match(result.content[0].text, /qa-1 → unit-a, unit-b/);
+    assert.match(result.content[0].text, /qa-2 → unit-c, unit-d, unit-e/);
+
+    const qaRows = registry
+      .getAllChildren()
+      .filter((child) => child.purpose === "review" && !child.reviewRunId && child.status === "running");
+    assert.deepEqual(
+      qaRows.map((row) => [row.scope, row.qaForScopes]),
+      [
+        ["qa-1", ["unit-a", "unit-b"]],
+        ["qa-2", ["unit-c", "unit-d", "unit-e"]],
+      ],
+      "the registry records exactly the units each reviewer owns",
+    );
+
+    const scripts = await h.launchScripts();
+    assert.equal(scripts.length, 2, "two QA panes, not one per unit");
+    const lastTicket = await ticketText(scripts[1]!);
+    assert.match(lastTicket, /# QA review batch: qa-2 — 3 units/);
+    assert.match(lastTicket, /unit-c/);
+    assert.match(lastTicket, /unit-d/);
+    assert.match(lastTicket, /unit-e/);
+    assert.doesNotMatch(lastTicket, /unit-a/, "a reviewer never sees another reviewer's unit");
+  } finally {
+    await h.detach();
+  }
+});
+
+test("a QA batch that would exceed the reviewer cap is refused before any pane opens", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    const scopes = ["unit-a", "unit-b", "unit-c", "unit-d", "unit-e"];
+    for (const scope of scopes) await completeWorker(h, scope);
+    for (const i of [1, 2]) {
+      registry.registerChild({
+        id: `qa-${i}`,
+        name: `QA ${i}`,
+        scope: `qa-${i}`,
+        sessionFile: join(h.dir, `qa-${i}.jsonl`),
+        paneId: `pane-qa-${i}`,
+        status: "running",
+        laneFiles: [],
+        lastMilestoneFiles: [],
+        updatedAt: new Date().toISOString(),
+        purpose: "review",
+      });
+    }
+
+    const result = await h.call("orch_qa", { scopes });
+    assert.equal(result.details.error, "qa-limit", result.content[0].text);
+    assert.equal(h.started.length, 0, "a partially spawned batch is not acceptable");
+  } finally {
+    await h.detach();
+  }
+});
