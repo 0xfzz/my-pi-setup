@@ -82,6 +82,14 @@ export interface ScopedChild {
   lastTail?: string | null;
   /** Consecutive identical-tail strikes. 3 strikes = stall. */
   stallStrikes?: number;
+  /**
+   * mtime of the session file at the last tick.
+   *
+   * A child that is running a long suite prints nothing new to its pane, so tail
+   * identity alone is not evidence of a stall — but its session file keeps being
+   * written. Activity here resets the strike counter.
+   */
+  lastSessionActivity?: number;
   /** Last captured token usage for the child (from the session file tail). */
   lastTokens?: number;
   lastContextWindow?: number;
@@ -360,7 +368,7 @@ export class ScopeRegistry {
 
   public updateRuntime(
     sessionFile: string,
-    fields: Partial<Pick<ScopedChild, "lastTail" | "stallStrikes" | "lastTokens" | "lastContextWindow">>
+    fields: Partial<Pick<ScopedChild, "lastTail" | "stallStrikes" | "lastTokens" | "lastContextWindow" | "lastSessionActivity">>
   ): ScopedChild | undefined {
     const child = this.childrenBySession.get(sessionFile);
     if (!child) return undefined;

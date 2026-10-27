@@ -290,6 +290,40 @@ function runVerifyCommand(command: string, cwd: string, timeoutMs = 300_000) {
   }
 }
 
+/**
+ * Decide the next stall-strike count.
+ *
+ * A child running a long suite prints nothing new to its pane for minutes, so
+ * identical tails alone interrupt work that is going fine. Session-file activity
+ * is the missing signal: the child keeps writing its transcript even when the
+ * pane looks frozen. Pure so the rule can be tested without timers.
+ */
+export function nextStallStrikes(params: {
+  previous: number;
+  /** Pane tail is byte-identical to the previous tick. */
+  unchanged: boolean;
+  /** A tail could be read at all (null means the probe failed). */
+  tailAvailable: boolean;
+  /** The child's session file changed since the last tick. */
+  sessionActive: boolean;
+  /** An interrupt was already delivered recently. */
+  cooling: boolean;
+}): number {
+  if (params.cooling) return 0;
+  if (params.sessionActive) return 0;
+  if (!params.tailAvailable || !params.unchanged) return 0;
+  return Math.max(0, params.previous) + 1;
+}
+
+/** mtime of a session file, or null when it cannot be read (unknown, not idle). */
+function sessionActivityAt(sessionFile: string): number | null {
+  try {
+    return statSync(sessionFile).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
 function tail(value: string, lines: number): string {
   const all = value.split("\n");
   return (all.length <= lines ? all : all.slice(-lines)).join("\n");
@@ -1052,8 +1086,20 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       const lastInterrupt = child.watchdog?.interruptSentAt ? Date.parse(child.watchdog.interruptSentAt) : null;
       const cooling = lastInterrupt !== null && Number.isFinite(lastInterrupt) && now() - lastInterrupt < INTERRUPT_COOLDOWN_MS;
       const unchanged = normalizePaneTail(tail) === normalizePaneTail(child.lastTail ?? null);
-      const strikes = !cooling && unchanged && tail !== null ? (child.stallStrikes ?? 0) + 1 : 0;
-      registry.updateRuntime(child.sessionFile, { lastTail: tail, stallStrikes: strikes });
+      const activity = sessionActivityAt(child.sessionFile);
+      const sessionActive = activity !== null && activity !== (child.lastSessionActivity ?? null);
+      const strikes = nextStallStrikes({
+        previous: child.stallStrikes ?? 0,
+        unchanged,
+        tailAvailable: tail !== null,
+        sessionActive,
+        cooling,
+      });
+      registry.updateRuntime(child.sessionFile, {
+        lastTail: tail,
+        stallStrikes: strikes,
+        ...(activity !== null ? { lastSessionActivity: activity } : {}),
+      });
       if (strikes >= MAX_STALL_STRIKES) {
         await tripWatchdog(child, "stall-detected", { strikes, tail });
       }
