@@ -40,10 +40,12 @@ Pi supplies them at runtime; `npm install` fetches them locally so the tests can
 ## Docs
 
 - `README.md` is the operator-facing document: tool surface, behaviour, commands.
-- `docs/` holds design notes, audits, and `docs/patches/` (the diffs applied to installed
-  packages, plus `VERIFICATION.md`).
-- Investigation reports are also kept as workspace artifacts; sum them into `docs/` when
-  they describe a decision rather than a one-off bug.
+- Design notes and audits live in the appendix at the end of `README.md`, one collapsed
+  section each, so the repository stays searchable as one document.
+- `patches/` holds the diffs applied to installed packages, plus `VERIFICATION.md` and the
+  VCC regression harness.
+- Investigation reports are also kept as workspace artifacts; sum them into a new appendix
+  section when they describe a decision rather than a one-off bug.
 
 ## Commits
 

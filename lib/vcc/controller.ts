@@ -1,7 +1,7 @@
 /**
  * Model-aware VCC auto-compaction controller.
  *
- * Policy summary (see docs/VCC-AUTO-COMPACT.md):
+ * Policy summary (see the VCC auto-compaction design note in README.md):
  *   - a model profile supplies a calibrated quality target when one exists
  *   - otherwise a documented fallback target is used and marked uncalibrated
  *   - the retained tail is derived from the post-compaction target, not trigger/4

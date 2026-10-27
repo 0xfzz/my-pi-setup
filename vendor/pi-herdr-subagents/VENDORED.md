@@ -37,7 +37,7 @@ Deliberately **not** copied: upstream `test/`, `agents/`, `herdr-plugin/`, `inde
 The local checkout was ahead of the snapshot commit (17 modified files). The vendored
 files therefore include local work on context forking, progress control, terminal-error
 shutdown and the workflow completion contract. The human-readable record of that work is
-in [`../../docs/patches/`](../../docs/patches/).
+in [`../../patches/`](../../patches/).
 
 Two behavioural changes made *in this repository* on top of the snapshot:
 
