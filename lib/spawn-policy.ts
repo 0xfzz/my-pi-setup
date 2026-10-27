@@ -41,8 +41,11 @@ export function defaultSpawnPurpose(modeId: string | undefined): SpawnPurpose {
  * - Plan: research, review and spec work. Implementation and ad-hoc spawns are
  *   refused because the parent is read-only; an explicit execution approval
  *   lifts that for this call.
- * - Supervise/Orchestrator: a handoff spec only. The mode's whole point is
- *   lane isolation and the review ladder, and an ad-hoc child has no lane.
+ * - Supervise/Orchestrator: handoff-backed implementation plus the two reader
+ *   shapes the mode itself needs. `research` is how the parent investigates
+ *   without its own shell; `review` is the QA child that judges a worker's
+ *   result. Both are read-only, so admitting them cannot produce a diff nobody
+ *   owns. An ad-hoc child still has no lane and stays refused.
  *   `implementation` is the same spawn shape as `spec` when a handoff backs it:
  *   `registryPurpose` already stores both as "implementation", so refusing the
  *   explicit spelling only taught callers to omit a correct argument.
@@ -55,7 +58,9 @@ export function allowedSpawnPurposes(
   const mode = normalizeSpawnMode(modeId);
   if (mode === "plan") return executionApproved ? [...ALL_PURPOSES] : ["spec", "research", "review"];
   if (mode === "supervise" || mode === "orchestrator") {
-    return hasHandoff ? ["spec", "implementation"] : ["spec"];
+    return hasHandoff
+      ? ["spec", "implementation", "research", "review"]
+      : ["spec", "research", "review"];
   }
   return [...ALL_PURPOSES];
 }
@@ -85,10 +90,14 @@ export function spawnRefusal(
     const label = mode === "orchestrator" ? "Orchestrator" : "Supervise";
     if (purpose === "implementation" && !hasHandoff) {
       return `${label} mode: an implementation spawn needs a handoff lane. `
-        + `Author one with orch_handoff, then call orch_spawn with{ handoffId, purpose: "implementation" }.`;
+        + `Author one with orch_handoff, then call orch_spawn with { handoffId, purpose: "implementation" }.`;
     }
-    return `${label} mode: delegation requires a handoff spec. `
-      + `Author one with orch_handoff, then call orch_spawn with its handoffId. Ad-hoc spawns are a Normal-mode shape.`;
+    if (purpose === "adhoc") {
+      return `${label} mode: an ad-hoc child has no handoff lane, so review cannot judge it. `
+        + `To investigate, spawn one research child (purpose: "research"); to implement, author a handoff and get it reviewed.`;
+    }
+    return `${label} mode: ${purpose} delegation is not admitted. `
+      + `Use purpose "research" to investigate or a reviewed handoff to implement.`;
   }
 
   return `Spawn purpose "${purpose}" is not admitted in ${mode} mode.`;
@@ -108,7 +117,11 @@ const RESEARCH_TOOLS: readonly string[] = [
 ];
 
 export function childToolsForPurpose(purpose: SpawnPurpose): string | undefined {
-  return purpose === "research" ? RESEARCH_TOOLS.join(",") : undefined;
+  // Research and QA are readers. A QA child that could write would be able to
+  // "fix" the defect it is judging, which ends the independence the review
+  // exists to provide. Both get the reader allowlist; the launcher still appends
+  // the child control tools so they can report and escalate.
+  return purpose === "research" || purpose === "review" ? RESEARCH_TOOLS.join(",") : undefined;
 }
 
 /** The value stored on the registry row. `spec` is implemented by a worker. */

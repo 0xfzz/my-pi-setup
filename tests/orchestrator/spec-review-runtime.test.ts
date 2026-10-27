@@ -345,6 +345,33 @@ test("a reviewer files its report into the run directory, and the gate rejects a
   }
 });
 
+test("an Orchestrator research spawn needs no handoff or design review", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    h.ctx.sessionManager.getBranch().push({
+      type: "custom",
+      customType: SUPERVISOR_MODE_TYPE,
+      data: { enabled: true, previousTools: [], modeId: "orchestrator" },
+    });
+
+    // Investigate by delegating a reader. Before this, research was refused in
+    // Orchestrator mode, so the parent's only instrument was its own shell — the
+    // bypass that wrote a design doc and then reviewed it.
+    const spawned = await h.call("orch_spawn", {
+      name: "Scout",
+      task: "Inventory the orchestration seams and report findings.",
+      purpose: "research",
+    });
+    assert.equal(spawned.details.status, "started", spawned.content[0].text);
+    assert.equal(h.started.length, 1, "the research child launched a pane");
+    assert.equal(handoffs.size, 0, "research needs no handoff");
+  } finally {
+    await h.detach();
+  }
+});
+
 test("a ready reviewed handoff admits an Orchestrator implementation spawn", async () => {
   process.env.PI_HERDR_PI_BIN = "/bin/true";
   process.env.PI_HERDR_LAUNCH_PREFIX = "";
