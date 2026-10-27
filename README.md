@@ -562,22 +562,23 @@ Verification: `node --experimental-strip-types --import ./tests/isolate-env.mjs 
 
 ## Design notes
 
-Long-form reasoning lives in `docs/`, one document per subject. Each line here is the
-summary; the file is the detail.
+README summarises; `docs/` holds the detail. Every note opens with the same metadata
+block — status, scope, what it was verified against — so a stale document says so before
+you read it. The contract is [`docs/TEMPLATE.md`](docs/TEMPLATE.md).
 
-| Note | What it covers |
-| --- | --- |
-| [Orchestrator role contract and EGM subset](docs/ORCHESTRATOR-EGM.md) | Elephant/Goldfish roles, review-ready vs human-approved, the supported subset and its audit targets. |
-| [Orchestrator web dashboard](docs/ORCHESTRATOR-DASHBOARD.md) | The live graph, artifact views, server bounds and trust model. |
-| [VCC auto-compaction](docs/VCC-AUTO-COMPACT.md) | Model-aware compaction policy, budgets, carried evidence and rollback. |
-| [What is wrong with the `workflow_todo` concept](docs/TODO-CONCEPT.md) | The diagnosis behind the todo design. |
-| [Architectural improvement plan: dynamic todo engine](docs/improvement-plan.md) | Design and rationale for atomic todo sync. |
-| [Context-forking subagents](docs/CONTEXT-FORKING-SUBAGENT.md) | Audit of subagent context forking, gaps, and the implementation plan. |
-| [Subagent fork context and Plan-mode fixes](docs/FIX-SUBAGENT-BUG.md) | The active-leaf/trailing-user bug and its fix. |
-| [Compatibility audit](docs/AUDIT-COMPATIBILITY.md) | Which Pi behaviours the extensions depend on, and where they are fragile. |
-| [Baseline before the delegation-namespace migration](docs/BASELINE.md) | Verification state captured before the `orch_*` cut-over. |
-| [Patch verification](docs/patches/VERIFICATION.md) | How each applied package patch was verified. |
-| [VCC patch test notes](docs/patches/vcc-tests/README.md) | Exact changes, the regression harness, retention/index behaviour, rollback and limitations. |
+| Note | Status | Summary |
+| --- | --- | --- |
+| [Orchestrator role contract and EGM subset](docs/ORCHESTRATOR-EGM.md) | current | Elephant/Goldfish/worker roles, review-ready vs human-approved, the supported subset. |
+| [Orchestrator web dashboard](docs/ORCHESTRATOR-DASHBOARD.md) | current | The graph, artifact views, server bounds and trust model. |
+| [VCC auto-compaction](docs/VCC-AUTO-COMPACT.md) | current | Capacity vs quality target, calibration, carried evidence, rollback. |
+| [What is wrong with the `workflow_todo` concept](docs/TODO-CONCEPT.md) | proposal | Evidence for the failure mode and the intent-graph replacement. |
+| [Architectural improvement plan: dynamic todo engine](docs/improvement-plan.md) | proposal | Atomic sync, monotonic completion, and the guardrails around them. |
+| [Context-forking subagents](docs/CONTEXT-FORKING-SUBAGENT.md) | historical | What a forked child inherits, the gaps, and the plan that followed. |
+| [Subagent fork context and Plan-mode fixes](docs/FIX-SUBAGENT-BUG.md) | implemented | The active-leaf/trailing-user bug and the mode-synchronization fix. |
+| [Compatibility audit](docs/AUDIT-COMPATIBILITY.md) | historical | Which Pi behaviours the extensions depend on, ranked by severity. |
+| [Baseline before the delegation-namespace migration](docs/BASELINE.md) | historical | The verification state captured before the `orch_*` cut-over. |
+| [Patch verification](docs/patches/VERIFICATION.md) | record | What was executed to verify each applied package patch. |
+| [VCC patch test notes](docs/patches/vcc-tests/README.md) | record | Exact changes, regression harness, retention/index behaviour, rollback. |
 
 ## Research / design references
 

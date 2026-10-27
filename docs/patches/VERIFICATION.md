@@ -1,5 +1,20 @@
 # Delegated-work implementation verification
 
+| Field | Value |
+| --- | --- |
+| **Status** | verification record |
+| **Detail for** | [README § Patches](../README.md) |
+| **Scope** | `docs/patches/` |
+| **Verified against** | as recorded below (installed Pi 1.3.0 / Node 22) |
+| **Related** | [VCC test notes](vcc-tests/README.md) |
+
+## Summary
+
+- What was executed to verify each applied patch, with the exact pass counts.
+- Forward and reverse dry-runs for the Herdr and VCC diffs.
+- The independent review found five correctness issues; all were addressed, and what was checked by inspection only is stated as such.
+- Limits are explicit: no live inference, network, credentials or session reload was used.
+
 Verified on the installed Pi 1.3.0 / Node 22 setup.
 
 - `npm test`: **38/38 passed** (`workflow-test-results.tap`).

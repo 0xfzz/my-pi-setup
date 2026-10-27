@@ -1,5 +1,20 @@
 # VCC projected compaction + recall fix (Pi 1.3.0 / pi-vcc 0.4.1)
 
+| Field | Value |
+| --- | --- |
+| **Status** | install + test record |
+| **Detail for** | [README § Delegated-work checkpoints](../../README.md) |
+| **Scope** | installed `pi-vcc` 0.4.1 sources |
+| **Verified against** | `node --test docs/patches/vcc-tests/regression.mjs` |
+| **Related** | [Verification](VERIFICATION.md) |
+
+## Summary
+
+- The zero-LLM compiler is preserved: no provider call was added, transcripts are not rewritten.
+- Only three installed files change; each change and its reason is listed.
+- The regression harness exercises those changes against real Pi projection APIs.
+- Retention/index behaviour, rollback and limitations are specified.
+
 ## Preserved concept
 
 VCC remains a **zero-LLM, algorithmic conversation compiler**. Its normalizer,

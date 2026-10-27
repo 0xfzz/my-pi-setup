@@ -1,6 +1,19 @@
 # What's wrong with the `workflow_todo` concept, and what to build instead
 
-Status: design critique + proposal. Evidence is cited against this tree.
+| Field | Value |
+| --- | --- |
+| **Status** | critique + proposal |
+| **Detail for** | [README § Conditional todo list](../README.md) |
+| **Scope** | `extensions/todo.ts`, `lib/todo-tools.ts` |
+| **Verified against** | cited against this tree at the time of writing; not re-verified |
+| **Related** | [Improvement plan](improvement-plan.md) |
+
+## Summary
+
+- Enforcement without intent: the extension injected an unrequested plan state four times in one session, each costing a turn.
+- The specific defects are enumerated with evidence, alongside what the current design already gets right.
+- The proposal is an intent graph with a computed frontier, not a linear checklist with mandatory transitions.
+- The one-line version at the end is the part to read if you only read one paragraph.
 
 ---
 

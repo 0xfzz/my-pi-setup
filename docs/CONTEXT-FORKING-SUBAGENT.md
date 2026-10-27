@@ -1,10 +1,21 @@
 # Context-Forking Subagents — research, gaps, and implementation plan
 
-Status: **historical audit / plan; local implementation has since changed**
+| Field | Value |
+| --- | --- |
+| **Status** | historical audit + plan |
+| **Detail for** | [README § Delegated-work checkpoints](../README.md) |
+| **Scope** | `vendor/pi-herdr-subagents/`, `lib/subagent-context.ts` |
+| **Verified against** | audited against Pi 1.3.0 and Herdr @ `9942203`, as stated below; not current |
+| **Related** | [Implemented fixes](FIX-SUBAGENT-BUG.md) |
+
+## Summary
+
+- What the forked child actually inherits today, measured against the concept of a context-rich delegate.
+- Gap analysis with line-level evidence, including smaller-model context budgeting (still a limitation).
+- Design for three context shapes plus on-demand recall, with rollout, risks and non-goals.
+- Superseded in part: read the implemented fixes first, then this for the reasoning and the open items.
 
 See [`FIX-SUBAGENT-BUG.md`](FIX-SUBAGENT-BUG.md) for the implemented active-leaf/trailing-user fix, current mode synchronization, regression results, and remaining limitations. The gap descriptions and line references below describe the earlier audited baseline, not all current code. In particular, smaller-model context budgeting remains a limitation; do not treat every proposed item below as implemented.
-Scope: `pi-workflow-extensions` + its companion patches to `pi-herdr-subagents`
-Audited against: Pi 1.3.0 (`@earendil-works/pi-coding-agent`), installed `pi-herdr-subagents`
 (`~/.pi/agent/git/github.com/0xfzz/pi-herdr-subagents` @ `9942203`), `pi-vcc` 0.4.1.
 
 ---

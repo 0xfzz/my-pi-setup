@@ -1,5 +1,20 @@
 # Compatibility audit — pi-workflow-extensions
 
+| Field | Value |
+| --- | --- |
+| **Status** | historical audit (Pi 1.3.0) |
+| **Detail for** | [README § Input modes](../README.md) |
+| **Scope** | `extensions/modes.ts`, `extensions/providers.ts`, `lib/tool-policy.ts` |
+| **Verified against** | reproductions against the real runtime at the time; not re-verified |
+| **Related** | [Baseline](BASELINE.md) |
+
+## Summary
+
+- Five findings ranked by severity; the two that matter are Plan-mode bash hardening being silently discarded and the editor slot being clobbered.
+- Each finding names the evidence, the failure mode and the smallest fix that removes it.
+- What is already correct is listed too, so a later change does not "fix" working behaviour.
+- Portability and a suggested order of work close the document.
+
 Audited against **Pi 1.3.0** (`@earendil-works/pi-coding-agent`) and the 9 packages
 actually installed in `~/.pi/agent/settings.json`.
 

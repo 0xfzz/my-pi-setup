@@ -1,5 +1,20 @@
 # Baseline before the delegation-namespace migration
 
+| Field | Value |
+| --- | --- |
+| **Status** | historical record |
+| **Detail for** | [README § Verification](../README.md) |
+| **Scope** | repository-wide |
+| **Verified against** | 2026-10-26T14:49:02Z, Node v22.23.2; superseded by the current suite |
+| **Related** | [Verification record](patches/VERIFICATION.md) |
+
+## Summary
+
+- Environment, deterministic checks and the delegation tool inventory at the moment before the orch_* migration.
+- Every later gate compares against this file instead of against "green".
+- The final C12 verification block records the post-migration state.
+- Numbers in the appendix below are historical; do not quote them as current.
+
 Recorded at the start of executing `@artifact:normal-mode-delegation-fix-plan` (v3).
 Every later gate compares against this file, not against "green".
 

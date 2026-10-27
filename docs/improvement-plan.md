@@ -1,8 +1,12 @@
 # Architectural Improvement Plan: Dynamic AI Todo List System
-**Project:** `pi-workflow-extensions` (Pi Coding Agent)  
-**Target:** Dynamic, State-of-the-Art Task Management Aligned with OpenCode & Claude Code  
-**Goal:** Deliver fluid, dynamic task tracking while guaranteeing strict runtime stability and eliminating agent loops  
-**Date:** October 2026  
+
+| Field | Value |
+| --- | --- |
+| **Status** | proposal (dated October 2026) |
+| **Detail for** | [README § Conditional todo list](../README.md) |
+| **Scope** | `extensions/todo.ts`, `lib/todo-tools.ts` |
+| **Verified against** | design document; the shipped surface is described in README |
+| **Related** | [Todo concept](TODO-CONCEPT.md) |
 
 ---
 

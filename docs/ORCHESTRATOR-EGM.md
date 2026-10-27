@@ -1,5 +1,20 @@
 # Orchestrator: review shell and EGM subset
 
+| Field | Value |
+| --- | --- |
+| **Status** | current reference |
+| **Detail for** | [README § Orchestrator mode](../README.md) |
+| **Scope** | `extensions/orchestrator.ts`, `lib/orchestrator/`, `lib/spawn-policy.ts` |
+| **Verified against** | commit `9a6cf72` baseline stated below; re-read at `f155a18` |
+| **Related** | [Baseline](BASELINE.md) · [Dashboard](ORCHESTRATOR-DASHBOARD.md) |
+
+## Summary
+
+- Three roles, not three prompts: Elephant (context-rich parent), Goldfish (independent spec reviewer), worker (one handoff, one lane).
+- Review-ready, human-approved and implemented are three different facts; a cancelled dialog is never consent.
+- A verdict binds to a content hash, a fix forces a fresh review, and a stale approval is refused at both ends.
+- The EGM subset is pinned, reviewed, direct-dispatch, findings — not the upstream scheduler, UI or bootstrap machinery.
+
 ## Execution baseline
 
 Before this change (commit `9a6cf72`), working tree clean:

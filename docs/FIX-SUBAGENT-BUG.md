@@ -1,5 +1,20 @@
 # Subagent fork context and Plan-mode state fixes
 
+| Field | Value |
+| --- | --- |
+| **Status** | implemented fix record |
+| **Detail for** | [README § Delegated-work checkpoints](../README.md) |
+| **Scope** | `vendor/pi-herdr-subagents/`, `lib/plan-mode.ts`, `lib/modes.ts` |
+| **Verified against** | validation steps recorded below |
+| **Related** | [Original audit](CONTEXT-FORKING-SUBAGENT.md) |
+
+## Summary
+
+- Fork context is now tree-aware: a linear prefix kept abandoned branches and dropped the investigation before delegation.
+- The child keeps the work that happened immediately before it was spawned, which is the whole point of the fork.
+- Plan/Normal mode state is synchronized so a switch is reflected rather than remembered from an earlier turn.
+- Activation steps are listed at the end; nothing here needs a live session reload.
+
 ## Scope
 
 This tracks the fixes requested in `@artifact:fix-subagent-bug` and the report that an agent sometimes claims Plan mode is still active after switching to Normal.

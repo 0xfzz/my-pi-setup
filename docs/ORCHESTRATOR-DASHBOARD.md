@@ -1,5 +1,20 @@
 # Orchestrator web dashboard
 
+| Field | Value |
+| --- | --- |
+| **Status** | current operator guide |
+| **Detail for** | [README § Orchestrator web dashboard](../README.md) |
+| **Scope** | `web/dashboard/`, `extensions/dashboard.ts`, `lib/dashboard/` |
+| **Verified against** | `tests/dashboard-*.test.ts`, `tests/dashboard-host-runtime.test.ts` |
+| **Related** | [Orchestrator mode](ORCHESTRATOR-EGM.md) |
+
+## Summary
+
+- A local, read-only view of the orchestrator graph, its workers and the workspace artifacts.
+- One detached server per OS user; later sessions join the same page instead of starting another.
+- Loopback only, separate producer/browser credentials, no mutation endpoints, projection allowlist (no transcripts, paths or tails).
+- Delivery is best-effort and coalesced, so a dead browser cannot block orchestration.
+
 A local, read-only dashboard for the orchestrator, its subagents, and workspace artifacts.
 
 ## Start

@@ -1,5 +1,20 @@
 # VCC auto-compaction
 
+| Field | Value |
+| --- | --- |
+| **Status** | current policy |
+| **Detail for** | [README § Delegated-work checkpoints](../README.md) |
+| **Scope** | `lib/vcc/`, `extensions/subagent-checkpoints.ts` |
+| **Verified against** | as recorded under Tests below; not re-verified in this pass |
+| **Related** | [Patch test notes](patches/vcc-tests/README.md) |
+
+## Summary
+
+- Replaces "trigger at 20% of the window, keep trigger/4" with three separate numbers: capacity, quality target, post-compaction target.
+- A model profile supplies a calibrated target when one exists; otherwise a documented fallback is used and marked uncalibrated.
+- The retained tail is derived from the post-compaction target, and the whole request is verified before the boundary draft is returned.
+- Configuration, calibration, telemetry and the small-model caveat are specified below.
+
 Model-aware compaction controller for `pi-vcc`. Replaces the previous
 "trigger at 20% of the context window, keep `trigger/4` of recent tail" policy
 with one that separates **capacity**, **quality target**, and **post-compaction

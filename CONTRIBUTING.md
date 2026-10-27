@@ -41,7 +41,9 @@ Pi supplies them at runtime; `npm install` fetches them locally so the tests can
 
 - `README.md` is the operator-facing document: tool surface, behaviour, commands.
 - `docs/` holds design notes, audits, and `docs/patches/` (the diffs applied to installed
-  packages, plus `VERIFICATION.md`).
+  packages, plus `VERIFICATION.md`). Every note follows [`docs/TEMPLATE.md`](docs/TEMPLATE.md):
+  a status/scope/verification block, a five-bullet summary, then the detail. `README.md`
+  indexes each note in one row — README summarises, the note holds the detail.
 - Investigation reports are also kept as workspace artifacts; sum them into `docs/` when
   they describe a decision rather than a one-off bug.
 
