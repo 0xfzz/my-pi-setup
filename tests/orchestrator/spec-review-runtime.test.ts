@@ -214,6 +214,30 @@ test("start pins the design, launches one isolated reviewer per lens, and leaks 
   }
 });
 
+test("a target that never converges stops after three non-ready rounds", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    saveDesign(h, "loop-design", "# Loop\n\nAmbiguous, and the parent keeps re-reviewing instead of deciding.");
+
+    for (let round = 0; round < 3; round += 1) {
+      const started = await h.call("orch_spec_review", { action: "start", targetArtifactId: "loop-design" });
+      assert.ok(started.details.runId, `round ${round + 1} starts: ${started.content[0].text}`);
+    }
+    assert.equal(h.started.length, 6, "three rounds launched two isolated reviewers each");
+
+    const refused = await h.call("orch_spec_review", { action: "start", targetArtifactId: "loop-design" });
+    assert.equal(refused.details.error, "review-loop");
+    assert.match(refused.content[0].text, /Refusing to start another review/);
+    assert.match(refused.content[0].text, /record dispositions/);
+    assert.equal(refused.details.rounds.length, 3);
+    assert.equal(h.started.length, 6, "the refused round launched no reviewer");
+  } finally {
+    await h.detach();
+  }
+});
+
 test("a reviewer cannot broad-search the tree or read control-plane state", async () => {
   process.env.PI_SUBAGENT_REVIEW_POLICY = "spec-only";
   process.env.PI_SUBAGENT_REVIEW_RUN = "spec-review-test";

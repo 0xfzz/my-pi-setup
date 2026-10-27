@@ -1620,6 +1620,32 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   const MAX_PINNED_CHARS = 512 * 1024;
 
   /**
+   * How many non-ready rounds one target may accumulate before the parent decides.
+   *
+   * The gate is strict by design, so a parent that answers every finding by
+   * revising the document can loop on reviews and never delegate. Three rounds is
+   * enough to converge a good spec; past that the disagreement is a decision
+   * (accept/contest a finding, or ask the user), not another reviewer pair.
+   */
+  const MAX_REVIEW_ROUNDS = 3;
+
+  /**
+   * Rounds opened for the same target since its last ready review.
+   *
+   * `ref` is the artifact id or file path: re-authoring a handoff keeps the id,
+   * so a genuinely revised spec still counts as the same conversation. A ready
+   * run resets the count — the question was answered. Cancelled runs never count,
+   * because cancelling is how a parent abandons a bad round.
+   */
+  function nonReadyRoundsFor(kind: "artifact" | "file", ref: string): ReviewRun[] {
+    const runs = [...specReviews.values()]
+      .filter((entry) => entry.target.kind === kind && entry.target.ref === ref && entry.status !== "cancelled")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+    const lastReady = runs.map((entry) => entry.readiness.ready).lastIndexOf(true);
+    return runs.slice(lastReady + 1).filter((entry) => !entry.readiness.ready);
+  }
+
+  /**
    * Read a workspace artifact's exact content.
    *
    * Branch first, then the sidecar the artifact extension writes for scoped specs
@@ -1864,6 +1890,27 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         // A rerun over the same content is a genuinely new attempt: the id carries
         // a salt so the previous run's reports and dispositions stay auditable
         // instead of being overwritten by a second opinion.
+        //
+        // But rerunning forever is not an attempt, it is a loop. When the same
+        // target has already burned MAX_REVIEW_ROUNDS without reaching readiness,
+        // another reviewer pair cannot break the tie: the parent must decide.
+        const nonReady = nonReadyRoundsFor(kind, ref);
+        if (nonReady.length >= MAX_REVIEW_ROUNDS) {
+          return text(
+            [
+              `Refusing to start another review: \`${ref}\` has had ${nonReady.length} non-ready rounds `,
+              `(${nonReady.map((entry) => entry.id).join(", ")}) and none reached readiness.`,
+              ``,
+              `A fourth pair of readers cannot settle a disagreement the previous three left open. Decide instead:`,
+              `  • record dispositions with orch_spec_review({ action: "resolve", runId, dispositions }) —`,
+              `    accept a finding with a rationale, or contest it, instead of revising the text again;`,
+              `  • or escalate the open question to the user;`,
+              `  • or, if the design really changed, give the new design its own artifact id so this history does not apply.`,
+            ].join("\n"),
+            { error: "review-loop", ref, rounds: nonReady.map((entry) => entry.id), max: MAX_REVIEW_ROUNDS },
+          );
+        }
+
         const run = openReviewRun({ target, preset, now: new Date(now()), salt: String(specReviews.size + 1) });
         // Machine-detectable defects are computed once, at pin time, and quoted
         // into every result. A reviewer that ignores them is still free to be
