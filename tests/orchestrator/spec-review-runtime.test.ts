@@ -756,3 +756,74 @@ test("reviewers run on the devil-advocate binding", async () => {
     await h.detach();
   }
 });
+
+/** The launcher passes system prompts by file path, so read what the child got. */
+async function systemPromptText(script: string): Promise<string | undefined> {
+  // The launcher shell-quotes argv entries, including the flag itself.
+  const match = script.match(/'?--(?:append-)?system-prompt'?\s+(?:'([^']*)'|"([^"]*)"|(\S+))/);
+  const path = match?.[1] ?? match?.[2] ?? match?.[3];
+  return path ? readFile(path, "utf8") : undefined;
+}
+
+async function writeRolePrompt(dir: string, name: string, text: string): Promise<void> {
+  const roleDir = join(dir, ".pi", "orch-agents");
+  await mkdir(roleDir, { recursive: true });
+  await writeFile(join(roleDir, name), text, "utf8");
+}
+
+test("a spawned worker receives the workspace role prompt as an appended system prompt", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    await writeRolePrompt(h.dir, "worker.md", "# House rules\n\nOnly edit the lane, and cite the verify output.");
+    const spawned = await h.call("orch_spawn", {
+      name: "Retry Worker",
+      task: "Implement the retry policy.",
+      purpose: "adhoc",
+      laneFiles: ["src/retry.ts"],
+    });
+    assert.equal(spawned.details.status, "started", spawned.content[0].text);
+    assert.match(spawned.content[0].text, /Role prompt: project \(\.pi\/orch-agents\/worker\.md\)/);
+
+    const script = (await h.launchScripts())[0]!;
+    assert.match(script, /--append-system-prompt/, "the role prompt is a real system prompt, not ticket text");
+    assert.match(await systemPromptText(script) ?? "", /Only edit the lane, and cite the verify output\./);
+  } finally {
+    await h.detach();
+  }
+});
+
+test("with no workspace file the built-in role prompt is used", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    const spawned = await h.call("orch_spawn", {
+      name: "Retry Worker",
+      task: "Implement the retry policy.",
+      purpose: "adhoc",
+      laneFiles: ["src/retry.ts"],
+    });
+    assert.match(spawned.content[0].text, /Role prompt: builtin/);
+    assert.match(await systemPromptText((await h.launchScripts())[0]!) ?? "", /# Role: worker/);
+  } finally {
+    await h.detach();
+  }
+});
+
+test("reviewers receive the devil-advocate role prompt", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    await writeRolePrompt(h.dir, "devil-advocate.md", "Judge the document, and state what you checked.");
+    saveDesign(h, "retry-design", "# Retry\n\nRetry with exponential backoff.");
+    const started = await h.call("orch_spec_review", { action: "start", targetArtifactId: "retry-design" });
+    assert.ok(started.details.runId, started.content[0].text);
+    assert.match(started.content[0].text, /Reviewer prompt: project/);
+    assert.match(await systemPromptText((await h.launchScripts())[0]!) ?? "", /Judge the document, and state what you checked\./);
+  } finally {
+    await h.detach();
+  }
+});

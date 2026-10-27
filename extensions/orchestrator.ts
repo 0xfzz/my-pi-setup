@@ -26,7 +26,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
 import {
   HandoffError,
@@ -86,7 +86,7 @@ import {
   type SubagentOutcome,
 } from "../vendor/pi-herdr-subagents/src/watcher.ts";
 import { buildOutcomeMessage } from "../vendor/pi-herdr-subagents/src/messages.ts";
-import { loadAgentDefaults } from "../vendor/pi-herdr-subagents/src/agents.ts";
+import { loadAgentDefaults, type AgentDefaults } from "../vendor/pi-herdr-subagents/src/agents.ts";
 import { loadSubagentSettings, saveSubagentSettings } from "../vendor/pi-herdr-subagents/src/settings.ts";
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";
 import { isDelegationTool, isRetiredDelegationTool, mayUseDelegationTool } from "../lib/delegation-tools.ts";
@@ -115,6 +115,7 @@ import {
 import { superviseModeFromBranch } from "../lib/supervise-mode.ts";
 import { planModeFromBranch } from "../lib/plan-mode.ts";
 import { readOnlyShellCommand } from "../lib/plan-shell.ts";
+import { ensureRolePrompts, loadRolePrompt, renderRolePromptReport } from "../lib/orchestrator/role-prompts.ts";
 import { providerModelPicker } from "../lib/provider-model-picker.ts";
 import {
   ORCH_ROLES,
@@ -2141,6 +2142,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         const launched: string[] = [];
         const failed: string[] = [];
         const modelNotes: string[] = [];
+        // One prompt for every lens: the lens differs by ticket, not by role.
+        const reviewerPrompt = loadRolePrompt("devil-advocate", cwd);
         for (const slot of run.reviewers) {
           const ticket = renderReviewerTicket({
             runId: run.id,
@@ -2163,7 +2166,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
                 review: { runId: run.id, lens: slot.lens, targetHash: target.contentHash, dir, roots: [cwd] },
                 scope: slot.scope,
               },
-              null,
+              rolePromptDefs(null, reviewerPrompt.text),
               {
                 sessionDir: ctx.sessionManager.getSessionDir(),
                 sessionId: `${parentSessionId}-${run.id}-${slot.lens}`,
@@ -2228,6 +2231,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             `Pinned ${target.kind} \`${target.ref}\` at ${target.contentHash.slice(0, 12)}.`,
             launched.length ? `Launched: ${launched.join(", ")}.` : "No reviewer was launched.",
             ...(modelNotes.length ? [`Reviewer models: ${modelNotes.join(", ")}.`] : []),
+            `Reviewer prompt: ${reviewerPrompt.source}${reviewerPrompt.path ? ` (${relative(cwd, reviewerPrompt.path)})` : ""}.`,
             ...(failed.length ? [`Failed: ${failed.join("; ")}`] : []),
             ``,
             `Reviewers are isolated: no parent transcript, no artifacts, no write tool, no shell.`,
@@ -2816,16 +2820,20 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       const agentDefs = params.agent ? loadAgentDefaults(params.agent) : null;
       const subagentSettings = loadSubagentSettings(ctx.cwd);
 
-      // The role binding decides the child's model unless this call names one. A
-      // QA reviewer critiques the worker's diff (qa-review); spec, implementation
-      // and ad-hoc children are workers. Research readers are cheap by design and
-      // keep the previous behaviour: no role, so no model argument.
-      const roleModel =
+      // The role decides both the child's model and its system prompt unless this
+      // call names a model. A QA reviewer critiques the worker's diff (qa-review);
+      // spec, implementation and ad-hoc children are workers. Research readers are
+      // cheap by design and keep the previous behaviour: no role, no role prompt.
+      const spawnRole: OrchRole | undefined =
         purpose === "review"
-          ? resolveChildModel(ctx, "qa-review", subagentSettings, params.model, agentDefs?.model)
+          ? "qa-review"
           : purpose === "spec" || purpose === "implementation" || purpose === "adhoc"
-            ? resolveChildModel(ctx, "worker", subagentSettings, params.model, agentDefs?.model)
+            ? "worker"
             : undefined;
+      const roleModel = spawnRole
+        ? resolveChildModel(ctx, spawnRole, subagentSettings, params.model, agentDefs?.model)
+        : undefined;
+      const rolePrompt = spawnRole ? loadRolePrompt(spawnRole, ctx.cwd) : undefined;
 
       // Per-handoff artifact directory: the child's ticket is not parked beside a
       // sibling's. getArtifactDir() is join(sessionDir, 'artifacts', sessionId), so
@@ -2878,7 +2886,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             // Deliberately NOT passing specPath: a path is a promise the child
             // shares a UID with its siblings and cannot keep.
           },
-          agentDefs,
+          rolePromptDefs(agentDefs, rolePrompt?.text),
           {
             sessionDir: ctx.sessionManager.getSessionDir(),
             sessionId: childArtifactSessionId,
@@ -2935,6 +2943,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           `Pane: ${started.paneId}`,
           `Lane: ${laneFiles.join(", ") || "not declared (ad-hoc)"}`,
           ...(roleModel ? [`Model: ${renderAttribution(roleModel)}.`] : []),
+          ...(rolePrompt
+            ? [`Role prompt: ${rolePrompt.source}${rolePrompt.path ? ` (${relative(ctx.cwd, rolePrompt.path)})` : ""}.`]
+            : []),
           ...(qaHandoff
             ? [`QA target: ${qaHandoff.scope} (${qaWorker?.name ?? "worker"}). A defect pings you; open a ticket, spawn a fix unit, and resume this QA to re-verify.`]
             : []),
@@ -4710,6 +4721,18 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   }
 
   /**
+   * The child identity is the workspace role prompt plus any agent-profile body.
+   * `systemPromptMode` must be set or the launcher prepends the identity to the
+   * ticket text instead of passing a real system prompt; "append" keeps pi's own
+   * prompt, which a role brief should refine, not replace.
+   */
+  function rolePromptDefs(agentDefs: AgentDefaults | null, promptText: string | undefined): AgentDefaults | null {
+    if (!promptText) return agentDefs;
+    const body = [promptText, agentDefs?.body].filter(Boolean).join("\n\n");
+    return { ...(agentDefs ?? {}), body, systemPromptMode: agentDefs?.systemPromptMode ?? "append" };
+  }
+
+  /**
    * Which model one delegated child runs on. Resolution is per spawn, not per
    * role: a pooled binding rolls once here, so a resume replays a recorded
    * decision instead of silently switching the child's model mid-task.
@@ -4814,6 +4837,34 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       }
       saveRoleBinding(ctx, role, binding, project);
       ctx.ui.notify(`${role} → ${renderBinding(binding)}${project ? " (project)" : ""}`, "info");
+    },
+  });
+
+  pi.registerCommand("orch-prompts", {
+    description: "Role system prompts: /orch-prompts inspects, /orch-prompts init [--force] writes the defaults into .pi/orch-agents/",
+    handler: async (arg, ctx) => {
+      const tokens = String(arg ?? "").trim().split(/\s+/).filter(Boolean);
+      const cwd = (ctx as any).cwd || process.cwd();
+
+      if (tokens[0] === "init") {
+        const written = ensureRolePrompts(cwd, { force: tokens.includes("--force") });
+        ctx.ui.notify(
+          [
+            `Role prompts in ${relative(cwd, written.dir) || written.dir}:`,
+            ...written.created.map((path) => `created ${relative(cwd, path)}`),
+            ...written.skipped.map((path) => `kept ${relative(cwd, path)} (authored content; --force overwrites)`),
+          ].join("\n"),
+          "info",
+        );
+        return;
+      }
+
+      if (tokens.length) {
+        ctx.ui.notify("Usage: /orch-prompts | /orch-prompts init [--force]", "error");
+        return;
+      }
+
+      ctx.ui.notify(renderRolePromptReport(cwd).join("\n"), "info");
     },
   });
 

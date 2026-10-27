@@ -128,7 +128,7 @@ Plan is read-only for the **parent**; delegating research, review or spec work i
 
 A delegated child may not spawn again (`PI_SUBAGENT_DEPTH`, default max-depth 1), and one parent may hold at most 8 running children (`PI_SUBAGENT_MAX_CHILDREN`). Both are hard stops before a pane exists and both are overridable.
 
-### Which model a child runs on
+### Which model and system prompt a child runs on
 
 Three child roles can be bound to a model: `devil-advocate`, `worker`, and `qa-review`. A binding is `inherit` (follow the parent), one provider-qualified model, or a pool rolled **once per spawned child** — a pooled panel is diverse by construction, and a resume replays the recorded roll instead of switching mid-task.
 
@@ -138,6 +138,16 @@ Three child roles can be bound to a model: `devil-advocate`, `worker`, and `qa-r
 /orch-model worker zai/glm-5.3-flash,deepseek/deepseek-4.1-flash   # text form
 /orch-model --project worker inherit         # write the project file instead of the global one
 ```
+
+Each role also has a **system prompt**, resolved per workspace: `.pi/orch-agents/devil-advocate.md`, `worker.md`, `qa-reviewer.md` (the role-id alias `qa-review.md` is accepted), then a global file under the agent dir, then a built-in default. The prompt is passed as a real `--append-system-prompt` file, so pi's own prompt stays and the role brief refines it.
+
+```text
+/orch-prompts                 # role → source (project | global | builtin) and path
+/orch-prompts init            # write the three defaults; never overwrites authored content
+/orch-prompts init --force    # regenerate them
+```
+
+An empty file falls through instead of silencing the role. Worker prompts apply to `spec`, `implementation` and `adhoc` children, `qa-reviewer.md` to QA reviewers, and `devil-advocate.md` to every lens of a spec review; research readers are unchanged.
 
 Candidates come from the live model registry, so a provider added in pi appears with no code change. Bindings persist in `subagents.json` as `{ provider, model }` (project wins over global) and are read tolerantly: one malformed role never discards the rest. Precedence is explicit `model` argument → role binding → agent profile → global default; `inherit` passes no `--model` at all. A binding whose model vanished from the registry falls back to the next pool member, then to inherit, and every spawn/review result names the model and why it was chosen. Worker bindings cover `spec`, `implementation` and `adhoc` children; `research` readers keep the default and stay cheap.
 
