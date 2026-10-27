@@ -6,6 +6,7 @@ import {
   pathPolicyProblem,
   readTargets,
   reviewPolicyFromEnv,
+  reviewPolicyStatus,
   SPEC_ONLY_TOOLS,
   SPEC_ONLY_POLICY,
   REVIEW_DIR_ENV,
@@ -34,7 +35,26 @@ test("a half-written policy is refused rather than weakened", () => {
   for (const missing of [REVIEW_RUN_ENV, REVIEW_LENS_ENV, REVIEW_TARGET_ENV, REVIEW_DIR_ENV]) {
     const withHole = env({ [missing]: undefined });
     assert.equal(reviewPolicyFromEnv(withHole), undefined, `${missing} is required`);
+    const status = reviewPolicyStatus(withHole);
+    assert.equal(status.state, "invalid", `${missing} must make the policy invalid, not ordinary`);
+    assert.ok(status.state === "invalid" && status.problems.length > 0);
   }
+});
+
+test("policy status distinguishes absent, valid and invalid", () => {
+  assert.equal(reviewPolicyStatus({}).state, "none");
+  assert.equal(reviewPolicyStatus({ [REVIEW_POLICY_ENV]: "" }).state, "none");
+  assert.equal(reviewPolicyStatus({ [REVIEW_POLICY_ENV]: "spec-only" }).state, "invalid");
+  assert.equal(reviewPolicyStatus({ [REVIEW_POLICY_ENV]: "advisory" }).state, "invalid");
+  assert.equal(reviewPolicyStatus(env()).state, "valid");
+
+  const badHash = reviewPolicyStatus(env({ [REVIEW_TARGET_ENV]: "not-a-hash" }));
+  assert.equal(badHash.state, "invalid");
+  assert.ok(badHash.state === "invalid" && badHash.problems.some(problem => /sha256/.test(problem)));
+
+  const badLens = reviewPolicyStatus(env({ [REVIEW_LENS_ENV]: "vibes" }));
+  assert.equal(badLens.state, "invalid");
+  assert.ok(badLens.state === "invalid" && badLens.problems.some(problem => /not a known review lens/.test(problem)));
 });
 
 test("a complete policy resolves roots absolutely", () => {

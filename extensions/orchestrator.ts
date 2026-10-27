@@ -131,6 +131,7 @@ import {
   readTargets,
   renderPolicyForReviewer,
   reviewPolicyFromEnv,
+  reviewPolicyStatus,
   type ReviewLens,
 } from "../lib/orchestrator/review-policy.ts";
 import {
@@ -1150,7 +1151,18 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     // resolved from the launcher-written environment, so a profile that 'wants'
     // bash or a writer does not get one — the profile can narrow the policy but
     // cannot widen it.
-    const reviewPolicy = reviewPolicyFromEnv();
+    const policyStatus = reviewPolicyStatus();
+    if (policyStatus.state === "invalid") {
+      // Fail closed. An ordinary child has no policy at all; a half-written
+      // reviewer policy is not ordinary. Let it report the blocker and nothing else.
+      if (event.toolName === "orch_ping" || event.toolName === "orch_done") return;
+      return {
+        block: true,
+        reason: `This session declares a spec-only review policy that cannot be read in full (${policyStatus.problems.join("; ")}). `
+          + `Only orch_ping/orch_done are available so it can report the blocker; it must not continue as an ordinary child.`,
+      };
+    }
+    const reviewPolicy = policyStatus.state === "valid" ? policyStatus.policy : undefined;
     if (reviewPolicy) {
       if (isSpecOnlyDeniedTool(event.toolName)) {
         return {
@@ -1588,12 +1600,18 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       ),
     }),
     async execute(_toolCallId, params) {
-      const policy = reviewPolicyFromEnv();
-      if (!policy) {
+      const status = reviewPolicyStatus();
+      if (status.state === "invalid") {
+        throw new Error(
+          `This reviewer session's spec-only policy is invalid (${status.problems.join("; ")}); refusing to file a report.`,
+        );
+      }
+      if (status.state !== "valid") {
         throw new Error(
           "orch_spec_review_submit is only available to a spec-only reviewer child. The orchestrator collects reports with orch_spec_review.",
         );
       }
+      const policy = status.policy;
       if (!isReviewLens(policy.lens)) {
         throw new Error(`This reviewer session has an unknown lens (${policy.lens}); refusing to file a report.`);
       }
@@ -2428,6 +2446,24 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   });
 
   /**
+   * A reviewer session is independent for life.
+   *
+   * `reviewRunId` is persisted with the row, so the decision survives a reload;
+   * `purpose` is the shorter form used before the run id existed. Either is
+   * enough to refuse author contact.
+   */
+  function isSpecReviewer(child: ScopedChild | undefined): boolean {
+    return Boolean(child && (child.purpose === "review" || child.reviewRunId));
+  }
+
+  function reviewerContactRefusal(child: ScopedChild | undefined): string | undefined {
+    if (!isSpecReviewer(child)) return undefined;
+    return `"${child!.name}" is an independent specification reviewer (run ${child!.reviewRunId ?? "unknown"}). `
+      + `Author instructions or answers would contaminate the review. Start a fresh review of the pinned revision with `
+      + `orch_spec_review({ action: "start", ... }); this session stays recorded for audit.`;
+  }
+
+  /**
    * The launch half of a resume, shared by `orch_resume` and by an answered
    * escalation. One implementation, so "answer the child" cannot drift from
    * "resume the child" — that drift produced a second pi process on one session
@@ -2439,6 +2475,17 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   ) {
     const child = registry.getChildBySession(params.sessionPath);
     const scope = child?.scope ?? "resumed";
+
+    // Refuse before any pane close, sidecar cleanup or row mutation: resuming a
+    // reviewer would graft the author's answer onto a review that must stay
+    // independent. A refusal must leave the reviewer exactly as it was.
+    if (isSpecReviewer(child)) {
+      return text(reviewerContactRefusal(child)!, {
+        error: "reviewer-resume-forbidden",
+        childId: child!.id,
+        runId: child!.reviewRunId ?? null,
+      });
+    }
 
     // A resume of a session file that does not exist spawns an orphan pane
     // bound to nothing — observed live when a stopped child was "resumed" and
@@ -2772,6 +2819,10 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       }
 
       // Authority rule: an orchestrator may only redirect inside an existing scope.
+      const reviewerRefusal = reviewerContactRefusal(target);
+      if (reviewerRefusal) {
+        return text(reviewerRefusal, { error: "reviewer-contact-forbidden", childId: target.id });
+      }
       if (origin === "orchestrator" && params.scope && params.scope !== target.scope) {
         return text(
           `Authority violation: the orchestrator cannot move "${target.name}" from scope "${target.scope}" to "${params.scope}". ` +
@@ -2860,6 +2911,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           origin,
           queue: params.queue,
           apply,
+          targetRefusal: target => reviewerContactRefusal(target),
         },
         client as any,
       );
@@ -3756,14 +3808,24 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     return status;
   }
 
-  function pauseSummary(closed: string[], stillLive: Array<{ name: string; reason: string }>, mode: string): string {
+  function pauseSummary(
+    closed: string[],
+    stillLive: Array<{ name: string; reason: string }>,
+    mode: string,
+    cancelledReviewers: string[],
+  ): string {
     return [
       `Orchestrator paused (${mode}). New spawns are refused until /orch-resume.`,
       closed.length ? `Closed ${closed.length} child(ren):\n${closed.join("\n")}` : "No running children were open.",
       stillLive.length
         ? `Still live — close failed, so the watchdog keeps retrying (these are NOT paused):\n${stillLive.map((c) => `${c.name} — ${c.reason}`).join("\n")}`
         : "",
-      closed.length ? "Every paused row keeps its session file, so /orch-resume continues the same conversation." : "",
+      cancelledReviewers.length
+        ? `Independent reviewers were closed and cannot resume (resuming would attach author context). Restart them with orch_spec_review:\n${cancelledReviewers.join("\n")}`
+        : "",
+      closed.length > cancelledReviewers.length
+        ? "Every paused worker keeps its session file, so /orch-resume continues the same conversation."
+        : "",
     ].filter(Boolean).join("\n\n");
   }
 
@@ -3776,21 +3838,30 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
 
     const active = registry.getAllChildren().filter((c) => c.status === "running" || c.status === "blocked");
     const closed: string[] = [];
+    const cancelledReviewers: string[] = [];
     const stillLive: Array<{ name: string; reason: string }> = [];
     for (const child of active) {
       // Graceful first: stop the current turn before its pane disappears, so the
       // child is not killed mid-write. Best effort — the close is what ends it.
       await interruptPane(child);
-      const settled = await settleChild(child, "paused");
-      if (settled.ok) closed.push(`${child.name} [${child.id}] scope=${child.scope}`);
-      else stillLive.push({ name: `${child.name} [${child.id}]`, reason: settled.reason });
+      // A reviewer cannot be resumed by design. Keeping it in the paused set would
+      // advertise a resume that must always be refused, so it is cancelled
+      // honestly and the run record stays for audit.
+      const reviewer = isSpecReviewer(child);
+      const settled = await settleChild(child, reviewer ? "scope-cancelled" : "paused");
+      if (settled.ok) {
+        closed.push(`${child.name} [${child.id}] scope=${child.scope}`);
+        if (reviewer) cancelledReviewers.push(`${child.name} [${child.id}] run=${child.reviewRunId ?? "unknown"}`);
+      } else {
+        stillLive.push({ name: `${child.name} [${child.id}]`, reason: settled.reason });
+      }
     }
 
     // Even with nothing open, the pause is the point: no new work starts while
     // the user is away. A failed close is not paused — it stays ticked.
     registry.setPaused(true);
     persistState();
-    ctx.ui.notify(pauseSummary(closed, stillLive, status.mode), stillLive.length ? "warning" : "info");
+    ctx.ui.notify(pauseSummary(closed, stillLive, status.mode, cancelledReviewers), stillLive.length ? "warning" : "info");
   }
 
   function resumeNotice(child: ScopedChild): string {
@@ -3945,7 +4016,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
 
       const resolution = await routeUpdate(
         registry,
-        { update: message, origin: "user", queue: isQueue, apply: !isDryRun },
+        { update: message, origin: "user", queue: isQueue, apply: !isDryRun, targetRefusal: target => reviewerContactRefusal(target) },
         client as any,
       );
 

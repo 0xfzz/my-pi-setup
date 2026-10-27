@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { ScopeRegistry, type ScopedChild } from "../../lib/orchestrator/scope-registry.ts";
-import { matchOwner, extractPotentialPaths } from "../../lib/orchestrator/steer-router.ts";
+import { matchOwner, extractPotentialPaths, routeUpdate } from "../../lib/orchestrator/steer-router.ts";
 
 function createChild(overrides: Partial<ScopedChild> = {}): ScopedChild {
   // One session file = one child. A shared default path silently made every
@@ -217,5 +217,35 @@ describe("steer-router outcome resolution matrix", () => {
     const res = matchOwner("src/net/client.ts clarification", registry, { origin: "user" });
     assert.equal(res.outcome, "blocked-owner");
     assert.equal(res.target?.id, "w1");
+  });
+});
+
+describe("routeUpdate target refusal", () => {
+  it("refuses an independent reviewer without touching its pane", async () => {
+    const registry = new ScopeRegistry();
+    registry.registerChild(createChild({ id: "rev-1", scope: "review-sr-1", purpose: "review", reviewRunId: "sr-1" }));
+    const writes: string[] = [];
+    const client = {
+      paneSendKeys: async () => { writes.push("keys"); },
+      paneSendText: async () => { writes.push("text"); },
+      paneRead: async () => "tail",
+    };
+
+    const result = await routeUpdate(
+      registry,
+      {
+        update: "approve this",
+        id: "rev-1",
+        origin: "user",
+        apply: true,
+        targetRefusal: target => target.purpose === "review" ? "reviewers are independent" : undefined,
+      },
+      client as any,
+    );
+
+    assert.equal(result.outcome, "blocked-owner");
+    assert.equal(result.applied, false);
+    assert.match(result.reason, /independent/);
+    assert.deepEqual(writes, [], "no steer was typed into the reviewer pane");
   });
 });

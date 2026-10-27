@@ -9,7 +9,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -245,6 +245,45 @@ test("a reviewer files its report into the run directory, and the gate rejects a
     assert.equal(written.targetHash, "a".repeat(64));
     assert.equal(written.findings[0].severity, "blocker");
     assert.match(written.findings[0].id, /^F-readiness-1$/, "ids are derived, so a reviewer cannot collide with another lens");
+  } finally {
+    await h.detach();
+  }
+});
+
+test("a reviewer cannot be resumed or steered with author context", async () => {
+  const h = await harness();
+  const sessionFile = join(h.dir, "reviewer.jsonl");
+  await writeFile(sessionFile, "{}\n", "utf8");
+  registry.registerChild({
+    id: "review-1",
+    name: "Comprehension Reviewer",
+    scope: "review-sr-1-comprehension",
+    sessionFile,
+    paneId: "pane-review",
+    status: "running",
+    laneFiles: [],
+    lastMilestoneFiles: [],
+    updatedAt: new Date().toISOString(),
+    purpose: "review",
+    reviewRunId: "sr-1",
+    reviewLens: "comprehension",
+    targetHash: "a".repeat(64),
+  });
+
+  try {
+    // Resume would close the pane and append the author's answer to the review.
+    const resumed = await h.call("orch_resume", { sessionPath: sessionFile, message: "Here is the answer" });
+    assert.equal(resumed.details.error, "reviewer-resume-forbidden");
+    assert.equal(h.started.length, 0, "a refused resume must not launch or close anything");
+
+    // Steering is author contact by another name.
+    const steered = await h.call("orch_steer", { id: "review-1", message: "Change your finding" });
+    assert.equal(steered.details.error, "reviewer-contact-forbidden");
+
+    // The router resolves targets internally, so the refusal lives there too.
+    const routed = await h.call("orch_route", { id: "review-1", update: "Approve this", apply: true });
+    assert.equal(routed.details.outcome, "blocked-owner");
+    assert.equal(routed.details.applied, false);
   } finally {
     await h.detach();
   }

@@ -419,7 +419,19 @@ export async function deliverSteer(
 
 export async function routeUpdate(
   registry: ScopeRegistry,
-  options: MatchOwnerOptions & { update: string; apply?: boolean },
+  options: MatchOwnerOptions & {
+    update: string;
+    apply?: boolean;
+    /**
+     * Refuse delivery to a target that must not receive author contact.
+     *
+     * The router owns target resolution, so the caller cannot pre-check it
+     * reliably. A refusal is reported as `blocked-owner` and never touches the
+     * pane: a reviewer that is told "here is the author's answer" is no longer
+     * independent.
+     */
+    targetRefusal?: (target: ScopedChild) => string | undefined;
+  },
   client?: ClientLike
 ): Promise<SteerResolution & { applied?: boolean; deliveryTail?: string | null }> {
   const decision = matchOwner(options.update, registry, options);
@@ -428,6 +440,10 @@ export async function routeUpdate(
   if (!options.apply || !client) return decision;
   if (!decision.target?.paneId) return decision;
   if (decision.outcome !== "interrupt" && decision.outcome !== "queue") return decision;
+  const refusal = options.targetRefusal?.(decision.target);
+  if (refusal) {
+    return { ...decision, outcome: "blocked-owner", reason: refusal, applied: false };
+  }
 
   const delivery = await deliverSteer(
     client,

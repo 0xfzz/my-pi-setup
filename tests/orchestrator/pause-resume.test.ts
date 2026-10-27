@@ -200,20 +200,28 @@ describe("/orch-pause closes the run but keeps it resumable", () => {
     }
   });
 
-  it("refuses outside orchestrator mode and closes nothing", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "orch-pause-"));
-    const h = harness({ dir, modeId: null });
-    const running = child({ id: "p-normal" });
-    registry.registerChild(running);
+  it("cancels independent reviewers instead of pausing a run that cannot resume", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "orch-pause-reviewer-"));
+    const h = harness({ dir });
+    const reviewer = child({
+      id: "p-reviewer",
+      status: "running",
+      purpose: "review",
+      reviewRunId: "sr-1",
+      reviewLens: "readiness",
+      targetHash: "a".repeat(64),
+    });
+    registry.registerChild(reviewer);
 
     try {
       await pause(h);
 
-      assert.equal(registry.getChildById(running.id)!.status, "running");
-      assert.equal(h.calls.close.length, 0);
-      assert.equal(h.notices.at(-1)!.level, "error");
-      assert.match(h.notices.at(-1)!.text, /orchestrator mode/);
-      assert.equal(registry.isPaused(), false);
+      const row = registry.getChildById("p-reviewer")!;
+      assert.equal(row.status, "closed");
+      assert.equal(row.closeReason, "scope-cancelled", "a reviewer must not claim to be resumable");
+      assert.equal(registry.getPausedChildren().length, 0, "the paused set is for workers, not reviewers");
+      assert.match(h.notices.at(-1)!.text, /cannot resume/);
+      assert.match(h.notices.at(-1)!.text, /orch_spec_review/);
     } finally {
       await h.emit("session_shutdown", {});
       await rm(dir, { recursive: true, force: true });

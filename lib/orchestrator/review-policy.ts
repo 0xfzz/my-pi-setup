@@ -27,7 +27,7 @@ export const REVIEW_TARGET_ENV = "PI_SUBAGENT_REVIEW_TARGET";
 export const REVIEW_DIR_ENV = "PI_SUBAGENT_REVIEW_DIR";
 export const REVIEW_ROOTS_ENV = "PI_SUBAGENT_REVIEW_ROOTS";
 
-/** The only policy value understood today. Anything else is treated as "no policy". */
+/** The only policy value understood today. Anything else is invalid, not absent. */
 export const SPEC_ONLY_POLICY = "spec-only";
 
 export interface ReviewPolicy {
@@ -45,23 +45,56 @@ function clean(value: unknown): string | undefined {
 }
 
 /**
- * Resolve the policy from an environment. Returns `undefined` for every ordinary
- * child: a policy that cannot be read in full is not silently downgraded to a
- * weaker one, because a reviewer with a half-read policy is a biased reviewer.
+ * The policy environment, resolved as one of three states.
+ *
+ * `none` is an ordinary child. `invalid` is a reviewer session whose policy
+ * cannot be read in full: it must fail closed, not continue with fewer
+ * restrictions than the launcher intended.
  */
-export function reviewPolicyFromEnv(env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env): ReviewPolicy | undefined {
-  if (env[REVIEW_POLICY_ENV] !== SPEC_ONLY_POLICY) return undefined;
+export type ReviewPolicyStatus =
+  | { state: "none" }
+  | { state: "valid"; policy: ReviewPolicy }
+  | { state: "invalid"; problems: string[] };
+
+export function reviewPolicyStatus(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+): ReviewPolicyStatus {
+  const declared = env[REVIEW_POLICY_ENV];
+  if (declared === undefined || declared === "") return { state: "none" };
+  if (declared !== SPEC_ONLY_POLICY) {
+    return { state: "invalid", problems: [`${REVIEW_POLICY_ENV}="${declared}" is not a supported review policy`] };
+  }
   const runId = clean(env[REVIEW_RUN_ENV]);
   const lens = clean(env[REVIEW_LENS_ENV]);
   const targetHash = clean(env[REVIEW_TARGET_ENV]);
   const reportDir = clean(env[REVIEW_DIR_ENV]);
-  if (!runId || !lens || !targetHash || !reportDir) return undefined;
+  const problems: string[] = [];
+  if (!runId) problems.push(`${REVIEW_RUN_ENV} is missing`);
+  if (!lens) problems.push(`${REVIEW_LENS_ENV} is missing`);
+  if (!targetHash) problems.push(`${REVIEW_TARGET_ENV} is missing`);
+  else if (!/^[0-9a-f]{64}$/i.test(targetHash)) problems.push(`${REVIEW_TARGET_ENV} is not a sha256 hash`);
+  if (!reportDir) problems.push(`${REVIEW_DIR_ENV} is missing`);
+  if (lens && !isReviewLens(lens)) problems.push(`${REVIEW_LENS_ENV}="${lens}" is not a known review lens`);
+  if (problems.length) return { state: "invalid", problems };
   const roots = String(env[REVIEW_ROOTS_ENV] ?? "")
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean)
     .map((entry) => resolve(entry));
-  return { runId, lens, targetHash, reportDir: resolve(reportDir), roots };
+  return {
+    state: "valid",
+    policy: { runId: runId!, lens: lens!, targetHash: targetHash!, reportDir: resolve(reportDir!), roots },
+  };
+}
+
+/**
+ * Resolve the policy from an environment. Returns `undefined` for every ordinary
+ * child AND for an invalid policy: callers that make an authorization decision
+ * must use `reviewPolicyStatus`, which distinguishes the two.
+ */
+export function reviewPolicyFromEnv(env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env): ReviewPolicy | undefined {
+  const status = reviewPolicyStatus(env);
+  return status.state === "valid" ? status.policy : undefined;
 }
 
 /**
