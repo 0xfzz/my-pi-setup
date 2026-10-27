@@ -1919,20 +1919,21 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     name: "orch_spec_review",
     label: "Independent Spec Review",
     description:
-      "Run or resolve an independent, read-only review of a specification before implementation. Pins the document by content hash, launches isolated reviewer children (one per lens), validates their findings, and records readiness. Actions: start | collect | resolve | status | cancel.",
+      "Run or resolve an independent, read-only review of a specification before implementation. Pins the document by content hash, launches isolated reviewer children (one per lens), validates their findings, and records readiness. Actions: lint | start | collect | resolve | status | cancel.",
     parameters: Type.Object({
       action: Type.Union([
+        Type.Literal("lint"),
         Type.Literal("start"),
         Type.Literal("collect"),
         Type.Literal("resolve"),
         Type.Literal("status"),
         Type.Literal("cancel"),
-      ], { description: "start = pin + launch reviewers; collect = read submitted reports; resolve = record dispositions and readiness; status = read; cancel = stop the run." }),
+      ], { description: "lint = machine defects only, no reviewers; start = pin + launch the devil's advocate; collect = read submitted reports; resolve = record dispositions and readiness; status = read; cancel = stop the run." }),
       targetArtifactId: Type.Optional(Type.String({ description: "Workspace artifact to review (preferred while the design is still an artifact)." })),
       targetFile: Type.Optional(Type.String({ description: "Repository file to review, relative to the working directory." })),
       title: Type.Optional(Type.String({ description: "Human title for the pinned target." })),
-      preset: Type.Optional(Type.Union([Type.Literal("quick"), Type.Literal("architecture")], {
-        description: "quick = comprehension + readiness (default). architecture = zoom-out, comprehension, critic, readiness.",
+      preset: Type.Optional(Type.Union([Type.Literal("single"), Type.Literal("quick"), Type.Literal("architecture")], {
+        description: "single = one devil's advocate with the merged gate lens (default). quick = comprehension + readiness. architecture = zoom-out, comprehension, critic, readiness (expensive; opt-in).",
       })),
       references: Type.Optional(Type.Array(Type.String(), { description: "Repository paths reviewers may consult. Defaults to none." })),
       focus: Type.Optional(Type.String({ description: "Optional extra instruction. Never include author reasoning: reviewers must judge the document, not your intent." })),
@@ -1956,6 +1957,46 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       }
       const runId = params.runId ? String(params.runId).trim() : undefined;
       const lookup = (id: string) => specReviews.get(id);
+
+      // Pre-flight: name the machine-detectable defects before spending a
+      // reviewer round on them. Zero children are launched.
+      if (params.action === "lint") {
+        const cwd = (ctx as any).cwd || process.cwd();
+        let source: { title: string; content: string } | null = null;
+        let ref = "";
+        try {
+          if (params.targetArtifactId) {
+            ref = params.targetArtifactId.trim();
+            source = readArtifactForReview(ctx, ref);
+            if (!source) {
+              return text(`No artifact [${ref}] in this session's catalog. Save the design first with artifact_save.`, { error: "unknown-artifact" });
+            }
+          } else if (params.targetFile) {
+            ref = params.targetFile.trim();
+            const path = resolve(cwd, ref);
+            if (statSync(path).size > MAX_PINNED_CHARS) {
+              return text(`Refusing to lint ${ref}: larger than ${MAX_PINNED_CHARS} characters.`, { error: "target-too-large" });
+            }
+            source = { title: ref, content: readFileSync(path, "utf8") };
+          } else {
+            return text("Give a target: targetArtifactId (preferred) or targetFile.", { error: "no-target" });
+          }
+        } catch (error: any) {
+          return text(`Could not read the lint target: ${error?.message ?? error}`, { error: "target-unreadable" });
+        }
+        const findings = lintSpec({ content: source.content, references: params.references ?? [], cwd });
+        return text(
+          findings.length
+            ? [
+                `Machine lint found ${findings.length} defect(s). They are prompts, not a verdict:`,
+                ...findings.map((finding) => `- ${finding.id} [${finding.severity}] ${finding.location} — ${finding.discrepancy}`),
+                ``,
+                `No reviewer was launched. Fix what is real, then start one review.`,
+              ].join("\n")
+            : `No machine-detectable defects in \`${ref}\`. That is not a review: start one with action "start".`,
+          { ref, findings },
+        );
+      }
 
       if (params.action === "start") {
         if (registry.isPaused()) {
@@ -2459,6 +2500,20 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       handoffs.set(record.id, { record, path });
       persistState();
 
+      // Pre-flight lint for the child's document. Warnings, not a refusal: the
+      // cheapest defects should be named before a reviewer round is paid for,
+      // but they must not become a second gate the parent has to satisfy.
+      const preflightWarnings = [
+        ...(!record.verifyCommand
+          ? ["no verifyCommand was declared: orch_check will have nothing to run and the review will judge prose only"]
+          : []),
+        ...lintSpec({
+          content: renderHandoffForChild(record),
+          references: [],
+          cwd: (ctx as any).cwd || process.cwd(),
+        }).map((finding) => `[${finding.severity}] ${finding.location} — ${finding.discrepancy}`),
+      ];
+
       for (const child of registry.getAllChildren()) {
         if (child.scope === record.scope && child.status === "running") {
           return text(
@@ -2477,6 +2532,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           `Lane (${record.laneFiles.length}): ${record.laneFiles.join(", ")}`,
           `Criteria (${record.acceptanceCriteria.length}):`,
           ...record.acceptanceCriteria.map((c, i) => `  ${i + 1}. ${c}`),
+          ...(preflightWarnings.length
+            ? [``, `Pre-flight lint (fix before a reviewer spends a round on it):`, ...preflightWarnings.map((warning) => `- ${warning}`)]
+            : []),
           ``,
           `Delegate with orch_spawn({ handoffId: "${record.id}", name, task }).`,
           `The child is told to recall ${record.artifactId} before starting. It is not given the spec inline, not given a path, and never told another scope exists.`,

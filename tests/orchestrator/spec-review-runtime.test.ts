@@ -624,3 +624,35 @@ test("the parent is told to end its turn, and a no-change poll is refused", asyn
     await h.detach();
   }
 });
+
+test("lint names machine defects without launching a reviewer", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    saveDesign(h, "lint-design", "# Retry\n\nThe plan names `src/does-not-exist.ts` and no verification step.");
+    const linted = await h.call("orch_spec_review", { action: "lint", targetArtifactId: "lint-design" });
+    assert.ok(Array.isArray(linted.details.findings), linted.content[0].text);
+    assert.ok(linted.details.findings.length >= 1, "the missing path is a machine-detectable defect");
+    assert.match(linted.content[0].text, /Machine lint found/);
+    assert.equal(h.started.length, 0, "lint launches nobody");
+    assert.equal(specReviews.size, 0, "lint opens no review run");
+  } finally {
+    await h.detach();
+  }
+});
+
+test("a handoff without a verify command warns before a reviewer spends a round", async () => {
+  const h = await harness();
+  try {
+    const authored = await h.call("orch_handoff", {
+      scope: "no-verify",
+      goal: "Do the thing.",
+      acceptanceCriteria: ["the thing works"],
+      laneFiles: ["src/thing.ts"],
+    });
+    assert.match(authored.content[0].text, /no verifyCommand was declared/);
+  } finally {
+    await h.detach();
+  }
+});
