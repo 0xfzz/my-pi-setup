@@ -43,11 +43,20 @@ export function defaultSpawnPurpose(modeId: string | undefined): SpawnPurpose {
  *   lifts that for this call.
  * - Supervise/Orchestrator: a handoff spec only. The mode's whole point is
  *   lane isolation and the review ladder, and an ad-hoc child has no lane.
+ *   `implementation` is the same spawn shape as `spec` when a handoff backs it:
+ *   `registryPurpose` already stores both as "implementation", so refusing the
+ *   explicit spelling only taught callers to omit a correct argument.
  */
-export function allowedSpawnPurposes(modeId: string | undefined, executionApproved = false): SpawnPurpose[] {
+export function allowedSpawnPurposes(
+  modeId: string | undefined,
+  executionApproved = false,
+  hasHandoff = false,
+): SpawnPurpose[] {
   const mode = normalizeSpawnMode(modeId);
   if (mode === "plan") return executionApproved ? [...ALL_PURPOSES] : ["spec", "research", "review"];
-  if (mode === "supervise" || mode === "orchestrator") return ["spec"];
+  if (mode === "supervise" || mode === "orchestrator") {
+    return hasHandoff ? ["spec", "implementation"] : ["spec"];
+  }
   return [...ALL_PURPOSES];
 }
 
@@ -56,8 +65,9 @@ export function spawnRefusal(
   modeId: string | undefined,
   purpose: SpawnPurpose,
   executionApproved = false,
+  hasHandoff = false,
 ): string | undefined {
-  if (allowedSpawnPurposes(modeId, executionApproved).includes(purpose)) return undefined;
+  if (allowedSpawnPurposes(modeId, executionApproved, hasHandoff).includes(purpose)) return undefined;
   const mode = normalizeSpawnMode(modeId);
 
   if (mode === "plan") {
@@ -72,7 +82,12 @@ export function spawnRefusal(
   }
 
   if (mode === "supervise" || mode === "orchestrator") {
-    return `${mode === "orchestrator" ? "Orchestrator" : "Supervise"} mode: delegation requires a handoff spec. `
+    const label = mode === "orchestrator" ? "Orchestrator" : "Supervise";
+    if (purpose === "implementation" && !hasHandoff) {
+      return `${label} mode: an implementation spawn needs a handoff lane. `
+        + `Author one with orch_handoff, then call orch_spawn with{ handoffId, purpose: "implementation" }.`;
+    }
+    return `${label} mode: delegation requires a handoff spec. `
       + `Author one with orch_handoff, then call orch_spawn with its handoffId. Ad-hoc spawns are a Normal-mode shape.`;
   }
 

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import {
   HandoffError,
   buildChildTicket,
+  handoffArtifactPayload,
   handoffIdFor,
   leakedSiblingScopes,
   renderHandoffForChild,
@@ -85,6 +86,29 @@ describe("handoff spec", () => {
     // The child is told its boundary is a write boundary, not a read one.
     assert.match(doc, /Read whatever you need/);
     assert.match(doc, /write only inside your lane/);
+  });
+
+  it("the artifact a review pins does not change when a designRef is attached", () => {
+    // Regression for the review loop: the review pins the handoff artifact by
+    // content hash, so the artifact must not embed the review that approved it.
+    // It used to render `designRef.runId` + `targetHash`, which made binding a
+    // ready review change the text it approved — unsatisfiable by construction.
+    const base = { ...validateHandoff(spec()), parentSessionId: "parent-1" };
+    const bound = { ...base, designRef: { runId: "sr-abc12345", targetHash: "a".repeat(64) } };
+
+    assert.equal(
+      handoffArtifactPayload(bound).content,
+      handoffArtifactPayload(base).content,
+      "attaching designRef must not alter the reviewed document",
+    );
+    assert.equal(renderHandoffForChild(bound), renderHandoffForChild(base));
+
+    // Provenance still reaches the child — through the ticket, which is not hashed
+    // and carries no run id or hash.
+    const ticket = buildChildTicket(bound, "Implement the retry policy.");
+    assert.match(ticket, /independent review of the spec document/);
+    assert.equal(ticket.includes("sr-abc12345"), false, "the ticket must not leak review internals");
+    assert.equal(ticket.includes("a".repeat(12)), false);
   });
 
   it("a child ticket carries only its own scope, never a sibling's", () => {

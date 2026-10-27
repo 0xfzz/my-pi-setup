@@ -321,37 +321,54 @@ test("a reviewer files its report into the run directory, and the gate rejects a
   }
 });
 
-test("a ready reviewed spec admits an Orchestrator implementation spawn", async () => {
+test("a ready reviewed handoff admits an Orchestrator implementation spawn", async () => {
   process.env.PI_HERDR_PI_BIN = "/bin/true";
   process.env.PI_HERDR_LAUNCH_PREFIX = "";
   const h = await harness();
   try {
-    saveDesign(h, "retry-design", "# Retry\n\nBackoff with jitter.");
-    const started = await h.call("orch_spec_review", { action: "start", targetArtifactId: "retry-design", preset: "quick" });
-    const run = specReviews.get(started.details.runId)!;
-    // Readiness evaluation is covered by the C2 unit tests; this asserts the
-    // admission wiring: a ready, matching review is what lets the spawn through.
-    run.readiness = { ...run.readiness, ready: true, reasons: [] };
-    run.status = "ready";
     h.ctx.sessionManager.getBranch().push({
       type: "custom",
       customType: SUPERVISOR_MODE_TYPE,
       data: { enabled: true, previousTools: [], modeId: "orchestrator" },
     });
 
+    // The production loop reviews the handoff itself, then binds the review to
+    // the same artifact. Regression: attaching designRef used to change the
+    // artifact text, so spawn saw a hash mismatch and the parent re-reviewed
+    // forever without ever delegating.
     const authored = await h.call("orch_handoff", {
+      scope: "retry-impl",
+      goal: "Implement retry with jitter",
+      acceptanceCriteria: ["jitter is applied"],
+      laneFiles: ["src/retry.ts"],
+    });
+    assert.equal(authored.details?.scope, "retry-impl", authored.content[0].text);
+
+    const started = await h.call("orch_spec_review", {
+      action: "start",
+      targetArtifactId: authored.details.artifactId,
+      preset: "quick",
+    });
+    const run = specReviews.get(started.details.runId)!;
+    // Readiness evaluation is covered by the C2 unit tests; this asserts the
+    // admission wiring: a ready, matching review is what lets the spawn through.
+    run.readiness = { ...run.readiness, ready: true, reasons: [] };
+    run.status = "ready";
+
+    const bound = await h.call("orch_handoff", {
       scope: "retry-impl",
       goal: "Implement retry with jitter",
       acceptanceCriteria: ["jitter is applied"],
       laneFiles: ["src/retry.ts"],
       designRef: { runId: run.id, targetHash: run.target.contentHash },
     });
-    assert.equal(authored.details?.scope, "retry-impl", authored.content[0].text);
+    assert.equal(bound.details?.scope, "retry-impl", bound.content[0].text);
 
     const spawned = await h.call("orch_spawn", {
       name: "Retry Worker",
       task: "Implement the retry policy.",
       handoffId: authored.details.id,
+      purpose: "implementation",
     });
     assert.equal(spawned.details.status, "started", spawned.content[0].text);
     assert.equal(spawned.details.handoffId, authored.details.id);

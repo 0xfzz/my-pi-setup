@@ -2341,10 +2341,14 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
 
       // ── mode × purpose, resolved before any row exists ───────────────────
       // A refused spawn must leave no registry row, pane, watcher or ticket.
+      // The handoff is resolved here so admission can tell "implementation with
+      // a lane" (the supervisor's normal spawn) from an ad-hoc implementation
+      // request that this mode does not admit.
       const modeId = currentModeId(ctx);
+      const handoff = resolveHandoff(params);
       const purpose: SpawnPurpose = params.purpose
         ?? (params.handoffId ? "spec" : defaultSpawnPurpose(modeId));
-      const refusal = spawnRefusal(modeId, purpose, false);
+      const refusal = spawnRefusal(modeId, purpose, false, Boolean(handoff));
       if (refusal) return text(refusal, { error: "purpose-refused", mode: modeId, purpose });
 
       if (purpose === "review") {
@@ -2354,8 +2358,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         );
       }
 
-      const handoff = resolveHandoff(params);
-      if (purpose === "spec" && !handoff) {
+      if ((purpose === "spec" || purpose === "implementation") && !handoff) {
         return text(
           `No handoff "${params.handoffId}". Author one first with orch_handoff, or spawn an ad-hoc unit without handoffId. ` +
             `Known handoffs: ${[...handoffs.keys()].join(", ") || "(none)"}.`,

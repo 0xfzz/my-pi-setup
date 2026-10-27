@@ -254,10 +254,6 @@ export function renderHandoffForChild(spec: HandoffRecord): string {
 
   const guidance = spec.guidance ? `\n## Notes from the orchestrator\n${spec.guidance}\n` : "";
 
-  const design = spec.designRef
-    ? `\n## Reviewed design you implement\nSpec review \`${spec.designRef.runId}\`, revision \`${spec.designRef.targetHash.slice(0, 12)}\`.\nThat review judged a document, not your task: it does not pre-approve your diff.\nYour acceptance criteria below are what the implementation review checks.\nIf this document contradicts the reviewed design, escalate — do not invent a third interpretation.\n`
-    : "";
-
   const reportShape = spec.reportShape
     ? spec.reportShape
     : "A short summary, then for EACH acceptance criterion: what you changed (file:line) and how you verified it. Say plainly what you did not do and why.";
@@ -266,7 +262,7 @@ export function renderHandoffForChild(spec: HandoffRecord): string {
 
 ## Goal
 ${spec.goal}
-${vision}${design}${outOfLane}${interfaces}${guidance}
+${vision}${outOfLane}${interfaces}${guidance}
 ## Files you own (your lane)
 ${lane}
 
@@ -352,6 +348,15 @@ export function buildChildTicket(spec: HandoffRecord, task: string): string {
     ? `## Your assignment for this handoff\n${trimmed}\n`
     : "";
 
+  // Provenance belongs in the ticket, not in the artifact. The artifact is the
+  // document a spec review pins by content hash, so embedding the review id or
+  // its hash in it would make the approval change the text it approved.
+  const reviewedNote = spec.designRef
+    ? `\nThis work unit is backed by an independent review of the spec document. That
+review judged the document, not your diff; your acceptance criteria are what the
+implementation review checks.\n`
+    : "";
+
   return `# Work handoff: ${spec.scope}
 
 ## Read your spec first
@@ -362,7 +367,7 @@ lane), the files you must not touch, and the interfaces you must honour.
 
 It is the only spec you have. If the recall fails or returns something for a
 different scope, do NOT guess your lane — escalate with \`orch_ping\`.
-
+${reviewedNote}
 ${assignment}
 ## Boundaries
 You own the files in your lane and nothing else. Read whatever you need to

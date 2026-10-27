@@ -49,6 +49,14 @@ test("Supervise and Orchestrator admit a handoff spec only", () => {
     assert.deepEqual(allowedSpawnPurposes(mode), ["spec"], mode);
     assert.match(spawnRefusal(mode, "adhoc") ?? "", /requires a handoff spec/);
     assert.equal(spawnRefusal(mode, "spec"), undefined);
+    // `implementation` is the same spawn shape as `spec` once a handoff exists:
+    // registryPurpose stores both as "implementation". Refusing the explicit
+    // spelling only taught the parent to omit a correct argument, which is how
+    // the review loop started.
+    assert.deepEqual(allowedSpawnPurposes(mode, false, true), ["spec", "implementation"], mode);
+    assert.equal(spawnRefusal(mode, "implementation", false, true), undefined, mode);
+    assert.match(spawnRefusal(mode, "implementation") ?? "", /needs a handoff lane/, mode);
+    assert.match(spawnRefusal(mode, "adhoc", false, true) ?? "", /requires a handoff spec/, mode);
   }
 });
 
