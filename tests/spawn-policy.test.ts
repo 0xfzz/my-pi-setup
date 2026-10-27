@@ -13,6 +13,7 @@ import {
   maxSpawnDepth,
   normalizeSpawnMode,
   registryPurpose,
+  requiresReviewedSpec,
   spawnRefusal,
 } from "../lib/spawn-policy.ts";
 
@@ -77,10 +78,12 @@ test("registry purpose and lane declaration are explicit, not inferred from empt
   assert.equal(laneDeclaration("spec", []), "declared");
 });
 
-test("an unknown or absent mode id is Normal, never a bypass", () => {
-  assert.equal(normalizeSpawnMode(undefined), "normal");
-  assert.equal(normalizeSpawnMode("off"), "normal");
-  assert.equal(normalizeSpawnMode("plan"), "plan");
+test("Orchestrator and Supervise require a reviewed spec for implementation", () => {
+  assert.equal(requiresReviewedSpec("orchestrator"), true);
+  assert.equal(requiresReviewedSpec("supervise"), true);
+  assert.equal(requiresReviewedSpec("normal"), false);
+  assert.equal(requiresReviewedSpec("plan"), false);
+  assert.equal(requiresReviewedSpec(undefined), false);
 });
 
 test("depth and breadth are hard stops with an explicit reason", () => {

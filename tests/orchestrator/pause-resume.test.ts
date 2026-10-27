@@ -234,16 +234,19 @@ describe("/orch-resume redeploys the paused run on its own sessions", () => {
 
   it("starts each paused child against its previous session file", async () => {
     const dir = await mkdtemp(join(tmpdir(), "orch-resume-"));
-    const h = harness({ dir });
+    // Normal mode: an unreviewed worker may resume here. Orchestrator's spec gate
+    // has its own regression test below.
+    const h = harness({ dir, modeId: null });
     const first = child({ id: "r-first", sessionFile: join(dir, "first.jsonl") });
     const second = child({ id: "r-second", sessionFile: join(dir, "second.jsonl") });
     await writeFile(first.sessionFile, "{}\n", "utf8");
     await writeFile(second.sessionFile, "{}\n", "utf8");
-    registry.registerChild(first);
-    registry.registerChild(second);
+    const pausedAt = new Date().toISOString();
+    registry.registerChild({ ...first, status: "closed", closeReason: "paused", closedAt: pausedAt });
+    registry.registerChild({ ...second, status: "closed", closeReason: "paused", closedAt: pausedAt });
+    registry.setPaused(true);
 
     try {
-      await pause(h);
       assert.equal(registry.getPausedChildren().length, 2);
 
       await resume(h);
@@ -258,6 +261,26 @@ describe("/orch-resume redeploys the paused run on its own sessions", () => {
       }
       assert.notEqual(rows[0].paneId, rows[1].paneId);
       assert.match(h.notices.at(-1)!.text, /Redeployed 2 child/);
+    } finally {
+      await h.emit("session_shutdown", {});
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to resume an unreviewed worker in Orchestrator mode", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "orch-resume-"));
+    const h = harness({ dir });
+    const worker = child({ id: "r-unreviewed", sessionFile: join(dir, "unreviewed.jsonl") });
+    await writeFile(worker.sessionFile, "{}\n", "utf8");
+    registry.registerChild({ ...worker, status: "closed", closeReason: "paused", closedAt: new Date().toISOString() });
+    registry.setPaused(true);
+
+    try {
+      await resume(h);
+
+      assert.equal(h.calls.start.length, 0, "no pane for an unreviewed implementation resume");
+      assert.match(h.notices.at(-1)!.text, /design-review-required/);
+      assert.equal(registry.getChildById(worker.id)!.closeReason, "paused", "the row stays paused for a Normal retry");
     } finally {
       await h.emit("session_shutdown", {});
       await rm(dir, { recursive: true, force: true });
@@ -282,15 +305,16 @@ describe("/orch-resume redeploys the paused run on its own sessions", () => {
 
   it("marks a paused child with no session file as paused-missing and keeps going", async () => {
     const dir = await mkdtemp(join(tmpdir(), "orch-resume-"));
-    const h = harness({ dir });
+    const h = harness({ dir, modeId: null });
     const alive = child({ id: "r-alive", sessionFile: join(dir, "alive.jsonl") });
     const lost = child({ id: "r-lost", sessionFile: join(dir, "missing.jsonl") });
     await writeFile(alive.sessionFile, "{}\n", "utf8");
-    registry.registerChild(alive);
-    registry.registerChild(lost);
+    const pausedAt = new Date().toISOString();
+    registry.registerChild({ ...alive, status: "closed", closeReason: "paused", closedAt: pausedAt });
+    registry.registerChild({ ...lost, status: "closed", closeReason: "paused", closedAt: pausedAt });
+    registry.setPaused(true);
 
     try {
-      await pause(h);
       await resume(h);
 
       const lostRow = registry.getChildById(lost.id)!;

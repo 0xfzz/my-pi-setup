@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import subagentV2, { handoffs, registry, specReviews } from "../../extensions/orchestrator.ts";
+import { SUPERVISOR_MODE_TYPE } from "../../lib/supervise-mode.ts";
 import { ARTIFACT_TYPE } from "../../lib/artifact-state.ts";
 
 interface Harness {
@@ -77,6 +78,37 @@ async function harness(): Promise<Harness> {
       getBranch: () => branch,
     },
     ui: { notify() {}, async input() { return ""; }, async select() { return ""; }, async confirm() { return false; } },
+    // `orch_handoff` publishes its spec through the artifact tool, exactly like
+    // production. A harness without this seam cannot exercise the handoff path.
+    async executeTool(name: string, args: any) {
+      if (name === "artifact_save") {
+        branch.push({
+          type: "custom",
+          customType: ARTIFACT_TYPE,
+          data: {
+            id: args.id,
+            title: args.title,
+            type: args.type,
+            content: args.content,
+            createdBy: "main",
+            tags: [],
+            version: 1,
+            createdAt: new Date(0).toISOString(),
+            updatedAt: new Date(0).toISOString(),
+            ...(args.scope ? { scope: args.scope } : {}),
+          },
+        });
+        return { isError: false, result: { content: [{ type: "text", text: `saved ${args.id}` }] } };
+      }
+      if (name === "artifact_recall") {
+        const found = [...branch].reverse().find((entry) => entry?.customType === ARTIFACT_TYPE && entry.data?.id === args.id);
+        return {
+          isError: !found,
+          result: { content: [{ type: "text", text: found ? found.data.content : `No artifact ${args.id}` }] },
+        };
+      }
+      return { isError: true, result: { content: [{ type: "text", text: `unknown tool ${name}` }] } };
+    },
   };
 
   subagentV2(pi, { client, stream: { watch: () => () => {}, onReconcile: () => () => {} } });
@@ -245,6 +277,45 @@ test("a reviewer files its report into the run directory, and the gate rejects a
     assert.equal(written.targetHash, "a".repeat(64));
     assert.equal(written.findings[0].severity, "blocker");
     assert.match(written.findings[0].id, /^F-readiness-1$/, "ids are derived, so a reviewer cannot collide with another lens");
+  } finally {
+    await h.detach();
+  }
+});
+
+test("a ready reviewed spec admits an Orchestrator implementation spawn", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    saveDesign(h, "retry-design", "# Retry\n\nBackoff with jitter.");
+    const started = await h.call("orch_spec_review", { action: "start", targetArtifactId: "retry-design", preset: "quick" });
+    const run = specReviews.get(started.details.runId)!;
+    // Readiness evaluation is covered by the C2 unit tests; this asserts the
+    // admission wiring: a ready, matching review is what lets the spawn through.
+    run.readiness = { ...run.readiness, ready: true, reasons: [] };
+    run.status = "ready";
+    h.ctx.sessionManager.getBranch().push({
+      type: "custom",
+      customType: SUPERVISOR_MODE_TYPE,
+      data: { enabled: true, previousTools: [], modeId: "orchestrator" },
+    });
+
+    const authored = await h.call("orch_handoff", {
+      scope: "retry-impl",
+      goal: "Implement retry with jitter",
+      acceptanceCriteria: ["jitter is applied"],
+      laneFiles: ["src/retry.ts"],
+      designRef: { runId: run.id, targetHash: run.target.contentHash },
+    });
+    assert.equal(authored.details?.scope, "retry-impl", authored.content[0].text);
+
+    const spawned = await h.call("orch_spawn", {
+      name: "Retry Worker",
+      task: "Implement the retry policy.",
+      handoffId: authored.details.id,
+    });
+    assert.equal(spawned.details.status, "started", spawned.content[0].text);
+    assert.equal(spawned.details.handoffId, authored.details.id);
   } finally {
     await h.detach();
   }

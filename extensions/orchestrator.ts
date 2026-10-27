@@ -120,6 +120,7 @@ import {
   depthProblem,
   maxChildren,
   registryPurpose,
+  requiresReviewedSpec,
   spawnRefusal,
 } from "../lib/spawn-policy.ts";
 import type { SpawnPurpose } from "../lib/delegation-tools.ts";
@@ -1496,6 +1497,15 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     return typeof manager?.getBranch === "function" ? (manager.getBranch() ?? []) : [];
   }
 
+  /** The mode this request runs under, derived from branch policy like the guards. */
+  function currentModeId(ctx: ExtensionContext): "normal" | "plan" | "supervise" | "orchestrator" {
+    const branch = branchOf(ctx);
+    if (planModeFromBranch(branch)?.enabled) return "plan";
+    const supervise = superviseModeFromBranch(branch);
+    if (supervise?.enabled) return supervise.modeId === "orchestrator" ? "orchestrator" : "supervise";
+    return "normal";
+  }
+
   // ── spec review: independent readers of a pinned document ───────────────────
   //
   // The EGM property this implements is narrow and worth restating: a specification
@@ -2213,14 +2223,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
 
       // ── mode × purpose, resolved before any row exists ───────────────────
       // A refused spawn must leave no registry row, pane, watcher or ticket.
-      const branch = branchOf(ctx);
-      const planState = planModeFromBranch(branch);
-      const superviseState = superviseModeFromBranch(branch);
-      const modeId = planState?.enabled
-        ? "plan"
-        : superviseState?.enabled
-          ? (superviseState.modeId ?? "supervise")
-          : "normal";
+      const modeId = currentModeId(ctx);
       const purpose: SpawnPurpose = params.purpose
         ?? (params.handoffId ? "spec" : defaultSpawnPurpose(modeId));
       const refusal = spawnRefusal(modeId, purpose, false);
@@ -2245,6 +2248,20 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         return text(
           `A handoff (${handoff.id}) was supplied, so this is a spec spawn. Drop handoffId for ad-hoc work, or ask for purpose "spec".`,
           { error: "handoff-vs-adhoc", handoffId: handoff.id },
+        );
+      }
+
+      // Orchestrator/Supervise implementation is spec-driven: a handoff without
+      // an independent review is a plan, not an authorised work unit. Checked
+      // before naming, the design gate, or any row/pane exists.
+      if (requiresReviewedSpec(modeId)
+        && (purpose === "spec" || purpose === "implementation")
+        && !handoff?.designRef) {
+        return text(
+          `Orchestrator implementation requires an independent, ready specification review. `
+            + `This handoff has no designRef, so nothing authorises the work. Run orch_spec_review on the design until it is ready, `
+            + `then re-author the handoff with designRef { runId, targetHash }. Research and ad-hoc delegation do not need a spec review.`,
+          { error: "design-review-required", mode: modeId, scope: handoff?.scope },
         );
       }
 
@@ -2486,6 +2503,27 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         childId: child!.id,
         runId: child!.reviewRunId ?? null,
       });
+    }
+
+    // Orchestrator/Supervise continuation is implementation too. A worker cannot
+    // resume past the spec gate by using resume instead of spawn.
+    const resumeMode = currentModeId(ctx);
+    if (requiresReviewedSpec(resumeMode) && child) {
+      const handoff = child.handoffId
+        ? handoffs.get(child.handoffId)?.record
+        : [...handoffs.values()].find((entry) => entry.record.scope === child.scope)?.record;
+      const run = handoff?.designRef ? specReviews.get(handoff.designRef.runId) : undefined;
+      const problem = handoff
+        ? designRefProblem(handoff.designRef, (id) => specReviews.get(id), run ? currentReviewContent(ctx, run) : null)
+        : "this child has no handoff spec, so no reviewed design authorises continued implementation";
+      if (problem) {
+        return text(
+          `Refused to resume "${child.name}": ${problem}. `
+            + `Orchestrator/Supervise implementation needs a ready, unchanged specification review; `
+            + `switch to Normal (/mode normal) to continue an unreviewed run, or start a fresh reviewed handoff.`,
+          { error: "design-review-required", childId: child.id, mode: resumeMode },
+        );
+      }
     }
 
     // A resume of a session file that does not exist spawns an orphan pane

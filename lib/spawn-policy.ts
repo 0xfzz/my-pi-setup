@@ -101,6 +101,18 @@ export function registryPurpose(purpose: SpawnPurpose): "implementation" | "revi
   return purpose === "spec" ? "implementation" : purpose;
 }
 
+/**
+ * Orchestrator/Supervise implementation is spec-driven.
+ *
+ * Normal and Plan keep their existing delegation policy. In the two supervisor
+ * modes a worker may only be admitted or resumed when its handoff carries a
+ * ready, unchanged independent specification review.
+ */
+export function requiresReviewedSpec(modeId: string | undefined): boolean {
+  const mode = normalizeSpawnMode(modeId);
+  return mode === "orchestrator" || mode === "supervise";
+}
+
 /** What `orch_brief` and `orch_check` should say when no lane was declared. */
 export function laneDeclaration(purpose: SpawnPurpose, laneFiles: readonly string[]): "declared" | "not-declared" {
   if (laneFiles.length > 0) return "declared";

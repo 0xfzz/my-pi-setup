@@ -9,11 +9,12 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, readFile, readdir, stat } from "node:fs/promises";
+import { mkdtemp, rm, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import subagentV2, { escalations, handoffs, registry } from "../../extensions/orchestrator.ts";
+import { SUPERVISOR_MODE_TYPE } from "../../lib/supervise-mode.ts";
 import { visibleToScope, type Artifact } from "../../lib/artifact-state.ts";
 
 interface Harness {
@@ -342,6 +343,48 @@ test("concept 4: the child cap refuses the next spawn before a pane exists", asy
   } finally {
     if (previous === undefined) delete process.env.PI_SUBAGENT_MAX_CHILDREN;
     else process.env.PI_SUBAGENT_MAX_CHILDREN = previous;
+    handoffs.clear();
+    await h.detach();
+  }
+});
+
+test("concept 5: Orchestrator refuses an implementation handoff with no reviewed spec", async () => {
+  const h = await harness();
+  const scope = uniqueScope("review-required");
+  h.branch.push({
+    type: "custom",
+    customType: SUPERVISOR_MODE_TYPE,
+    data: { enabled: true, previousTools: [], modeId: "orchestrator" },
+  });
+  try {
+    const authored = await h.call("orch_handoff", handoffParams({ scope }));
+    assert.equal(authored.details.scope, scope);
+
+    const refused = await h.call("orch_spawn", { name: "Worker", task: "Implement it", handoffId: authored.details.id });
+    assert.equal(refused.details.error, "design-review-required");
+    assert.match(refused.content[0].text, /independent, ready specification review/);
+    assert.equal(h.spawned.length, 0, "no pane without a reviewed spec");
+
+    // Resume is implementation continuation, not an escape hatch.
+    const sessionFile = join(h.dir, "worker-review-required.jsonl");
+    await writeFile(sessionFile, "{}\n", "utf8");
+    registry.registerChild({
+      id: "worker-review-required",
+      name: "Worker",
+      scope,
+      sessionFile,
+      paneId: "pane-worker",
+      status: "closed",
+      laneFiles: ["src/net/client.ts"],
+      lastMilestoneFiles: [],
+      updatedAt: new Date().toISOString(),
+      handoffId: authored.details.id,
+      purpose: "implementation",
+    });
+    const resumed = await h.call("orch_resume", { sessionPath: sessionFile });
+    assert.equal(resumed.details.error, "design-review-required", "resume cannot bypass the spec gate");
+    assert.equal(h.spawned.length, 0);
+  } finally {
     handoffs.clear();
     await h.detach();
   }
