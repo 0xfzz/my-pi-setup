@@ -4,6 +4,16 @@ import { getAgentConfigDir } from "./agents.ts";
 
 export interface SubagentSettings {
   defaultModel?: string; // "inherit" | "provider/model" | undefined
+  /**
+   * Per-role model bindings for the orchestrator's children.
+   *
+   * Shape: `{ "devil-advocate": "inherit", "worker": [{ provider, model }, …] }`.
+   * Kept as unknown here so an older build never rewrites a newer file's shape;
+   * `lib/orchestrator/role-models.ts` validates and normalises on read.
+   */
+  roleModels?: Record<string, unknown>;
+  /** Friendly names for awkward provider/model ids, resolved before validation. */
+  modelAliases?: Record<string, { provider: string; model: string }>;
 }
 
 export function getSubagentSettingsFile(

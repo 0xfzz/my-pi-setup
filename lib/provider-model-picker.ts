@@ -15,7 +15,7 @@ const plainTheme: SelectListTheme = {
 export class ProviderModelPicker implements Component, Focusable {
   readonly models: readonly ModelChoice[];
   #input = new Input({ prompt: "Search: ", placeholder: "model ID or name" });
-  #selected = new Set<string>();
+  #selected: Set<string>;
   #filtered: readonly ModelChoice[] = [];
   #list!: SelectList;
   #visible = 0;
@@ -27,12 +27,15 @@ export class ProviderModelPicker implements Component, Focusable {
   #theme: SelectListTheme;
 
   constructor(models: readonly ModelChoice[], done: (result: ModelSelection) => void,
-    requestRender: () => void, rows = () => 24, theme = plainTheme) {
+    requestRender: () => void, rows = () => 24, theme = plainTheme,
+    /** Ids to start ticked, so reopening a saved selection shows it. */
+    preselected: readonly string[] = []) {
     this.models = models;
     this.#done = done;
     this.#requestRender = requestRender;
     this.#rows = rows;
     this.#theme = theme;
+    this.#selected = new Set(preselected.filter(id => models.some(model => model.id === id)));
     this.#rebuild(false);
   }
 
@@ -140,12 +143,17 @@ export class ProviderModelPicker implements Component, Focusable {
   invalidate(): void { this.#input.invalidate(); this.#list.invalidate(); }
 }
 
-export async function providerModelPicker(ctx: ExtensionCommandContext, models: readonly ModelChoice[]): Promise<ModelSelection> {
+export async function providerModelPicker(
+  ctx: ExtensionCommandContext,
+  models: readonly ModelChoice[],
+  preselected: readonly string[] = [],
+): Promise<ModelSelection> {
   if (ctx.mode === "tui") {
     return ctx.ui.custom<ModelSelection>((tui, theme, _kb, done) => new ProviderModelPicker(
       models, done, () => tui.requestRender(), () => tui.terminal.rows,
       { selectedPrefix: text => theme.fg("accent", text), selectedText: text => theme.fg("accent", text),
         description: text => theme.fg("muted", text), scrollInfo: text => theme.fg("dim", text), noMatch: text => theme.fg("warning", text) },
+      preselected,
     ), {
       // Inline custom UI replaces only the editor. Its dock is shorter than the
       // terminal (widgets/footer still consume rows), so a terminal-sized list
@@ -155,7 +163,7 @@ export async function providerModelPicker(ctx: ExtensionCommandContext, models: 
     });
   }
   // RPC supports standard dialogs, not custom terminal components.
-  const selected = new Set<string>();
+  const selected = new Set<string>(preselected.filter(id => models.some(model => model.id === id)));
   const manual = "Enter model ID manually";
   for (;;) {
     const finish = `Use selected models (${selected.size})`;

@@ -87,7 +87,7 @@ import {
 } from "../vendor/pi-herdr-subagents/src/watcher.ts";
 import { buildOutcomeMessage } from "../vendor/pi-herdr-subagents/src/messages.ts";
 import { loadAgentDefaults } from "../vendor/pi-herdr-subagents/src/agents.ts";
-import { loadSubagentSettings } from "../vendor/pi-herdr-subagents/src/settings.ts";
+import { loadSubagentSettings, saveSubagentSettings } from "../vendor/pi-herdr-subagents/src/settings.ts";
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";
 import { isDelegationTool, isRetiredDelegationTool, mayUseDelegationTool } from "../lib/delegation-tools.ts";
 import { CHECKPOINT_TYPE } from "../lib/subagent-state.ts";
@@ -115,6 +115,22 @@ import {
 import { superviseModeFromBranch } from "../lib/supervise-mode.ts";
 import { planModeFromBranch } from "../lib/plan-mode.ts";
 import { readOnlyShellCommand } from "../lib/plan-shell.ts";
+import { providerModelPicker } from "../lib/provider-model-picker.ts";
+import {
+  ORCH_ROLES,
+  isOrchRole,
+  modelKey,
+  normalizeRoleModels,
+  parseBinding,
+  parseCommandValue,
+  renderBinding,
+  renderRoleMenu,
+  resolveRoleModel,
+  type ModelRegistryPort,
+  type OrchRole,
+  type ResolvedRoleModel,
+  type RoleBinding,
+} from "../lib/orchestrator/role-models.ts";
 import {
   capacityProblem,
   childToolsForPurpose,
@@ -4603,6 +4619,129 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         ].join("\n"),
         "info",
       );
+    },
+  });
+
+  // ── /orch-model: which model each child role runs on ───────────────────────
+
+  /** The live registry is the only candidate source, so a new provider appears here for free. */
+  function registryModelChoices(ctx: ExtensionContext): { choices: { id: string; name?: string }[]; auth: Map<string, boolean> } {
+    const choices: { id: string; name?: string }[] = [];
+    const auth = new Map<string, boolean>();
+    const registry: any = (ctx as any)?.modelRegistry;
+    if (!registry?.getAll) return { choices, auth };
+    const seen = new Set<string>();
+    for (const entry of registry.getAll() ?? []) {
+      const provider = String(entry?.provider ?? "").trim();
+      const model = String(entry?.id ?? "").trim();
+      if (!provider || !model) continue;
+      const key = `${provider}/${model}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      choices.push({ id: key, name: `${provider} · ${entry?.name ?? model}` });
+      try {
+        auth.set(key, typeof registry.hasConfiguredAuth === "function" ? Boolean(registry.hasConfiguredAuth(entry)) : true);
+      } catch {
+        auth.set(key, true);
+      }
+    }
+    choices.sort((a, b) => a.id.localeCompare(b.id));
+    return { choices, auth };
+  }
+
+  function bindingIds(binding: RoleBinding | undefined): string[] {
+    if (!binding || binding === "inherit") return ["inherit"];
+    return Array.isArray(binding) ? binding.map(modelKey) : [modelKey(binding)];
+  }
+
+  function saveRoleBinding(ctx: ExtensionContext, role: OrchRole, binding: RoleBinding, project: boolean): void {
+    const cwd = (ctx as any).cwd || process.cwd();
+    const current = normalizeRoleModels(loadSubagentSettings(cwd).roleModels);
+    current[role] = binding;
+    saveSubagentSettings({ roleModels: current }, { scope: project ? "project" : "global", cwd });
+  }
+
+  pi.registerCommand("orch-model", {
+    description: "Bind a model per child role: /orch-model [devil-advocate|worker|qa-review] [inherit|provider/model,...] [--project]",
+    handler: async (arg, ctx) => {
+      const tokens = String(arg ?? "").trim().split(/\s+/).filter(Boolean);
+      const project = tokens.includes("--project");
+      const rest = tokens.filter((token) => token !== "--project");
+      const cwd = (ctx as any).cwd || process.cwd();
+      const roleModels = normalizeRoleModels(loadSubagentSettings(cwd).roleModels);
+      const { choices, auth } = registryModelChoices(ctx);
+      const known = choices.map((choice) => choice.id);
+
+      let role: OrchRole | undefined;
+      if (rest[0]) {
+        if (!isOrchRole(rest[0])) {
+          ctx.ui.notify(`Unknown role "${rest[0]}". Roles: ${ORCH_ROLES.join(", ")}.`, "error");
+          return;
+        }
+        role = rest[0];
+      }
+
+      // No role: the menu the user asked for, one row per role. Picking a row
+      // opens the same picker the role path uses.
+      if (!role) {
+        if (rest.length) {
+          ctx.ui.notify("Usage: /orch-model [devil-advocate|worker|qa-review] [inherit|provider/model,...] [--project]", "error");
+          return;
+        }
+        const rows = renderRoleMenu(roleModels);
+        const picked = await ctx.ui.select("Orchestrator child roles", [...rows, "Done"]);
+        if (!picked || picked === "Done") return;
+        const index = rows.indexOf(picked);
+        if (index < 0) return;
+        role = ORCH_ROLES[index]!;
+      }
+
+      // Text shortcut: scripting, and the only path that works without a UI.
+      const value = rest.slice(1).join(" ").trim();
+      if (value) {
+        const parsed = parseCommandValue(value, known);
+        if (!parsed.ok) {
+          ctx.ui.notify(`Not saved:\n${parsed.problems.map((problem) => `- ${problem}`).join("\n")}`, "error");
+          return;
+        }
+        saveRoleBinding(ctx, role, parsed.binding, project);
+        ctx.ui.notify(`${role} → ${renderBinding(parsed.binding)}${project ? " (project)" : ""}`, "info");
+        return;
+      }
+
+      // Picker: inherit first, then the provider-aware registry list, with the
+      // current binding pre-ticked. One tick binds one model; two or more a pool.
+      const pickerChoices = [
+        { id: "inherit", name: "follow the parent model" },
+        ...choices.map((choice) => ({
+          id: choice.id,
+          name: auth.get(choice.id) === false ? `${choice.name ?? choice.id} (no credentials)` : choice.name ?? choice.id,
+        })),
+      ];
+      const selection = await providerModelPicker(ctx as any, pickerChoices, bindingIds(roleModels[role]));
+      if (!selection) return;
+      if ("manual" in selection) {
+        ctx.ui.notify(`Enter it explicitly: /orch-model ${role} provider/model`, "info");
+        return;
+      }
+      const models = selection.ids.filter((id) => id !== "inherit");
+      let binding: RoleBinding;
+      if (!models.length) {
+        if (!selection.ids.includes("inherit")) {
+          ctx.ui.notify("Nothing selected; nothing was saved.", "warning");
+          return;
+        }
+        binding = "inherit";
+      } else {
+        const parsed = parseBinding(models);
+        if (!parsed.ok) {
+          ctx.ui.notify(`Not saved:\n${parsed.problems.map((problem) => `- ${problem}`).join("\n")}`, "error");
+          return;
+        }
+        binding = parsed.binding;
+      }
+      saveRoleBinding(ctx, role, binding, project);
+      ctx.ui.notify(`${role} → ${renderBinding(binding)}${project ? " (project)" : ""}`, "info");
     },
   });
 
