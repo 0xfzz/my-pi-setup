@@ -402,7 +402,74 @@ Mode: **Orchestrator** (`/mode orchestrator`). The supervisor decomposes a large
 4. **Review** — `orch_review` records each criterion against evidence the orchestrator gathered itself; an approved verdict with a failing criterion or an out-of-lane diff is refused in code. Two consecutive `revise` rounds stop the loop and move the decision to the user.
 5. **Escalate** — `orch_escalate` is the ladder: `answer` / `to-user` (through the ask-user extension — a cancelled dialog is unanswered, never consent) / `relay-user` / `cancel`.
 
-**Durability.** The registry persists to an atomic versioned sidecar (`orchestrator-registry.json`) and is restored + reconciled on session start: dead panes are closed, live panes keep running, pending escalations survive. A watchdog enforces each child's wall-clock budget and stall-detects (3 identical pane tails) — interrupting and steering the parent instead of burning tokens. `orch_running` lazily re-verifies pane liveness, so a child whose pane died never lingers as a zombie triggering cleanup loops across sessions; `orch_resume` refuses session paths that do not exist.
+### The flow
+
+Every gate below is enforced in code, not by prompt text — and a refused step writes nothing: no
+registry row, no pane, no ticket.
+
+```mermaid
+flowchart TD
+    req(["Request"]) --> author["1 · orch_handoff<br/>scope · criteria · lane · dependsOn"]
+    author --> design{"ready spec review?"}
+    design -->|"no designRef in Orchestrator/Supervise"| refuseA(["refused — nothing written"])
+    design -->|"ready, or not required"| deps{"dependsOn approved?"}
+    deps -->|"no"| refuseB(["refused — dependency-unapproved"])
+    deps -->|"yes"| spawn["2 · orch_spawn<br/>purpose · budgetMinutes"]
+    spawn --> admit{"admission"}
+    admit -->|"depth · breadth · scope busy · paused"| refuseC(["refused — no row, no pane, no ticket"])
+    admit -->|"admitted"| work["3 · worker in its own pane<br/>its handoff artifact is its only spec"]
+    work -->|"orch_ping"| ladder{"4 · escalation ladder"}
+    ladder -->|"orchestrator knows"| answer["orch_escalate answer"]
+    ladder -->|"does not know"| user{"ask the user"}
+    user -->|"answered"| answer
+    user -->|"cancelled is not consent"| blocker(["child reports the blocker"])
+    answer -->|"resume"| work
+    work -->|"orch_done"| check["5 · orch_check<br/>lane from git · declared verifyCommand · receipt"]
+    check --> review{"6 · orch_review"}
+    review -->|"failing criterion · out of lane · prose only · unreadable tree · substituted check"| revise["revise"]
+    revise -->|"round 1–2"| work
+    revise -->|"round 3"| handOver(["decision moves to the user"])
+    review -->|"evidence per criterion verified · lane computed · receipt, if cited, valid"| approve["approved"]
+    approve --> settle["child settled · verdict recorded"]
+    settle --> record[["artifact: review-SCOPE"]]
+```
+
+**Specification review runs in front of implementation**, and the handoff carries the reviewed
+revision, so an approval cannot transfer to text nobody read:
+
+```mermaid
+flowchart LR
+    start["orch_spec_review start"] --> pin["pin by content hash<br/>+ machine lint"]
+    pin --> lenses["one isolated reviewer per lens<br/>comprehension · readiness · critic · zoom-out"]
+    lenses --> collect["collect<br/>reports bound to lens and revision"]
+    collect --> resolve{"resolve dispositions"}
+    resolve -->|"blocker open · fix applied · missing context"| start
+    resolve -->|"ready"| ref["designRef: runId + targetHash"]
+    ref --> handoff["orch_handoff carries designRef"]
+    handoff --> spawn["orch_spawn re-reads the content"]
+    spawn -->|"drifted or not ready"| refused(["refused"])
+    spawn -->|"matches"| worker(["worker starts"])
+```
+
+**Child lifecycle** — these are the statuses the registry persists, so a restart reconciles
+instead of guessing:
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> running: spawn admitted
+    running --> blocked: orch_ping — question
+    blocked --> running: orch_escalate answer
+    running --> paused: budget or stall interrupt
+    paused --> running: orch_resume
+    running --> completed: orch_done
+    running --> closed: orch_close or pane gone
+    completed --> closed: orch_review verdict
+    paused --> closed: orch_close
+    closed --> [*]
+```
+
+**Durability.** The registry persists to an atomic versioned sidecar (`orchestrator-registry.json`) and is restored + reconciled on session start: dead panes are closed, live panes keep running, pending escalations survive. A watchdog enforces each child's wall-clock budget and stall-detects when the pane has not changed **and** the child's session file has not been written for ~90s — interrupting and steering the parent instead of burning tokens, without interrupting a child that is quietly running its test suite. `orch_running` lazily re-verifies pane liveness, so a child whose pane died never lingers as a zombie triggering cleanup loops across sessions; `orch_resume` refuses session paths that do not exist.
 
 ### Spawn shapes and mode policy
 
