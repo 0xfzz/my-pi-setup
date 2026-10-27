@@ -329,6 +329,65 @@ export function allFindings(run: ReviewRun): ReviewFinding[] {
     });
 }
 
+export interface FindingCluster {
+  /** Normalized location, used only as the grouping key. */
+  key: string;
+  /** First-seen spelling of the location, for display. */
+  location: string;
+  lenses: ReviewLens[];
+  severities: Severity[];
+  findingIds: string[];
+}
+
+function locationKey(location: string): string {
+  return String(location ?? "")
+    .toLowerCase()
+    .replace(/^[#§\s]+/, "")
+    .replace(/[`*_]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Group findings that point at the same place, across lenses.
+ *
+ * Two lenses describing one defect in two spellings is not two defects, and a
+ * parent that counts them twice either double-fixes the document or treats two
+ * consistent reports as corroboration that does not exist. Deterministic on
+ * purpose: no referee child, no model, no extra context to leak.
+ */
+export function clusterFindings(run: ReviewRun): FindingCluster[] {
+  const byKey = new Map<string, FindingCluster>();
+  for (const finding of allFindings(run)) {
+    const key = locationKey(finding.location);
+    const existing = byKey.get(key);
+    if (existing) {
+      if (!existing.lenses.includes(finding.lens)) existing.lenses.push(finding.lens);
+      if (!existing.severities.includes(finding.severity)) existing.severities.push(finding.severity);
+      existing.findingIds.push(finding.id);
+      continue;
+    }
+    byKey.set(key, {
+      key,
+      location: finding.location,
+      lenses: [finding.lens],
+      severities: [finding.severity],
+      findingIds: [finding.id],
+    });
+  }
+  return [...byKey.values()]
+    // Order inside a cluster must not depend on which lens reported first, or the
+    // same run summarised twice reads differently.
+    .map((cluster) => ({
+      ...cluster,
+      lenses: [...cluster.lenses].sort(),
+      severities: [...cluster.severities].sort(
+        (a, b) => SEVERITIES.indexOf(a) - SEVERITIES.indexOf(b),
+      ),
+    }))
+    .sort((a, b) => b.lenses.length - a.lenses.length || a.location.localeCompare(b.location));
+}
+
 /** Counts are what the parent reads: the full findings stay in the run record. */
 export function findingCounts(findings: readonly ReviewFinding[]): { blocker: number; major: number; nit: number; open: number } {
   const counts = { blocker: 0, major: 0, nit: 0, open: 0 };
@@ -638,6 +697,21 @@ export function renderRunSummary(run: ReviewRun): string {
     `Findings: ${counts.blocker} blocker, ${counts.major} major, ${counts.nit} nit · ${counts.open} open`,
     `Reviewers: ${run.reviewers.map((slot) => `${slot.lens}=${slot.status}`).join(", ")}`,
   ];
+  const clusters = clusterFindings(run).filter(
+    (cluster) => cluster.findingIds.length > 1 || cluster.lenses.length > 1,
+  );
+  if (clusters.length) {
+    lines.push(
+      `Overlap: ${clusters
+        .map(
+          (cluster) =>
+            `${cluster.location} ×${cluster.findingIds.length} (${cluster.lenses.join(", ")}; ${[
+              ...new Set(cluster.severities),
+            ].join("/")})`,
+        )
+        .join(" · ")}`,
+    );
+  }
   if (run.readiness.reasons.length) {
     lines.push(`Not ready:`, ...run.readiness.reasons.map((reason) => `- ${reason}`));
   }

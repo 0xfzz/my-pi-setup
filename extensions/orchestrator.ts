@@ -1226,6 +1226,10 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           registry.recordAuthorWrite({ path, tool: event.toolName, at: new Date(now()).toISOString() });
         }
         persistState();
+      } else if (AUTHOR_SHELL_TOOLS.has(event.toolName)) {
+        // No path is recorded: the point is that a shell does not have to name one.
+        registry.recordAuthorShell(new Date(now()).toISOString());
+        persistState();
       }
       return;
     }
@@ -1253,6 +1257,12 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
 
   /** Files a write/edit call names. Kept next to the audit that consumes it. */
   const AUTHOR_WRITE_TOOLS = new Set(["write", "edit", "multi_edit", "multiedit", "apply_patch", "applypatch", "patch"]);
+  /**
+   * Shell-shaped parent tools. Which names count is deliberately generous: a
+   * shell can write anywhere, so the honest independence claim has to deny
+   * "clean" whenever one ran, not only when we can see what it touched.
+   */
+  const AUTHOR_SHELL_TOOLS = new Set(["bash", "shell", "sh", "run_command", "runcommand", "terminal", "exec"]);
   function authorWrittenPaths(input: any): string[] {
     const paths: string[] = [];
     for (const key of ["path", "file_path", "filePath"]) {
@@ -3658,13 +3668,18 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             pathMatchesAnyLane(laneFiles, write.path) ||
             pathMatchesAnyLane(handoff?.outOfLaneFiles ?? [], write.path),
         );
-      const independence: "clean" | "self-authored" = touched.length > 0 ? "self-authored" : "clean";
+      const independence: "clean" | "self-authored" | "shell-unverified" =
+        touched.length > 0 ? "self-authored" : registry.getAuthorShells(since).length > 0 ? "shell-unverified" : "clean";
       const needsConfirmation =
-        params.verdict === "approved" && (independence === "self-authored" || findings.length > 0);
+        params.verdict === "approved" && (independence !== "clean" || findings.length > 0);
       if (needsConfirmation && params.userConfirmed !== true) {
+        const shellCount = registry.getAuthorShells(since).length;
         const why = independence === "self-authored"
           ? `the orchestrator itself wrote ${[...new Set(touched.map((write) => write.path))].join(", ")} inside this work unit`
-          : findings.join("; ");
+          : independence === "shell-unverified"
+            ? `the orchestrator ran ${shellCount} shell command(s) during this work unit, and a shell can write anywhere — `
+              + `the independence log cannot prove it did not. That is not an accusation, it is the absence of a fact the gate can check`
+            : findings.join("; ");
         return text(
           `Approval for "${scope}" needs the user's confirmation: ${why}.\n\n`
             + `Ask the user with ask_user — show the evidence you verified and the findings — then call orch_review again ` +
@@ -3695,6 +3710,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           { error: "revise-loop-exhausted", scope, rounds: reviseRound, max: MAX_REVISE_ROUNDS, findings: params.summary },
         );
       }
+      const workUnitTokens = registry
+        .getChildrenInScope(scope)
+        .reduce((sum, row) => sum + (row.lastTokens ?? 0), 0);
       registry.recordReview({
         id: `rev-${scope}-${Date.now()}`,
         scope,
@@ -3708,6 +3726,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         laneSource,
         evidenceRefs: evidenceCheck.checked,
         userConfirmed: params.userConfirmed === true,
+        ...(workUnitTokens > 0 ? { tokens: workUnitTokens } : {}),
         ...(specRevision !== undefined ? { specRevision } : {}),
         ...(receiptId ? { checkRunId: receiptId } : {}),
         ...(findings.length ? { findings } : {}),
@@ -3756,7 +3775,13 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         params.summary,
         ``,
         `## Independence`,
-        `- Verdict source: ${independence === "clean" ? "clean (the orchestrator did not write this lane)" : "self-authored (the orchestrator wrote here)"}`,
+        `- Verdict source: ${
+          independence === "clean"
+            ? "clean (the orchestrator did not write this lane and ran no shell)"
+            : independence === "self-authored"
+              ? "self-authored (the orchestrator wrote here)"
+              : "shell-unverified (the orchestrator ran a shell, which can write without naming a path)"
+        }`,
         ...(touched.length ? [`- Orchestrator writes:`, ...touched.map((w) => `  - ${w.path} (${w.tool} at ${w.at})`)] : []),
         `- Evidence verified: ${evidenceCheck.ok ? `YES (${evidenceCheck.checked} reference(s))` : "NO"}`,
         ...(params.userConfirmed ? [`- User confirmed: yes`] : []),

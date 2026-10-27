@@ -18,16 +18,21 @@ import type { HandoffRecord } from "../../lib/orchestrator/handoff.ts";
 interface Harness {
   tools: Map<string, any>;
   ctx: any;
+  /** Drive a lifecycle hook (tool_call) as Pi would. */
+  emit: (name: string, event: any, ctx: any) => Promise<any[]>;
 }
 
 function harness(dir: string): Harness {
   const tools = new Map<string, any>();
+  const hooks = new Map<string, Function[]>();
   const pi: any = {
     registerTool(tool: any) {
       tools.set(tool.name, tool);
     },
     registerCommand() {},
-    on() {},
+    on(name: string, fn: Function) {
+      hooks.set(name, [...(hooks.get(name) ?? []), fn]);
+    },
     sendMessage() {},
     appendEntry() {},
     getAllTools() {
@@ -50,7 +55,12 @@ function harness(dir: string): Harness {
     now: () => 10_000_000,
     watchdogIntervalMs: 30_000,
   });
-  return { tools, ctx };
+  const emit = async (name: string, event: any, emitCtx: any) => {
+    const results: any[] = [];
+    for (const fn of hooks.get(name) ?? []) results.push(await fn(event, emitCtx));
+    return results;
+  };
+  return { tools, ctx, emit };
 }
 
 function handoff(scope: string, over: Partial<HandoffRecord> = {}): HandoffRecord {
@@ -203,6 +213,62 @@ describe("gate integrity: fail closed on what the gate could not observe", () =>
       });
       assert.equal(review.details.error, "test-ref-unobserved");
       assert.deepEqual(review.details.unobserved, ["jitter is applied"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("invariant: a shell during the work unit denies a clean independence claim", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "orch-failclosed-"));
+    const h = harness(dir);
+    await writeFile(join(dir, "a.ts"), "one\ntwo\n", "utf8");
+    handoffs.set("handoff-net", { record: handoff("net"), path: join(dir, "spec.md") });
+    registry.registerChild({
+      id: "c-shell",
+      name: "Worker",
+      scope: "net",
+      sessionFile: join(dir, "child.jsonl"),
+      status: "running",
+      laneFiles: ["src/net/"],
+      lastMilestoneFiles: [],
+      startedAt: 9_000_000,
+      updatedAt: new Date(9_000_000).toISOString(),
+      frozenCriteria: ["net works"],
+      handoffRevision: 1,
+      lastTokens: 4200,
+      watchdog: { trip: null, interrupts: 0 },
+    } as any);
+    try {
+      // The parent inspects the lane through a shell: no write tool, no path the
+      // independence log can attribute. Allowed, but it denies a "clean" claim.
+      const results = await h.emit(
+        "tool_call",
+        { toolName: "bash", input: { command: "sed -n 1,200p src/net/client.ts" } },
+        h.ctx,
+      );
+      assert.ok(results.every((result) => result?.block !== true), "a parent shell is permitted, not blocked");
+
+      const refused = await call(h, "orch_review", {
+        scope: "net",
+        verdict: "approved",
+        criteriaNotes: [{ criterion: "net works", evidenceRefs: [{ kind: "file", path: "a.ts" }], passed: true }],
+        summary: "looks right",
+      });
+      assert.equal(refused.details.error, "confirmation-required");
+      assert.equal(refused.details.independence, "shell-unverified");
+
+      const confirmed = await call(h, "orch_review", {
+        scope: "net",
+        verdict: "approved",
+        criteriaNotes: [{ criterion: "net works", evidenceRefs: [{ kind: "file", path: "a.ts" }], passed: true }],
+        summary: "user agreed despite shell activity",
+        userConfirmed: true,
+      });
+      assert.equal(confirmed.details.verdict, "approved", JSON.stringify(confirmed.details));
+
+      const record = registry.getReviews("net")[0]!;
+      assert.equal(record.independence, "shell-unverified");
+      assert.equal(record.tokens, 4200, "the work unit's spend is recorded with the verdict");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

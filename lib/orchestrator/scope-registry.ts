@@ -148,8 +148,14 @@ export interface ReviewRecord {
   failedCriteria: string[];
   inLane: boolean;
   timestamp: string;
-  /** Whether this answer can be trusted as an independent read of the work. */
-  independence?: "clean" | "self-authored";
+  /**
+   * Whether this answer can be trusted as an independent read of the work.
+   *
+   * `shell-unverified` is the honest third state: the orchestrator may run bash,
+   * and a shell can write anywhere, so a scope reviewed after shell activity has
+   * no provable independence claim even when no write/edit tool was used.
+   */
+  independence?: "clean" | "self-authored" | "shell-unverified";
   /** True when the evidence was verified against the repository, not just quoted. */
   verified?: boolean;
   /** Where "in lane" came from: computed from git, or declared by the model. */
@@ -160,6 +166,8 @@ export interface ReviewRecord {
   userConfirmed?: boolean;
   /** Handoff revision the review judged (the frozen one). */
   specRevision?: number;
+  /** Tokens its children spent on this work unit, when the sessions reported any. */
+  tokens?: number;
   /** Check receipt this verdict relied on, when one was cited. */
   checkRunId?: string;
   /** Non-fatal findings, e.g. "handoff was revised after spawn". */
@@ -181,6 +189,8 @@ export interface RegistrySnapshot {
   paused?: boolean;
   /** Writes the orchestrator made itself, used to compute review independence. */
   authorWrites?: AuthorWrite[];
+  /** Shell invocations by the orchestrator, which can write without naming a path. */
+  authorShells?: string[];
 }
 
 export class ScopeRegistry {
@@ -196,6 +206,8 @@ export class ScopeRegistry {
   private paused = false;
   /** Bounded: independence only needs the recent history of a live scope. */
   private readonly authorWrites: AuthorWrite[] = [];
+  /** Timestamps of orchestrator shell calls: a shell can write without naming a path. */
+  private readonly authorShells: string[] = [];
 
   /**
    * Insert a child, keeping exactly ONE live row per session file.
@@ -254,6 +266,7 @@ export class ScopeRegistry {
     this.knownPanes.clear();
     this.paused = false;
     this.authorWrites.length = 0;
+    this.authorShells.length = 0;
   }
 
   /** Test seam only: the registry is a module singleton shared by one file's cases. */
@@ -271,6 +284,23 @@ export class ScopeRegistry {
     return this.authorWrites.filter((w) =>
       (!sinceIso || w.at >= sinceIso) && (!path || w.path === path),
     );
+  }
+
+  /**
+   * Record that the orchestrator ran a shell command.
+   *
+   * No path is recorded because a shell does not have to name one: that is the
+   * point. The fact is enough to deny a "clean" independence claim, which is
+   * what the review gate needs and all it can honestly conclude.
+   */
+  public recordAuthorShell(at: string = new Date().toISOString()): void {
+    this.authorShells.push(at);
+    if (this.authorShells.length > 500) this.authorShells.splice(0, this.authorShells.length - 500);
+  }
+
+  /** Shell invocations at or after `sinceIso` (inclusive). */
+  public getAuthorShells(sinceIso?: string): string[] {
+    return this.authorShells.filter((at) => !sinceIso || at >= sinceIso);
   }
 
   public setPaused(paused: boolean): void {
@@ -503,6 +533,7 @@ export class ScopeRegistry {
       panes: [...this.knownPanes],
       paused: this.paused,
       authorWrites: [...this.authorWrites],
+      authorShells: [...this.authorShells],
     };
   }
 
@@ -515,8 +546,12 @@ export class ScopeRegistry {
   public loadSnapshot(snapshot: RegistrySnapshot): void {
     this.paused = snapshot.paused === true;
     this.authorWrites.length = 0;
+    this.authorShells.length = 0;
     for (const write of snapshot.authorWrites ?? []) {
       if (write?.path && write?.at) this.authorWrites.push(write);
+    }
+    for (const at of snapshot.authorShells ?? []) {
+      if (typeof at === "string" && at) this.authorShells.push(at);
     }
     const newest = new Map<string, ScopedChild>();
     for (const child of snapshot.children ?? []) {
