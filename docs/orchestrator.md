@@ -59,7 +59,7 @@ flowchart TD
     deps -->|"no"| refuseB(["refused — dependency-unapproved"])
     deps -->|"yes"| spawn["2 · orch_spawn<br/>purpose · budgetMinutes"]
     spawn --> admit{"admission"}
-    admit -->|"depth · breadth · scope busy · paused"| refuseC(["refused — no row, no pane, no ticket"])
+    admit -->|"depth · breadth · scope busy · orchestrator paused"| refuseC(["refused — no row, no pane, no ticket"])
     admit -->|"admitted"| work["3 · worker in its own pane<br/>its handoff artifact is its only spec"]
     work -->|"orch_ping"| ladder{"4 · escalation ladder"}
     ladder -->|"orchestrator knows"| answer["orch_escalate answer"]
@@ -73,7 +73,7 @@ flowchart TD
     revise -->|"round 1–2"| work
     revise -->|"round 3"| handOver(["decision moves to the user"])
     review -->|"evidence per criterion verified · lane computed · receipt, if cited, valid"| approve["approved"]
-    approve --> settle["child settled · verdict recorded"]
+    approve --> settle["verdict recorded · evidence bound to the scope"]
     settle --> record[["artifact: review-SCOPE"]]
 ```
 
@@ -83,7 +83,7 @@ revision, so an approval cannot transfer to text nobody read:
 ```mermaid
 flowchart LR
     start["orch_spec_review start"] --> pin["pin by content hash<br/>+ machine lint"]
-    pin --> lenses["one isolated reviewer per lens<br/>comprehension · readiness · critic · zoom-out"]
+    pin --> lenses["one isolated reviewer per lens<br/>default single: gate<br/>quick: comprehension + readiness<br/>architecture: + critic + zoom-out"]
     lenses --> collect["collect<br/>reports bound to lens and revision"]
     collect --> resolve{"resolve dispositions"}
     resolve -->|"blocker open · fix applied · missing context"| start
@@ -102,15 +102,21 @@ stateDiagram-v2
     direction LR
     [*] --> running: spawn admitted
     running --> blocked: orch_ping — question
-    blocked --> running: orch_escalate answer
-    running --> paused: budget or stall interrupt
-    paused --> running: orch_resume
+    blocked --> running: answer delivered · orch_resume
     running --> completed: orch_done
-    running --> closed: orch_close or pane gone
-    completed --> closed: orch_review verdict
-    paused --> closed: orch_close
+    running --> failed: pane ends without orch_done
+    running --> closed: orch_close · pane gone · /orch-pause (closeReason=paused)
+    completed --> running: orch_resume
+    failed --> running: orch_resume
+    completed --> closed: orch_close
+    failed --> closed: orch_close
+    closed --> running: orch_resume (a paused close is redeployed)
     closed --> [*]
 ```
+
+A pause is not a status: `/orch-pause` closes the row with `closeReason: "paused"`, and
+`orch_resume` redeploys it. Reviewing a child records a verdict; it does not close the child —
+`orch_close` does that.
 
 **Durability.** The registry persists to an atomic versioned sidecar (`orchestrator-registry.json`) and is restored + reconciled on session start: dead panes are closed, live panes keep running, pending escalations survive. A watchdog enforces each child's wall-clock budget and stall-detects when the pane has not changed **and** the child's session file has not been written for ~90s — interrupting and steering the parent instead of burning tokens, without interrupting a child that is quietly running its test suite. `orch_running` lazily re-verifies pane liveness, so a child whose pane died never lingers as a zombie triggering cleanup loops across sessions; `orch_resume` refuses session paths that do not exist.
 
