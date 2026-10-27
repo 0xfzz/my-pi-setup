@@ -42,6 +42,9 @@ function report(runId: string, lens: any, targetHash: string, findings: any[] = 
     targetHash,
     summary: `${lens} summary`,
     findings,
+    // A clean report must state what it looked at; these fixtures are clean
+    // reports, so they carry coverage the way a real reviewer now must.
+    ...(findings.length === 0 ? { coverage: [`${lens} read the whole document`] } : {}),
     ...extra,
   };
 }

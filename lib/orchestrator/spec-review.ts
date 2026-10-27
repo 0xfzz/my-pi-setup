@@ -22,6 +22,7 @@
 import { createHash } from "node:crypto";
 
 import type { ReviewLens } from "./review-policy.ts";
+import { renderLintForReviewer, type SpecLintFinding } from "./spec-lint.ts";
 
 export const REVIEW_PRESET_QUICK = "quick";
 export const REVIEW_PRESET_ARCHITECTURE = "architecture";
@@ -121,6 +122,15 @@ export interface ReviewerReport {
   verdict?: "clean" | "findings" | "blocked";
   /** Context the reviewer could not find in the document, reported as evidence. */
   missingContext?: string[];
+  /**
+   * What this lens checked and found adequate.
+   *
+   * Required for an empty findings array. Without it the cheapest satisfying
+   * report is the empty one — the equilibrium that turns a review gate into a
+   * rubber stamp — and a "clean" verdict carries no evidence that anything was
+   * read.
+   */
+  coverage?: string[];
   submittedAt: string;
 }
 
@@ -214,6 +224,21 @@ export function parseReviewerReport(
     ? value.missingContext.filter((item: unknown): item is string => typeof item === "string" && item.trim() !== "")
     : undefined;
 
+  const coverage = Array.isArray(value.coverage)
+    ? value.coverage.filter((item: unknown): item is string => typeof item === "string" && item.trim() !== "")
+    : undefined;
+  const rawFindingsCount = Array.isArray(value.findings) ? value.findings.length : 0;
+  // A `blocked` report is not claiming the document is clean — it is saying the lens
+  // could not complete, which already blocks readiness. Every other empty report
+  // has to state what it looked at, or "nothing found" is indistinguishable from
+  // "nothing looked at".
+  if (rawFindingsCount === 0 && value.verdict !== "blocked" && !coverage?.length) {
+    problems.push(
+      "an empty findings array needs coverage[]: state what this lens checked and found adequate, "
+        + "otherwise \"nothing found\" is indistinguishable from \"nothing looked at\"",
+    );
+  }
+
   if (problems.length) return { ok: false, problems };
   return {
     ok: true,
@@ -227,6 +252,7 @@ export function parseReviewerReport(
       findings,
       ...(verdict ? { verdict } : {}),
       ...(missingContext?.length ? { missingContext } : {}),
+      ...(coverage?.length ? { coverage } : {}),
       submittedAt: typeof value.submittedAt === "string" && value.submittedAt ? value.submittedAt : new Date().toISOString(),
     },
   };
@@ -281,6 +307,13 @@ export interface ReviewRun {
   };
   /** Rewrites observed after the pin; the run is then stale by definition. */
   supersededBy?: string;
+  /**
+   * Machine-detected defects computed at pin time, quoted into every ticket.
+   *
+   * A calibration aid, not a verdict: the reviewer must confirm or refute them,
+   * and an empty list never means the document is good.
+   */
+  lint?: SpecLintFinding[];
 }
 
 export function reviewRunId(target: PinnedTarget, preset: ReviewPreset, salt = ""): string {
@@ -641,6 +674,8 @@ export function renderReviewerTicket(input: {
   target: PinnedTarget;
   /** Extra instruction from the parent (still no author reasoning). */
   focus?: string;
+  /** Machine-detected defects to confirm or refute. Never a verdict. */
+  lint?: readonly SpecLintFinding[];
   policy: { roots: string[] };
 }): string {
   const { target, lens } = input;
@@ -672,7 +707,7 @@ the live document is out of scope; if you find one, report it as a finding.
 <<<PINNED_TARGET_START ${target.contentHash}>>>
 ${target.snapshot}
 <<<PINNED_TARGET_END>>>
-
+${renderLintForReviewer(input.lint ?? [])}
 ## How to report
 Call \`orch_spec_review_submit\` exactly once, with:
 - verdict-level \`summary\` (2-4 sentences, plain English, no praise);
@@ -680,12 +715,15 @@ Call \`orch_spec_review_submit\` exactly once, with:
   (section heading or line number inside the pinned text), \`discrepancy\`
   (what is wrong), \`rationale\` (why it matters), optional \`references\`,
   optional \`suggestion\`;
+- \`coverage[]\` — what you checked and found adequate. REQUIRED when your
+  findings array is empty: a clean report has to say what it looked at, or
+  "nothing found" cannot be told apart from "nothing looked at";
 - \`missingContext[]\` for anything you needed and could not find.
 
 Blockers are reserved for defects that make implementation unsafe or impossible.
 Do not file style opinions as blockers. Do not report a finding you cannot tie to
 a location. If the document is genuinely adequate for your lens, submit an empty
-findings array and say why in the summary — an empty report is a valid answer.
+findings array WITH coverage, and say in the summary what makes you confident.
 `;
 }
 

@@ -162,6 +162,7 @@ import {
   type CheckReceipt,
 } from "../lib/orchestrator/receipts.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardState } from "../lib/dashboard/integration.ts";
+import { lintSpec } from "../lib/orchestrator/spec-lint.ts";
 import { projectChildProvenance, projectOrchestrator } from "../lib/dashboard/projection.ts";
 import { displayName as namingDisplayName, givenNameFor, givenNamePart, isHumanName } from "../lib/naming.ts";
 
@@ -1646,6 +1647,14 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       missingContext: Type.Optional(
         Type.Array(Type.String({ description: "Anything you needed and could not find in the document or permitted paths." })),
       ),
+      coverage: Type.Optional(
+        Type.Array(
+          Type.String({
+            description:
+              "What you checked and found adequate. Required when findings is empty; without it a clean report is indistinguishable from an unread one.",
+          }),
+        ),
+      ),
     }),
     async execute(_toolCallId, params) {
       const status = reviewPolicyStatus();
@@ -1672,6 +1681,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           targetHash: policy.targetHash,
           summary: params.summary,
           findings: params.findings ?? [],
+          ...(params.coverage?.length ? { coverage: params.coverage } : {}),
           ...(params.verdict ? { verdict: params.verdict } : {}),
           ...(params.missingContext?.length ? { missingContext: params.missingContext } : {}),
           submittedAt: new Date(now()).toISOString(),
@@ -1798,6 +1808,10 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         // a salt so the previous run's reports and dispositions stay auditable
         // instead of being overwritten by a second opinion.
         const run = openReviewRun({ target, preset, now: new Date(now()), salt: String(specReviews.size + 1) });
+        // Machine-detectable defects are computed once, at pin time, and quoted
+        // into every result. A reviewer that ignores them is still free to be
+        // right; the cheap defects stop depending on attention.
+        run.lint = lintSpec({ content: target.snapshot, references: target.references, cwd });
         const dir = reviewReportDir(ctx, run.id);
         mkdirSync(dir, { recursive: true, mode: 0o700 });
         chmodPrivate(dir);
@@ -1816,6 +1830,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             lens: slot.lens,
             target,
             focus: params.focus,
+            lint: run.lint,
             policy: { roots: [cwd] },
           }) + `\n${renderPolicyForReviewer({ lens: slot.lens, roots: [cwd] })}\n`;
           let plan: LaunchPlan;
