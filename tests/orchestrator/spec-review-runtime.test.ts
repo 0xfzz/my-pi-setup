@@ -24,6 +24,7 @@ interface Harness {
   started: any[];
   launchScripts: () => Promise<string[]>;
   call: (name: string, params: any) => Promise<any>;
+  emit: (name: string, event?: any) => Promise<any>;
   detach: () => Promise<void>;
 }
 
@@ -131,6 +132,11 @@ async function harness(): Promise<Harness> {
       assert.ok(tool, `${name} is registered`);
       return tool.execute("call-id", params, undefined, undefined, ctx);
     },
+    async emit(name: string, event: any = {}) {
+      let result: any;
+      for (const fn of hooks.get(name) ?? []) result = await fn(event, ctx) ?? result;
+      return result;
+    },
     async detach() {
       for (const stop of hooks.get("session_shutdown") ?? []) await stop({}, ctx);
       for (const child of registry.getAllChildren()) registry.updateStatus(child.sessionFile, "closed");
@@ -204,6 +210,39 @@ test("start pins the design, launches one isolated reviewer per lens, and leaks 
     const dir = join(h.dir, "artifacts", "parent-session", "spec-reviews", run);
     assert.ok(dir.includes("spec-reviews"), "reports live under a run-scoped directory");
   } finally {
+    await h.detach();
+  }
+});
+
+test("a reviewer cannot broad-search the tree or read control-plane state", async () => {
+  process.env.PI_SUBAGENT_REVIEW_POLICY = "spec-only";
+  process.env.PI_SUBAGENT_REVIEW_RUN = "spec-review-test";
+  process.env.PI_SUBAGENT_REVIEW_LENS = "readiness";
+  process.env.PI_SUBAGENT_REVIEW_TARGET = "a".repeat(64);
+  process.env.PI_SUBAGENT_REVIEW_DIR = join(tmpdir(), "spec-review-test");
+  const h = await harness();
+  // The repository root is separate from the session directory; using the
+  // session directory as both would make every path look like control plane.
+  const repo = await mkdtemp(join(tmpdir(), "spec-review-repo-"));
+  process.env.PI_SUBAGENT_REVIEW_ROOTS = repo;
+  try {
+    // A search with no path walks the working tree, including control-plane files
+    // that happen to live inside it. The reviewer must name a permitted path.
+    const broad = await h.emit("tool_call", { toolName: "grep", input: { pattern: "secret" } });
+    assert.match(broad?.reason ?? "", /explicit permitted path/);
+
+    const scoped = await h.emit("tool_call", { toolName: "grep", input: { pattern: "retry", path: repo } });
+    assert.equal(scoped, undefined, "a named path inside the root remains readable");
+
+    // The sidecar name binds a session to an outcome wherever it lives, even
+    // when the session directory itself is not in the path.
+    const sidecar = await h.emit("tool_call", { toolName: "read", input: { path: join(repo, "orchestrator-registry-parent.json") } });
+    assert.match(sidecar?.reason ?? "", /control-plane/);
+
+    const shell = await h.emit("tool_call", { toolName: "bash", input: { command: "python3 -c 'print(1)'" } });
+    assert.match(shell?.reason ?? "", /not available to a spec-only reviewer/);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
     await h.detach();
   }
 });

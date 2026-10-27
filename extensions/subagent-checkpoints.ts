@@ -364,6 +364,10 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
   // Request-local injection survives BOTH native compaction and the custom turn_end compactor.
   // It does not overwrite either summarizer or keep appending copies to the transcript.
   pi.on("context", async (event, context) => {
+    // A spec-only reviewer sees only its pinned ticket. Checkpoint snapshots and
+    // parent briefs are author-context channels; never inject them, even if a
+    // restored session somehow carries records.
+    if (specOnlyReviewer) return { messages: event.messages };
     await refresh(context);
     const snapshot = checkpointContext(records, observed);
     const messages = event.messages.filter(m =>

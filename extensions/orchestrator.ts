@@ -58,6 +58,7 @@ import {
   EscalationError,
   EscalationLedger,
 } from "../lib/orchestrator/escalation.ts";
+import { isControlPlanePath } from "../lib/orchestrator/control-plane.ts";
 import {
   deliverSteer,
   INTERRUPT_KEY,
@@ -1171,6 +1172,15 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           reason: `${event.toolName} is not available to a spec-only reviewer. You have read instruments and \`orch_spec_review_submit\`.`,
         };
       }
+      // A default search walks the whole working tree, including control-plane
+      // files that happen to live in it. Reviewers must name what they read.
+      const namedPath = (event.input as any)?.path;
+      if (BROAD_SEARCH_TOOLS.has(event.toolName) && (typeof namedPath !== "string" || !namedPath.trim())) {
+        return {
+          block: true,
+          reason: `${event.toolName} needs an explicit permitted path in a spec-only review; a default broad search can read control-plane state.`,
+        };
+      }
       if (READ_PATH_TOOLS.has(event.toolName)) {
         let sessionDir: string | null = null;
         try {
@@ -1180,6 +1190,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         }
         const cwd = (ctx as any).cwd || process.cwd();
         for (const target of readTargets(event.toolName, event.input)) {
+          const controlPlane = isControlPlanePath(resolve(cwd, target), { sessionDir });
+          if (controlPlane) return { block: true, reason: controlPlane };
           const problem = pathPolicyProblem(target, {
             cwd,
             roots: reviewPolicy.roots.length ? reviewPolicy.roots : [cwd],
@@ -1222,6 +1234,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
 
   /** Tools whose input names a filesystem path a reviewer might read. */
   const READ_PATH_TOOLS = new Set(["read", "grep", "find", "ls", "ffgrep", "fffind"]);
+
+  /** Search tools whose default target is the whole working tree. */
+  const BROAD_SEARCH_TOOLS = new Set(["grep", "find", "ffgrep", "fffind"]);
 
   /** Files a write/edit call names. Kept next to the audit that consumes it. */
   const AUTHOR_WRITE_TOOLS = new Set(["write", "edit", "multi_edit", "multiedit", "apply_patch", "applypatch", "patch"]);

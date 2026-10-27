@@ -38,7 +38,51 @@ that. Plan retains its conservative shell grammar. Goldfish get no shell.
 Regression tests accompany each fix (rather than committing a deliberately red
 suite). Each coherent unit is verified and committed before the next.
 
+## Role contract
+
+| Role | Context | May change | Purpose |
+| --- | --- | --- | --- |
+| Elephant (Orchestrator parent) | full session, artifacts, repository | specs and control plane; no product code in Supervise | decompose, delegate, verify |
+| Goldfish (spec reviewer) | pinned snapshot plus named permitted paths | its report only | independent judgement |
+| Worker | exactly one handoff/ticket | its lane | implement and verify |
+
+An ordinary Normal or Plan child is a worker, not a Goldfish. Goldfish is a
+mechanism — a fresh `standalone` session with a spec-only policy and no author
+channel — not a persona name.
+
+## Review-ready, human-approved, implemented
+
+These are three different facts:
+
+- **Review-ready**: every launched lens filed a complete report and no blocker or
+  missing-context finding remains open.
+- **Human-approved**: the user authorized implementation. Review readiness is
+  never consent; a cancelled dialog is not consent either.
+- **Implemented**: a worker changed its lane and verification passed.
+
+A revised spec needs a fresh review. Approving a stale snapshot is refused at
+both the authoring and spawn ends.
+
+## Supported subset
+
+Ported: pinned artifact/file review, the four review lenses, direct reviewer
+dispatch, findings and dispositions, stale-review detection, `designRef`
+admission, and read/write separation between roles.
+
+Not ported: upstream skills/commands, the staged scheduler and review UI,
+bootstrap/drift machinery, and every upstream persona. The four lenses are
+implemented here as rubrics plus prompts; adding a lens is not a framework port.
+
+Reviewer context is the ticket's pinned text and explicitly named references.
+Reviewers get `read`, named-path search, todo tools, and the submit tool. A
+search with no path is refused because it can walk control-plane state; a
+reviewer cannot read the registry sidecar even when it lives under the working
+tree. Checkpoint snapshots and parent briefs are suppressed for spec-only
+reviewers.
+
 ## Audit targets
+
+All audit targets below are implemented and covered by regression tests:
 
 - Reject partial reviewer policy instead of treating it as an ordinary worker.
 - Refuse generic reviewer resume/author-answer routes before side effects; fresh
@@ -46,7 +90,8 @@ suite). Each coherent unit is verified and committed before the next.
 - Block readiness on blocked/incomplete reports and unresolved missing context.
 - Require ready matching spec reviews for Orchestrator implementation admission,
   including resume; Normal delegation is unchanged.
-- Inspect real reviewer context and filesystem search boundaries.
+- Inspect real reviewer context and filesystem search boundaries; no parent
+  pointer, no checkpoint injection, no broad search, no control-plane reads.
 
 Review-ready is not human execution approval. Ordinary user authorization to
 implement is still required; a model-authored boolean is not proof of consent.

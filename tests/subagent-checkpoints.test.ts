@@ -122,6 +122,24 @@ test("context is bounded, prioritizes active work and honestly labels recovered 
   assert.ok(text.indexOf("/tmp/active.jsonl") < text.indexOf("/tmp/0.jsonl"));
 });
 
+test("a spec-only reviewer's context is not polluted with checkpoint state", async () => {
+  const previous = process.env.PI_SUBAGENT_REVIEW_POLICY;
+  process.env.PI_SUBAGENT_REVIEW_POLICY = "spec-only";
+  const h = harness();
+  try {
+    h.entries.push({ type: "custom", customType: CHECKPOINT_TYPE, data: launch("/tmp/reviewer.jsonl") });
+    await h.emit("session_start");
+    const messages = [{ role: "user", content: "pinned ticket" }];
+    const out = await h.emit("context", { messages });
+    assert.deepEqual(out.messages, messages, "a reviewer sees only its ticket");
+    assert.equal(out.messages.some((m: any) => m.customType === CONTEXT_TYPE), false);
+  } finally {
+    if (previous === undefined) delete process.env.PI_SUBAGENT_REVIEW_POLICY;
+    else process.env.PI_SUBAGENT_REVIEW_POLICY = previous;
+    await h.emit("session_shutdown");
+  }
+});
+
 test("atomic progress sidecars validate, cap sizes and use private permissions", async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-progress-test-"));
   try {
