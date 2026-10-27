@@ -1,3 +1,5 @@
+import { lanesOverlap, normalizePath } from "./lane.ts";
+
 /**
  * Why a child stopped. Present iff its status is terminal, so an audit can tell
  * a deliberate close from a crash without inferring it from pane liveness.
@@ -476,21 +478,18 @@ export class ScopeRegistry {
   }
 
   /**
-   * Exact + directory-prefix overlap check between a candidate lane and every
-   * active child's lane. A whole-repo lane (a lone "**" over "*" glob) conflicts
-   * with everything, which is itself worth refusing upstream.
+   * Overlap between a candidate lane and every active child's lane.
+   *
+   * Uses the SAME matcher as the review gate (`lanesOverlap` -> `laneCoversPath`),
+   * so a glob that covers a file at review time also conflicts at admission time.
+   * Two implementations is how a lane became disjoint at spawn and overlapping at
+   * review, which is the one disagreement that silently produces two writers.
    */
   public findLaneConflicts(candidateFiles: string[], excludeSessionFile?: string): ScopedChild[] {
-    const norm = (p: string) => p.replace(/^\.?\//, "");
-    const candidate = candidateFiles.map(norm);
-    return this.getRunningChildren().filter((child) => {
+    const candidate = candidateFiles.map(normalizePath).filter(Boolean);
+    return this.getActiveChildren().filter((child) => {
       if (excludeSessionFile && child.sessionFile === excludeSessionFile) return false;
-      return candidate.some((cLane) =>
-        child.laneFiles.some((lane) => {
-          const l = norm(lane);
-          return l === cLane || cLane.startsWith(l + "/") || l.startsWith(cLane + "/");
-        }),
-      );
+      return candidate.some((cLane) => child.laneFiles.some((lane) => lanesOverlap(cLane, lane)));
     });
   }
 

@@ -37,58 +37,12 @@ export interface EvidenceCheck {
 /** Largest file we will count lines in for a `line` bound check. */
 const MAX_SCANNED_BYTES = 2 * 1024 * 1024;
 
-export function normalizePath(value: string): string {
-  return value.trim().replace(/\\/g, "/").replace(/^\.?\//, "").replace(/\/+$/, "");
-}
+// The lane matcher lives in one place so "in lane" cannot mean two things.
+// `findLaneConflicts` (admission) and `pathMatchesAnyLane` (review) both route
+// through `lane.ts`; re-exported here because this module is where callers look.
+export { laneCoversPath, normalizePath, pathMatchesAnyLane } from "./lane.ts";
 
-/**
- * Does `lane` (as authored in a handoff) cover `candidate` (a changed file)?
- *
- * Same semantics as the registry's lane-conflict matcher — exact path, directory
- * prefix, plus the glob forms a spec is likely to use — so "in lane" means the
- * same thing when the handoff is authored and when the diff is judged.
- */
-export function laneCoversPath(lane: string, candidate: string): boolean {
-  const l = normalizePath(lane);
-  const c = normalizePath(candidate);
-  if (!l || !c) return false;
-  if (!/[*?[\]{}]/.test(l)) {
-    if (l === c || c.startsWith(`${l}/`)) return true;
-    // A bare filename names that file wherever it lives; a path names a location.
-    if (!l.includes("/") && c.split("/").pop() === l) return true;
-    return false;
-  }
-  // One scan, not chained replaces: replacing `**/` with `(?:.*/)?` and then
-  // replacing `*` rewrote the marker itself, so `**/*.md` matched nothing.
-  let pattern = "";
-  for (let index = 0; index < l.length; index++) {
-    const char = l[index]!;
-    if (char === "*") {
-      if (l[index + 1] === "*") {
-        if (l[index + 2] === "/") {
-          pattern += "(?:.*/)?";
-          index += 2;
-        } else {
-          pattern += ".*";
-          index += 1;
-        }
-      } else {
-        pattern += "[^/]*";
-      }
-      continue;
-    }
-    if (char === "?") {
-      pattern += "[^/]";
-      continue;
-    }
-    pattern += "\\^$+.(()|[]{}".includes(char) ? `\\${char}` : char;
-  }
-  return new RegExp(`^${pattern}$`).test(c) || new RegExp(`^${pattern}/`).test(c);
-}
-
-export function pathMatchesAnyLane(laneFiles: readonly string[], candidate: string): boolean {
-  return laneFiles.some((lane) => laneCoversPath(lane, candidate));
-}
+import { laneCoversPath } from "./lane.ts";
 
 function countLines(file: string): number | null {
   try {
