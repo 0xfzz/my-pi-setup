@@ -9,7 +9,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -28,7 +28,7 @@ interface Harness {
   detach: () => Promise<void>;
 }
 
-async function harness(): Promise<Harness> {
+async function harness(deps: any = {}): Promise<Harness> {
   const dir = await mkdtemp(join(tmpdir(), "spec-review-rt-"));
   const tools = new Map<string, any>();
   const started: any[] = [];
@@ -79,6 +79,13 @@ async function harness(): Promise<Harness> {
       getBranch: () => branch,
     },
     ui: { notify() {}, async input() { return ""; }, async select() { return ""; }, async confirm() { return false; } },
+    // The role-model resolver validates against the live registry. Everything
+    // "exists" here, so a launch test fails only on wiring, not on lookup.
+    modelRegistry: {
+      getAll: () => [],
+      find: (provider: string, model: string) => ({ provider, id: model }),
+      hasConfiguredAuth: () => true,
+    },
     // `orch_handoff` publishes its spec through the artifact tool, exactly like
     // production. A harness without this seam cannot exercise the handoff path.
     async executeTool(name: string, args: any) {
@@ -112,7 +119,7 @@ async function harness(): Promise<Harness> {
     },
   };
 
-  subagentV2(pi, { client, stream: { watch: () => () => {}, onReconcile: () => () => {} } });
+  subagentV2(pi, { client, stream: { watch: () => () => {}, onReconcile: () => () => {} }, ...deps });
 
   return {
     dir,
@@ -652,6 +659,99 @@ test("a handoff without a verify command warns before a reviewer spends a round"
       laneFiles: ["src/thing.ts"],
     });
     assert.match(authored.content[0].text, /no verifyCommand was declared/);
+  } finally {
+    await h.detach();
+  }
+});
+
+/** Bind role models the way `/orch-model --project` does: project settings win. */
+async function bindRoleModels(dir: string, roleModels: Record<string, unknown>): Promise<void> {
+  await mkdir(join(dir, ".pi"), { recursive: true });
+  await writeFile(join(dir, ".pi", "subagents.json"), JSON.stringify({ roleModels }));
+}
+
+test("a spawned worker runs on the worker role model and says so", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    await bindRoleModels(h.dir, { worker: { provider: "zai", model: "glm-5.3-flash" } });
+    const spawned = await h.call("orch_spawn", {
+      name: "Retry Worker",
+      task: "Implement the retry policy.",
+      purpose: "adhoc",
+      laneFiles: ["src/retry.ts"],
+    });
+    assert.equal(spawned.details.status, "started", spawned.content[0].text);
+    assert.match(spawned.content[0].text, /Model: zai\/glm-5\.3-flash — worker binding/);
+
+    const scripts = await h.launchScripts();
+    assert.equal(scripts.length, 1);
+    assert.match(scripts[0]!, /--model/);
+    assert.match(scripts[0]!, /zai\/glm-5\.3-flash/);
+  } finally {
+    await h.detach();
+  }
+});
+
+test("a pooled worker binding rolls once, deterministically under the rng seam", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  // 0.999 selects the last usable member: a roll, not always the first entry.
+  const h = await harness({ random: () => 0.999 });
+  try {
+    await bindRoleModels(h.dir, {
+      worker: [
+        { provider: "zai", model: "first" },
+        { provider: "zai", model: "second" },
+        { provider: "zai", model: "third" },
+      ],
+    });
+    const spawned = await h.call("orch_spawn", {
+      name: "Retry Worker",
+      task: "Implement the retry policy.",
+      purpose: "adhoc",
+      laneFiles: ["src/retry.ts"],
+    });
+    assert.equal(spawned.details.status, "started", spawned.content[0].text);
+    assert.match(spawned.content[0].text, /rolled from a 3-model worker pool/);
+    assert.match((await h.launchScripts())[0]!, /zai\/third/);
+  } finally {
+    await h.detach();
+  }
+});
+
+test("an explicit spawn model beats the role binding", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    await bindRoleModels(h.dir, { worker: { provider: "zai", model: "glm-5.3-flash" } });
+    const spawned = await h.call("orch_spawn", {
+      name: "Retry Worker",
+      task: "Implement the retry policy.",
+      purpose: "adhoc",
+      laneFiles: ["src/retry.ts"],
+      model: "anthropic/claude-opus-5.8",
+    });
+    assert.match(spawned.content[0].text, /anthropic\/claude-opus-5\.8 — explicit override/);
+    assert.match((await h.launchScripts())[0]!, /anthropic\/claude-opus-5\.8/);
+  } finally {
+    await h.detach();
+  }
+});
+
+test("reviewers run on the devil-advocate binding", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    await bindRoleModels(h.dir, { "devil-advocate": { provider: "deepseek", model: "deepseek-4.1-flash" } });
+    saveDesign(h, "retry-design", "# Retry\n\nRetry with exponential backoff.");
+    const started = await h.call("orch_spec_review", { action: "start", targetArtifactId: "retry-design" });
+    assert.ok(started.details.runId, started.content[0].text);
+    assert.match(started.content[0].text, /Reviewer models: gate on deepseek\/deepseek-4\.1-flash/);
+    assert.match((await h.launchScripts())[0]!, /deepseek\/deepseek-4\.1-flash/);
   } finally {
     await h.detach();
   }

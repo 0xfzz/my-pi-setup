@@ -123,6 +123,7 @@ import {
   normalizeRoleModels,
   parseBinding,
   parseCommandValue,
+  renderAttribution,
   renderBinding,
   renderRoleMenu,
   resolveRoleModel,
@@ -284,6 +285,8 @@ export interface OrchestratorDeps {
   now?: () => number;
   /** Watchdog period override for runtime tests (default 30s). */
   watchdogIntervalMs?: number;
+  /** RNG seam: a pooled role model must roll deterministically in tests. */
+  random?: () => number;
 }
 
 /**
@@ -1954,6 +1957,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       references: Type.Optional(Type.Array(Type.String(), { description: "Repository paths reviewers may consult. Defaults to none." })),
       focus: Type.Optional(Type.String({ description: "Optional extra instruction. Never include author reasoning: reviewers must judge the document, not your intent." })),
       budgetMinutes: Type.Optional(Type.Number({ description: "Wall-clock budget per reviewer (default 20)." })),
+      model: Type.Optional(Type.String({ description: "Model override for the reviewers; defaults to the devil-advocate role binding (/orch-model)." })),
       runId: Type.Optional(Type.String({ description: "Existing review run id, for collect/resolve/status/cancel." })),
       dispositions: Type.Optional(
         Type.Array(
@@ -2136,6 +2140,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
 
         const launched: string[] = [];
         const failed: string[] = [];
+        const modelNotes: string[] = [];
         for (const slot of run.reviewers) {
           const ticket = renderReviewerTicket({
             runId: run.id,
@@ -2145,6 +2150,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             lint: run.lint,
             policy: { roots: [cwd] },
           }) + `\n${renderPolicyForReviewer({ lens: slot.lens, roots: [cwd] })}\n`;
+          const roleModel = resolveChildModel(ctx, "devil-advocate", subagentSettings, params.model);
           let plan: LaunchPlan;
           try {
             plan = buildLaunchPlan(
@@ -2153,6 +2159,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
                 task: ticket,
                 tools,
                 policy: "spec-only",
+                model: roleModel.model,
                 review: { runId: run.id, lens: slot.lens, targetHash: target.contentHash, dir, roots: [cwd] },
                 scope: slot.scope,
               },
@@ -2203,6 +2210,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
               updatedAt: new Date(now()).toISOString(),
             });
             launched.push(slot.lens);
+            modelNotes.push(`${slot.lens} on ${roleModel.model ?? "inherit"}`);
           } catch (error: any) {
             slot.status = "failed";
             slot.reason = `launch failed: ${error?.message ?? error}`;
@@ -2219,12 +2227,13 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             `Spec rounds: ${nonReady.length + 1} of ${MAX_REVIEW_ROUNDS} for this target · ${sessionRounds + 1} of ${MAX_SESSION_REVIEW_ROUNDS} this session.`,
             `Pinned ${target.kind} \`${target.ref}\` at ${target.contentHash.slice(0, 12)}.`,
             launched.length ? `Launched: ${launched.join(", ")}.` : "No reviewer was launched.",
+            ...(modelNotes.length ? [`Reviewer models: ${modelNotes.join(", ")}.`] : []),
             ...(failed.length ? [`Failed: ${failed.join("; ")}`] : []),
             ``,
             `Reviewers are isolated: no parent transcript, no artifacts, no write tool, no shell.`,
             `When a reviewer completes you are re-triggered; run collect then. ${RETRIGGER_CONTRACT}`,
           ].join("\n"),
-          { runId: run.id, targetHash: target.contentHash, preset, launched, failed },
+          { runId: run.id, targetHash: target.contentHash, preset, launched, failed, modelNotes },
         );
       }
 
@@ -2807,6 +2816,17 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       const agentDefs = params.agent ? loadAgentDefaults(params.agent) : null;
       const subagentSettings = loadSubagentSettings(ctx.cwd);
 
+      // The role binding decides the child's model unless this call names one. A
+      // QA reviewer critiques the worker's diff (qa-review); spec, implementation
+      // and ad-hoc children are workers. Research readers are cheap by design and
+      // keep the previous behaviour: no role, so no model argument.
+      const roleModel =
+        purpose === "review"
+          ? resolveChildModel(ctx, "qa-review", subagentSettings, params.model, agentDefs?.model)
+          : purpose === "spec" || purpose === "implementation" || purpose === "adhoc"
+            ? resolveChildModel(ctx, "worker", subagentSettings, params.model, agentDefs?.model)
+            : undefined;
+
       // Per-handoff artifact directory: the child's ticket is not parked beside a
       // sibling's. getArtifactDir() is join(sessionDir, 'artifacts', sessionId), so
       // qualifying the sessionId with the handoff id isolates the tree without
@@ -2847,7 +2867,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             name: displayName,
             task: ticket,
             agent: params.agent,
-            model: params.model,
+            model: roleModel?.model,
             skills: params.skills,
             tools: params.tools ?? childToolsForPurpose(purpose),
             cwd: params.cwd,
@@ -2914,6 +2934,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           `Subagent "${displayName}" launched (scope: ${scope}, ${handoffId ? `handoff: ${handoffId}` : "ad-hoc, no handoff spec"}).`,
           `Pane: ${started.paneId}`,
           `Lane: ${laneFiles.join(", ") || "not declared (ad-hoc)"}`,
+          ...(roleModel ? [`Model: ${renderAttribution(roleModel)}.`] : []),
           ...(qaHandoff
             ? [`QA target: ${qaHandoff.scope} (${qaWorker?.name ?? "worker"}). A defect pings you; open a ticket, spawn a fix unit, and resume this QA to re-verify.`]
             : []),
@@ -4659,6 +4680,57 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     const current = normalizeRoleModels(loadSubagentSettings(cwd).roleModels);
     current[role] = binding;
     saveSubagentSettings({ roleModels: current }, { scope: project ? "project" : "global", cwd });
+  }
+
+  /**
+   * The registry port the resolver validates against: the same live source the
+   * picker lists, so "exists" here means "the user can actually pick it".
+   */
+  function roleModelRegistry(ctx: ExtensionContext): ModelRegistryPort {
+    const registry: any = (ctx as any)?.modelRegistry;
+    if (!registry?.find) return { has: () => false, hasAuth: () => true };
+    return {
+      has: (provider, model) => {
+        try {
+          return Boolean(registry.find(provider, model));
+        } catch {
+          return false;
+        }
+      },
+      hasAuth: (provider, model) => {
+        try {
+          const entry = registry.find(provider, model);
+          if (!entry) return false;
+          return typeof registry.hasConfiguredAuth === "function" ? Boolean(registry.hasConfiguredAuth(entry)) : true;
+        } catch {
+          return true;
+        }
+      },
+    };
+  }
+
+  /**
+   * Which model one delegated child runs on. Resolution is per spawn, not per
+   * role: a pooled binding rolls once here, so a resume replays a recorded
+   * decision instead of silently switching the child's model mid-task.
+   */
+  function resolveChildModel(
+    ctx: ExtensionContext,
+    role: OrchRole,
+    settings: ReturnType<typeof loadSubagentSettings>,
+    explicit?: string,
+    agentDefault?: string,
+  ): ResolvedRoleModel {
+    const roleModels = normalizeRoleModels(settings.roleModels);
+    return resolveRoleModel({
+      role,
+      binding: roleModels[role],
+      explicit,
+      registry: roleModelRegistry(ctx),
+      rng: deps?.random ?? Math.random,
+      agentDefault,
+      globalDefault: settings.defaultModel,
+    });
   }
 
   pi.registerCommand("orch-model", {
