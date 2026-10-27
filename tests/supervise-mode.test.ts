@@ -4,6 +4,7 @@ import { isSupervisorTool, superviseShellCommand, SUPERVISOR_TOOLS, supervisorAl
 import { PARENT_DELEGATION_TOOLS } from "../lib/delegation-tools.ts";
 import { MODES, ModeRegistry } from "../lib/modes.ts";
 import modesExtension from "../extensions/modes.ts";
+import { workflowFromBranch } from "../lib/orchestrator/workflow.ts";
 
 test("the supervisor shell accepts real scripts and refuses only an empty command", () => {
   assert.equal(superviseShellCommand("python3 - <<'PY'\nprint(1)\nPY"), "python3 - <<'PY'\nprint(1)\nPY");
@@ -151,6 +152,7 @@ test("supervise mode command and tool execution policy in modesExtension", async
 
   assert.ok(commands.has("supervise"), "/supervise command must be registered");
   assert.ok(commands.has("mode"), "/mode command must be registered");
+  assert.ok(commands.has("orch-mode"), "/orch-mode command must be registered");
 
   const ctx: any = {
     mode: "tui",
@@ -188,6 +190,16 @@ test("supervise mode command and tool execution policy in modesExtension", async
   const native = events.get("user_bash")!({ command: "node -e 'console.log(1)'" }, ctx);
   assert.ok(native?.operations, "native shell runs review scripts in supervise mode");
   assert.equal(native?.result, undefined, "native shell is not replaced with a refusal");
+
+  // The workflow is a branch-local policy inside Orchestrator, not a new mode.
+  await commands.get("orch-mode").handler("general", ctx);
+  assert.equal(workflowFromBranch(branch), "general");
+  await commands.get("orch-mode").handler("sdd", ctx);
+  assert.equal(workflowFromBranch(branch), "sdd");
+  await commands.get("orch-mode").handler("regular", ctx);
+  assert.equal(workflowFromBranch(branch), "general", "regular is an alias for general");
+  await commands.get("orch-mode").handler("nonsense", ctx);
+  assert.equal(workflowFromBranch(branch), "general", "an invalid workflow does not change the decision");
 
   // Switch off via /supervise off
   await commands.get("supervise").handler("off", ctx);

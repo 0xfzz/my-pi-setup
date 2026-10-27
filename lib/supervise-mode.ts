@@ -32,6 +32,7 @@
 import { PLAN_TOOLS, type PlanToolInfo } from "./plan-mode.ts";
 import { isDispatcherTool } from "./tool-policy.ts";
 import { parentDelegationToolNames } from "./delegation-tools.ts";
+import type { OrchestratorWorkflow } from "./orchestrator/workflow.ts";
 
 export const SUPERVISOR_MODE_ID = "supervise";
 export const SUPERVISOR_MODE_TYPE = "input-supervise-mode:v1";
@@ -375,7 +376,7 @@ export const EXPECTED_SUPERVISOR_TOOLS: ReadonlySet<string> = new Set([
  * A test keeps it under a line/character budget, so this cannot quietly grow back
  * into the essay it replaced.
  */
-export const SUPERVISOR_MODE_GUIDANCE = `You are the orchestrator: you delegate, then verify. You do not implement.
+export const SUPERVISOR_MODE_GUIDANCE = `You are the orchestrator (SDD workflow): you delegate, then verify. You do not implement.
 
 Loop: orch_spec_review → orch_handoff → orch_spawn → orch_brief → orch_check → orch_review.
 
@@ -389,3 +390,27 @@ Loop: orch_spec_review → orch_handoff → orch_spawn → orch_brief → orch_c
 - bash/python/node inspect only: no edits, formatting, installs, commits, or control-plane writes. Delegate changes.
 - Stuck child: orch_steer (queue) or orch_interrupt; end it with orch_close. Unsure: orch_escalate, then ask_user. A cancelled dialog is not consent.
 - Approve only when every criterion passes on evidence you gathered yourself. /mode normal to implement.`;
+
+/**
+ * General-purpose orchestrator briefing.
+ *
+ * The handoff/lane/review loop is unchanged; the SDD artifact lifecycle and the
+ * mandatory design review are not. It stays inside the same per-turn budget.
+ */
+export const GENERAL_ORCHESTRATOR_GUIDANCE = `You are the orchestrator (general workflow): you delegate, then verify. You do not implement.
+
+Loop: orch_handoff → orch_spawn → orch_brief → orch_check → orch_review.
+
+- One spec per unit: goal, testable criteria, lane (files it owns). No whole-repo lane; two children never share a scope or a lane. A child sees only its own spec.
+- Criteria are frozen at spawn. Revising them later makes the review need the user.
+- orch_brief is the review packet: criteria, lane, diff hunks, what the child last said. Read only what it flags.
+- orch_check runs the declared command and returns evidenceRefs you can cite. If it says "not run", you have no test evidence — say so in the findings.
+- Verify, don't trust. Prose is not evidence; a citation that does not exist is refused. Lane drift is a violation: verdict "revise" with findings, never "approved".
+- bash/python/node inspect only: no edits, formatting, installs, commits, or control-plane writes. Delegate changes.
+- Stuck child: orch_steer (queue) or orch_interrupt; end it with orch_close. Unsure: orch_escalate, then ask_user. A cancelled dialog is not consent.
+- Approve only when every criterion passes on evidence you gathered yourself. /mode normal to implement.`;
+
+/** Pick the briefing that matches the branch-derived workflow. */
+export function supervisorGuidance(workflow: OrchestratorWorkflow): string {
+  return workflow === "sdd" ? SUPERVISOR_MODE_GUIDANCE : GENERAL_ORCHESTRATOR_GUIDANCE;
+}

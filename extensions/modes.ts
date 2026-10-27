@@ -6,7 +6,8 @@ import { recordsFromBranch as childRecords } from "../lib/subagent-state.ts";
 import { childContextState, isSubagentChildSession, ownEntries } from "../lib/subagent-context.ts";
 import { readOnlyShellCommand } from "../lib/plan-shell.ts";
 import { INPUT_MODE_CONTEXT_TYPE, inputModeGuidance, isPlanTool, missingPlanTools, pendingPlanDeferredTools, pendingPlanExitTools, PLAN_MODE_GUIDANCE, PLAN_MODE_TYPE, planModeFromBranch } from "../lib/plan-mode.ts";
-import { declaredSuperviseTools, isSupervisorTool, superviseShellCommand, SUPERVISOR_MODE_GUIDANCE, SUPERVISOR_MODE_TYPE, superviseModeFromBranch } from "../lib/supervise-mode.ts";
+import { declaredSuperviseTools, isSupervisorTool, superviseShellCommand, supervisorGuidance, SUPERVISOR_MODE_TYPE, superviseModeFromBranch } from "../lib/supervise-mode.ts";
+import { normalizeOrchestratorWorkflow, ORCHESTRATOR_WORKFLOW_TYPE, orchestratorWorkflow, workflowLabel } from "../lib/orchestrator/workflow.ts";
 import { isControlPlanePath } from "../lib/orchestrator/control-plane.ts";
 import { reconcileLoadout, switchStateFromBranch } from "../lib/delegation-switch.ts";
 import { RETIRED_V1_TOOLS, isRetiredDelegationTool, stripRetiredTools } from "../lib/delegation-tools.ts";
@@ -27,6 +28,7 @@ export default function modesExtension(pi: ExtensionAPI) {
   let baseEditor: EditorFactory | undefined;
   const isPlan = (ctx: ExtensionContext) => planModeFromBranch(policyEntries(ctx))?.enabled === true;
   const isSupervise = (ctx: ExtensionContext) => superviseModeFromBranch(policyEntries(ctx))?.enabled === true;
+  const workflowOf = (ctx: ExtensionContext) => orchestratorWorkflow(policyEntries(ctx));
   const allowedPlanTool = (name: string) => isPlanTool(name, pi.getAllTools().find(tool => tool.name === name));
 
   /**
@@ -128,9 +130,11 @@ export default function modesExtension(pi: ExtensionAPI) {
     const branch = policyEntries(ctx);
     for (let index = branch.length - 1; index >= 0; index--) {
       const entry = branch[index];
-      if (entry.type === "custom" && (entry.customType === PLAN_MODE_TYPE || entry.customType === SUPERVISOR_MODE_TYPE) && typeof (entry.data as any)?.enabled === "boolean") {
-        return entry.id ?? JSON.stringify([index, entry.customType, entry.data]);
-      }
+      if (entry.type !== "custom") continue;
+      const modeDecision = (entry.customType === PLAN_MODE_TYPE || entry.customType === SUPERVISOR_MODE_TYPE)
+        && typeof (entry.data as any)?.enabled === "boolean";
+      const workflowDecision = entry.customType === ORCHESTRATOR_WORKFLOW_TYPE;
+      if (modeDecision || workflowDecision) return entry.id ?? JSON.stringify([index, entry.customType, entry.data]);
     }
     return "none";
   }
@@ -441,7 +445,7 @@ export default function modesExtension(pi: ExtensionAPI) {
     if (superviseActive) {
       restrictSuperviseTools(ctx);
       event.systemPromptOptions.selectedTools = pi.getActiveTools().filter(name => allowedSuperviseTool(ctx, name));
-      event.systemPromptOptions.sections["supervise_mode"] = SUPERVISOR_MODE_GUIDANCE;
+      event.systemPromptOptions.sections["supervise_mode"] = supervisorGuidance(workflowOf(ctx));
       delete event.systemPromptOptions.sections["plan_mode"];
       return;
     }
@@ -569,6 +573,42 @@ export default function modesExtension(pi: ExtensionAPI) {
       } else {
         switchToNext(ctx);
       }
+    },
+  });
+
+  pi.registerCommand("orch-mode", {
+    description: "Orchestrator workflow: /orch-mode [sdd|general] (regular aliases general)",
+    getArgumentCompletions(prefix) {
+      return ["sdd", "general", "regular"]
+        .filter(value => value.startsWith(prefix))
+        .map(value => ({ value, label: value === "regular" ? "regular (general)" : value }));
+    },
+    async handler(args, ctx) {
+      synchronize(ctx);
+      if (ctx.mode !== "tui") {
+        ctx.ui.notify("Orchestrator workflows are available in the terminal UI only. Use the orchestrator tool policy directly.", "warning");
+        return;
+      }
+      const requested = args.trim().toLowerCase();
+      if (!requested) {
+        const active = isSupervise(ctx);
+        ctx.ui.notify(`Orchestrator workflow: ${workflowLabel(workflowOf(ctx))}${active ? "" : " (enter /mode orchestrator to use it)"}. Use /orch-mode sdd|general.`, "info");
+        return;
+      }
+      const workflow = normalizeOrchestratorWorkflow(requested);
+      if (!workflow) {
+        ctx.ui.notify(`Unknown workflow "${requested}". Use /orch-mode sdd|general.`, "warning");
+        return;
+      }
+      // The workflow is a policy inside Orchestrator. Entering here is subject to
+      // the same busy/transition guards as /mode orchestrator.
+      if (!isSupervise(ctx) && !select("orchestrator", ctx)) return;
+      pi.appendEntry(ORCHESTRATOR_WORKFLOW_TYPE, { workflow });
+      restrictSuperviseTools(ctx);
+      restoredKey = stateKey(ctx);
+      draw?.();
+      refresh?.();
+      ctx.ui.notify(`Orchestrator workflow: ${workflowLabel(workflow)}.`, "info");
     },
   });
 

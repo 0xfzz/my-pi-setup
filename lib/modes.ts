@@ -15,7 +15,7 @@ export const MODES: readonly ModeDefinition[] = [
   { id: "normal", label: "Normal", icon: "󰚥", summary: "AI chat & tools", tone: "accent", hint: "Chat with AI", route: text => text },
   { id: "plan", label: "Plan", icon: "󰏫", summary: "Read; artifacts RW", tone: "success", hint: "Explore / plan · writes only to artifacts · /plan off to exit", route: text => text },
   { id: "supervise", label: "Supervise", icon: "󰒋", summary: "Supervise · review", tone: "accent", hint: "Orchestrate · review · no implementation · /mode normal to exit", cycleable: false, route: text => text },
-  { id: "orchestrator", label: "Orchestrator", icon: "󰀅", summary: "Delegate · review", tone: "accent", hint: "orch_handoff → orch_spawn · review with evidence · /mode normal to exit", cycleable: true, route: text => text },
+  { id: "orchestrator", label: "Orchestrator", icon: "󰀅", summary: "Delegate · review", tone: "accent", hint: "orch_handoff → orch_spawn · review with evidence · /orch-mode sdd|general · /mode normal to exit", cycleable: true, route: text => text },
 ];
 
 export class ModeRegistry {

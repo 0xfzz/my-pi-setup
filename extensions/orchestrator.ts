@@ -113,6 +113,7 @@ import {
 } from "../lib/orchestrator/brief.ts";
 import { superviseModeFromBranch } from "../lib/supervise-mode.ts";
 import { planModeFromBranch } from "../lib/plan-mode.ts";
+import { orchestratorWorkflow } from "../lib/orchestrator/workflow.ts";
 import {
   capacityProblem,
   childToolsForPurpose,
@@ -2266,17 +2267,16 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         );
       }
 
-      // Orchestrator/Supervise implementation is spec-driven: a handoff without
-      // an independent review is a plan, not an authorised work unit. Checked
-      // before naming, the design gate, or any row/pane exists.
-      if (requiresReviewedSpec(modeId)
+      // SDD implementation requires an independent review; General does not.
+      const workflow = orchestratorWorkflow(branchOf(ctx));
+      if (requiresReviewedSpec(modeId, workflow)
         && (purpose === "spec" || purpose === "implementation")
         && !handoff?.designRef) {
         return text(
-          `Orchestrator implementation requires an independent, ready specification review. `
+          `SDD Orchestrator implementation requires an independent, ready specification review. `
             + `This handoff has no designRef, so nothing authorises the work. Run orch_spec_review on the design until it is ready, `
-            + `then re-author the handoff with designRef { runId, targetHash }. Research and ad-hoc delegation do not need a spec review.`,
-          { error: "design-review-required", mode: modeId, scope: handoff?.scope },
+            + `then re-author the handoff with designRef { runId, targetHash }, or switch to /orch-mode general. Research and ad-hoc delegation do not need a spec review.`,
+          { error: "design-review-required", mode: modeId, workflow, scope: handoff?.scope },
         );
       }
 
@@ -2523,7 +2523,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     // Orchestrator/Supervise continuation is implementation too. A worker cannot
     // resume past the spec gate by using resume instead of spawn.
     const resumeMode = currentModeId(ctx);
-    if (requiresReviewedSpec(resumeMode) && child) {
+    const resumeWorkflow = orchestratorWorkflow(branchOf(ctx));
+    if (requiresReviewedSpec(resumeMode, resumeWorkflow) && child) {
       const handoff = child.handoffId
         ? handoffs.get(child.handoffId)?.record
         : [...handoffs.values()].find((entry) => entry.record.scope === child.scope)?.record;
@@ -2534,9 +2535,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       if (problem) {
         return text(
           `Refused to resume "${child.name}": ${problem}. `
-            + `Orchestrator/Supervise implementation needs a ready, unchanged specification review; `
-            + `switch to Normal (/mode normal) to continue an unreviewed run, or start a fresh reviewed handoff.`,
-          { error: "design-review-required", childId: child.id, mode: resumeMode },
+            + `SDD Orchestrator implementation needs a ready, unchanged specification review; `
+            + `switch to Normal (/mode normal) or /orch-mode general to continue an unreviewed run, or start a fresh reviewed handoff.`,
+          { error: "design-review-required", childId: child.id, mode: resumeMode, workflow: resumeWorkflow },
         );
       }
     }
