@@ -457,3 +457,60 @@ export function leakedSiblingScopes(ticket: string, selfScope: string, siblingSc
   }
   return leaked;
 }
+
+/**
+ * The QA child's ticket.
+ *
+ * A QA child judges a RESULT against the work unit's frozen acceptance criteria.
+ * It is not a second spec reviewer: the specification is settled by the time a
+ * worker runs, and re-litigating it here is the loop this lifecycle removes.
+ *
+ * The ticket carries only this work unit — its criteria, its lane, its verify
+ * command. It never names a sibling scope, and it does not need one.
+ */
+export function buildQaTicket(input: {
+  handoff: HandoffRecord;
+  workerName: string;
+  task: string;
+}): string {
+  const { handoff } = input;
+  const criteria = handoff.acceptanceCriteria.map((c, i) => `${i + 1}. ${c}`).join("\n");
+  const lane = handoff.laneFiles.map((f) => `- \`${f}\``).join("\n");
+  const verify = handoff.verifyCommand
+    ? `The declared verification command is \`${handoff.verifyCommand}\`. The orchestrator's orch_check receipt quotes its result; treat a failing receipt as a defect.`
+    : `No verification command was declared. Judge the evidence in the worker's report and the lane diff.`;
+  const assignment = String(input.task ?? "").trim();
+
+  return `# QA review: ${handoff.scope}
+
+## What you are judging
+The worker "${input.workerName}" completed work unit \`${handoff.scope}\`.
+You judge the RESULT against the acceptance criteria below. You do not redesign
+the specification and you do not fix anything yourself.
+
+${assignment ? `## The orchestrator's focus for this review\n${assignment}\n` : ""}
+## Acceptance criteria — each must be evidenced
+${criteria}
+
+## The worker's lane
+${lane}
+
+${verify}
+
+## What to do
+- **Satisfied** → call \`orch_done\` with the evidence summary: for each
+  criterion, what you checked and what proves it.
+- **Defect** → call \`orch_ping\` IMMEDIATELY. Say which criterion fails, the
+  file and line, what is wrong, and the smallest fix you would accept. The
+  orchestrator opens a defect ticket, spawns a fix unit, and resumes you to
+  re-verify. Do not wait for the review to finish elsewhere.
+
+You are read-only: no write/edit tool and a read-only shell. If you cannot
+verify something from the lane and the evidence, say so in the ping rather than
+guessing.
+
+## What to report back
+A verdict, then per criterion: what you checked, the evidence, and pass/fail.
+Say plainly what you could not verify.
+`;
+}

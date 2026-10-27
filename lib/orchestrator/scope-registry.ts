@@ -61,6 +61,8 @@ export interface ScopedChild {
   reviewRunId?: string;
   reviewLens?: string;
   targetHash?: string;
+  /** QA children only: the completed work-unit scope whose result this child judges. */
+  qaForScope?: string;
   paneId?: string;
   status: "running" | "completed" | "blocked" | "failed" | "closed";
   /** Audit copy of the handoff spec. Orchestrator-side evidence, never handed to the child. */

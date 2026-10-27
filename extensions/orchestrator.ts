@@ -32,6 +32,7 @@ import {
   HandoffError,
   buildAdhocTicket,
   buildChildTicket,
+  buildQaTicket,
   handoffArtifactPayload,
   handoffIdFor,
   leakedSiblingScopes,
@@ -1398,7 +1399,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
      * would reintroduce the ghost-row class of bug this registry was rewritten to
      * remove.
      */
-    meta?: Pick<ScopedChild, "purpose" | "reviewRunId" | "reviewLens" | "targetHash">,
+    meta?: Pick<ScopedChild, "purpose" | "reviewRunId" | "reviewLens" | "targetHash" | "qaForScope">,
   ) {
     // One row per session file: a resume supersedes the previous row instead of
     // forking a second "running" ghost that only the newest row can update.
@@ -2432,6 +2433,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       ),
       task: Type.String({ description: "The specific assignment. For an ad-hoc spawn this is the whole brief; for a spec spawn it must stay inside the handoff's lane." }),
       handoffId: Type.Optional(Type.String({ description: "Handoff id returned by orch_handoff (its scope is accepted too). Omit it for an ad-hoc spawn." })),
+      qaFor: Type.Optional(
+        Type.String({ description: "QA spawns only: the completed work-unit scope whose result this child judges. Used with purpose \"review\"." }),
+      ),
       purpose: Type.Optional(
         Type.Union(
           [
@@ -2497,9 +2501,10 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       const refusal = spawnRefusal(modeId, purpose, false, Boolean(handoff));
       if (refusal) return text(refusal, { error: "purpose-refused", mode: modeId, purpose });
 
-      if (purpose === "review") {
+      if (purpose === "review" && !params.qaFor) {
         return text(
-          "A review spawn needs a pinned document and an isolated reviewer: start it with orch_spec_review, which creates the reviewer and its ticket.",
+          "A review spawn needs a pinned document and an isolated reviewer: start it with orch_spec_review, which creates the reviewer and its ticket. "
+            + "To QA a completed work unit's result, pass qaFor: \"<scope>\".",
           { error: "use-spec-review" },
         );
       }
@@ -2518,6 +2523,32 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         );
       }
 
+      // ── QA: judge a completed work unit's result ───────────────────────
+      // QA is admitted only for a finished result. It is read-only and judges
+      // the acceptance criteria, not the specification, so it cannot become a
+      // second review loop.
+      let qaHandoff: HandoffRecord | undefined;
+      let qaWorker: ScopedChild | undefined;
+      if (purpose === "review") {
+        const qaFor = String(params.qaFor ?? "").trim();
+        qaWorker = registry.getAllChildren().find((child) => child.scope === qaFor && child.status === "completed");
+        if (!qaWorker) {
+          return text(
+            `No completed work unit "${qaFor}" to review. A QA child judges a finished result: wait for the worker's completion trigger, then pass qaFor with its scope.`,
+            { error: "no-completed-work", scope: qaFor },
+          );
+        }
+        qaHandoff = qaWorker.handoffId
+          ? handoffs.get(qaWorker.handoffId)?.record
+          : [...handoffs.values()].find((entry) => entry.record.scope === qaFor)?.record;
+        if (!qaHandoff) {
+          return text(
+            `Work unit "${qaFor}" has no handoff spec, so there are no acceptance criteria to judge. Resume or re-spawn it with a handoff.`,
+            { error: "no-handoff", scope: qaFor },
+          );
+        }
+      }
+
       // Orchestrator/Supervise implementation is spec-driven: a handoff without
       // an independent review is a plan, not an authorised work unit. Checked
       // before naming, the design gate, or any row/pane exists.
@@ -2532,9 +2563,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         );
       }
 
-      const scope = handoff?.scope ?? adhocScope(params);
-      const laneFiles = handoff?.laneFiles ?? [...(params.laneFiles ?? [])];
-      const acceptanceCriteria = handoff?.acceptanceCriteria ?? [...(params.acceptanceCriteria ?? [])];
+      const scope = qaHandoff ? `qa-${qaHandoff.scope}`.slice(0, 64) : handoff?.scope ?? adhocScope(params);
+      const laneFiles = qaHandoff ? [] : handoff?.laneFiles ?? [...(params.laneFiles ?? [])];
+      const acceptanceCriteria = qaHandoff ? qaHandoff.acceptanceCriteria : handoff?.acceptanceCriteria ?? [...(params.acceptanceCriteria ?? [])];
       const handoffId = handoff?.id;
 
       // ── human naming ─────────────────────────────────────────────────────
@@ -2632,22 +2663,24 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       // touching v1's launch planner.
       const childArtifactSessionId = `${parentSessionId}-${handoffId ?? `adhoc-${scope}`}`;
 
-      const ticket = handoff
-        ? buildChildTicket(handoff, params.task)
-        : buildAdhocTicket({
-            scope,
-            purpose: purpose === "research" ? "research" : purpose === "implementation" ? "implementation" : "adhoc",
-            task: params.task,
-            laneFiles,
-            acceptanceCriteria,
-          });
+      const ticket = qaHandoff
+        ? buildQaTicket({ handoff: qaHandoff, workerName: qaWorker?.name ?? qaHandoff.scope, task: params.task })
+        : handoff
+          ? buildChildTicket(handoff, params.task)
+          : buildAdhocTicket({
+              scope,
+              purpose: purpose === "research" ? "research" : purpose === "implementation" ? "implementation" : "adhoc",
+              task: params.task,
+              laneFiles,
+              acceptanceCriteria,
+            });
 
       // Isolation is a data invariant, checked before the child exists rather than
       // trusted to happen. A ticket that names a sibling's scope hands this child
       // knowledge it has no lane for, and the resulting diff is unattributable.
       const siblingScopes = [...handoffs.values()]
         .map((entry) => entry.record.scope)
-        .filter((sibling) => sibling !== scope);
+        .filter((sibling) => sibling !== scope && sibling !== qaHandoff?.scope);
       const leaked = leakedSiblingScopes(ticket, scope, siblingScopes);
       if (leaked.length > 0) {
         return text(
@@ -2723,7 +2756,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         handoffId,
         params.budgetMinutes ? params.budgetMinutes * 60_000 : undefined,
         { criteria: acceptanceCriteria, revision: handoff?.revision ?? 1 },
-        { purpose: registryPurpose(purpose) },
+        { purpose: registryPurpose(purpose), ...(qaHandoff ? { qaForScope: qaHandoff.scope } : {}) },
       );
 
       return text(
@@ -2731,6 +2764,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           `Subagent "${displayName}" launched (scope: ${scope}, ${handoffId ? `handoff: ${handoffId}` : "ad-hoc, no handoff spec"}).`,
           `Pane: ${started.paneId}`,
           `Lane: ${laneFiles.join(", ") || "not declared (ad-hoc)"}`,
+          ...(qaHandoff
+            ? [`QA target: ${qaHandoff.scope} (${qaWorker?.name ?? "worker"}). A defect pings you; open a ticket, spawn a fix unit, and resume this QA to re-verify.`]
+            : []),
           ``,
           handoffId
             ? `The child holds this handoff only. It cannot see any other work unit.`

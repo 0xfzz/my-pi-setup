@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import {
   HandoffError,
   buildChildTicket,
+  buildQaTicket,
   handoffArtifactPayload,
   handoffIdFor,
   leakedSiblingScopes,
@@ -178,3 +179,17 @@ describe("handoff spec", () => {
     assert.equal(first.id, second.id);
   });
 });
+
+  it("a QA ticket judges a result against the unit's criteria and names no sibling", () => {
+    const record = { ...validateHandoff(spec()), parentSessionId: "parent-1" };
+    const ticket = buildQaTicket({ handoff: record, workerName: "Net Worker", task: "Focus on the lane diff." });
+
+    assert.match(ticket, /# QA review: net-retry/);
+    assert.match(ticket, /## Acceptance criteria/);
+    assert.match(ticket, /Backoff is exponential/);
+    assert.match(ticket, /orch_ping/);
+    assert.match(ticket, /orch_done/);
+    assert.match(ticket, /read-only/);
+    assert.match(ticket, /Fix defect|orch_ping/);
+    assert.deepEqual(leakedSiblingScopes(ticket, "qa-net-retry", ["db-pool"]), []);
+  });

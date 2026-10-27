@@ -545,3 +545,59 @@ test("a reviewer cannot be resumed or steered with author context", async () => 
     await h.detach();
   }
 });
+
+test("a QA child is admitted only for a completed work unit and gets its criteria", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    const refused = await h.call("orch_spawn", {
+      name: "QA",
+      task: "Judge the result.",
+      purpose: "review",
+      qaFor: "retry-impl",
+    });
+    assert.equal(refused.details.error, "no-completed-work", refused.content[0].text);
+
+    const authored = await h.call("orch_handoff", {
+      scope: "retry-impl",
+      goal: "Implement retry with jitter",
+      acceptanceCriteria: ["jitter is applied"],
+      laneFiles: ["src/retry.ts"],
+    });
+    registry.registerChild({
+      id: "worker-1",
+      name: "Retry Worker",
+      scope: "retry-impl",
+      sessionFile: join(h.dir, "worker-1.jsonl"),
+      paneId: "pane-worker",
+      status: "completed",
+      laneFiles: ["src/retry.ts"],
+      lastMilestoneFiles: [],
+      updatedAt: new Date().toISOString(),
+      handoffId: authored.details.id,
+      purpose: "implementation",
+    });
+
+    const spawned = await h.call("orch_spawn", {
+      name: "QA",
+      task: "Judge the result against the criteria.",
+      purpose: "review",
+      qaFor: "retry-impl",
+    });
+    assert.equal(spawned.details.status, "started", spawned.content[0].text);
+    assert.equal(spawned.details.scope, "qa-retry-impl");
+
+    // The QA child is a reader: the launcher marks its purpose and hands it the
+    // reader allowlist, so the lifecycle cannot turn QA into a second writer.
+    const scripts = await h.launchScripts();
+    const qaScript = scripts[scripts.length - 1] ?? "";
+    assert.match(qaScript, /PI_SUBAGENT_PURPOSE='review'/);
+
+    const row = [...registry.getAllChildren()].find((child) => child.scope === "qa-retry-impl");
+    assert.equal(row?.qaForScope, "retry-impl", "the registry links QA to the unit it judges");
+    assert.equal(row?.purpose, "review");
+  } finally {
+    await h.detach();
+  }
+});
