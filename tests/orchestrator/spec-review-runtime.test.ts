@@ -601,3 +601,26 @@ test("a QA child is admitted only for a completed work unit and gets its criteri
     await h.detach();
   }
 });
+
+test("the parent is told to end its turn, and a no-change poll is refused", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    h.ctx.sessionManager.getBranch().push({
+      type: "custom",
+      customType: SUPERVISOR_MODE_TYPE,
+      data: { enabled: true, previousTools: [], modeId: "orchestrator" },
+    });
+    const spawned = await h.call("orch_spawn", { name: "Scout", task: "Inventory the seams.", purpose: "research" });
+    assert.match(spawned.content[0].text, /Do not poll or sleep/, "a spawn result ends the turn");
+
+    const first = await h.call("orch_running", {});
+    assert.match(first.content[0].text, /children \(1\)/);
+    const second = await h.call("orch_running", {});
+    assert.equal(second.details.error, "no-new-events", second.content[0].text);
+    assert.match(second.content[0].text, /Do not poll or sleep/);
+  } finally {
+    await h.detach();
+  }
+});

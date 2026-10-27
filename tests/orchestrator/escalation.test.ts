@@ -192,3 +192,13 @@ it("a QA defect question carries the ticket lifecycle, not just an answer prompt
   assert.match(text, /todo_act failed/);
   assert.match(text, /ask the user/);
 });
+
+it("a repeated poll with no new events is detectable, and the contract ends the turn", async () => {
+  const { notePoll, resetPollFingerprints, RETRIGGER_CONTRACT } = await import("../../extensions/orchestrator.ts");
+  resetPollFingerprints();
+  assert.equal(notePoll("session-a", "running", "same"), false, "the first poll is answered");
+  assert.equal(notePoll("session-a", "running", "same"), true, "an identical repeat is refused");
+  assert.equal(notePoll("session-a", "running", "changed"), false, "a real change is answered");
+  assert.match(RETRIGGER_CONTRACT, /Do not poll or sleep/);
+  resetPollFingerprints();
+});

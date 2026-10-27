@@ -228,6 +228,39 @@ export function escalationGuidance(escalationId: string): string[] {
   ];
 }
 
+/**
+ * The sentence that ends the parent's turn.
+ *
+ * The orchestrator is event-driven: completion, a child question, and a
+ * watchdog notice all arrive as messages that trigger a turn. Sleep-polling was
+ * the observed failure (session 01a17cb6 spent six minutes in `bash sleep`), so
+ * the contract is stated in every result that starts asynchronous work.
+ */
+export const RETRIGGER_CONTRACT =
+  "Your turn ends here. You will be re-triggered when a child completes (report), asks a question (escalation), "
+  + "or hits its budget/stalls (watchdog). Do not poll or sleep; act only when triggered.";
+
+/**
+ * Fingerprints of the last status/collect answer per session and action.
+ *
+ * A second poll with no new child status, report, escalation or completion is
+ * answered with one line instead of the same page: re-reading unchanged state
+ * burns tokens without changing a decision.
+ */
+const lastPollFingerprints = new Map<string, string>();
+
+/** True when this poll's fingerprint is identical to the previous one. */
+export function notePoll(sessionKey: string, action: string, fingerprint: string): boolean {
+  const key = `${sessionKey}:${action}`;
+  const previous = lastPollFingerprints.get(key);
+  lastPollFingerprints.set(key, fingerprint);
+  return previous !== undefined && previous === fingerprint;
+}
+
+export function resetPollFingerprints(): void {
+  lastPollFingerprints.clear();
+}
+
 export interface OrchestratorDeps {
   client?: HerdrClient;
   stream?: any;
@@ -1205,6 +1238,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   pi.on("session_start", async (_event, ctx) => {
     sessionDir = ctx.sessionManager.getSessionDir();
     ownerSessionId = ctx.sessionManager.getSessionId();
+    resetPollFingerprints();
     const header = (ctx.sessionManager as any).getHeader?.();
     const provenChild = isSubagentChildSession(ctx);
     // `seeded` folds in the child flag for legacy seeds that carry a parent-session
@@ -1246,6 +1280,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
 
   pi.on("session_shutdown", () => {
     stopWatchdog();
+    resetPollFingerprints();
     // Only the owner writes the sidecar. A child writing its restored view marked
     // siblings closed/blocked behind the parent's back.
     if (!isChildSession) persistState();
@@ -2130,7 +2165,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             ...(failed.length ? [`Failed: ${failed.join("; ")}`] : []),
             ``,
             `Reviewers are isolated: no parent transcript, no artifacts, no write tool, no shell.`,
-            `When they finish, run orch_spec_review({ action: "collect", runId: "${run.id}" }).`,
+            `When a reviewer completes you are re-triggered; run collect then. ${RETRIGGER_CONTRACT}`,
           ].join("\n"),
           { runId: run.id, targetHash: target.contentHash, preset, launched, failed },
         );
@@ -2157,6 +2192,15 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         const roundsForTarget = nonReadyRoundsFor(run.target.kind, run.target.ref).length;
         const budget = `Spec rounds: ${Math.min(roundsForTarget, MAX_REVIEW_ROUNDS)} of ${MAX_REVIEW_ROUNDS} for this target · `
           + `${Math.min(sessionReviewRounds(), MAX_SESSION_REVIEW_ROUNDS)} of ${MAX_SESSION_REVIEW_ROUNDS} this session.`;
+        const fingerprint = JSON.stringify([
+          run.status,
+          run.readiness.ready,
+          run.reviewers.map((slot) => [slot.lens, slot.status]),
+          Object.keys(run.reports),
+        ]);
+        if (notePoll(ctx.sessionManager.getSessionId(), `status:${run.id}`, fingerprint)) {
+          return text(`No new events since your last check. ${RETRIGGER_CONTRACT}`, { error: "no-new-events", runId: run.id });
+        }
         return text(
           renderRunSummary(run) + `\n${budget}` + (stale ? `\nStale: ${stale}. Start a new review of the revised document.` : ""),
           { runId: run.id, status: run.status, ready: run.readiness.ready, stale: stale ?? null },
@@ -2254,6 +2298,18 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           };
       specReviews.set(next.id, next);
       persistState();
+      // Collect is a poll too. A repeat that found nothing new is one line, not
+      // the same run summary again.
+      const collectFingerprint = JSON.stringify([
+        next.status,
+        next.readiness.ready,
+        next.reviewers.map((slot) => [slot.lens, slot.status]),
+        Object.keys(next.reports),
+        problems,
+      ]);
+      if (notePoll(ctx.sessionManager.getSessionId(), `collect:${next.id}`, collectFingerprint)) {
+        return text(`No new events since your last check. ${RETRIGGER_CONTRACT}`, { error: "no-new-events", runId: next.id });
+      }
       return text(
         [renderRunSummary(next), ...(problems.length ? [``, `Waiting on:`, ...problems.map((p) => `- ${p}`)] : [])].join("\n"),
         {
@@ -2793,7 +2849,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             : `The child has no handoff spec. orch_check will report lane: not-declared unless you passed laneFiles.`,
           `The scope (${scope}) is the identity: use it in orch_steer, orch_check and orch_review.`,
           ...(driftWarning ? [`Warning: ${driftWarning}.`] : []),
-          `Do NOT guess results. The outcome (or an orch_ping escalation) arrives automatically.`,
+          `The outcome (or an orch_ping escalation) arrives automatically.`,
+          RETRIGGER_CONTRACT,
         ].join("\n"),
         {
           id: running.id,
@@ -3337,6 +3394,19 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       const filtered = params.scope ? running.filter((c) => c.scope === params.scope) : running;
       const pending = escalations.forOrchestrator();
 
+      // A poll that changed nothing is not information. Answer once, then refuse
+      // the repeat: the parent has triggers, not a timer.
+      const fingerprint = JSON.stringify({
+        children: filtered.map((child) => [child.id, child.status, child.pendingPing === true]),
+        escalations: pending.map((entry) => entry.id),
+      });
+      if (notePoll(ownerSessionId ?? "parent", `running:${params.scope ?? "*"}`, fingerprint)) {
+        return text(`No new events since your last check. ${RETRIGGER_CONTRACT}`, {
+          error: "no-new-events",
+          count: filtered.length,
+        });
+      }
+
       const lines = filtered.map((child) => {
         const waiting = pending.filter((e) => e.childId === child.id);
         const watchdog = child.watchdog?.trip
@@ -3655,6 +3725,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             `orch_resume({ sessionPath: "${escalation.sessionFile}", message: <below> }).`,
         ``,
         message,
+        ``,
+        RETRIGGER_CONTRACT,
       ].join("\n"),
       {
         status: escalation.stage,
