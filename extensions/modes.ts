@@ -50,6 +50,7 @@ export default function modesExtension(pi: ExtensionAPI) {
    */
   const superviseOptions = (ctx: ExtensionContext) => ({
     disabledDelegates: switchStateFromBranch(policyEntries(ctx)).disabled,
+    workflow: workflowOf(ctx),
   });
   const allowedSuperviseTool = (ctx: ExtensionContext, name: string) =>
     isSupervisorTool(name, pi.getAllTools().find(tool => tool.name === name), superviseOptions(ctx));
@@ -510,6 +511,9 @@ export default function modesExtension(pi: ExtensionAPI) {
     if (planActive) {
       if (!allowedPlanTool(event.toolName)) {
         return { block: true, reason: `Plan mode: ${event.toolName} is blocked. Read-only inspection is allowed; writes are only allowed through artifact_save. Use /plan off to implement changes.` };
+      }
+      if (event.toolName === "orch_sdd" && !["status", "analyze"].includes(String((event.input as any)?.action ?? ""))) {
+        return { block: true, reason: "Plan mode: orch_sdd may only run status or analyze. Leave Plan mode to create spec, plan, tasks, or clarify." };
       }
       if (event.toolName === "bash") {
         const command = readOnlyShellCommand(event.input?.command);

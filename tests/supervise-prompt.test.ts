@@ -29,13 +29,13 @@ test("the general brief keeps the review loop but drops the SDD gate", () => {
     assert.ok(GENERAL_ORCHESTRATOR_GUIDANCE.includes(needle), `general prompt must mention ${needle}`);
   }
   assert.match(GENERAL_ORCHESTRATOR_GUIDANCE, /general workflow/i);
-  assert.doesNotMatch(GENERAL_ORCHESTRATOR_GUIDANCE, /orch_spec_review|designRef/i);
+  assert.doesNotMatch(GENERAL_ORCHESTRATOR_GUIDANCE, /orch_spec_review|designRef|orch_sdd/i);
   assert.equal(supervisorGuidance("sdd"), SUPERVISOR_MODE_GUIDANCE);
   assert.equal(supervisorGuidance("general"), GENERAL_ORCHESTRATOR_GUIDANCE);
 });
 
 test("the brief names the loop, the review tools and the verifiable-evidence rule", () => {
-  for (const needle of ["orch_handoff", "orch_spawn", "orch_brief", "orch_check", "orch_review", "evidenceRefs", "lane", "revise", "bash/python/node"]) {
+  for (const needle of ["orch_handoff", "orch_spawn", "orch_brief", "orch_check", "orch_review", "evidenceRefs", "lane", "revise", "bash/python/node", "orch_sdd"]) {
     assert.ok(SUPERVISOR_MODE_GUIDANCE.includes(needle), `prompt must mention ${needle}`);
   }
 });

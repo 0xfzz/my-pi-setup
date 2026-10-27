@@ -119,6 +119,8 @@ export const SUPERVISOR_TOOLS: ReadonlySet<string> = new Set([
   "orch_review",
   // Independent specification review — the gate that runs before a worker exists.
   "orch_spec_review",
+  // Lean SDD artifacts. Visible only in the SDD workflow; General hides it.
+  "orch_sdd",
   // ── Review instruments and coordination ────────────────────────────────
   "read",
   "grep",
@@ -278,6 +280,8 @@ export interface SupervisorToolOptions {
    * not consent to undo it.
    */
   disabledDelegates?: ReadonlySet<string>;
+  /** SDD tools are visible only in the SDD workflow. */
+  workflow?: OrchestratorWorkflow;
 }
 
 export function isSupervisorTool(
@@ -287,6 +291,8 @@ export function isSupervisorTool(
 ): boolean {
   if (options?.disabledDelegates?.has(name)) return false;
   if (SUPERVISOR_DENIED_TOOLS.has(name) || tool?.annotations?.destructiveHint === true) return false;
+  // SDD is a workflow, not just a permission: General must not advertise it.
+  if (name === "orch_sdd" && options?.workflow === "general") return false;
   // A dispatcher executes tools this policy never sees, so neither the
   // allowlist nor the control-plane path guard can inspect what it runs.
   if (DISPATCHER_NAMES.has(name)) return false;
@@ -362,6 +368,7 @@ export const EXPECTED_SUPERVISOR_TOOLS: ReadonlySet<string> = new Set([
   "orch_check",
   "orch_review",
   "orch_spec_review",
+  "orch_sdd",
   "orch_escalate",
 ]);
 
@@ -378,9 +385,9 @@ export const EXPECTED_SUPERVISOR_TOOLS: ReadonlySet<string> = new Set([
  */
 export const SUPERVISOR_MODE_GUIDANCE = `You are the orchestrator (SDD workflow): you delegate, then verify. You do not implement.
 
-Loop: orch_spec_review → orch_handoff → orch_spawn → orch_brief → orch_check → orch_review.
+Loop: orch_sdd → orch_spec_review → orch_handoff → orch_spawn → orch_brief → orch_check → orch_review.
 
-- A design that matters gets orch_spec_review first (pinned, isolated reviewers); pass { runId, targetHash } as designRef so spawn refuses a stale approval.
+- Designs get orch_spec_review first (pinned, isolated reviewers); pass { runId, targetHash } as designRef so spawn refuses a stale approval.
 
 - One spec per unit: goal, testable criteria, lane (files it owns). No whole-repo lane; two children never share a scope or a lane. A child sees only its own spec.
 - Criteria are frozen at spawn. Revising them later makes the review need the user.

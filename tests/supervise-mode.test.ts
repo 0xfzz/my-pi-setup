@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isSupervisorTool, superviseShellCommand, SUPERVISOR_TOOLS, supervisorAllowlistGaps } from "../lib/supervise-mode.ts";
+import { declaredSuperviseTools, isSupervisorTool, superviseShellCommand, SUPERVISOR_TOOLS, supervisorAllowlistGaps } from "../lib/supervise-mode.ts";
 import { PARENT_DELEGATION_TOOLS } from "../lib/delegation-tools.ts";
 import { MODES, ModeRegistry } from "../lib/modes.ts";
 import modesExtension from "../extensions/modes.ts";
@@ -37,9 +37,19 @@ test("isSupervisorTool permits supervisor controls, read-only tools, and orch_* 
   // the spawn tool has an unreachable mandatory precondition. `orch_escalate` is the
   // ladder's middle rung. A production session lost all three and worked around v2
   // with the v1 `subagent` tool, so they are asserted by name, not just in bulk.
-  for (const name of ["orch_handoff", "orch_escalate", "orch_spawn", "orch_resume", "orch_interrupt", "orch_steer", "orch_route", "orch_running", "orch_review"]) {
+  for (const name of ["orch_handoff", "orch_escalate", "orch_spawn", "orch_resume", "orch_interrupt", "orch_steer", "orch_route", "orch_running", "orch_review", "orch_sdd"]) {
     assert.equal(isSupervisorTool(name), true, `expected ${name} to be allowed`);
   }
+});
+
+test("SDD is a workflow-scoped tool, not a General-orchestrator surface", () => {
+  assert.equal(SUPERVISOR_TOOLS.has("orch_sdd"), true);
+  assert.equal(isSupervisorTool("orch_sdd", undefined, { workflow: "sdd" }), true);
+  assert.equal(isSupervisorTool("orch_sdd", undefined, { workflow: "general" }), false);
+
+  const tools = [{ name: "orch_sdd" }, { name: "orch_handoff" }];
+  assert.deepEqual(declaredSuperviseTools(tools, { workflow: "sdd" }), ["orch_sdd", "orch_handoff"]);
+  assert.deepEqual(declaredSuperviseTools(tools, { workflow: "general" }), ["orch_handoff"]);
 });
 
 test("isSupervisorTool denies direct file modifications, browser tools, and opaque gateways", () => {

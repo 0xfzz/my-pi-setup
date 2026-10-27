@@ -115,6 +115,16 @@ import { superviseModeFromBranch } from "../lib/supervise-mode.ts";
 import { planModeFromBranch } from "../lib/plan-mode.ts";
 import { orchestratorWorkflow } from "../lib/orchestrator/workflow.ts";
 import {
+  SddError,
+  sddAnalyze,
+  sddClarify,
+  sddPlan,
+  sddSpecify,
+  sddStatus,
+  sddTasks,
+  type SddTaskInput,
+} from "../lib/orchestrator/sdd.ts";
+import {
   capacityProblem,
   childToolsForPurpose,
   currentSpawnDepth,
@@ -1676,6 +1686,129 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         ].join("\n"),
         { runId: policy.runId, lens, findings: parsed.report.findings.length, ...counts },
       );
+    },
+  });
+
+  // ── orch_sdd — lean SDD artifacts (SDD workflow only) ──────────────────────
+  pi.registerTool({
+    name: "orch_sdd",
+    label: "Spec-Driven Development",
+    description:
+      "Create and inspect durable SDD artifacts under specs/<feature>/. Actions: specify | clarify | plan | tasks | analyze | status. Artifacts are create-only; changed contracts use <feature>-v2. status/analyze are read-only and available in Plan mode.",
+    parameters: Type.Object({
+      action: Type.Union([
+        Type.Literal("specify"),
+        Type.Literal("clarify"),
+        Type.Literal("plan"),
+        Type.Literal("tasks"),
+        Type.Literal("analyze"),
+        Type.Literal("status"),
+      ]),
+      feature: Type.String({ description: "Feature slug (or specs/<slug>) under the repository's specs/ directory." }),
+      title: Type.Optional(Type.String({ description: "specify: feature title." })),
+      problem: Type.Optional(Type.String({ description: "specify: problem / why." })),
+      goals: Type.Optional(Type.Array(Type.String())),
+      nonGoals: Type.Optional(Type.Array(Type.String())),
+      requirements: Type.Optional(Type.Array(Type.String(), { description: "specify: requirements; FR-### ids are assigned." })),
+      acceptance: Type.Optional(Type.Array(Type.String(), { description: "specify: Given/When/Then scenarios; AC-### ids are assigned." })),
+      constraints: Type.Optional(Type.Array(Type.String())),
+      outOfScope: Type.Optional(Type.Array(Type.String())),
+      openQuestions: Type.Optional(Type.Array(Type.String())),
+      parentRoadmap: Type.Optional(Type.String({ description: "Optional roadmap path for a slice." })),
+      sliceId: Type.Optional(Type.String({ description: "Optional roadmap entry id (R#)." })),
+      question: Type.Optional(Type.String({ description: "clarify: open question to resolve." })),
+      answer: Type.Optional(Type.String({ description: "clarify: answer to record." })),
+      approach: Type.Optional(Type.String({ description: "plan: implementation approach." })),
+      files: Type.Optional(Type.Array(Type.String())),
+      interfaces: Type.Optional(Type.Array(Type.String())),
+      testStrategy: Type.Optional(Type.Array(Type.String())),
+      risks: Type.Optional(Type.Array(Type.String())),
+      taskMapping: Type.Optional(Type.String()),
+      tasks: Type.Optional(Type.Array(Type.Object({
+        id: Type.Optional(Type.String()),
+        title: Type.String(),
+        dependsOn: Type.Optional(Type.Array(Type.String())),
+        parallel: Type.Optional(Type.Boolean()),
+        maps: Type.Optional(Type.Array(Type.String())),
+        files: Type.Optional(Type.Array(Type.String())),
+        verify: Type.Optional(Type.String()),
+        phase: Type.Optional(Type.String()),
+      }))),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const branch = branchOf(ctx);
+      const workflow = orchestratorWorkflow(branch);
+      if (workflow !== "sdd") {
+        return text("orch_sdd is available only in the SDD workflow. Run /orch-mode sdd.", { error: "sdd-workflow-required" });
+      }
+      if (planModeFromBranch(branch)?.enabled && params.action !== "status" && params.action !== "analyze") {
+        return text("Plan mode: orch_sdd may only run status or analyze. Leave Plan mode to author specs.", { error: "plan-read-only" });
+      }
+      const cwd = (ctx as any).cwd || process.cwd();
+      try {
+        if (params.action === "specify") {
+          const result = sddSpecify(cwd, {
+            feature: params.feature,
+            title: params.title ?? "",
+            problem: params.problem ?? "",
+            goals: params.goals ?? [],
+            nonGoals: params.nonGoals ?? [],
+            requirements: params.requirements ?? [],
+            acceptance: params.acceptance ?? [],
+            constraints: params.constraints ?? [],
+            outOfScope: params.outOfScope ?? [],
+            openQuestions: params.openQuestions ?? [],
+            parentRoadmap: params.parentRoadmap,
+            sliceId: params.sliceId,
+          });
+          return text(`SDD spec created: ${result.file}`, { featureDir: result.featureDir, file: result.file });
+        }
+        if (params.action === "clarify") {
+          const result = sddClarify(cwd, { feature: params.feature, question: params.question ?? "", answer: params.answer ?? "" });
+          return text(`SDD clarification recorded in ${result.file}`, { featureDir: result.featureDir, file: result.file });
+        }
+        if (params.action === "plan") {
+          const result = sddPlan(cwd, {
+            feature: params.feature,
+            approach: params.approach ?? "",
+            files: params.files ?? [],
+            interfaces: params.interfaces ?? [],
+            testStrategy: params.testStrategy ?? [],
+            risks: params.risks ?? [],
+            taskMapping: params.taskMapping,
+          });
+          return text(`SDD plan created: ${result.file}`, { featureDir: result.featureDir, file: result.file });
+        }
+        if (params.action === "tasks") {
+          const result = sddTasks(cwd, { feature: params.feature, tasks: (params.tasks ?? []) as SddTaskInput[] });
+          return text(`SDD tasks created: ${result.file}`, { featureDir: result.featureDir, file: result.file });
+        }
+        if (params.action === "analyze") {
+          const result = sddAnalyze(cwd, params.feature);
+          const lines = result.findings.length
+            ? result.findings.map((finding) => `- ${finding.code} ${finding.location}: ${finding.message}`)
+            : ["- Clean: no SDD consistency findings."];
+          return text([`SDD analyze: ${result.featureDir}`, ...lines].join("\n"), result);
+        }
+        const result = sddStatus(cwd, params.feature);
+        const specPath = join(result.featureDir, "spec.md");
+        const reviews = [...specReviews.values()]
+          .filter((run) => run.target.kind === "file" && resolve(cwd, run.target.ref) === specPath)
+          .map((run) => ({ runId: run.id, ready: evaluateReadiness(run).ready, targetHash: run.target.contentHash }));
+        const lines = [
+          `SDD feature: ${result.featureDir}`,
+          `Files: spec=${result.files.spec} plan=${result.files.plan} tasks=${result.files.tasks}`,
+          `Spec status: ${result.specStatus ?? "missing"}`,
+          `Tasks: ${result.doneCount}/${result.taskCount} done`,
+          `Ready: ${result.ready.map((task) => task.id).join(", ") || "none"}`,
+          `Parallel groups: ${result.parallelGroups.map((group) => group.map((task) => task.id).join("+")).join(" | ") || "none"}`,
+          `Findings: ${result.findings.length}`,
+          `Spec reviews: ${reviews.map((review) => `${review.runId}${review.ready ? " ready" : " not-ready"}`).join(", ") || "none"}`,
+        ];
+        return text(lines.join("\n"), { ...result, reviews });
+      } catch (error: any) {
+        return text(`SDD rejected: ${error instanceof SddError ? error.message : (error?.message ?? String(error))}`, { error: "sdd-error" });
+      }
     },
   });
 
