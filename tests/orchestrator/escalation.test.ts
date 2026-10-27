@@ -181,3 +181,14 @@ describe("escalation ladder", () => {
     assert.deepEqual(ledger.forChild("child-1").map((e) => e.id), ["esc-a"]);
   });
 });
+
+it("a QA defect question carries the ticket lifecycle, not just an answer prompt", async () => {
+  const { escalationGuidance } = await import("../../extensions/orchestrator.ts");
+  const text = escalationGuidance("esc-1").join("\n");
+  assert.match(text, /orch_escalate/);
+  assert.match(text, /todo_plan/);
+  assert.match(text, /todo_act claim/);
+  assert.match(text, /todo_act done/);
+  assert.match(text, /todo_act failed/);
+  assert.match(text, /ask the user/);
+});

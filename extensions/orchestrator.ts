@@ -207,6 +207,27 @@ export function childPurposeFromEnv(env: NodeJS.ProcessEnv = process.env): "rese
   return value === "research" || value === "review" ? value : undefined;
 }
 
+/**
+ * What the parent does with a child's question.
+ *
+ * The defect-ticket steps live here rather than in a prompt because a ping
+ * answered in prose leaves the defect in nobody's state: a second ping cannot
+ * see the first, and the same defect can be "fixed" twice. The ledger is the
+ * todo surface, whose `done` is already evidence-gated.
+ */
+export function escalationGuidance(escalationId: string): string[] {
+  return [
+    `Answer it with orch_escalate({ id: "${escalationId}", action: "answer", answer: "..." }) if you know from context you have.`,
+    `If you do not, use action: "to-user" with your reason — the user decides, and a cancelled dialog is not an answer.`,
+    ``,
+    `If this is a QA defect (a completed result that fails a criterion), open a ticket instead of answering in prose:`,
+    `  1. todo_plan add: "Fix defect <scope>: <criterion>", resource file:<defective file>, the finding as the note;`,
+    `  2. todo_act claim that task, author a fix handoff scoped to the defective file, and orch_spawn the fix worker;`,
+    `  3. when the fix completes, orch_resume this QA child to re-verify;`,
+    `  4. QA passes → todo_act done with the QA evidence; QA still fails → todo_act failed (reopen; twice → ask the user).`,
+  ];
+}
+
 export interface OrchestratorDeps {
   client?: HerdrClient;
   stream?: any;
@@ -1525,8 +1546,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             outcome.message,
             "",
             `Escalation id: ${escalation.id}`,
-            `Answer it with orch_escalate({ id: "${escalation.id}", action: "answer", answer: "..." }) if you know from context you have.`,
-            `If you do not, use action: "to-user" with your reason — the user decides, and a cancelled dialog is not an answer.`,
+            ...escalationGuidance(escalation.id),
           ].join("\n"),
           display: true,
           details: { id: running.id, name: running.name, scope, escalationId: escalation.id, question: outcome.message },
