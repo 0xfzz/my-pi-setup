@@ -46,12 +46,12 @@ function report(runId: string, lens: any, targetHash: string, findings: any[] = 
   };
 }
 
-function runWithAllReports(overrides: { findings?: Record<string, any[]>; preset?: ReviewPreset } = {}): ReviewRun {
+function runWithAllReports(overrides: { findings?: Record<string, any[]>; preset?: ReviewPreset; extra?: Record<string, any> } = {}): ReviewRun {
   const target = pinned();
   const preset: ReviewPreset = overrides.preset ?? "quick";
   const run = openReviewRun({ target, preset, now: BASE_TIME });
   for (const lens of REVIEW_PRESETS[preset] as ReviewLens[]) {
-    const parsed = parseReviewerReport(report(run.id, lens, target.contentHash, overrides.findings?.[lens] ?? []), {
+    const parsed = parseReviewerReport(report(run.id, lens, target.contentHash, overrides.findings?.[lens] ?? [], overrides.extra?.[lens] ?? {}), {
       runId: run.id,
       lens,
       targetHash: target.contentHash,
@@ -144,6 +144,44 @@ test("two clean reports make a quick review ready", () => {
   const verdict = evaluateReadiness(run);
   assert.equal(verdict.ready, true, verdict.reasons.join("; "));
   assert.equal(settleReadiness(run).status, "ready");
+});
+
+test("a blocked reviewer blocks readiness even with zero findings", () => {
+  const run = runWithAllReports({ extra: { comprehension: { verdict: "blocked" } } });
+  const verdict = evaluateReadiness(run);
+  assert.equal(verdict.ready, false);
+  assert.match(verdict.reasons.join("; "), /comprehension reviewer is blocked/);
+  assert.equal(settleReadiness(run).status, "blocked");
+});
+
+test("unresolved missing context blocks readiness even with zero findings", () => {
+  const run = runWithAllReports({
+    extra: { readiness: { missingContext: ["src/net/retry.ts does not exist", "the rollback path is unstated"] } },
+  });
+  const verdict = evaluateReadiness(run);
+  assert.equal(verdict.ready, false);
+  assert.match(verdict.reasons.join("; "), /readiness reviewer reported missing context: src\/net\/retry\.ts does not exist/);
+});
+
+test("an explicit clean verdict with no findings is still ready", () => {
+  const run = runWithAllReports({ extra: { comprehension: { verdict: "clean" }, readiness: { verdict: "clean" } } });
+  assert.equal(evaluateReadiness(run).ready, true);
+});
+
+test("an invalid verdict is rejected, not silently treated as clean", () => {
+  const run = openReviewRun({ target: pinned(), preset: "quick", now: BASE_TIME });
+  const parsed = parseReviewerReport(
+    report(run.id, "comprehension", run.target.contentHash, [], { verdict: "looks-fine" }),
+    { runId: run.id, lens: "comprehension", targetHash: run.target.contentHash },
+  );
+  assert.equal(parsed.ok, false);
+  assert.match(parsed.problems.join("; "), /invalid verdict/);
+});
+
+test("a report written before verdict existed is still a completed report", () => {
+  const run = runWithAllReports();
+  assert.equal("verdict" in run.reports.comprehension!, false, "legacy reports have no verdict field");
+  assert.equal(evaluateReadiness(run).ready, true);
 });
 
 test("an empty findings array is a valid, clean report", () => {

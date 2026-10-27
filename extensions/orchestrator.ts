@@ -1624,6 +1624,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           targetHash: policy.targetHash,
           summary: params.summary,
           findings: params.findings ?? [],
+          ...(params.verdict ? { verdict: params.verdict } : {}),
           ...(params.missingContext?.length ? { missingContext: params.missingContext } : {}),
           submittedAt: new Date(now()).toISOString(),
         },

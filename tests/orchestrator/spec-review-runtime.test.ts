@@ -250,6 +250,32 @@ test("a reviewer files its report into the run directory, and the gate rejects a
   }
 });
 
+test("a blocked reviewer report keeps its verdict and missing context", async () => {
+  const h = await harness();
+  const dir = join(h.dir, "reports", "run-blocked");
+  try {
+    process.env.PI_SUBAGENT_REVIEW_POLICY = "spec-only";
+    process.env.PI_SUBAGENT_REVIEW_RUN = "run-blocked";
+    process.env.PI_SUBAGENT_REVIEW_LENS = "readiness";
+    process.env.PI_SUBAGENT_REVIEW_TARGET = "b".repeat(64);
+    process.env.PI_SUBAGENT_REVIEW_DIR = dir;
+
+    const filed = await h.call("orch_spec_review_submit", {
+      verdict: "blocked",
+      summary: "The document does not state what happens after the third retry.",
+      findings: [],
+      missingContext: ["what happens after the third retry"],
+    });
+
+    assert.equal(filed.details.findings, 0);
+    const written = JSON.parse(await readFile(join(dir, "readiness.json"), "utf8"));
+    assert.equal(written.verdict, "blocked", "a blocked report must not look like a clean one on disk");
+    assert.deepEqual(written.missingContext, ["what happens after the third retry"]);
+  } finally {
+    await h.detach();
+  }
+});
+
 test("a reviewer cannot be resumed or steered with author context", async () => {
   const h = await harness();
   const sessionFile = join(h.dir, "reviewer.jsonl");

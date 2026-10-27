@@ -111,6 +111,14 @@ export interface ReviewerReport {
   targetHash: string;
   summary: string;
   findings: ReviewFinding[];
+  /**
+   * How the reviewer finished.
+   *
+   * `blocked` means the reviewer could not complete its lens; it is not a clean
+   * report with zero findings. Absent on reports written before this field
+   * existed, which are treated as completed.
+   */
+  verdict?: "clean" | "findings" | "blocked";
   /** Context the reviewer could not find in the document, reported as evidence. */
   missingContext?: string[];
   submittedAt: string;
@@ -182,6 +190,10 @@ export function parseReviewerReport(
   }
   const summary = String(value.summary ?? "").trim();
   if (!summary) problems.push("report has no summary");
+  const verdict = value.verdict;
+  if (verdict !== undefined && !["clean", "findings", "blocked"].includes(verdict)) {
+    problems.push(`report has an invalid verdict: ${String(verdict)}`);
+  }
 
   const rawFindings = Array.isArray(value.findings) ? value.findings : [];
   if (!Array.isArray(value.findings)) problems.push("report has no findings array");
@@ -213,6 +225,7 @@ export function parseReviewerReport(
       targetHash: expected.targetHash,
       summary,
       findings,
+      ...(verdict ? { verdict } : {}),
       ...(missingContext?.length ? { missingContext } : {}),
       submittedAt: typeof value.submittedAt === "string" && value.submittedAt ? value.submittedAt : new Date().toISOString(),
     },
@@ -358,6 +371,17 @@ export function evaluateReadiness(run: ReviewRun, options: { now?: Date } = {}):
     }
     if (report.targetHash !== run.target.contentHash) {
       reasons.push(`the ${lens} report reviews a different target revision`);
+    }
+    // A reviewer that could not finish has not reviewed the document. Zero
+    // findings from a blocked or context-starved pass is not a clean result.
+    if (report.verdict === "blocked") {
+      reasons.push(`the ${lens} reviewer is blocked: ${report.summary}`);
+    }
+    if (report.missingContext?.length) {
+      reasons.push(
+        `the ${lens} reviewer reported missing context: ${report.missingContext.slice(0, 3).join("; ")}`
+          + (report.missingContext.length > 3 ? ` (+${report.missingContext.length - 3} more)` : ""),
+      );
     }
   }
   if (submitted.length !== lenses.length) {
