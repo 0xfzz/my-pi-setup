@@ -160,7 +160,7 @@ import {
 } from "../lib/orchestrator/receipts.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardState } from "../lib/dashboard/integration.ts";
 import { projectChildProvenance, projectOrchestrator } from "../lib/dashboard/projection.ts";
-import * as naming from "../web/dashboard/src/naming.mjs";
+import { displayName as namingDisplayName, givenNameFor, givenNamePart, isHumanName } from "../lib/naming.ts";
 
 /** Shared handles. Exported so tests can assert on real state, not a mock. */
 export const registry = new ScopeRegistry();
@@ -2241,10 +2241,10 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       // mints the child id), and the composed label is what the pane, the prompt,
       // the registry and the dashboard all read. `scope` stays the identity key.
       const requestedName = typeof params.name === "string" ? params.name.trim() : "";
-      const givenName = naming.isHumanName(requestedName)
-        ? naming.givenNamePart(requestedName)
-        : naming.givenNameFor(`scope:${scope}`);
-      const displayName = naming.displayName({ name: givenName, scope }, { givenName, max: 44 });
+      const givenName = isHumanName(requestedName)
+        ? givenNamePart(requestedName)
+        : givenNameFor(`scope:${scope}`);
+      const displayName = namingDisplayName({ name: givenName, scope }, { givenName, max: 44 });
 
       // ── the design gate ──────────────────────────────────────────────────
       // A reviewed design is only useful if the worker is launched against the

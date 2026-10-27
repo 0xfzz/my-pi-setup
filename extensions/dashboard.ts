@@ -18,7 +18,7 @@
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { meaningfulSessionTitle, sessionTitle } from "../web/dashboard/src/naming.mjs";
+import { meaningfulSessionTitle, sessionTitle } from "../lib/naming.ts";
 import { DASHBOARD_GOAL_ENTRY, latestGoalTitle, type GoalTitleRecord } from "../lib/dashboard/goal-title.ts";
 
 import {
