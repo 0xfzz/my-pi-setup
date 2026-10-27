@@ -13,7 +13,7 @@ import { mkdtemp, rm, readFile, readdir, stat, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import subagentV2, { escalations, handoffs, registry, reviewSeams } from "../../extensions/orchestrator.ts";
+import subagentV2, { escalations, handoffs, headDriftWarning, registry, reviewSeams } from "../../extensions/orchestrator.ts";
 import { SUPERVISOR_MODE_TYPE } from "../../lib/supervise-mode.ts";
 import { visibleToScope, type Artifact } from "../../lib/artifact-state.ts";
 
@@ -600,4 +600,47 @@ test("concept 3: two writers in one scope are refused, because nobody owns the d
     handoffs.clear();
     await h.detach();
   }
+});
+
+test("concept 5: a dependent is refused until its dependency is approved", async () => {
+  const h = await harness();
+  const base = uniqueScope("net-retry");
+  const dependent = uniqueScope("net-audit");
+  try {
+    const dependency = await h.call("orch_handoff", handoffParams({ scope: base }));
+    const downstream = await h.call(
+      "orch_handoff",
+      handoffParams({ scope: dependent, laneFiles: ["src/audit/"], dependsOn: [base] }),
+    );
+    assert.equal(downstream.details.dependsOn?.[0], base, "the dependency is recorded as data, not prose");
+
+    const blocked = await h.call("orch_spawn", { name: "Audit", task: "Consume the retry interface.", handoffId: downstream.details.id });
+    assert.equal(blocked.details.error, "dependency-unapproved");
+    assert.deepEqual(blocked.details.unapproved, [base]);
+    assert.equal(h.spawned.length, 0, "a refused spawn leaves no pane behind");
+
+    // Approve the dependency, then the dependent is admitted.
+    registry.recordReview({
+      id: "rev-dependency",
+      scope: base,
+      verdict: "approved",
+      summary: "reviewed",
+      failedCriteria: [],
+      inLane: true,
+      timestamp: new Date().toISOString(),
+    });
+    const admitted = await h.call("orch_spawn", { name: "Audit", task: "Consume the retry interface.", handoffId: downstream.details.id });
+    assert.equal(admitted.details.status, "started", admitted.content[0].text);
+    assert.ok(dependency.details.id);
+  } finally {
+    handoffs.clear();
+    await h.detach();
+  }
+});
+
+test("head drift is reported, not silently tolerated", () => {
+  assert.equal(headDriftWarning("aaaaaaa111", "aaaaaaa111"), undefined, "same HEAD is not drift");
+  assert.equal(headDriftWarning(null, "aaaaaaa111"), undefined, "an unknown baseline is not a claim");
+  assert.match(headDriftWarning("aaaaaaa111", "bbbbbbb222")!, /reviewed against HEAD aaaaaaa/);
+  assert.match(headDriftWarning("aaaaaaa111", "bbbbbbb222")!, /bbbbbbb/);
 });

@@ -75,6 +75,15 @@ export interface HandoffSpec {
   laneFiles: string[];
   /** Files this child must not touch, even if it believes it should. */
   outOfLaneFiles?: string[];
+  /**
+   * Scopes this work unit depends on.
+   *
+   * `orch_spawn` refuses a dependent until each one has an `approved` review, so a
+   * child cannot build against an interface nobody has agreed to yet. The graph is
+   * data rather than prose because "B waits for A" written in `guidance` is a
+   * sentence, and a sentence cannot refuse a spawn.
+   */
+  dependsOn?: string[];
   /** What the report must contain beyond a prose summary. */
   reportShape?: string;
   /**
@@ -162,6 +171,18 @@ export function validateHandoff(spec: HandoffSpec): HandoffRecord & { revision: 
     }
   }
 
+  // Dependencies are scope slugs like any other. A self-dependency, an empty slug
+  // or a duplicate would either deadlock admission or make the ready-set ambiguous.
+  let dependsOn: string[] | undefined;
+  if (spec.dependsOn?.length) {
+    dependsOn = [...new Set(spec.dependsOn.map((dep) => sanitizeScope(dep)))];
+    if (dependsOn.includes(scope)) {
+      throw new HandoffError(
+        `"${scope}" cannot depend on itself. A work unit that waits for its own approval never starts.`,
+      );
+    }
+  }
+
   // A design reference is a claim that an independent review exists. A malformed
   // one must fail here, not be discovered at spawn with a child already planned.
   let designRef: DesignRef | undefined;
@@ -186,6 +207,7 @@ export function validateHandoff(spec: HandoffSpec): HandoffRecord & { revision: 
     ...(spec.verifyCommand ? { verifyCommand: String(spec.verifyCommand).trim() } : {}),
     ...(spec.guidance ? { guidance: String(spec.guidance).trim() } : {}),
     ...(spec.interfaces?.length ? { interfaces: spec.interfaces.map(String) } : {}),
+    ...(dependsOn?.length ? { dependsOn } : {}),
     ...(spec.vision ? { vision: String(spec.vision).trim() } : {}),
     ...(designRef ? { designRef } : {}),
     revision: 1,

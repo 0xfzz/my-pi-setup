@@ -324,6 +324,17 @@ function sessionActivityAt(sessionFile: string): number | null {
   }
 }
 
+export function headDriftWarning(
+  reviewed: string | null | undefined,
+  current: string | null | undefined,
+): string | undefined {
+  if (!reviewed || !current || reviewed === current) return undefined;
+  return (
+    `the design was reviewed against HEAD ${reviewed.slice(0, 7)}, but this worktree is at ${current.slice(0, 7)} — `
+    + `the reference paths that were judged may have moved. The design hash still matches; the repository may not`
+  );
+}
+
 function tail(value: string, lines: number): string {
   const all = value.split("\n");
   return (all.length <= lines ? all : all.slice(-lines)).join("\n");
@@ -2110,6 +2121,12 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       }),
       outOfLaneFiles: Type.Optional(Type.Array(Type.String(), { description: "Files it must not modify even if it thinks it should." })),
       interfaces: Type.Optional(Type.Array(Type.String(), { description: "Contracts another work unit consumes; changing them silently breaks it." })),
+      dependsOn: Type.Optional(
+        Type.Array(Type.String(), {
+          description:
+            "Scopes this unit consumes. orch_spawn refuses it until each has an approved review, so two lanes cannot agree on paper and disagree at integration.",
+        }),
+      ),
       guidance: Type.Optional(Type.String({ description: "Conventions, prior decisions, or notes from the orchestrator." })),
       reportShape: Type.Optional(Type.String({ description: "What the report must contain beyond prose." })),
       verifyCommand: Type.Optional(
@@ -2175,6 +2192,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           laneFiles: params.laneFiles,
           outOfLaneFiles: params.outOfLaneFiles,
           interfaces: params.interfaces,
+          dependsOn: params.dependsOn,
           guidance: params.guidance,
           reportShape: params.reportShape,
           verifyCommand: params.verifyCommand,
@@ -2247,6 +2265,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           scope: record.scope,
           revision: record.revision,
           laneFiles: record.laneFiles,
+          ...(record.dependsOn?.length ? { dependsOn: record.dependsOn } : {}),
         },
       );
     },
@@ -2386,6 +2405,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       // revision that was actually reviewed. Re-authoring the design after review
       // would otherwise leave an approval attached to text nobody read, so the
       // current content is re-read here rather than trusted from the record.
+      let driftWarning: string | undefined;
       if (handoff?.designRef) {
         const run = specReviews.get(handoff.designRef.runId);
         const problem = designRefProblem(
@@ -2398,6 +2418,25 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             `Refusing to spawn \"${displayName}\": ${problem}. ` +
               `Resolve it with orch_spec_review, or re-author the handoff without designRef if this unit genuinely does not depend on a reviewed design.`,
             { error: "design-ref-not-ready", scope, designRef: handoff.designRef },
+          );
+        }
+        driftWarning = headDriftWarning(run?.target.repoBaseline?.head, repoHead((ctx as any).cwd || process.cwd()));
+      }
+
+      // ── dependencies must be approved first ─────────────────────────────
+      // Starting a dependent against an unapproved interface is how two lanes
+      // agree on paper and disagree at integration time. `interfaces` is prose and
+      // cannot refuse anything; `dependsOn` is data and can.
+      if (handoff?.dependsOn?.length) {
+        const unapproved = handoff.dependsOn.filter(
+          (dependency) => !registry.getReviews(dependency).some((review) => review.verdict === "approved"),
+        );
+        if (unapproved.length > 0) {
+          return text(
+            `Refusing to spawn "${handoff.scope}": it depends on ${unapproved.join(", ")}, which `
+              + `${unapproved.length === 1 ? "has" : "have"} no approved review yet. `
+              + `Review the dependency first (orch_review), or drop it from dependsOn if this unit genuinely does not consume it.`,
+            { error: "dependency-unapproved", scope, dependsOn: handoff.dependsOn, unapproved },
           );
         }
       }
@@ -2545,6 +2584,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             ? `The child holds this handoff only. It cannot see any other work unit.`
             : `The child has no handoff spec. orch_check will report lane: not-declared unless you passed laneFiles.`,
           `The scope (${scope}) is the identity: use it in orch_steer, orch_check and orch_review.`,
+          ...(driftWarning ? [`Warning: ${driftWarning}.`] : []),
           `Do NOT guess results. The outcome (or an orch_ping escalation) arrives automatically.`,
         ].join("\n"),
         {
@@ -2553,6 +2593,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           scope,
           purpose,
           ...(handoffId ? { handoffId } : {}),
+          ...(driftWarning ? { headDrift: driftWarning } : {}),
           status: "started",
           paneId: started.paneId,
           sessionFile: running.sessionFile,
