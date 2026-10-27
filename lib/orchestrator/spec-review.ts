@@ -24,18 +24,25 @@ import { createHash } from "node:crypto";
 import type { ReviewLens } from "./review-policy.ts";
 import { renderLintForReviewer, type SpecLintFinding } from "./spec-lint.ts";
 
+export const REVIEW_PRESET_SINGLE = "single";
 export const REVIEW_PRESET_QUICK = "quick";
 export const REVIEW_PRESET_ARCHITECTURE = "architecture";
-export type ReviewPreset = typeof REVIEW_PRESET_QUICK | typeof REVIEW_PRESET_ARCHITECTURE;
+export type ReviewPreset =
+  | typeof REVIEW_PRESET_SINGLE
+  | typeof REVIEW_PRESET_QUICK
+  | typeof REVIEW_PRESET_ARCHITECTURE;
 
 /** Lens sets per preset. Flat dispatch: no synthesizer child, so no hidden context. */
 export const REVIEW_PRESETS: Record<ReviewPreset, ReviewLens[]> = {
+  // The default: one devil's advocate. A specification is authored by the
+  // orchestrator and attacked once; a panel is an explicit, expensive opt-in.
+  single: ["gate"],
   quick: ["comprehension", "readiness"],
   architecture: ["zoom-out", "comprehension", "critic", "readiness"],
 };
 
 export function isReviewPreset(value: unknown): value is ReviewPreset {
-  return value === REVIEW_PRESET_QUICK || value === REVIEW_PRESET_ARCHITECTURE;
+  return value === REVIEW_PRESET_SINGLE || value === REVIEW_PRESET_QUICK || value === REVIEW_PRESET_ARCHITECTURE;
 }
 
 export const RUBRIC_VERSION = "egm-lite-1";
@@ -654,6 +661,11 @@ export function designRefProblem(
 
 /** Rubrics. Our own wording; the method and the source are attributed, the text is not copied. */
 export const LENS_RUBRICS: Record<ReviewLens, string> = {
+  gate: `Judge whether a competent engineer who has never spoken to the author could implement this as written, and whether the result could be verified.
+Flag every term, service, file, interface or prerequisite that is not defined in the document or reachable from the permitted repository paths.
+Flag hand-waving ("the system handles it"), assumed workflow steps, and any requirement whose acceptance cannot be observed.
+Check that named paths, modules, functions and interfaces exist or are created by this plan; that dependencies and migrations are named; and that a verification command could plausibly fail.
+Report contradictions between sections as findings, not as questions.`,
   comprehension: `Judge whether a competent engineer who has never spoken to the author could implement this.
 Flag every term, service, file, interface or prerequisite that is not defined in the document or reachable from the permitted repository paths.
 Flag hand-waving ("the system handles it"), assumed workflow steps, and any requirement whose acceptance cannot be observed.`,

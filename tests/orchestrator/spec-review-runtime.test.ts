@@ -171,7 +171,7 @@ function saveDesign(h: Harness, id: string, content: string) {
   });
 }
 
-test("start pins the design, launches one isolated reviewer per lens, and leaks no parent channel", async () => {
+test("start pins the design, launches one devil's advocate by default, and leaks no parent channel", async () => {
   process.env.PI_HERDR_PI_BIN = "/bin/true";
   process.env.PI_HERDR_LAUNCH_PREFIX = "";
   const h = await harness();
@@ -181,13 +181,12 @@ test("start pins the design, launches one isolated reviewer per lens, and leaks 
     const started = await h.call("orch_spec_review", { action: "start", targetArtifactId: "retry-design" });
     const details = started.details;
     assert.ok(details.runId, `start must return a run id: ${started.content[0].text}`);
-    assert.deepEqual(details.launched, ["comprehension", "readiness"], "quick preset launches two lenses");
-
-    const task = h.started[0]?.launchScriptFile ? "" : "";
-    void task;
+    // The spec phase is the orchestrator plus ONE devil's advocate. A panel is an
+    // explicit opt-in, not the default that made every spec a review career.
+    assert.deepEqual(details.launched, ["gate"], "the default single preset launches one reviewer");
 
     const scripts = await h.launchScripts();
-    assert.equal(scripts.length, 2, "one launch script per reviewer");
+    assert.equal(scripts.length, 1, "one launch script for the one reviewer");
     for (const script of scripts) {
       // Isolation is structural: no parent transcript pointer, no artifact writer,
       // no shell. The reviewer judges a snapshot it was handed.
@@ -205,6 +204,10 @@ test("start pins the design, launches one isolated reviewer per lens, and leaks 
       assert.match(toolsLine, /read/);
     }
 
+    // A panel remains available, explicitly and expensively.
+    const panel = await h.call("orch_spec_review", { action: "start", targetArtifactId: "retry-design", preset: "quick" });
+    assert.deepEqual(panel.details.launched, ["comprehension", "readiness"], "quick stays opt-in");
+
     // The pinned document itself is quoted into the ticket each reviewer receives.
     const run = details.runId;
     const dir = join(h.dir, "artifacts", "parent-session", "spec-reviews", run);
@@ -214,25 +217,75 @@ test("start pins the design, launches one isolated reviewer per lens, and leaks 
   }
 });
 
-test("a target that never converges stops after three non-ready rounds", async () => {
+test("a round must dispose of the previous round's findings before another starts", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    saveDesign(h, "gated-design", "# Gated\n\nThe retry policy is not stated.");
+    const started = await h.call("orch_spec_review", { action: "start", targetArtifactId: "gated-design" });
+    const run = specReviews.get(started.details.runId)!;
+    run.reports = {
+      gate: {
+        runId: run.id,
+        lens: "gate",
+        targetHash: run.target.contentHash,
+        summary: "the retry policy is missing",
+        findings: [{
+          id: "F-gate-1",
+          lens: "gate",
+          severity: "major",
+          location: "Retry",
+          discrepancy: "no retry policy is stated",
+          rationale: "implementers must guess the backoff",
+        }],
+        submittedAt: new Date(0).toISOString(),
+      },
+    } as any;
+    run.status = "blocked";
+    run.reviewers[0]!.status = "submitted";
+    run.readiness = { ...run.readiness, ready: false, reasons: ["unresolved major: F-gate-1 (Retry)"], counts: { blocker: 0, major: 1, nit: 0, open: 1 } };
+
+    const refused = await h.call("orch_spec_review", { action: "start", targetArtifactId: "gated-design" });
+    assert.equal(refused.details.error, "findings-open", refused.content[0].text);
+    assert.deepEqual(refused.details.findings, ["F-gate-1"]);
+    assert.equal(h.started.length, 1, "no second reviewer was launched while findings were open");
+
+    const resolved = await h.call("orch_spec_review", {
+      action: "resolve",
+      runId: run.id,
+      dispositions: [{ findingId: "F-gate-1", action: "accepted", rationale: "the follow-up already covers this case" }],
+    });
+    assert.equal(resolved.details?.status, "ready", resolved.content[0].text);
+
+    const second = await h.call("orch_spec_review", { action: "start", targetArtifactId: "gated-design" });
+    assert.ok(second.details.runId, second.content[0].text);
+  } finally {
+    await h.detach();
+  }
+});
+
+test("a target that never converges stops after two non-ready rounds", async () => {
   process.env.PI_HERDR_PI_BIN = "/bin/true";
   process.env.PI_HERDR_LAUNCH_PREFIX = "";
   const h = await harness();
   try {
     saveDesign(h, "loop-design", "# Loop\n\nAmbiguous, and the parent keeps re-reviewing instead of deciding.");
 
-    for (let round = 0; round < 3; round += 1) {
+    for (let round = 0; round < 2; round += 1) {
       const started = await h.call("orch_spec_review", { action: "start", targetArtifactId: "loop-design" });
       assert.ok(started.details.runId, `round ${round + 1} starts: ${started.content[0].text}`);
     }
-    assert.equal(h.started.length, 6, "three rounds launched two isolated reviewers each");
+    assert.equal(h.started.length, 2, "two rounds launched one devil's advocate each");
 
     const refused = await h.call("orch_spec_review", { action: "start", targetArtifactId: "loop-design" });
     assert.equal(refused.details.error, "review-loop");
     assert.match(refused.content[0].text, /Refusing to start another review/);
-    assert.match(refused.content[0].text, /record dispositions/);
-    assert.equal(refused.details.rounds.length, 3);
-    assert.equal(h.started.length, 6, "the refused round launched no reviewer");
+    assert.match(refused.content[0].text, /Record dispositions/);
+    assert.match(refused.content[0].text, /ask the user/);
+    assert.doesNotMatch(refused.content[0].text, /artifact id so this history does not apply/);
+    assert.equal(refused.details.rounds.length, 2);
+    assert.equal(h.started.length, 2, "the refused round launched no reviewer");
   } finally {
     await h.detach();
   }

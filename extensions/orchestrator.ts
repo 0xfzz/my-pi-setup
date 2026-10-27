@@ -140,6 +140,8 @@ import {
 } from "../lib/orchestrator/review-policy.ts";
 import {
   REVIEW_PRESET_QUICK,
+  REVIEW_PRESET_SINGLE,
+  allFindings,
   applyDispositions,
   designRefProblem,
   evaluateReadiness,
@@ -153,6 +155,7 @@ import {
   settleReadiness,
   stalenessProblem,
   type DesignRef,
+  type ReviewFinding,
   type ReviewRun,
 } from "../lib/orchestrator/spec-review.ts";
 import {
@@ -1656,12 +1659,39 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   /**
    * How many non-ready rounds one target may accumulate before the parent decides.
    *
-   * The gate is strict by design, so a parent that answers every finding by
-   * revising the document can loop on reviews and never delegate. Three rounds is
-   * enough to converge a good spec; past that the disagreement is a decision
-   * (accept/contest a finding, or ask the user), not another reviewer pair.
+   * The spec phase is one devil's advocate plus one re-review of a fixed blocker.
+   * A third round is not a third opinion; it is a disagreement the orchestrator
+   * owns. `MAX_SESSION_REVIEW_ROUNDS` bounds the whole session so renaming the
+   * document (and therefore the target ref) cannot mint a fresh budget.
    */
-  const MAX_REVIEW_ROUNDS = 3;
+  const MAX_REVIEW_ROUNDS = 2;
+  const MAX_SESSION_REVIEW_ROUNDS = 3;
+
+  /** Every run for one target, including cancelled ones, oldest first. */
+  function runsForTarget(kind: "artifact" | "file", ref: string): ReviewRun[] {
+    return [...specReviews.values()]
+      .filter((entry) => entry.target.kind === kind && entry.target.ref === ref)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  }
+
+  /**
+   * Non-ready rounds in this parent session, cancelled ones included.
+   *
+   * A cancelled round already paid for reviewer children; letting cancellation
+   * reset the budget would make cancel/start an unbounded loop.
+   */
+  function sessionReviewRounds(): number {
+    return [...specReviews.values()].filter((entry) => !entry.readiness.ready).length;
+  }
+
+  /** Findings that still gate readiness: blockers/majors without a settling disposition. */
+  function openGatingFindings(run: ReviewRun): ReviewFinding[] {
+    return allFindings(run).filter((finding) => {
+      if (finding.severity === "nit") return false;
+      const disposition = run.dispositions[finding.id];
+      return !disposition || disposition.action === "unresolved" || disposition.action === "contested";
+    });
+  }
 
   /**
    * Rounds opened for the same target since its last ready review.
@@ -1875,7 +1905,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         if (registry.isPaused()) {
           return text("The orchestrator is paused: no reviewers were launched.", { error: "orchestrator-paused" });
         }
-        const preset = params.preset && isReviewPreset(params.preset) ? params.preset : REVIEW_PRESET_QUICK;
+        const preset = params.preset && isReviewPreset(params.preset) ? params.preset : REVIEW_PRESET_SINGLE;
         const cwd = (ctx as any).cwd || process.cwd();
         if (!ctx.sessionManager.getSessionFile()) {
           return text("Error: no session file, so reviewer children cannot be tracked.", { error: "no-session-file" });
@@ -1921,30 +1951,61 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           return text(`Refusing to pin the target: ${error?.message ?? error}`, { error: "pin-failed" });
         }
 
-        // A rerun over the same content is a genuinely new attempt: the id carries
-        // a salt so the previous run's reports and dispositions stay auditable
-        // instead of being overwritten by a second opinion.
-        //
-        // But rerunning forever is not an attempt, it is a loop. When the same
-        // target has already burned MAX_REVIEW_ROUNDS without reaching readiness,
-        // another reviewer pair cannot break the tie: the parent must decide.
+        // ── one-pass lifecycle gates ────────────────────────────────────────
+        // 1. A round must consume the previous round's findings. Re-reviewing
+        //    revised text while abandoning the old run loses the decision the
+        //    reviewer asked for and is how the spec phase became a career.
+        // 2. The spec phase is one devil's advocate plus one re-review; past
+        //    that, the disagreement is the orchestrator's (or the user's), not
+        //    another reviewer's.
+        const prior = runsForTarget(kind, ref).filter((entry) => entry.status !== "cancelled");
+        const latest = prior[prior.length - 1];
+        if (latest && !latest.readiness.ready) {
+          const open = openGatingFindings(latest);
+          if (open.length) {
+            return text(
+              [
+                `Refusing to start another review: run \`${latest.id}\` still has ${open.length} open finding(s).`,
+                ...open.slice(0, 3).map((finding) => `- ${finding.id} [${finding.severity}] ${finding.location} — ${finding.discrepancy}`),
+                ``,
+                `Resolve every finding with orch_spec_review({ action: "resolve", runId: "${latest.id}", dispositions }) —`,
+                `fix it, accept it with a rationale, or contest it. If you cannot decide, ask the user with ask_user;`,
+                `another reviewer cannot settle a disagreement you own.`,
+              ].join("\n"),
+              { error: "findings-open", runId: latest.id, findings: open.map((finding) => finding.id) },
+            );
+          }
+        }
+
         const nonReady = nonReadyRoundsFor(kind, ref);
-        if (nonReady.length >= MAX_REVIEW_ROUNDS) {
+        const sessionRounds = sessionReviewRounds();
+        if (nonReady.length >= MAX_REVIEW_ROUNDS || sessionRounds >= MAX_SESSION_REVIEW_ROUNDS) {
+          const open = latest ? openGatingFindings(latest).slice(0, 3) : [];
           return text(
             [
-              `Refusing to start another review: \`${ref}\` has had ${nonReady.length} non-ready rounds `,
-              `(${nonReady.map((entry) => entry.id).join(", ")}) and none reached readiness.`,
+              nonReady.length >= MAX_REVIEW_ROUNDS
+                ? `Refusing to start another review: \`${ref}\` has had ${nonReady.length} non-ready rounds (${nonReady.map((entry) => entry.id).join(", ")}).`
+                : `Refusing to start another review: this session has already spent ${sessionRounds} non-ready rounds.`,
+              ...(open.length ? [``, ...open.map((finding) => `- ${finding.id} [${finding.severity}] ${finding.location} — ${finding.discrepancy}`)] : []),
               ``,
-              `A fourth pair of readers cannot settle a disagreement the previous three left open. Decide instead:`,
-              `  • record dispositions with orch_spec_review({ action: "resolve", runId, dispositions }) —`,
-              `    accept a finding with a rationale, or contest it, instead of revising the text again;`,
-              `  • or escalate the open question to the user;`,
-              `  • or, if the design really changed, give the new design its own artifact id so this history does not apply.`,
+              `Record dispositions with orch_spec_review({ action: "resolve", runId, dispositions }) —`,
+              `fix, accept with a rationale, or contest — or ask the user with ask_user.`,
+              `A different artifact id does not reset this budget: reviewer rounds are the expensive part, not the file name.`,
             ].join("\n"),
-            { error: "review-loop", ref, rounds: nonReady.map((entry) => entry.id), max: MAX_REVIEW_ROUNDS },
+            {
+              error: "review-loop",
+              ref,
+              rounds: nonReady.map((entry) => entry.id),
+              sessionRounds,
+              max: MAX_REVIEW_ROUNDS,
+              sessionMax: MAX_SESSION_REVIEW_ROUNDS,
+            },
           );
         }
 
+        // The default preset is `single` (one devil's advocate). An explicit
+        // preset is honoured, so a genuinely contested design can still opt into
+        // a panel; a re-review that names none stays single.
         const run = openReviewRun({ target, preset, now: new Date(now()), salt: String(specReviews.size + 1) });
         // Machine-detectable defects are computed once, at pin time, and quoted
         // into every result. A reviewer that ignores them is still free to be
@@ -2042,6 +2103,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         return text(
           [
             renderRunSummary(run),
+            `Spec rounds: ${nonReady.length + 1} of ${MAX_REVIEW_ROUNDS} for this target · ${sessionRounds + 1} of ${MAX_SESSION_REVIEW_ROUNDS} this session.`,
             `Pinned ${target.kind} \`${target.ref}\` at ${target.contentHash.slice(0, 12)}.`,
             launched.length ? `Launched: ${launched.join(", ")}.` : "No reviewer was launched.",
             ...(failed.length ? [`Failed: ${failed.join("; ")}`] : []),
@@ -2071,8 +2133,11 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         // Status re-checks the document: a readiness badge that outlives the text
         // it approved is the failure this whole mechanism exists to prevent.
         const stale = stalenessProblem(run, currentReviewContent(ctx, run));
+        const roundsForTarget = nonReadyRoundsFor(run.target.kind, run.target.ref).length;
+        const budget = `Spec rounds: ${Math.min(roundsForTarget, MAX_REVIEW_ROUNDS)} of ${MAX_REVIEW_ROUNDS} for this target · `
+          + `${Math.min(sessionReviewRounds(), MAX_SESSION_REVIEW_ROUNDS)} of ${MAX_SESSION_REVIEW_ROUNDS} this session.`;
         return text(
-          renderRunSummary(run) + (stale ? `\nStale: ${stale}. Start a new review of the revised document.` : ""),
+          renderRunSummary(run) + `\n${budget}` + (stale ? `\nStale: ${stale}. Start a new review of the revised document.` : ""),
           { runId: run.id, status: run.status, ready: run.readiness.ready, stale: stale ?? null },
         );
       }

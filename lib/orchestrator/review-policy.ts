@@ -140,7 +140,7 @@ export function isSpecOnlyDeniedTool(name: string): boolean {
 }
 
 /** Names accepted by `orch_spec_review_submit`; kept next to the policy so they cannot drift. */
-export const REVIEW_LENSES = ["comprehension", "readiness", "zoom-out", "critic"] as const;
+export const REVIEW_LENSES = ["gate", "comprehension", "readiness", "zoom-out", "critic"] as const;
 export type ReviewLens = (typeof REVIEW_LENSES)[number];
 
 export function isReviewLens(value: unknown): value is ReviewLens {
