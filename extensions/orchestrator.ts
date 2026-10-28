@@ -54,6 +54,7 @@ import {
   type PersistedState,
 } from "../lib/orchestrator/registry-persistence.ts";
 import { handoffReceiptFromFile, handoffReceiptProblem } from "../lib/orchestrator/handoff-receipt.ts";
+import { buildPlanStepTicket, buildPlannerTicket, parsePlan, stripRecallFrame, type Plan, type PlanStep } from "../lib/orchestrator/roles.ts";
 import {
   ESCALATION_TYPE,
   EscalationError,
@@ -2676,6 +2677,13 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         }),
       ),
       task: Type.String({ description: "The specific assignment. For an ad-hoc spawn this is the whole brief; for a spec spawn it must stay inside the handoff's lane." }),
+      role: Type.Optional(
+        Type.Union([Type.Literal("worker"), Type.Literal("research"), Type.Literal("planner")], {
+          description: "worker = writes its lane; research = read-only reader; planner = read-only, writes a plan artifact (plan-<scope>).",
+        }),
+      ),
+      planId: Type.Optional(Type.String({ description: "Worker steps: plan artifact id from a planner child. Its step supplies the lane and criteria." })),
+      stepId: Type.Optional(Type.String({ description: "Worker steps: which plan step to execute. Required when the plan has more than one step." })),
       handoffId: Type.Optional(Type.String({ description: "Handoff id returned by agent_handoff (its scope is accepted too). Omit it for an ad-hoc spawn." })),
       qaFor: Type.Optional(
         Type.Union(
@@ -2758,7 +2766,11 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       }
 
       const modeId = currentModeId(ctx);
-      const purpose: SpawnPurpose = params.purpose === "research" ? "research" : "adhoc";
+      const role = params.role ?? (params.purpose === "research" ? "research" : "worker");
+      if (params.planId && role === "planner") {
+        return text("A planner produces a plan; it does not execute a plan step. Drop planId or use role \"worker\".", { error: "planner-vs-step" });
+      }
+      const purpose: SpawnPurpose = role === "worker" ? "adhoc" : "research";
       const refusal = spawnRefusal(modeId, purpose);
       if (refusal) return text(refusal, { error: "purpose-refused", mode: modeId, purpose });
 
@@ -2775,8 +2787,34 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       }
 
       const scope = adhocScope(params);
-      const laneFiles = [...(params.laneFiles ?? [])];
-      const acceptanceCriteria = [...(params.acceptanceCriteria ?? [])];
+      let laneFiles = [...(params.laneFiles ?? [])];
+      let acceptanceCriteria = [...(params.acceptanceCriteria ?? [])];
+      let parsedPlan: Plan | undefined;
+      let planStep: PlanStep | undefined;
+      if (params.planId) {
+        const reply = typeof (ctx as any).executeTool === "function"
+          ? await (ctx as any).executeTool("artifact_recall", { id: params.planId, offset: 1, limit: 400 })
+          : undefined;
+        if (!reply || reply.isError) {
+          return text(`No plan artifact \`${params.planId}\`. A planner child writes it; check the id or spawn a planner first.`, { error: "unknown-plan", planId: params.planId });
+        }
+        const parsed = parsePlan(stripRecallFrame(String(reply?.result?.content?.[0]?.text ?? "")));
+        if (!parsed.ok) {
+          return text(`Plan \`${params.planId}\` is not executable:\n- ${parsed.problems.join("\n- ")}`, { error: "invalid-plan", planId: params.planId, problems: parsed.problems });
+        }
+        parsedPlan = parsed.plan;
+        planStep = params.stepId
+          ? parsedPlan.steps.find((step) => step.id === params.stepId)
+          : parsedPlan.steps.length === 1
+            ? parsedPlan.steps[0]
+            : undefined;
+        if (!planStep) {
+          return text(`Plan \`${params.planId}\` has no step \`${params.stepId ?? "(one step)"}\`. Steps: ${parsedPlan.steps.map((step) => step.id).join(", ")}.`, { error: "unknown-plan-step", planId: params.planId, steps: parsedPlan.steps.map((step) => step.id) });
+        }
+        laneFiles = [...new Set([...laneFiles, ...planStep.files])];
+        acceptanceCriteria = planStep.acceptanceCriteria.length ? [...planStep.acceptanceCriteria] : acceptanceCriteria;
+      }
+      const plannerPlanId = role === "planner" ? `plan-${scope}` : undefined;
 
       // ── human naming ─────────────────────────────────────────────────────
       const requestedName = typeof params.name === "string" ? params.name.trim() : "";
@@ -2817,20 +2855,24 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       const parentSessionId = ctx.sessionManager.getSessionId();
       const agentDefs = params.agent ? loadAgentDefaults(params.agent) : null;
       const subagentSettings = loadSubagentSettings(ctx.cwd);
-      const spawnRole: OrchRole | undefined = purpose === "adhoc" ? "worker" : undefined;
+      const spawnRole: OrchRole | undefined = role === "worker" || role === "planner" ? "worker" : undefined;
       const roleModel = spawnRole
         ? resolveChildModel(ctx, spawnRole, subagentSettings, params.model, agentDefs?.model)
         : undefined;
       const rolePrompt = spawnRole ? loadRolePrompt(spawnRole, ctx.cwd) : undefined;
       const childArtifactSessionId = `${parentSessionId}-adhoc-${scope}`;
 
-      const ticket = buildAdhocTicket({
-        scope,
-        purpose: purpose === "research" ? "research" : "adhoc",
-        task: params.task,
-        laneFiles,
-        acceptanceCriteria,
-      });
+      const ticket = role === "planner" && plannerPlanId
+        ? buildPlannerTicket({ scope, planId: plannerPlanId, task: params.task })
+        : parsedPlan && planStep && params.planId
+          ? buildPlanStepTicket({ scope, planId: params.planId, plan: parsedPlan, step: planStep, task: params.task })
+          : buildAdhocTicket({
+              scope,
+              purpose: purpose === "research" ? "research" : "adhoc",
+              task: params.task,
+              laneFiles,
+              acceptanceCriteria,
+            });
 
       let plan: LaunchPlan;
       try {
@@ -2914,6 +2956,10 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           name: displayName,
           scope,
           purpose,
+          role,
+          ...(plannerPlanId ? { planId: plannerPlanId } : {}),
+          ...(params.planId ? { planId: params.planId } : {}),
+          ...(planStep ? { stepId: planStep.id } : {}),
           status: "started",
           paneId: started.paneId,
           sessionFile: running.sessionFile,
