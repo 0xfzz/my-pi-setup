@@ -23,16 +23,38 @@ import { isAbsolute, relative, resolve } from "node:path";
 export const REVIEW_POLICY_ENV = "PI_SUBAGENT_REVIEW_POLICY";
 export const REVIEW_RUN_ENV = "PI_SUBAGENT_REVIEW_RUN";
 export const REVIEW_LENS_ENV = "PI_SUBAGENT_REVIEW_LENS";
+/**
+ * The chunk a split reviewer judges (`review-1` … `review-K`).
+ *
+ * A document review has a lens; a split review has a chunk. They are different
+ * assignments, not two names for one thing, so exactly one is written per child.
+ */
+export const REVIEW_CHUNK_ENV = "PI_SUBAGENT_REVIEW_CHUNK";
 export const REVIEW_TARGET_ENV = "PI_SUBAGENT_REVIEW_TARGET";
 export const REVIEW_DIR_ENV = "PI_SUBAGENT_REVIEW_DIR";
 export const REVIEW_ROOTS_ENV = "PI_SUBAGENT_REVIEW_ROOTS";
+/**
+ * The member scopes a chunk reviewer must judge, comma separated.
+ *
+ * Written into the child's environment so its submit tool can refuse a report
+ * that skipped a member BEFORE the child exits. Without it, a skipped member is
+ * only discovered by the parent at collect time, after the reviewer is gone.
+ */
+export const REVIEW_MEMBERS_ENV = "PI_SUBAGENT_REVIEW_MEMBERS";
 
 /** The only policy value understood today. Anything else is invalid, not absent. */
 export const SPEC_ONLY_POLICY = "spec-only";
 
 export interface ReviewPolicy {
   runId: string;
-  lens: string;
+  /** `document` = one pinned document judged by one lens; `split` = one chunk of specs. */
+  kind: "document" | "split";
+  /** Document reviews only. */
+  lens?: string;
+  /** Split reviews only: `review-1` … `review-K`. */
+  chunkId?: string;
+  /** Split reviews only: the member scopes this chunk must cover. */
+  members?: string[];
   targetHash: string;
   /** Directory this reviewer may write its single report into. */
   reportDir: string;
@@ -66,11 +88,28 @@ export function reviewPolicyStatus(
   }
   const runId = clean(env[REVIEW_RUN_ENV]);
   const lens = clean(env[REVIEW_LENS_ENV]);
+  const chunkId = clean(env[REVIEW_CHUNK_ENV]);
   const targetHash = clean(env[REVIEW_TARGET_ENV]);
   const reportDir = clean(env[REVIEW_DIR_ENV]);
   const problems: string[] = [];
   if (!runId) problems.push(`${REVIEW_RUN_ENV} is missing`);
-  if (!lens) problems.push(`${REVIEW_LENS_ENV} is missing`);
+  if (lens && chunkId) {
+    problems.push(`${REVIEW_LENS_ENV} and ${REVIEW_CHUNK_ENV} are both set: a reviewer judges a document lens or a chunk, not both`);
+  } else if (!lens && !chunkId) {
+    problems.push(`neither ${REVIEW_LENS_ENV} nor ${REVIEW_CHUNK_ENV} is set`);
+  }
+  if (chunkId && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(chunkId)) {
+    problems.push(`${REVIEW_CHUNK_ENV}="${chunkId}" is not a chunk id`);
+  }
+  const members = String(env[REVIEW_MEMBERS_ENV] ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (chunkId && !members.length) problems.push(`${REVIEW_MEMBERS_ENV} is missing for a chunk review`);
+  if (!chunkId && members.length) problems.push(`${REVIEW_MEMBERS_ENV} is set on a document review`);
+  if (members.some((member) => !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(member))) {
+    problems.push(`${REVIEW_MEMBERS_ENV} contains an invalid scope`);
+  }
   if (!targetHash) problems.push(`${REVIEW_TARGET_ENV} is missing`);
   else if (!/^[0-9a-f]{64}$/i.test(targetHash)) problems.push(`${REVIEW_TARGET_ENV} is not a sha256 hash`);
   if (!reportDir) problems.push(`${REVIEW_DIR_ENV} is missing`);
@@ -83,7 +122,15 @@ export function reviewPolicyStatus(
     .map((entry) => resolve(entry));
   return {
     state: "valid",
-    policy: { runId: runId!, lens: lens!, targetHash: targetHash!, reportDir: resolve(reportDir!), roots },
+    policy: {
+      runId: runId!,
+      kind: chunkId ? "split" : "document",
+      ...(lens ? { lens } : {}),
+      ...(chunkId ? { chunkId, members } : {}),
+      targetHash: targetHash!,
+      reportDir: resolve(reportDir!),
+      roots,
+    },
   };
 }
 
@@ -224,8 +271,9 @@ export const PATH_READ_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "fi
  * refusal it did not expect becomes a blocker it reports instead of context it
  * silently acquires.
  */
-export function renderPolicyForReviewer(policy: Pick<ReviewPolicy, "lens" | "roots">): string {
-  return `Your session is isolated on purpose (lens: ${policy.lens}).
+export function renderPolicyForReviewer(policy: Pick<ReviewPolicy, "lens" | "chunkId" | "roots">): string {
+  const assignment = policy.chunkId ? `chunk ${policy.chunkId}` : `lens: ${policy.lens}`;
+  return `Your session is isolated on purpose (${assignment}).
 - You did not inherit any parent conversation, and you cannot pull one.
 - You have no write tool. The specification you are judging is quoted in this ticket.
 - You may read repository files${policy.roots.length ? ` under: ${policy.roots.join(", ")}` : ""}.
