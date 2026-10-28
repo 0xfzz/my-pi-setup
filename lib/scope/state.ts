@@ -33,7 +33,7 @@ import {
 export interface ScopeConfigFile {
   roots?: Array<string | { path: string; access?: ScopeAccess }>;
   rules?: ScopeRule[];
-  defaults?: { external?: ScopeEffect; unknown?: ScopeEffect };
+  defaults?: { external?: ScopeEffect; readExternal?: ScopeEffect; unknown?: ScopeEffect };
   /** Tool name → input field that carries a path, for MCP servers. */
   mcp?: Record<string, string | { pathField?: string }>;
   /** Accepted so a hand-written file with the key is rejected loudly, not ignored. */
@@ -95,6 +95,7 @@ export function loadScopeConfig(cwd: string, records?: ScopeRecord | undefined):
       rules.push({ ...rule, source: file.source });
     }
     if (parsed.defaults?.external && isEffect(parsed.defaults.external)) defaults.external = parsed.defaults.external;
+    if (parsed.defaults?.readExternal && isEffect(parsed.defaults.readExternal)) defaults.readExternal = parsed.defaults.readExternal;
     if (parsed.defaults?.unknown && isEffect(parsed.defaults.unknown)) defaults.unknown = parsed.defaults.unknown;
     for (const [tool, value] of Object.entries(parsed.mcp ?? {})) {
       const field = typeof value === "string" ? value : value.pathField;

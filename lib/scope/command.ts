@@ -101,7 +101,7 @@ export function describeRoot(root: ScopeRoot, cwd: string): string {
 
 export function statusLines(state: ScopeState, cwd: string, sources: readonly string[]): string[] {
   const lines = ["Scope", ...state.roots.map(root => `  ${describeRoot(root, cwd)}`)];
-  lines.push(`  defaults: external=${state.defaults.external} unknown=${state.defaults.unknown}`);
+  lines.push(`  defaults: write-outside=${state.defaults.external} read-outside=${state.defaults.readExternal} unknown=${state.defaults.unknown}`);
   if (state.yolo) {
     lines.push(`  yolo: ${state.yolo.strength}${state.yolo.persist ? " (persisted)" : ""} — /scope yolo off to disarm`);
   }

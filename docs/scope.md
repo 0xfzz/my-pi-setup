@@ -48,7 +48,7 @@ It is a **policy, not a sandbox**. Read [Limits](#limits) before relying on it.
 
 | Command | Effect |
 |---|---|
-| `/scope` or `/scope status` | Roots with access and provenance, both defaults, rule count, config files, yolo state |
+| `/scope` or `/scope status` | Roots with access and provenance, the three defaults, rule count, config files, yolo state |
 | `/scope allow <path> [--ro\|--rw] [--project\|--global]` | Add a root for this session, the project, or every project |
 | `/scope deny <path> [--project\|--global]` | Deny the path and everything under it (writes `dir` and `dir/*`) |
 | `/scope remove <path>` | Drop a session root |
@@ -91,7 +91,7 @@ values override global ones; branch grants are layered on top.
     "../shared-docs",
     { "path": "~/scratch", "access": "ro" }
   ],
-  "defaults": { "external": "ask", "unknown": "ask" },
+  "defaults": { "external": "ask", "readExternal": "allow", "unknown": "ask" },
   "rules": [
     { "action": "read", "resource": "**/.env*", "effect": "deny" },
     { "action": "bash", "resource": "git push *", "effect": "deny" }
@@ -102,8 +102,11 @@ values override global ones; branch grants are layered on top.
 
 - `roots` accept strings (`rw`) or `{ path, access }`; relative paths resolve
   against the workspace, `~` against your home directory.
-- `defaults.external` is the answer for paths outside every root (`ask` by
-  default). `defaults.unknown` is the answer for a tool whose inputs this
+- `defaults.external` is the answer for a **write** outside every root (`ask` by
+  default). `defaults.readExternal` is the answer for a **read** outside every
+  root (`allow` by default — Claude Code, Codex CLI and Cline all gate writes and
+  leave reads open; a gate that asks about `cat /etc/os-release` is one people
+  switch off). `defaults.unknown` is the answer for a tool whose inputs this
   extension cannot map — a new MCP server, a dispatcher (`ask` by default;
   choose `deny` for a strict setup).
 - `rules` are `{ action, resource, effect }`, matched with opencode's wildcards
@@ -138,9 +141,12 @@ is refused with a warning when the session loads.
   not, because it resolves inside the workspace. Read-only-ness reuses the
   existing `readOnlyShellCommand` judgement, so `git -C ../repo status` asks
   for nothing while `rm -rf ../build` is a write.
-- A command a tokenizer cannot model (`$(…)`, backticks, heredocs, `bash -c`,
+- A command a tokenizer cannot model (`$(…)`, backticks, `<(…)`, `bash -c`,
   `xargs`, `find -exec`) is *unknown*: it asks once per call and cannot be
   covered by a folder grant.
+- A **heredoc is data, not code**: `git commit -F - <<EOF` keeps working. It is
+  opaque only when an interpreter reads the body (`python3 <<EOF`), because then
+  the body is a program.
 - Session-state tools (`todo_*`, `artifact_*`, `ask_user`, delegation) claim
   nothing. An unmapped tool is *unknown* unless it declares `readOnlyHint`
   (and `destructiveHint` outranks that).
@@ -156,7 +162,8 @@ This raises the cost of an accident. It does not contain a determined escape:
   [Run Pi safely](../node_modules/@earendil-works/pi-coding-agent/docs/security.md).
 - `bash` can leave the workspace in ways a tokenizer cannot see: `bash -c`,
   `find -exec`, `git -C`, interpreters, subshells. Those become *unknown* when
-  they are recognizable; the rest is a heuristic.
+  they are recognizable; the rest is a heuristic. This is why the real fix for a
+  strict setup is an OS sandbox, not a better parser — see [Limits](#limits).
 - A symlinked ancestor is resolved with `realpath`, so `link -> /etc` is judged
   by its target. A path created *after* the check is not.
 - Network egress, secret redaction and resource cost are out of scope.

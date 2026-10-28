@@ -38,7 +38,18 @@ export interface ScopeRule {
  * inputs this extension cannot map to a path. Both default to `ask`.
  */
 export interface ScopeDefaults {
+  /** Writes outside every root. */
   external: ScopeEffect;
+  /**
+   * Reads outside every root. Open by default.
+   *
+   * Every harness surveyed (Claude Code, Codex CLI, Cline) gates *writes*: reads
+   * are allowed in the workspace and, for the most part, on the machine, because
+   * refusing `cat /etc/os-release` protects nothing and makes the gate noisy
+   * enough that people turn it off. Writes outside the workspace still ask.
+   */
+  readExternal: ScopeEffect;
+  /** Tools whose paths cannot be mapped at all (an unmapped MCP server). */
   unknown: ScopeEffect;
 }
 
@@ -118,7 +129,7 @@ export interface ScopeRecord {
 
 export const SCOPE_RECORD_TYPE = "agent-scope:v1";
 
-export const DEFAULT_SCOPE_DEFAULTS: ScopeDefaults = { external: "ask", unknown: "ask" };
+export const DEFAULT_SCOPE_DEFAULTS: ScopeDefaults = { external: "ask", readExternal: "allow", unknown: "ask" };
 
 /** Directories that must never become a standing grant from a dialog answer. */
 export function isUnsafeRoot(path: string, home: string | undefined): boolean {

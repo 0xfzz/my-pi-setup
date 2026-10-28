@@ -17,7 +17,7 @@ const state: ScopeState = {
     { path: "/shared", access: "ro", source: "session" },
   ],
   rules: [{ action: "bash", resource: "rm *", effect: "deny", source: "project" }],
-  defaults: { external: "ask", unknown: "ask" },
+  defaults: { external: "ask", readExternal: "allow", unknown: "ask" },
 };
 
 test("bare /scope and /scope status are the same thing", () => {
@@ -73,7 +73,7 @@ test("status lists every root with its access and provenance, plus both defaults
   assert.match(text, /workspace {2}rw {2}\(session\)/);
   assert.match(text, /vendor {2}ro {2}\(project\)/);
   assert.match(text, /\/shared {2}ro {2}\(session\)/);
-  assert.match(text, /external=ask unknown=ask/);
+  assert.match(text, /write-outside=ask read-outside=allow unknown=ask/);
   assert.match(text, /rules: 1/);
   assert.match(text, /\/work\/\.pi\/scope\.json/);
 });
@@ -102,6 +102,11 @@ test("a decision line names the rule or root that produced it", () => {
     { tool: "read", action: "read", absolute: "/etc/x", resource: "/etc/x", write: false, external: true, kind: "file" },
     state,
   );
-  assert.match(decisionLine(byDefault), /ASK/);
+  assert.match(decisionLine(byDefault), /ALLOW/, "reads outside the workspace are open by default");
+  const byWrite = evaluateClaim(
+    { tool: "write", action: "write", absolute: "/etc/x", resource: "/etc/x", write: true, external: true, kind: "file" },
+    state,
+  );
+  assert.match(decisionLine(byWrite), /ASK/, "an outside write still asks");
   assert.match(decisionLine(byDefault), /\[default\]/);
 });

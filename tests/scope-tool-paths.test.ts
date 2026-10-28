@@ -55,11 +55,23 @@ test("bash inside the workspace is not treated as a write when it is a read-only
 });
 
 test("bash refuses to guess when the command can escape a tokenizer", () => {
-  for (const command of ["cat $(pwd)/x", "bash -c 'rm -rf /'", "find . -exec rm {} ;", "echo `whoami`"]) {
+  for (const command of ["cat $(pwd)/x", "bash -c 'rm -rf /'", "find . -exec rm {} ;", "echo `whoami`", "ls | xargs rm", "python3 <<PY\nprint(1)\nPY"]) {
     const claim = shellClaim(command, cwd);
     assert.equal(claim.unknown, true, command);
     assert.match(claim.reason ?? "", /cannot be determined/);
   }
+});
+
+test("a heredoc that carries data is not an opaque command", () => {
+  // Regression: `git commit -F - <<EOF` used to be denied outright because the
+  // whole command was treated as "paths cannot be determined". A heredoc body is
+  // data for git; it is code only when an interpreter reads it.
+  const claim = shellClaim("git commit -F - <<EOF\nfeat: x\nEOF", cwd);
+  assert.equal(claim.unknown, false);
+  assert.equal(claim.reason, undefined);
+
+  const redirect = shellClaim("git commit -F msg.txt <<EOF\nbody\nEOF", cwd);
+  assert.equal(redirect.unknown, false);
 });
 
 test("an unmapped MCP tool is unknown until config names its path field", () => {

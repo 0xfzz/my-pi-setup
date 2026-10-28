@@ -96,12 +96,12 @@ test("a read inside the workspace passes without a dialog", async () => {
   }
 });
 
-test("an outside read opens one dialog; allow-once runs it, deny blocks it", async () => {
+test("an outside write opens one dialog; allow-once runs it, deny blocks it", async () => {
   const allowed = await fixture();
   try {
-    const pending = allowed.emit("tool_call", { toolName: "read", input: { path: "../elsewhere/a.txt" } });
+    const pending = allowed.emit("tool_call", { toolName: "write", input: { path: "../elsewhere/a.txt", content: "x" } });
     await tick();
-    assert.ok(allowed.dialog, "the dialog must open for an outside path");
+    assert.ok(allowed.dialog, "the dialog must open for an outside write");
     allowed.dialog!.component.handleInput("1");
     assert.deepEqual(await pending, []);
     assert.equal(allowed.appended.length, 0, "allow once must not write a grant");
@@ -111,7 +111,7 @@ test("an outside read opens one dialog; allow-once runs it, deny blocks it", asy
 
   const denied = await fixture();
   try {
-    const pending = denied.emit("tool_call", { toolName: "read", input: { path: "../elsewhere/a.txt" } });
+    const pending = denied.emit("tool_call", { toolName: "write", input: { path: "../elsewhere/a.txt", content: "x" } });
     await tick();
     denied.dialog!.component.handleInput("3");
     const [result] = await pending as Array<{ block: boolean; reason: string }>;
@@ -123,10 +123,20 @@ test("an outside read opens one dialog; allow-once runs it, deny blocks it", asy
   }
 });
 
+test("an outside read runs with no dialog at all", async () => {
+  const f = await fixture();
+  try {
+    assert.deepEqual(await f.emit("tool_call", { toolName: "read", input: { path: "/etc/os-release" } }), []);
+    assert.equal(f.dialog, undefined, "reads are open by default");
+  } finally {
+    await f.cleanup();
+  }
+});
+
 test("allow this folder writes a branch snapshot and stops asking", async () => {
   const f = await fixture();
   try {
-    const pending = f.emit("tool_call", { toolName: "read", input: { path: "../elsewhere/a.txt" } });
+    const pending = f.emit("tool_call", { toolName: "write", input: { path: "../elsewhere/a.txt", content: "x" } });
     await tick();
     f.dialog!.component.handleInput("2");
     assert.deepEqual(await pending, []);
@@ -144,7 +154,7 @@ test("allow this folder writes a branch snapshot and stops asking", async () => 
 test("a session with no UI blocks with an actionable message instead of pretending", async () => {
   const f = await fixture({ hasUI: false, mode: "print" });
   try {
-    const [result] = await f.emit("tool_call", { toolName: "read", input: { path: "/etc/hosts" } }) as Array<{ block: boolean; reason: string }>;
+    const [result] = await f.emit("tool_call", { toolName: "write", input: { path: "/etc/hosts", content: "x" } }) as Array<{ block: boolean; reason: string }>;
     assert.equal(result?.block, true);
     assert.match(result!.reason, /no dialog is available/);
     assert.match(result!.reason, /\/scope allow/);
@@ -164,7 +174,7 @@ test("/scope status and /scope deny steer the same state the gate uses", async (
 
     await f.commands.get("scope").handler("status", f.ctx);
     assert.match(f.notices.at(-1)!, /Scope/);
-    assert.match(f.notices.at(-1)!, /defaults: external=ask/);
+    assert.match(f.notices.at(-1)!, /defaults: write-outside=ask/);
   } finally {
     await f.cleanup();
   }

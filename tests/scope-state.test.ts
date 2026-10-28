@@ -26,7 +26,7 @@ test("a session with no config starts at the workspace, read-write", async () =>
   try {
     const loaded = loadScopeConfig(f.dir);
     assert.deepEqual(loaded.state.roots.map(root => [root.path, root.access]), [[canonicalize(f.dir), "rw"]]);
-    assert.deepEqual(loaded.state.defaults, { external: "ask", unknown: "ask" });
+    assert.deepEqual(loaded.state.defaults, { external: "ask", readExternal: "allow", unknown: "ask" });
     assert.deepEqual(loaded.problems, []);
     assert.deepEqual(loaded.sources, []);
   } finally {
@@ -121,7 +121,7 @@ test("a snapshot persists session and branch roots, not config or global ones", 
       { path: "/granted", access: "ro", source: "branch" },
     ],
     rules: [{ action: "bash", resource: "rm *", effect: "deny", source: "project" }],
-    defaults: { external: "ask", unknown: "ask" },
+    defaults: { external: "ask", readExternal: "allow", unknown: "ask" },
     yolo: { strength: "ro", persist: false, since: 1 },
   };
   const snapshot = scopeSnapshot(state);

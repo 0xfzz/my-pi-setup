@@ -5,11 +5,11 @@ import { DEFAULT_SCOPE_DEFAULTS, type ScopeRoot, type ScopeState } from "../lib/
 
 const cwd = "/work";
 
-function harness(script: Array<AskAnswer | undefined | Error>) {
+function harness(script: Array<AskAnswer | undefined | Error>, defaults = { external: "ask", readExternal: "ask", unknown: "ask" } as ScopeState["defaults"]) {
   const state: ScopeState = {
     roots: [{ path: cwd, access: "rw", source: "session" }],
     rules: [],
-    defaults: DEFAULT_SCOPE_DEFAULTS,
+    defaults,
   };
   const asked: AskRequest[] = [];
   const grants: Array<ScopeRoot | undefined> = [];
@@ -33,6 +33,16 @@ test("a path inside the workspace never asks", async () => {
   const h = harness([]);
   assert.equal(await h.gate.gate("read", { path: "src/a.ts" }), undefined);
   assert.deepEqual(h.asked, []);
+});
+
+test("with the shipped defaults an outside read runs without a dialog", async () => {
+  const h = harness([], DEFAULT_SCOPE_DEFAULTS);
+  assert.equal(await h.gate.gate("read", { path: "/etc/os-release" }), undefined);
+  assert.deepEqual(h.asked, [], "reads are open by default");
+
+  const write = await h.gate.gate("write", { path: "/etc/motd" });
+  assert.equal(write?.block, true, "an outside write still asks, and no answer blocks");
+  assert.equal(h.asked.length, 1);
 });
 
 test("an outside read asks once and the answer covers only that call", async () => {

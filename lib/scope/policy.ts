@@ -9,8 +9,10 @@
  *   4. yolo may upgrade the remaining *question* — never a denial;
  *   5. otherwise ask, and the caller must obtain an answer.
  *
- * There is no branch that returns `allow` without a root, a rule or yolo, so a
- * missing root cannot be mistaken for permission.
+ * Reads outside the workspace are the one exception: they default to `allow`
+ * (`defaults.readExternal`) because a gate that asks about `ls /tmp` is a gate
+ * people disable. A `deny` rule still wins, and `external_directory` rules still
+ * apply to both directions.
  */
 import { resolveRule } from "./glob.ts";
 import type {
@@ -103,7 +105,7 @@ export function evaluateClaim(claim: Claim, state: ScopeState, options: Evaluate
   }
   const decision: ScopeDecision = {
     ...base,
-    effect: state.defaults.external,
+    effect: pathClaim.write ? state.defaults.external : state.defaults.readExternal,
     reason: `outside the workspace: ${pathClaim.absolute}`,
   };
   return withYolo(decision, state);

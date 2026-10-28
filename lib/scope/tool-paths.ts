@@ -71,10 +71,48 @@ const NO_FS_CLAIM: ReadonlySet<string> = new Set([
 const NO_FS_PREFIXES = ["vcc_", "todo_", "artifact_", "dashboard_", "subagent_", "workflow_"];
 
 /** Constructs that make a command's real effect unknowable to a tokenizer. */
-const UNMODELLABLE = [
-  "$(", "`", "<<", "eval ", "exec ", "xargs ", "-exec", "-execdir", "<(", ">(",
-  "bash -c", "sh -c", "zsh -c", "python -c", "node -e", "perl -e", "ruby -e",
+/**
+ * Constructs that hide code from the token scan: the code runs at runtime, so the
+ * paths in the text are not the paths the command touches.
+ */
+const CODE_HIDING = ["$(", "`", "<(", ">(", "xargs ", "-exec", "-execdir", "eval ", "exec "];
+
+/** Inline code passed as a flag value: the flag *is* the program. */
+const INLINE_CODE = [
+  "bash -c", "sh -c", "zsh -c", "fish -c", "python -c", "python3 -c",
+  "node -e", "node -p", "perl -e", "ruby -e", "php -r", "deno eval", "bun -e",
 ];
+
+/**
+ * Binaries whose heredoc body is *code*, not data. `git commit -F - <<EOF` feeds
+ * data and must keep working; `python3 <<EOF` feeds a program and must not be
+ * mistaken for a harmless redirect.
+ */
+const INTERPRETERS = new Set([
+  "python", "python3", "node", "deno", "bun", "perl", "ruby", "php",
+  "bash", "sh", "zsh", "fish", "osascript",
+]);
+
+const WRAPPERS = new Set(["sudo", "env", "time", "nice", "nohup", "command", "exec"]);
+
+/** The program each `|`/`&&`/`;` segment runs, with wrappers and `VAR=1` skipped. */
+function segmentBinaries(tokens: readonly string[]): string[] {
+  const binaries: string[] = [];
+  let expectBinary = true;
+  for (const token of tokens) {
+    if (/^[|&;]+$/.test(token)) {
+      expectBinary = true;
+      continue;
+    }
+    if (!expectBinary) continue;
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;
+    const bare = token.replace(/^["']|["']$/g, "");
+    if (WRAPPERS.has(bare)) continue;
+    expectBinary = false;
+    binaries.push(bare.split("/").pop() ?? bare);
+  }
+  return binaries;
+}
 
 function isNoClaim(tool: string): boolean {
   return NO_FS_CLAIM.has(tool) || NO_FS_PREFIXES.some(prefix => tool.startsWith(prefix));
@@ -149,9 +187,18 @@ export function shellClaim(command: unknown, cwd: string): ClaimSet {
     return { paths: [{ raw: cwd, write: true, kind: "directory", action: "bash" }], unknown: false };
   }
   const lowered = command.toLowerCase();
-  const escape = UNMODELLABLE.find(marker => lowered.includes(marker));
-  if (escape) {
-    return { paths: [], unknown: true, reason: `bash command contains "${escape}", so its paths cannot be determined` };
+  const marker = [...CODE_HIDING, ...INLINE_CODE].find(candidate => lowered.includes(candidate));
+  // A heredoc is only opaque when its body is code. `git commit -F - <<EOF` is a
+  // data pipe and used to be denied as "paths cannot be determined".
+  const codeHeredoc = lowered.includes("<<") && segmentBinaries(words(command)).some(binary => INTERPRETERS.has(binary));
+  if (marker || codeHeredoc) {
+    return {
+      paths: [],
+      unknown: true,
+      reason: marker
+        ? `bash command contains "${marker}", so its paths cannot be determined`
+        : "bash feeds a heredoc to an interpreter, so its paths cannot be determined",
+    };
   }
 
   // `readOnlyShellCommand` is the project's existing conservative judgement: it
