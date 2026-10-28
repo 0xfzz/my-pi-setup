@@ -71,6 +71,9 @@ into the prompt border and makes context usage readable at a glance:
 ── deepseek-v4.1-flash · opencode-go · high ─────────────────
 ❯ 
 ──────────────────────────────────────────────────────────────
+~/project (main) • Session title
+ctx [██████░░░░░░] 27.5% · 275k/1.0M · 725k left · ↑1.5k ↓300 · $0.150
+MCP: 1 server enabled
 ```
 
 - The model label is embedded in the editor's own top rule by
@@ -79,10 +82,11 @@ into the prompt border and makes context usage readable at a glance:
   `/model` updates it without a reload and without spending an extra row above
   the prompt. Long labels truncate with `…`; the `↑N` scroll indicator is
   preserved.
-- The footer is a custom `ContextFooter`. It reads `ctx.getContextUsage()` every
-  frame (unknown usage renders `?`, not a fake percentage), colors the bar green
-  → amber → red at 70% / 90%, and keeps the cumulative token/cost line plus
-  extension statuses.
+- The footer is a compact `ContextFooter`: one context line with the bar,
+  percentage, used/window, remaining tokens, input/output totals and `$` cost,
+  followed by extension statuses only when present. It reads
+  `ctx.getContextUsage()` every frame (unknown usage renders `?`, not a fake
+  percentage) and colors the bar green → amber → red at 70% / 90%.
 - Parent TUI sessions only; Herdr children and RPC/print keep Pi's default
   chrome. Removing the extension restores the built-in editor and footer on
   shutdown.

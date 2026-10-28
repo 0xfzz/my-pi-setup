@@ -112,7 +112,7 @@ test("renderModelTopBorder embeds the model in the editor top rule", () => {
   assert.match(scrolled, /↑3/);
 });
 
-test("ContextFooter explains used, left and window with a progress bar", () => {
+test("ContextFooter stays compact while explaining context and cost", () => {
   const ctx = fakeContext();
   const footer = new ContextFooter(() => ctx, theme, footerData);
   const lines = footer.render(100).map(stripTerminalSequences);
@@ -120,15 +120,17 @@ test("ContextFooter explains used, left and window with a progress bar", () => {
   assert.match(text, /~/);
   assert.match(text, /\(main\)/);
   assert.match(text, /Popup design system/);
-  assert.match(text, /context/i);
+  assert.match(text, /ctx/i);
   assert.match(text, /27\.5%/);
-  assert.match(text, /275k used/);
+  assert.match(text, /275k\/1\.0M/);
   assert.match(text, /725k left/);
-  assert.match(text, /1\.0M window/);
   assert.match(text, /█/);
   assert.match(text, /↑1\.5k/);
+  assert.match(text, /↓300/);
   assert.match(text, /\$0\.150/);
   assert.match(text, /MCP: 1 server enabled/);
+  // Cache counters moved out of the minimal footer; cost and context stay.
+  assert.doesNotMatch(text, /R5\.0k|CH72\.7%/);
   for (const line of lines) {
     assert.ok(visibleWidth(line) <= 100, `line exceeds width: ${line}`);
   }

@@ -120,12 +120,6 @@ function usageLine(totals: UsageTotals): string {
   const parts: string[] = [];
   if (totals.input) parts.push(`↑${formatTokens(totals.input)}`);
   if (totals.output) parts.push(`↓${formatTokens(totals.output)}`);
-  if (totals.cacheRead) parts.push(`R${formatTokens(totals.cacheRead)}`);
-  if (totals.cacheWrite) parts.push(`W${formatTokens(totals.cacheWrite)}`);
-  if (totals.cacheHitRate !== undefined && (totals.cacheRead > 0 || totals.cacheWrite > 0)) {
-    parts.push(`CH${totals.cacheHitRate.toFixed(1)}%`);
-  }
-  if (totals.cost) parts.push(`$${totals.cost.toFixed(3)}`);
   return parts.join(" ");
 }
 
@@ -228,12 +222,6 @@ export class ContextFooter implements Component {
 
       lines.push(this.renderContextLine(ctx, width));
 
-      const usage = this.usage(ctx);
-      const stats = usageLine(usage);
-      if (stats) {
-        lines.push(this.theme.fg("dim", truncateToWidth(stats, width, this.theme.fg("dim", "…"))));
-      }
-
       const statuses = [...this.footerData.getExtensionStatuses().entries()]
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([, text]) => text.replace(/[\r\n\t]+/g, " ").replace(/ +/g, " ").trim())
@@ -255,23 +243,28 @@ export class ContextFooter implements Component {
     const percent = usage?.percent
       ?? (tokens !== null && window > 0 ? (tokens / window) * 100 : null);
     const color = contextColor(percent);
-    const barWidth = width >= 100 ? 24 : width >= 70 ? 16 : 10;
+    const barWidth = width >= 100 ? 20 : width >= 70 ? 12 : 8;
     const bar = contextBar(percent, barWidth);
-    const paintedBar = this.theme.fg(color, "█".repeat(bar.indexOf("░") < 0 ? barWidth : bar.indexOf("░")))
-      + this.theme.fg("dim", "░".repeat(bar.indexOf("░") < 0 ? 0 : barWidth - bar.indexOf("░")));
+    const split = bar.indexOf("░");
+    const filled = split < 0 ? barWidth : split;
+    const paintedBar = this.theme.fg(color, "█".repeat(filled))
+      + this.theme.fg("dim", "░".repeat(barWidth - filled));
 
     const percentText = percent === null ? "?" : `${percent.toFixed(1)}%`;
     const used = tokens === null ? "?" : formatTokens(tokens);
     const total = window > 0 ? formatTokens(window) : "?";
     const remaining = tokens !== null && window > 0 ? Math.max(0, window - tokens) : null;
-    const detail = remaining === null
-      ? `${used} / ${total}`
-      : `${used} used · ${formatTokens(remaining)} left · ${total} window`;
+    const totals = this.usage(ctx);
+    const consumption = usageLine(totals);
 
-    const label = this.theme.fg("dim", "context");
+    const detail: string[] = [this.theme.fg("muted", `${used}/${total}`)];
+    if (remaining !== null) detail.push(this.theme.fg("dim", `${formatTokens(remaining)} left`));
+    if (consumption) detail.push(this.theme.fg("dim", consumption));
+    if (totals.cost) detail.push(this.theme.fg("accent", `$${totals.cost.toFixed(3)}`));
+
+    const label = this.theme.fg("dim", "ctx");
     const percentPaint = this.theme.fg(color, percentText);
-    const detailPaint = this.theme.fg("muted", detail);
-    const line = `${label} [${paintedBar}] ${percentPaint}  ${detailPaint}`;
+    const line = `${label} ${this.theme.fg("dim", "[")}${paintedBar}${this.theme.fg("dim", "]")} ${percentPaint} ${this.theme.fg("dim", "·")} ${detail.join(this.theme.fg("dim", " · "))}`;
     return truncateToWidth(line, width, this.theme.fg("dim", "…"));
   }
 
