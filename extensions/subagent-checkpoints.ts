@@ -9,6 +9,7 @@ import {
   isPopupCloseKey,
   type PopupRow,
 } from "../lib/popup.ts";
+import { PopupList } from "../lib/ui/shell.ts";
 import { watch, readFileSync, existsSync, statSync, type FSWatcher } from "node:fs";
 import { open, rename, writeFile, rm } from "node:fs/promises";
 import { dirname, basename } from "node:path";
@@ -557,57 +558,20 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
     const panelTitle = titleLines[0];
     const headerLines = titleLines.slice(1);
     return context.ui.custom<string | undefined>((tui, theme, _keys, done) => {
-      let selected = 0;
-      const buildRows = (): PopupRow[] => {
-        const rows: PopupRow[] = headerLines.map(l => theme.fg("dim", l));
-        if (headerLines.length > 0) rows.push("");
-        for (let i = 0; i < options.length; i++) {
-          const marker = i === selected ? theme.fg("accent", "→ ") : "  ";
-          rows.push(marker + options[i]);
-        }
-        rows.push(theme.fg("dim", "Esc close"));
-        return rows;
-      };
-      const panel = new PopupPanel({
+      const list = new PopupList<string>({
         theme,
         title: panelTitle,
         hint,
-        onKey(data) {
-          if (isPopupCloseKey(data) || data === "escape" || data === "\x1b") {
-            done(undefined);
-          } else if (matchesKey(data, "enter") || data === "enter" || data === "\r") {
-            done(options[selected]);
-          } else if (matchesKey(data, "up") || matchesKey(data, "k")) {
-            selected = Math.max(0, selected - 1);
-            panel.setContent(buildRows());
-            tui?.requestRender?.();
-          } else if (matchesKey(data, "down") || matchesKey(data, "j")) {
-            selected = Math.min(options.length - 1, selected + 1);
-            panel.setContent(buildRows());
-            tui?.requestRender?.();
-          } else if (/^[1-9]$/.test(data)) {
-            const digit = parseInt(data, 10);
-            if (digit >= 1 && digit <= options.length) {
-              done(options[digit - 1]);
-            }
-          }
-        },
-        onMouse(event) {
-          if (event.type === "click" || event.type === "press") {
-            const offset = 2 + (headerLines.length > 0 ? headerLines.length + 1 : 0);
-            const localY = event.y - offset;
-            if (localY >= 0 && localY < options.length) {
-              selected = localY;
-              panel.setContent(buildRows());
-              return { handled: true, render: true };
-            }
-          }
-          return undefined;
-        },
+        items: options,
+        terminalRows: () => tui?.terminal?.rows ?? 24,
+        header: headerLines.length ? [...headerLines.map(line => theme.fg("dim", line)), ""] : [],
+        renderItem: (option, { selected }) =>
+          `${selected ? theme.fg("accent", "→ ") : "  "}${option}`,
+        onSelect: (option) => done(option),
+        onCancel: () => done(undefined),
       });
-      panel.setContent(buildRows());
-      return panel;
-    }, { overlay: true, overlayOptions: popupOverlayOptions("85%", 46, popupHeight(options.length + headerLines.length + 2)) as any });
+      return list;
+    }, { overlay: true, overlayOptions: popupOverlayOptions("85%", 46, "85%") as any });
   }
 
   async function textDetailPopup(

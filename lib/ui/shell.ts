@@ -335,11 +335,11 @@ export class PopupList<T> implements Component, Focusable {
       return true;
     }
     const page = 8;
-    if (isPopupCloseKey(data)) {
+    if (isPopupCloseKey(data) || data === "escape" || data === "\x1b") {
       this.options.onCancel();
       return true;
     }
-    if (matchesKey(data, "enter")) {
+    if (matchesKey(data, "enter") || data === "enter" || data === "\r") {
       this.options.onSelect(this.options.items[this.selected]!, this.selected);
       return true;
     }
