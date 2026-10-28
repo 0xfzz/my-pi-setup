@@ -13,7 +13,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { dirname } from "node:path";
 import { Type } from "typebox";
 import { popupOverlayOptions } from "../lib/popup.ts";
-import { formatAudit, ScopeLog } from "../lib/scope/audit.ts";
+import { formatAudit, formatStats, ScopeLog } from "../lib/scope/audit.ts";
 import {
   decisionLine,
   parseScopeCommand,
@@ -220,7 +220,7 @@ export default function scopeExtension(pi: ExtensionAPI) {
         ctx.ui.notify(ruleLines(state).join("\n"), "info");
         return;
       case "log":
-        ctx.ui.notify(formatAudit(log.list(), action.limit).join("\n"), "info");
+        ctx.ui.notify((action.stats ? formatStats(log.list()) : formatAudit(log.list(), action.limit)).join("\n"), "info");
         return;
       case "allow": {
         if (action.target === "session") {
