@@ -178,6 +178,9 @@ import {
   REVIEW_PRESET_SINGLE,
   allFindings,
   applyDispositions,
+  batchReviewContent,
+  effectiveReviewTarget,
+  hashContent,
   designRefProblem,
   evaluateReadiness,
   isReviewPreset,
@@ -191,6 +194,7 @@ import {
   stalenessProblem,
   type DesignRef,
   type ReviewFinding,
+  type ReviewMember,
   type ReviewRun,
 } from "../lib/orchestrator/spec-review.ts";
 import {
@@ -203,6 +207,8 @@ import {
 } from "../lib/orchestrator/receipts.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardState } from "../lib/dashboard/integration.ts";
 import { lintSpec } from "../lib/orchestrator/spec-lint.ts";
+import { applyReviewPatches, type ReviewPatchRevision } from "../lib/orchestrator/review-patches.ts";
+import { amendHandoff } from "../lib/orchestrator/handoff-amendment.ts";
 import { projectChildProvenance, projectOrchestrator } from "../lib/dashboard/projection.ts";
 import { displayName as namingDisplayName, givenNameFor, givenNamePart, isHumanName } from "../lib/naming.ts";
 
@@ -1864,8 +1870,26 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   }
 
   /** Re-read whatever the run was pinned from, so staleness is a fact and not a guess. */
-  function currentReviewContent(ctx: ExtensionContext, run: ReviewRun): string | null {
+  function currentReviewContent(ctx: ExtensionContext, run: ReviewRun, memberId?: string): string | null {
     try {
+      if (memberId) {
+        const member = run.members?.find((m) => m.id === memberId);
+        return member ? readArtifactForReview(ctx, member.target.ref)?.content ?? null : null;
+      }
+      if (run.members) {
+        const members = run.members.map((m) => {
+          const content = readArtifactForReview(ctx, m.target.ref)?.content;
+          if (content === undefined) throw new Error("missing member");
+          return { ...m, target: { ...m.target, snapshot: content } };
+        });
+        let program = run.program;
+        if (program) {
+          const content = readArtifactForReview(ctx, program.ref)?.content;
+          if (content === undefined) return null;
+          program = { ...program, snapshot: content };
+        }
+        return batchReviewContent(members, program);
+      }
       if (run.target.kind === "artifact") {
         return readArtifactForReview(ctx, run.target.ref)?.content ?? null;
       }
@@ -1875,6 +1899,98 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     } catch {
       return null;
     }
+  }
+
+  /** Binding never rewrites the reviewed artifact (approval is provenance, not text). */
+  function bindReviewedHandoffs(ctx: ExtensionContext, run: ReviewRun): void {
+    if (!run.readiness.ready || stalenessProblem(run, currentReviewContent(ctx, run))) return;
+    for (const member of run.members ?? []) {
+      const stored = member.handoffId ? handoffs.get(member.handoffId) : undefined;
+      const target = effectiveReviewTarget(run, member.id);
+      if (stored && renderHandoffForChild(stored.record) === target.snapshot) {
+        stored.record.designRef = { runId: run.id, memberId: member.id, targetHash: target.contentHash };
+      }
+    }
+  }
+
+  /** One narrow write path: apply exactly the independent reviewer's replacements. */
+  async function applyReviewerAmendments(ctx: ExtensionContext, run: ReviewRun, dispositions?: Array<{
+    findingId: string; action: string; rationale?: string; userConfirmed?: boolean;
+  }>) {
+    const findings = allFindings(run).filter((f) => f.patch && !run.dispositions[f.id]?.patched
+      && (!dispositions?.length || dispositions.some((d) => d.findingId === f.id && d.action === "fix")));
+    if (!findings.length) return undefined;
+    if (run.status === "cancelled" || !run.reviewers.every((s) => s.status === "submitted")) {
+      return text("Collect the complete review before applying amendments.", { error: "review-incomplete" });
+    }
+    const stale = stalenessProblem(run, currentReviewContent(ctx, run));
+    if (stale) return text(`Cannot apply reviewer patches: ${stale}`, { error: "stale-target" });
+    const groups = new Map<string, typeof findings>();
+    for (const finding of findings) {
+      const key = finding.memberId ?? run.target.ref;
+      groups.set(key, [...(groups.get(key) ?? []), finding]);
+    }
+    const plans: Array<{ target: ReturnType<typeof effectiveReviewTarget>; content: string;
+      revision: ReviewPatchRevision; stored?: { record: HandoffRecord; path: string }; amended?: HandoffRecord }> = [];
+    try {
+      for (const [targetId, entries] of groups) {
+        const member = run.members?.find((m) => m.id === targetId);
+        if (run.members && !member) throw new Error(`Unknown batch member ${targetId}`);
+        const target = effectiveReviewTarget(run, member?.id);
+        if (target.kind !== "artifact") throw new Error("Automatic patches require an artifact target; file targets remain read-only");
+        const changes = entries.map((f) => ({ findingId: f.id, patch: f.patch! }));
+        const content = applyReviewPatches(target.snapshot, changes);
+        const stored = member?.handoffId ? handoffs.get(member.handoffId)
+          : [...handoffs.values()].find((h) => h.record.artifactId === target.ref);
+        if (stored && registry.getRunningChildren().some((c) => c.scope === stored.record.scope)) {
+          throw new Error(`Cannot amend ${stored.record.scope} while a child holds its lane`);
+        }
+        const amended = stored ? amendHandoff(stored.record, changes) : undefined;
+        plans.push({ target, content, stored, amended, revision: { targetId, previousHash: target.contentHash,
+          nextHash: hashContent(content), changes, at: new Date(now()).toISOString() } });
+      }
+    } catch (error) {
+      return text(`Patches refused before any write: ${String(error)}. Resolve the structural decision; do not launch another reviewer automatically.`, { error: "invalid-review-patches" });
+    }
+    // Preflight dispositions too: a bad finding id must not cause partial writes.
+    const explicit = (dispositions ?? []).filter((d) => !findings.some((f) => f.id === d.findingId));
+    const checked = explicit.length ? applyDispositions(run, explicit as any, { now: new Date(now()) }) : { ok: true, run, problems: [] };
+    if (!checked.ok) return text(checked.problems.join("\n"), { error: "invalid-dispositions" });
+    let next = { ...checked.run, dispositions: { ...checked.run.dispositions }, patchRevisions: [...(run.patchRevisions ?? [])] };
+    for (const plan of plans) {
+      try {
+        const published = plan.amended ? await publishHandoffArtifact(ctx, plan.amended)
+          : await (async () => {
+              const result = await (ctx as any).executeTool("artifact_save", { id: plan.target.ref, title: plan.target.title, type: "spec", content: plan.content });
+              return result?.isError || result?.result?.isError ? { ok: false, message: "artifact_save failed" } : { ok: true };
+            })();
+        if (!published.ok || readArtifactForReview(ctx, plan.target.ref)?.content !== plan.content) throw new Error("Artifact publication could not be verified");
+        next.patchRevisions.push(plan.revision);
+        for (const change of plan.revision.changes) next.dispositions[change.findingId] = {
+          action: "fix", patched: true, rationale: "Exact reviewer-authored patch applied and read back", at: plan.revision.at, targetHash: plan.revision.previousHash,
+        };
+        // Record successful writes before the next one; retry never reapplies them.
+        if (plan.stored && plan.amended) {
+          plan.stored.record = plan.amended;
+          writeFileSync(plan.stored.path, plan.content, { mode: 0o600 });
+        }
+        specReviews.set(run.id, next);
+        persistState();
+      } catch (error) {
+        specReviews.set(run.id, next);
+        persistState();
+        return text(`Patch publication stopped: ${String(error)}. Successful amendments are recorded; retry resolve, not start.`, { error: "patch-publish-failed", runId: run.id });
+      }
+    }
+    next = { ...next, ...settleReadiness(next, { now: new Date(now()) }) };
+    specReviews.set(next.id, next);
+    bindReviewedHandoffs(ctx, next);
+    persistState();
+    return text(renderRunSummary(next) + "\nReviewer-authored amendments applied. No re-review was launched.", {
+      runId: next.id, ready: next.readiness.ready, status: next.status, resolution: "reviewer-patched",
+      targetHash: effectiveReviewTarget(next).contentHash,
+      members: next.members?.map((m) => ({ memberId: m.id, targetHash: effectiveReviewTarget(next, m.id).contentHash })),
+    });
   }
 
   function repoHead(cwd: string): string | null {
@@ -1913,6 +2029,10 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           rationale: Type.String({ minLength: 1, description: "Why it matters for implementation." }),
           references: Type.Optional(Type.Array(Type.String({ description: "Permitted repository path supporting the finding." }))),
           suggestion: Type.Optional(Type.String({ description: "Optional concrete replacement or addition." })),
+          memberId: Type.Optional(Type.String({ description: "Handoff scope for batch findings; required for a member-specific patch." })),
+          patch: Type.Optional(Type.Object({ oldText: Type.String({ minLength: 1 }), newText: Type.String() }, {
+            description: "Exact, unique, non-overlapping replacement in the pinned document. The parent can apply it without another reviewer. No structural lane/criteria changes.",
+          })), 
         }),
         { description: "Findings for your lens. An empty array is a valid clean answer." },
       ),
@@ -1998,6 +2118,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         Type.Literal("status"),
         Type.Literal("cancel"),
       ], { description: "lint = machine defects only, no reviewers; start = pin + launch the devil's advocate; collect = read submitted reports; resolve = record dispositions and readiness; status = read; cancel = stop the run." }),
+      handoffIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 5,
+        description: "Review 1–5 already-authored scoped handoffs together with ONE reviewer. Scope names or handoff ids. Automatically binds approved members for spawn." })),
+      prdArtifactId: Type.Optional(Type.String({ description: "PRD artifact pinned as shared reference for the handoff batch." })),
       targetArtifactId: Type.Optional(Type.String({ description: "Workspace artifact to review (preferred while the design is still an artifact)." })),
       targetFile: Type.Optional(Type.String({ description: "Repository file to review, relative to the working directory." })),
       title: Type.Optional(Type.String({ description: "Human title for the pinned target." })),
@@ -2081,8 +2204,41 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         let source: { title: string; content: string } | null = null;
         let kind: "artifact" | "file" = "artifact";
         let ref = "";
+        let members: ReviewMember[] | undefined;
+        let program: ReviewRun["program"];
         try {
-          if (params.targetArtifactId) {
+          if (params.handoffIds) {
+            if (params.targetArtifactId || params.targetFile || !params.handoffIds.length || params.handoffIds.length > 5) {
+              return text("A batch needs 1–5 handoffs and no other target.", { error: "invalid-batch" });
+            }
+            if (preset !== "single") return text("Batch reviews use one devil's advocate, not a panel.", { error: "batch-preset" });
+            const records = params.handoffIds.map((id) => resolveHandoff({ handoffId: id }));
+            if (records.some((r) => !r) || new Set(records.map((r) => r?.id)).size !== records.length) {
+              return text("Batch handoffs must exist and be unique.", { error: "invalid-batch" });
+            }
+            members = records.map((record) => {
+              const artifact = readArtifactForReview(ctx, record!.artifactId);
+              if (!artifact || artifact.content !== renderHandoffForChild(record!)) throw new Error(`Handoff ${record!.scope} differs from its artifact; re-author before review`);
+              return { id: record!.scope, handoffId: record!.id, target: pinTarget({ kind: "artifact", ref: record!.artifactId,
+                title: artifact.title, content: artifact.content, references: params.references, now: new Date(now()) }) };
+            }).sort((a, b) => a.id.localeCompare(b.id));
+            // Exact path duplication is cheap to catch here. Runtime lane matching
+            // continues to enforce globs and active-writer conflicts at spawn.
+            for (let i = 0; i < records.length; i++) for (let j = i + 1; j < records.length; j++) {
+              const a = records[i]!, b = records[j]!;
+              if (a.laneFiles.some((f) => b.laneFiles.includes(f)) && !a.dependsOn?.includes(b.scope) && !b.dependsOn?.includes(a.scope)) {
+                return text(`Overlapping batch lanes: ${a.scope}, ${b.scope}. Serialize with dependsOn or split the lanes.`, { error: "batch-lane-conflict" });
+              }
+            }
+            if (params.prdArtifactId) {
+              const prd = readArtifactForReview(ctx, params.prdArtifactId);
+              if (!prd) throw new Error("PRD artifact not found");
+              program = pinTarget({ kind: "artifact", ref: params.prdArtifactId, title: prd.title, content: prd.content });
+            }
+            ref = `batch:${members.map((m) => m.id).join(",")}`;
+            source = { title: params.title ?? "Scoped handoff batch", content: batchReviewContent(members, program) };
+            if (source.content.length > MAX_PINNED_CHARS) throw new Error("Batch exceeds the pinned content cap");
+          } else if (params.targetArtifactId) {
             ref = params.targetArtifactId.trim();
             source = readArtifactForReview(ctx, ref);
             if (!source) {
@@ -2125,6 +2281,21 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         // 2. The spec phase is one devil's advocate plus one re-review; past
         //    that, the disagreement is the orchestrator's (or the user's), not
         //    another reviewer's.
+        // Approval is never re-earned by re-reading text a reviewer already
+        // approved. Only a READY identical run is reused: an unready one still
+        // has findings the parent owns, and those gates must answer instead.
+        const sameTarget = (entry: ReviewRun) => {
+          if (entry.target.contentHash === target.contentHash) return true;
+          try { return effectiveReviewTarget(entry).contentHash === target.contentHash; } catch { return false; }
+        };
+        const identical = [...specReviews.values()]
+          .filter((entry) => entry.preset === preset && entry.status !== "cancelled" && entry.readiness.ready)
+          .find(sameTarget);
+        if (identical) {
+          const hash = effectiveReviewTarget(identical).contentHash;
+          return text(renderRunSummary(identical) + "\nThis exact revision is already reviewed and ready; no reviewer was launched. Bind it and spawn.",
+            { runId: identical.id, targetHash: hash, reused: true, launched: [] });
+        }
         const prior = runsForTarget(kind, ref).filter((entry) => entry.status !== "cancelled");
         const latest = prior[prior.length - 1];
         if (latest && !latest.readiness.ready) {
@@ -2174,6 +2345,10 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         // preset is honoured, so a genuinely contested design can still opt into
         // a panel; a re-review that names none stays single.
         const run = openReviewRun({ target, preset, now: new Date(now()), salt: String(specReviews.size + 1) });
+        if (members) {
+          run.members = members;
+          run.program = program;
+        }
         // Machine-detectable defects are computed once, at pin time, and quoted
         // into every result. A reviewer that ignores them is still free to be
         // right; the cheap defects stop depending on attention.
@@ -2201,7 +2376,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             focus: params.focus,
             lint: run.lint,
             policy: { roots: [cwd] },
-          }) + `\n${renderPolicyForReviewer({ lens: slot.lens, roots: [cwd] })}\n`;
+          }) + (members ? `\nBatch instructions: judge ALL ${members.length} handoffs against the pinned PRD, including shared-interface contradictions and missing scope. Include coverage for each member. For member findings set memberId to its scope. Patch oldText must be the literal member document text (not JSON-escaped). Return exact patches where safe; structural lane/criteria changes require a parent decision, not another automatic review.\n` : "")
+            + `\n${renderPolicyForReviewer({ lens: slot.lens, roots: [cwd] })}\n`;
           const roleModel = resolveChildModel(ctx, "devil-advocate", subagentSettings, params.model);
           let plan: LaunchPlan;
           try {
@@ -2286,7 +2462,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             `Reviewers are isolated: no parent transcript, no artifacts, no write tool, no shell.`,
             `When a reviewer completes you are re-triggered; run collect then. ${RETRIGGER_CONTRACT}`,
           ].join("\n"),
-          { runId: run.id, targetHash: target.contentHash, preset, launched, failed, modelNotes },
+          { runId: run.id, targetHash: target.contentHash, preset, launched, failed, modelNotes,
+            ...(members ? { members: members.map((m) => ({ memberId: m.id, handoffId: m.handoffId, targetHash: m.target.contentHash })) } : {}) },
         );
       }
 
@@ -2346,6 +2523,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       }
 
       if (params.action === "resolve") {
+        const patchResult = await applyReviewerAmendments(ctx, run, params.dispositions);
+        if (patchResult) return patchResult;
         const result = applyDispositions(
           run,
           (params.dispositions ?? []).map((entry) => ({
@@ -2400,6 +2579,11 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           problems.push(`${slot.lens}: ${slot.reason}`);
           continue;
         }
+        if (run.members && parsed.report.findings.some((f) => (f.memberId && !run.members!.some((m) => m.id === f.memberId)) || (f.patch && !f.memberId))) {
+          problems.push(`${slot.lens}: batch patch must name a known memberId`);
+          slot.status = "failed";
+          continue;
+        }
         run.reports[slot.lens] = parsed.report;
         slot.status = "submitted";
         slot.reportPath = file;
@@ -2416,6 +2600,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             updatedAt: new Date(now()).toISOString(),
           };
       specReviews.set(next.id, next);
+      bindReviewedHandoffs(ctx, next);
       persistState();
       // Collect is a poll too. A repeat that found nothing new is one line, not
       // the same run summary again.
@@ -2482,6 +2667,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         Type.Object({
           runId: Type.String({ description: "Spec review run id from orch_spec_review." }),
           targetHash: Type.String({ description: "The reviewed content hash, from orch_spec_review status." }),
+          memberId: Type.Optional(Type.String({ description: "Batch member scope, when the handoff was reviewed in a batch." })),
         }, { description: "Bind this work unit to an independent specification review. orch_spawn refuses a run that is not ready or whose document changed." }),
       ),
     }),
@@ -2515,9 +2701,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         if (params.designRef) {
           const reviewed = specReviews.get(String(params.designRef.runId).trim());
           const problem = designRefProblem(
-            { runId: String(params.designRef.runId).trim(), targetHash: String(params.designRef.targetHash).trim().toLowerCase() },
+            { runId: String(params.designRef.runId).trim(), targetHash: String(params.designRef.targetHash).trim().toLowerCase(), memberId: params.designRef.memberId },
             (id) => specReviews.get(id),
-            reviewed ? currentReviewContent(ctx, reviewed) : null,
+            reviewed ? currentReviewContent(ctx, reviewed, params.designRef.memberId) : null,
           );
           if (problem) {
             return text(
@@ -2540,7 +2726,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           verifyCommand: params.verifyCommand,
           vision: params.vision,
           designRef: params.designRef
-            ? { runId: String(params.designRef.runId).trim(), targetHash: String(params.designRef.targetHash).trim().toLowerCase() }
+            ? { runId: String(params.designRef.runId).trim(), targetHash: String(params.designRef.targetHash).trim().toLowerCase(), memberId: params.designRef.memberId }
             : undefined,
         } as HandoffSpec);
         record = written.record;
@@ -2871,7 +3057,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         const problem = designRefProblem(
           handoff.designRef,
           (id) => specReviews.get(id),
-          run ? currentReviewContent(ctx, run) : null,
+          run ? currentReviewContent(ctx, run, handoff.designRef.memberId) : null,
         );
         if (problem) {
           return text(
@@ -2879,6 +3065,13 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
               `Resolve it with orch_spec_review, or re-author the handoff without designRef if this unit genuinely does not depend on a reviewed design.`,
             { error: "design-ref-not-ready", scope, designRef: handoff.designRef },
           );
+        }
+        if (run?.members) {
+          const member = run.members.find((m) => m.id === handoff.designRef!.memberId);
+          if (member?.handoffId !== handoff.id || effectiveReviewTarget(run, member.id).snapshot !== renderHandoffForChild(handoff)
+              || stalenessProblem(run, currentReviewContent(ctx, run))) {
+            return text("The handoff or its PRD/batch changed after review; restore or explicitly re-author it.", { error: "design-ref-not-ready", scope });
+          }
         }
         driftWarning = headDriftWarning(run?.target.repoBaseline?.head, repoHead((ctx as any).cwd || process.cwd()));
       }

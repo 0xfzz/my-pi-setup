@@ -12,14 +12,15 @@
  *
  *   1. The unit of review is a CONTENT HASH, not a document id. An artifact id
  *      survives an edit, so "approved" would silently transfer to text nobody
- *      reviewed. A revised specification is a different target and needs a fresh
- *      report.
+ *      reviewed. The sole exception is an exact, recorded patch proposed by the
+ *      independent reviewer; the whole amendment chain is replayed by the gate.
  *   2. A missing or malformed report is NEVER a clean review. Absence of evidence
  *      is the commonest way a review gate decays into a rubber stamp.
  *   3. Findings are resolved explicitly. Nothing is "closed" by a timeout, and a
  *      blocker cannot be accepted without the user saying so.
  */
 import { createHash } from "node:crypto";
+import { replayReviewPatches, type ReviewPatch, type ReviewPatchRevision } from "./review-patches.ts";
 
 import type { ReviewLens } from "./review-policy.ts";
 import { renderLintForReviewer, type SpecLintFinding } from "./spec-lint.ts";
@@ -108,6 +109,10 @@ export interface ReviewFinding {
   rationale: string;
   references?: string[];
   suggestion?: string;
+  /** Batch member id (handoff scope); absent for a single target. */
+  memberId?: string;
+  /** Exact replacement proposed by the independent reviewer. */
+  patch?: ReviewPatch;
 }
 
 const SEVERITIES: readonly Severity[] = ["blocker", "major", "nit"];
@@ -163,8 +168,14 @@ function parseFinding(raw: any, lens: ReviewLens, index: number): { finding?: Re
   const references = Array.isArray(raw.references)
     ? raw.references.filter((value: unknown): value is string => typeof value === "string" && value.trim() !== "")
     : undefined;
+  if (raw.patch !== undefined && (!raw.patch || typeof raw.patch.oldText !== "string" || !raw.patch.oldText
+      || typeof raw.patch.newText !== "string" || raw.patch.oldText.length + raw.patch.newText.length > 128 * 1024)) {
+    return { problem: `finding ${index + 1} has an invalid or oversized patch` };
+  }
   return {
     finding: {
+      ...(typeof raw.memberId === "string" && raw.memberId.trim() ? { memberId: raw.memberId.trim() } : {}),
+      ...(raw.patch ? { patch: { oldText: raw.patch.oldText, newText: raw.patch.newText } } : {}),
       id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim().slice(0, 80) : `F-${lens}-${index + 1}`,
       lens,
       severity: severity as Severity,
@@ -289,12 +300,20 @@ export interface Disposition {
   /** Which target hash the decision was made against. */
   targetHash: string;
   userConfirmed?: boolean;
+  /** A replayable reviewer-authored patch closed this finding without another reader. */
+  patched?: boolean;
 }
 
 export type ReviewStatus = "collecting" | "collected" | "ready" | "blocked" | "cancelled";
 
+export interface ReviewMember { id: string; target: PinnedTarget; handoffId?: string }
+
 export interface ReviewRun {
   id: string;
+  /** Immutable batch members, in canonical scope order. */
+  members?: ReviewMember[];
+  program?: PinnedTarget;
+  patchRevisions?: ReviewPatchRevision[];
   target: PinnedTarget;
   preset: ReviewPreset;
   reviewers: ReviewerSlot[];
@@ -509,6 +528,21 @@ export function evaluateReadiness(run: ReviewRun, options: { now?: Date } = {}):
       reasons.push(`${finding.severity} ${finding.id} is ${disposition.action}`);
       continue;
     }
+    if (disposition.action === "fix" && disposition.patched) {
+      const targetId = finding.memberId ?? run.target.ref;
+      const original = finding.memberId ? run.members?.find((m) => m.id === finding.memberId)?.target : run.target;
+      try {
+        if (!original || !run.patchRevisions?.some((r) => r.targetId === targetId && r.changes.some((c) => c.findingId === finding.id
+          && finding.patch && c.patch.oldText === finding.patch.oldText && c.patch.newText === finding.patch.newText))) {
+          throw new Error("missing reviewer patch receipt");
+        }
+        replayReviewPatches(original.snapshot, targetId, run.patchRevisions);
+      } catch {
+        open += 1;
+        reasons.push(`invalid patch receipt for ${finding.id}`);
+      }
+      continue;
+    }
     if (disposition.action === "fix") {
       // A fix edits the document, so the pinned target no longer exists as text.
       // The finding is resolved; the *approval* is not, because nobody has read
@@ -630,8 +664,10 @@ export function stalenessProblem(run: ReviewRun, currentContent: string | null):
   if (run.status === "cancelled") return "the review run was cancelled";
   if (currentContent === null) return "the pinned target could not be read back, so its content cannot be confirmed";
   const currentHash = hashContent(currentContent);
-  if (currentHash !== run.target.contentHash) {
-    return `the document changed since it was reviewed (reviewed ${run.target.contentHash.slice(0, 12)}, now ${currentHash.slice(0, 12)})`;
+  let expected: string;
+  try { expected = effectiveReviewTarget(run).contentHash; } catch { return "the reviewer patch chain is invalid"; }
+  if (currentHash !== expected) {
+    return `the document changed since it was reviewed (reviewed ${expected.slice(0, 12)}, now ${currentHash.slice(0, 12)})`;
   }
   return undefined;
 }
@@ -640,6 +676,26 @@ export function stalenessProblem(run: ReviewRun, currentContent: string | null):
 export interface DesignRef {
   runId: string;
   targetHash: string;
+  memberId?: string;
+}
+
+export function batchReviewContent(members: readonly ReviewMember[], program?: PinnedTarget): string {
+  return JSON.stringify({ program: program ? { ref: program.ref, content: program.snapshot } : null,
+    members: [...members].sort((a, b) => a.id.localeCompare(b.id)).map((m) => ({ id: m.id, content: m.target.snapshot })) }, null, 2);
+}
+
+/** Reports remain bound to the original pin; gates use replay-verified amendments. */
+export function effectiveReviewTarget(run: ReviewRun, memberId?: string): PinnedTarget {
+  if (memberId) {
+    const member = run.members?.find((m) => m.id === memberId);
+    if (!member) throw new Error(`Unknown batch member ${memberId}`);
+    const snapshot = replayReviewPatches(member.target.snapshot, member.id, run.patchRevisions);
+    return { ...member.target, snapshot, contentHash: hashContent(snapshot) };
+  }
+  const snapshot = run.members
+    ? batchReviewContent(run.members.map((m) => ({ ...m, target: effectiveReviewTarget(run, m.id) })), run.program)
+    : replayReviewPatches(run.target.snapshot, run.target.ref, run.patchRevisions);
+  return { ...run.target, snapshot, contentHash: hashContent(snapshot) };
 }
 
 export function designRefProblem(
@@ -650,13 +706,18 @@ export function designRefProblem(
   if (!ref) return "this handoff has no designRef, so no independent specification review backs it";
   const run = lookup(ref.runId);
   if (!run) return `design review ${ref.runId} is not known to this orchestrator`;
-  if (run.target.contentHash !== ref.targetHash) {
-    return `design review ${ref.runId} covered ${run.target.contentHash.slice(0, 12)}, not ${ref.targetHash.slice(0, 12)}`;
+  let target: PinnedTarget;
+  try { target = effectiveReviewTarget(run, ref.memberId); } catch (error) { return String(error); }
+  if (run.members && !ref.memberId) return "a batch designRef must name its memberId";
+  if (target.contentHash !== ref.targetHash) {
+    return `design review ${ref.runId} covered ${target.contentHash.slice(0, 12)}, not ${ref.targetHash.slice(0, 12)}`;
   }
   if (!run.readiness.ready) {
     return `design review ${ref.runId} is not ready: ${run.readiness.reasons.join("; ") || "no reason recorded"}`;
   }
-  return stalenessProblem(run, currentContent);
+  if (currentContent === null) return "the pinned target could not be read back, so its content cannot be confirmed";
+  if (run.status === "cancelled") return "the review run was cancelled";
+  return hashContent(currentContent) === target.contentHash ? undefined : "the document changed since it was reviewed";
 }
 
 /** Rubrics. Our own wording; the method and the source are attributed, the text is not copied. */

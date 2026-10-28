@@ -193,7 +193,8 @@ export function validateHandoff(spec: HandoffSpec): HandoffRecord & { revision: 
     if (!/^[a-f0-9]{64}$/.test(targetHash)) {
       throw new HandoffError("designRef.targetHash must be a sha256 hex digest of the reviewed content.");
     }
-    designRef = { runId, targetHash };
+    const memberId = typeof spec.designRef.memberId === "string" ? spec.designRef.memberId.trim() : undefined;
+    designRef = { runId, targetHash, ...(memberId ? { memberId } : {}) };
   }
 
   return {
