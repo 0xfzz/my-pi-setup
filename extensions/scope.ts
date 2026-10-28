@@ -233,6 +233,7 @@ export default function scopeExtension(pi: ExtensionAPI) {
             absolute: classified.absolute,
             resource: classified.resource,
             write: mode === "write",
+            posture: mode === "write" ? "write" : "read",
             external: classified.external,
             kind: "unknown",
           };

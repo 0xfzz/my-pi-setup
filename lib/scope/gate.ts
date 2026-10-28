@@ -16,7 +16,7 @@
  */
 import { describeDecision, evaluateClaim } from "./policy.ts";
 import { classifyPath, suggestGrant } from "./paths.ts";
-import { claimSetFor, displayPath, type ClaimOptions } from "./tool-paths.ts";
+import { claimSetFor, displayPath, type ClaimOptions, type PathRequest } from "./tool-paths.ts";
 import type { PathClaim, ScopeDecision, ScopeRoot, ScopeRule, ScopeState, ScopeSuggestion } from "./types.ts";
 
 export interface AskRequest {
@@ -101,7 +101,7 @@ export function createGate(deps: GateDeps): Gate {
       mcpPathFields: deps.mcpPathFields?.(),
     });
 
-  function toPathClaim(tool: string, request: { raw: string; write: boolean; kind: "file" | "directory" | "unknown"; action: string }): PathClaim {
+  function toPathClaim(tool: string, request: PathRequest): PathClaim {
     const classified = classifyPath(deps.cwd(), deps.state().roots, request.raw);
     return {
       tool,
@@ -109,6 +109,7 @@ export function createGate(deps: GateDeps): Gate {
       absolute: classified.absolute,
       resource: classified.resource,
       write: request.write,
+      posture: request.posture,
       external: classified.external,
       kind: request.kind,
     };
@@ -190,7 +191,7 @@ export function createGate(deps: GateDeps): Gate {
         };
         deps.onAsk?.(request);
         const answer = await deps.ask(request).catch(() => undefined);
-        if (answer?.kind === "rule") applyAnswer(answer, { tool, action: tool, absolute: deps.cwd(), resource: "*", write: true, external: true, kind: "unknown" });
+        if (answer?.kind === "rule") applyAnswer(answer, { tool, action: tool, absolute: deps.cwd(), resource: "*", write: false, posture: "unknown", external: true, kind: "unknown" });
         if (answer?.kind === "unavailable") return { block: true, reason: answer.message };
         // There is no safe standing grant for "unknown paths": allow once only.
         return answer?.kind === "once" ? undefined : { block: true, reason: `Scope: ${tool} was not run; it does not declare the paths it touches. ${DENY_HINT}` };

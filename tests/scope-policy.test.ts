@@ -26,6 +26,7 @@ function claim(overrides: Partial<PathClaim> = {}): PathClaim {
     absolute: "/work/src/a.ts",
     resource: "src/a.ts",
     write: false,
+    posture: overrides.write ? "write" : "read",
     external: false,
     kind: "file",
     ...overrides,

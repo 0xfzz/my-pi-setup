@@ -15,6 +15,8 @@
  * apply to both directions.
  */
 import { resolveRule } from "./glob.ts";
+import { tmpdir } from "node:os";
+import { toResourceSlash } from "./paths.ts";
 import type {
   Claim,
   ScopeDecision,
@@ -42,6 +44,60 @@ function reasonForDeny(rule: { action: string; resource: string }, tool: string)
   return `${tool} is denied by rule ${rule.action}:${rule.resource}`;
 }
 
+/**
+ * Targets that are never a boundary question.
+ *
+ * `cmd 2>/dev/null` was the loudest single source of asking in a shell-heavy
+ * session, and a tool writing its own scratch file under `$TMPDIR` is not an
+ * escape. Deny rules still win — this runs after them.
+ */
+const DEVICE_PREFIXES = ["/dev/", "/proc/", "/sys/"];
+const TEMP_PREFIXES = ["/tmp/", "/var/tmp/", "/private/tmp/", "/private/var/folders/"];
+
+function isSpecialPath(absolute: string, workspace: string): boolean {
+  const path = toResourceSlash(absolute);
+  if (DEVICE_PREFIXES.some(prefix => path.startsWith(prefix))) return true;
+  const scratch = toResourceSlash(tmpdir());
+  // A workspace that itself lives in the temp root does not turn its siblings
+  // into scratch: there the boundary is real and must still ask.
+  if (workspace === scratch || workspace.startsWith(`${scratch}/`)) return false;
+  return path === scratch || path.startsWith(`${scratch}/`) || TEMP_PREFIXES.some(prefix => path.startsWith(prefix));
+}
+
+/**
+ * Reads that are never quiet, whatever `readExternal` says.
+ *
+ * Decision F: an outside read is silent when it is ordinary, and asks when it is
+ * one of the handful of files whose disclosure is the reason a gate exists —
+ * private keys, cloud credentials, dotenv secrets. This is the shape Codex and
+ * Claude Code's sandbox both take (reads free, dangerous reads named); asking
+ * about every outside read is the noise it was meant to prevent.
+ */
+const SENSITIVE_SEGMENTS = [
+  "/.ssh/",
+  "/.aws/",
+  "/.gnupg/",
+  "/.docker/config.json",
+  "/.config/gh/",
+  "/.config/gcloud/",
+  "/.kube/config",
+  "/.netrc",
+  "/.pgpass",
+  "/.git-credentials",
+  "/.npmrc",
+  "/.pypirc",
+];
+const SENSITIVE_NAMES = [".env", ".envrc", ".netrc", ".pgpass", ".git-credentials", "id_rsa", "id_ed25519", "id_ecdsa"];
+const SENSITIVE_SUFFIXES = [".pem", ".key", ".p12", ".pfx", ".kdbx", ".keystore"];
+
+function isSensitive(absolute: string): boolean {
+  const path = `/${toResourceSlash(absolute).replace(/^\/+/, "")}`;
+  const name = path.split("/").pop() ?? "";
+  if (SENSITIVE_NAMES.includes(name) || name.startsWith(".env.")) return true;
+  if (SENSITIVE_SUFFIXES.some(suffix => name.endsWith(suffix))) return true;
+  return SENSITIVE_SEGMENTS.some(segment => path.includes(segment));
+}
+
 /** Evaluate one claim. Pure: no IO, no UI, no globals. */
 export function evaluateClaim(claim: Claim, state: ScopeState, options: EvaluateOptions = {}): ScopeDecision {
   if ("unknown" in claim && claim.unknown) return withYolo(unknownDecision(claim, state), state);
@@ -50,7 +106,9 @@ export function evaluateClaim(claim: Claim, state: ScopeState, options: Evaluate
   const base = {
     resource: pathClaim.resource,
     external: pathClaim.external,
-    write: pathClaim.write,
+    // `unknown` posture is judged as a write would be: a reader the scanner cannot
+    // vouch for must not slip through on the read default.
+    write: pathClaim.posture !== "read",
   };
 
   // 1. Deny rules are absolute. A session grant, a project root or yolo can never
@@ -67,16 +125,23 @@ export function evaluateClaim(claim: Claim, state: ScopeState, options: Evaluate
     return { ...base, effect: "deny", reason: reasonForDeny(boundary.rule, "external_directory"), rule: boundary.rule };
   }
 
-  // 2. A read-only root still allows the read; the write has to be granted.
+  // 2. Device, /proc and temp targets are never a boundary question. `cmd
+  //    2>/dev/null` must not prompt, and a scratch file under $TMPDIR is not an
+  //    escape — this was the loudest source of asking in a shell-heavy session.
+  if (isSpecialPath(pathClaim.absolute, state.roots[0]?.path ?? "")) {
+    return { ...base, effect: "allow", reason: `special path ${pathClaim.absolute}` };
+  }
+
+  // 3. A read-only root still allows the read; a write has to be granted.
   const covering = pathClaim.external ? undefined : coveringRoot(state, pathClaim.absolute);
-  if (covering && pathClaim.write && covering.access === "ro") {
+  if (covering && base.write && covering.access === "ro") {
     return withYolo(
       { ...base, effect: "ask", reason: `${pathClaim.tool} would write inside read-only root ${covering.path}`, root: covering },
       state,
     );
   }
 
-  // 3. Explicit allow rule, then a covering root.
+  // 4. Explicit allow rule, then a covering root.
   const allowed = denied?.effect === "allow" ? denied : boundary?.effect === "allow" ? boundary : undefined;
   if (allowed) {
     return { ...base, effect: "allow", reason: `allowed by rule ${allowed.rule.action}:${allowed.rule.resource}`, rule: allowed.rule };
@@ -89,7 +154,7 @@ export function evaluateClaim(claim: Claim, state: ScopeState, options: Evaluate
   if (!options.approvedOnce) {
     const covered = coveringRoot(state, pathClaim.absolute);
     if (covered) {
-      if (covered.access === "ro" && pathClaim.write) {
+      if (covered.access === "ro" && base.write) {
         return withYolo(
           { ...base, effect: "ask", reason: `write inside read-only root ${covered.path}`, root: covered },
           state,
@@ -105,9 +170,14 @@ export function evaluateClaim(claim: Claim, state: ScopeState, options: Evaluate
   }
   const decision: ScopeDecision = {
     ...base,
-    effect: pathClaim.write ? state.defaults.external : state.defaults.readExternal,
+    effect: base.write ? state.defaults.external : state.defaults.readExternal,
     reason: `outside the workspace: ${pathClaim.absolute}`,
   };
+  // 5. A sensitive read is never quiet, whatever `readExternal` says: keys,
+  //    cloud credentials and dotenv files are the reads that actually matter.
+  if (!base.write && isSensitive(pathClaim.absolute)) {
+    return withYolo({ ...decision, effect: state.defaults.external, reason: `${decision.reason} (sensitive)` }, state);
+  }
   return withYolo(decision, state);
 }
 

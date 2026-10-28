@@ -12,6 +12,14 @@
 /** What should happen. `ask` is the safe default and never means "yes". */
 export type ScopeEffect = "allow" | "ask" | "deny";
 
+/**
+ * What a claim does to its target.
+ *
+ * `unknown` means "this call may do either", and it is judged as a write would be:
+ * a reader the scanner cannot vouch for must not slip through a read-only root.
+ */
+export type ScopePosture = "read" | "write" | "unknown";
+
 /** Read or write access for a root. Writes also cover shell mutations. */
 export type ScopeAccess = "ro" | "rw";
 
@@ -78,8 +86,10 @@ export interface PathClaim {
   absolute: string;
   /** Workspace-relative resource for internal paths; absolute for external. */
   resource: string;
-  /** `true` when the call can modify the target. */
+  /** `true` when the call can modify the target. Mirrors `posture === "write"`. */
   write: boolean;
+  /** Whether the call reads, writes, or cannot be told apart. */
+  posture: ScopePosture;
   external: boolean;
   /** Set when the claim is a directory (grants widen to the directory). */
   kind: "file" | "directory" | "unknown";

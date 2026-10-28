@@ -7,7 +7,7 @@ const options = { cwd };
 
 test("file tools claim their path and carry the write flag", () => {
   assert.deepEqual(claimSetFor("read", { path: "src/a.ts" }, options).paths, [
-    { raw: "src/a.ts", write: false, kind: "file", action: "read" },
+    { raw: "src/a.ts", write: false, posture: "read", kind: "file", action: "read" },
   ]);
   assert.equal(claimSetFor("write", { path: "src/a.ts" }, options).paths[0]?.write, true);
   assert.equal(claimSetFor("edit", { path: "src/a.ts" }, options).paths[0]?.write, true);
@@ -38,7 +38,7 @@ test("bash extracts absolute, home, parent and redirection paths", () => {
     ["ls ~/notes", "~/notes", false],
     ["find .. -name '*.ts'", "..", false],
     ["echo hi > /tmp/out.txt", "/tmp/out.txt", true],
-    ["tee /tmp/log < /etc/hosts", "/etc/hosts", true],
+    ["tee /tmp/log < /etc/hosts", "/etc/hosts", false],
   ];
   for (const [command, expected, write] of cases) {
     const claim = shellClaim(command, cwd);

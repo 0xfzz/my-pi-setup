@@ -92,19 +92,19 @@ test("rules list shows effect and provenance, with an empty state", () => {
 
 test("a decision line names the rule or root that produced it", () => {
   const byRoot = evaluateClaim(
-    { tool: "read", action: "read", absolute: "/work/a.ts", resource: "a.ts", write: false, external: false, kind: "file" },
+    { tool: "read", action: "read", absolute: "/work/a.ts", resource: "a.ts", write: false, posture: "read", external: false, kind: "file" },
     state,
   );
   assert.match(decisionLine(byRoot), /ALLOW/);
   assert.match(decisionLine(byRoot), /root \/work/);
 
   const byDefault = evaluateClaim(
-    { tool: "read", action: "read", absolute: "/etc/x", resource: "/etc/x", write: false, external: true, kind: "file" },
+    { tool: "read", action: "read", absolute: "/etc/x", resource: "/etc/x", write: false, posture: "read", external: true, kind: "file" },
     state,
   );
   assert.match(decisionLine(byDefault), /ALLOW/, "reads outside the workspace are open by default");
   const byWrite = evaluateClaim(
-    { tool: "write", action: "write", absolute: "/etc/x", resource: "/etc/x", write: true, external: true, kind: "file" },
+    { tool: "write", action: "write", absolute: "/etc/x", resource: "/etc/x", write: true, posture: "write", external: true, kind: "file" },
     state,
   );
   assert.match(decisionLine(byWrite), /ASK/, "an outside write still asks");
