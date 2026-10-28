@@ -115,3 +115,22 @@ test("image paths are pasted through the editor too, so pi-paster can claim them
   assert.deepEqual(delivered, ["/tmp/clip.png"]);
   assert.deepEqual(target.inserted, []);
 });
+
+test("Ctrl+Shift+V and Shift+Insert are paste keys, not dead keys", async () => {
+  const { isPasteKey } = await import("../extensions/clipboard-paste.ts");
+  const { setKittyProtocolActive } = await import("@earendil-works/pi-tui");
+  setKittyProtocolActive(true);
+  // Under the kitty keyboard protocol these are distinct sequences; only
+  // Ctrl+V was bound, so the classic paste shortcut arrived as an unbound key.
+  assert.equal(isPasteKey("\x1b[118;5u"), true, "kitty Ctrl+V");
+  assert.equal(isPasteKey("\x1b[118;6u"), true, "kitty Ctrl+Shift+V");
+  assert.equal(isPasteKey("\x16"), true, "legacy Ctrl+V");
+  assert.equal(isPasteKey("\x1b[2;2~"), true, "Shift+Insert");
+  assert.equal(isPasteKey("v"), false, "a plain letter is not a paste");
+  assert.equal(isPasteKey("\x1b[118;4u"), false, "Ctrl+Alt+V is not a paste");
+  assert.equal(isPasteKey("\x1b[200~text\x1b[201~"), false, "an actual terminal paste must reach the editor");
+
+  const remapped = { matches: (data: string, action: string) => action === "app.clipboard.pasteImage" && data === "\x1b[19;5u" };
+  assert.equal(isPasteKey("\x1b[19;5u", remapped as never), true, "a user rebind still works");
+  setKittyProtocolActive(false);
+});

@@ -10,7 +10,7 @@ independently:
 | What you press | Who reads the clipboard |
 |---|---|
 | `Ctrl+Shift+V` (kitty, GNOME Terminal, Konsole…), `prefix + ]` (tmux/Herdr), middle-click | **the terminal**, which sends the text as a bracketed paste (`ESC[200~ … ESC[201~`) |
-| **`Ctrl+V`** — Pi's `app.clipboard.pasteImage` | **Pi**, by running a clipboard helper |
+| **`Ctrl+V`**, **`Ctrl+Shift+V`**, **`Shift+Insert`** | **Pi**, through this extension's reader (see below) |
 | right-click | Pi, same helper |
 
 The first path never involves Pi, which is why pasting inside a multiplexer like
@@ -55,6 +55,12 @@ through the reader in `lib/clipboard.ts`:
 
 Ordering inside a backend matters: file paths (`text/uri-list`) win over images,
 and images win over text, because a path is what the model can act on.
+
+All three keys are accepted. Under the kitty keyboard protocol `Ctrl+Shift+V`
+arrives as `CSI 118;6u` — a *different* key from `Ctrl+V`'s `CSI 118;5u`, and one
+Pi does not bind, so the classic paste shortcut used to do nothing at all.
+`Shift+Insert` is the same case on X11. If the terminal handles the paste itself
+the key never reaches the editor, so accepting it cannot double-paste.
 
 Pasted text is delivered as a bracketed paste rather than inserted literally, so
 Pi keeps its own paste behaviour: a paste over 10 lines (or 1000 characters) is

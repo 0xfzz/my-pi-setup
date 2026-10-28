@@ -17,7 +17,7 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { CustomEditor, type ExtensionAPI, type ExtensionContext, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
 import { matchesKey } from "@earendil-works/pi-tui";
 import {
   describeClipboardFailure,
@@ -133,6 +133,24 @@ export function readSystemClipboard(): Promise<ClipboardRead | undefined> {
   return readClipboard({ run: systemRun });
 }
 
+/**
+ * Which keystrokes mean "paste".
+ *
+ * `app.clipboard.pasteImage` is whatever the user bound (Ctrl+V by default), but
+ * under the kitty keyboard protocol Ctrl+Shift+V arrives as `CSI 118;6u` — a
+ * different key from Ctrl+V's `CSI 118;5u`, and one that no binding covers, so
+ * the classic terminal paste shortcut did nothing. Shift+Insert is the same
+ * case on X11. Both are accepted here: if the terminal handles the paste itself
+ * the key never reaches us, so this cannot double-paste.
+ */
+export function isPasteKey(
+  data: string,
+  keybindings?: Pick<KeybindingsManager, "matches">,
+): boolean {
+  if (keybindings?.matches(data, "app.clipboard.pasteImage")) return true;
+  return matchesKey(data, "ctrl+v") || matchesKey(data, "ctrl+shift+v") || matchesKey(data, "shift+insert");
+}
+
 export default function clipboardPaste(pi: ExtensionAPI) {
   let context: ExtensionContext | undefined;
   let installedEditor: EditorFactory | undefined;
@@ -158,12 +176,7 @@ export default function clipboardPaste(pi: ExtensionAPI) {
       const baseRender = editor.render.bind(editor);
       editor.render = (width: number) => paintPasteMarkers(baseRender(width), paint);
       editor.handleInput = (data: string) => {
-        // Respect a user remap of the paste action; fall back to the default key
-        // when the keybindings manager is not available (tests, RPC).
-        const pasteKey = keybindings?.matches
-          ? keybindings.matches(data, "app.clipboard.pasteImage")
-          : matchesKey(data, "ctrl+v");
-        if (!pasteKey) return handleBaseInput(data);
+        if (!isPasteKey(data, keybindings)) return handleBaseInput(data);
         void insertClipboard(editor, {
           read: readSystemClipboard,
           notify: (message, level) => context?.ui.notify(message, level),
@@ -187,6 +200,7 @@ export default function clipboardPaste(pi: ExtensionAPI) {
       const lines = [
         `platform: ${process.platform}`,
         `WAYLAND_DISPLAY=${env.WAYLAND_DISPLAY ?? "-"} DISPLAY=${env.DISPLAY ?? "-"} TMUX=${env.TMUX ? "yes" : "no"}`,
+        "paste keys: Ctrl+V, Ctrl+Shift+V, Shift+Insert",
       ];
       if (read?.files?.length) lines.push(`clipboard: files ${read.files.slice(0, 3).join(", ")}`);
       else if (read?.image) lines.push(`clipboard: image ${read.image.mimeType} (${read.image.bytes.length} bytes)`);
