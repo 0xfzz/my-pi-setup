@@ -121,3 +121,47 @@ test("applySelection isolates visual inverse highlight to container bounds", () 
 
   dispose();
 });
+
+test("triple-click installs a semantic table-cell range and copies only that cell", () => {
+  const tui = createMockTui(120, 24);
+  const controller = new SelectionBoundaryController(tui as any, {
+    enabled: () => true,
+    width: () => 24,
+  });
+  const dispose = controller.install();
+  Reflect.set(tui, "previousScreen", [
+    "┌─────┬─────┐",
+    "│ one │ two │",
+    "│ 1a  │ 2a  │",
+    "├─────┼─────┤",
+    "│ red │ blue│",
+    "└─────┴─────┘",
+  ]);
+
+  for (let i = 0; i < 3; i++) {
+    (tui as any).handleSelectionMouseEvent({ x: 2, y: 2, button: 0 });
+    (tui as any).handleSelectionMouseEvent({ x: 2, y: 2, button: 0, release: true });
+  }
+
+  assert.equal((tui as any).getActiveSelectionText(), "one\n1a");
+  dispose();
+});
+
+test("clicking a wrapped OSC 8 link resolves the URL from the continuation line", () => {
+  const tui = createMockTui(120, 24);
+  const controller = new SelectionBoundaryController(tui as any, {
+    enabled: () => true,
+    width: () => 24,
+  });
+  const dispose = controller.install();
+  const open = "\x1b]8;;https://example.com/very/long\x1b\\";
+  const close = "\x1b]8;;\x1b\\";
+  Reflect.set(tui, "previousScreen", [
+    `${open}https://example.com/very`,
+    `long${close} tail`,
+  ]);
+
+  (tui as any).handleSelectionMouseEvent({ x: 1, y: 1, button: 0 });
+  assert.equal(Reflect.get(tui, "pressedUrl"), "https://example.com/very/long");
+  dispose();
+});

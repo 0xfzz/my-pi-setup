@@ -1,5 +1,7 @@
 import type { TUI } from "@earendil-works/pi-tui";
 import { sliceByColumn } from "@earendil-works/pi-tui";
+import { blockSelectionAt, extractBlockText, type BlockSelection } from "./selection/blocks.ts";
+import { resolveHyperlinkAt } from "./selection/osc8.ts";
 
 export type SelectionRegionType = "sidebar" | "conversation" | "prompt";
 
@@ -44,6 +46,10 @@ export class SelectionBoundaryController {
   private originalApplySelection?: (screen: string[], layout?: any) => string[];
   private originalGetActiveSelectionText?: () => string | undefined;
   private active = false;
+  /** Semantic block selected by a multi-click, captured with its screen lines. */
+  private semantic?: { selection: BlockSelection; lines: string[] };
+  private lastClick?: { timestamp: number; row: number; col: number; count: number };
+  private dragged = false;
 
   constructor(tui: TUI, options: SelectionBoundaryControllerOptions) {
     this.tui = tui;
@@ -143,6 +149,18 @@ export class SelectionBoundaryController {
 
       if (isPress) {
         this.activeRegion = this.resolveRegion(raw.x, raw.y);
+        this.dragged = false;
+        this.semantic = undefined;
+        const now = Date.now();
+        const previous = this.lastClick;
+        const count = previous && now - previous.timestamp <= 500
+          && previous.row === raw.y && previous.col === raw.x
+          ? (previous.count % 3) + 1
+          : 1;
+        this.lastClick = { timestamp: now, row: raw.y, col: raw.x, count };
+      } else if (isDrag) {
+        this.dragged = true;
+        this.semantic = undefined;
       }
 
       let eventToDispatch = raw;
@@ -156,12 +174,42 @@ export class SelectionBoundaryController {
 
       this.originalHandleSelectionMouseEvent(eventToDispatch);
 
+      // Pi's own resolver is per-line, so a wrapped OSC 8 link loses its URL on
+      // continuation lines. Resolve it with the carried state before release.
+      const screen = Reflect.get(this.tui, "previousScreen") as string[] | undefined;
+      if (isPress && screen?.length) {
+        const url = resolveHyperlinkAt(screen, raw.y, raw.x);
+        if (url) Reflect.set(this.tui, "pressedUrl", url);
+
+        const count = this.lastClick?.count ?? 1;
+        if (count >= 2) {
+          const block = blockSelectionAt(screen, raw.y, raw.x, count);
+          // Double-click only overrides Pi's word selection for a hyperlink;
+          // triple-click uses the semantic block (cell, quote, code, item).
+          if (block && (count >= 3 || block.kind === "link")) {
+            this.semantic = { selection: block, lines: [...screen] };
+            Reflect.set(this.tui, "selectionAnchor", block.range.start);
+            Reflect.set(this.tui, "selectionFocus", block.range.end);
+            Reflect.set(this.tui, "selectionGranularity", "character");
+          }
+        }
+      }
+
       if (isRelease) {
+        // A click landing on an overlay clears Pi's selection after dispatch.
+        // Re-install the semantic range so a triple-click still copies the block.
+        if (this.semantic && !this.dragged) {
+          Reflect.set(this.tui, "selectionAnchor", this.semantic.selection.range.start);
+          Reflect.set(this.tui, "selectionFocus", this.semantic.selection.range.end);
+        }
+        if (this.dragged) this.semantic = undefined;
+
         const hasSelection = typeof tuiAny.hasActiveSelection === "function"
           ? tuiAny.hasActiveSelection()
           : Boolean(Reflect.get(this.tui, "selectionAnchor"));
         if (!hasSelection) {
           this.activeRegion = undefined;
+          this.semantic = undefined;
         }
       }
     };
@@ -224,7 +272,9 @@ export class SelectionBoundaryController {
     // 3. Intercept active selection text copying to isolate copied text
     if (this.originalGetActiveSelectionText) {
       tuiAny.getActiveSelectionText = (): string | undefined => {
-        if (!this.active || !this.originalGetActiveSelectionText) return undefined;
+        if (!this.active) return undefined;
+        if (this.semantic) return extractBlockText(this.semantic.lines, this.semantic.selection);
+        if (!this.originalGetActiveSelectionText) return undefined;
         const rawText = this.originalGetActiveSelectionText();
         if (!rawText || !this.activeRegion) return rawText;
 
