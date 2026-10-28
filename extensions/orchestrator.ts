@@ -212,10 +212,8 @@ import {
   parseHandoffDocument,
 } from "../lib/orchestrator/handoff-document.ts";
 import {
-  REVIEW_PRESET_SINGLE,
   allFindings,
   applyDispositions,
-  batchReviewContent,
   effectiveReviewTarget,
   hashContent,
   designRefProblem,
@@ -1956,26 +1954,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   }
 
   /** Re-read whatever the run was pinned from, so staleness is a fact and not a guess. */
-  function currentReviewContent(ctx: ExtensionContext, run: ReviewRun, memberId?: string): string | null {
+  function currentReviewContent(ctx: ExtensionContext, run: ReviewRun): string | null {
     try {
-      if (memberId) {
-        const member = run.members?.find((m) => m.id === memberId);
-        return member ? readArtifactForReview(ctx, member.target.ref)?.content ?? null : null;
-      }
-      if (run.members) {
-        const members = run.members.map((m) => {
-          const content = readArtifactForReview(ctx, m.target.ref)?.content;
-          if (content === undefined) throw new Error("missing member");
-          return { ...m, target: { ...m.target, snapshot: content } };
-        });
-        let program = run.program;
-        if (program) {
-          const content = readArtifactForReview(ctx, program.ref)?.content;
-          if (content === undefined) return null;
-          program = { ...program, snapshot: content };
-        }
-        return batchReviewContent(members, program);
-      }
       if (run.target.kind === "artifact") {
         return readArtifactForReview(ctx, run.target.ref)?.content ?? null;
       }
@@ -1987,15 +1967,18 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     }
   }
 
-  /** Binding never rewrites the reviewed artifact (approval is provenance, not text). */
+  /**
+   * Bind a reviewed document to the handoff whose artifact it is.
+   *
+   * Binding never rewrites the reviewed artifact (approval is provenance, not
+   * text). A chunk wave binds its own members and never goes through here.
+   */
   function bindReviewedHandoffs(ctx: ExtensionContext, run: ReviewRun): void {
     if (!run.readiness.ready || stalenessProblem(run, currentReviewContent(ctx, run))) return;
-    for (const member of run.members ?? []) {
-      const stored = member.handoffId ? handoffs.get(member.handoffId) : undefined;
-      const target = effectiveReviewTarget(run, member.id);
-      if (stored && renderHandoffForChild(stored.record) === target.snapshot) {
-        stored.record.designRef = { runId: run.id, memberId: member.id, targetHash: target.contentHash };
-      }
+    const target = effectiveReviewTarget(run);
+    const stored = [...handoffs.values()].find((entry) => entry.record.artifactId === run.target.ref);
+    if (stored && renderHandoffForChild(stored.record) === target.snapshot) {
+      stored.record.designRef = { runId: run.id, targetHash: target.contentHash };
     }
   }
 
@@ -2011,71 +1994,78 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     }
     const stale = stalenessProblem(run, currentReviewContent(ctx, run));
     if (stale) return text(`Cannot apply reviewer patches: ${stale}`, { error: "stale-target" });
-    const groups = new Map<string, typeof findings>();
-    for (const finding of findings) {
-      const key = finding.memberId ?? run.target.ref;
-      groups.set(key, [...(groups.get(key) ?? []), finding]);
-    }
-    const plans: Array<{ target: ReturnType<typeof effectiveReviewTarget>; content: string;
-      revision: ReviewPatchRevision; stored?: { record: HandoffRecord; path: string }; amended?: HandoffRecord }> = [];
+
+    const target = effectiveReviewTarget(run);
+    const changes = findings.map((f) => ({ findingId: f.id, patch: f.patch! }));
+    let content: string;
+    let stored: { record: HandoffRecord; path: string } | undefined;
+    let amended: HandoffRecord | undefined;
+    let revision: ReviewPatchRevision;
     try {
-      for (const [targetId, entries] of groups) {
-        const member = run.members?.find((m) => m.id === targetId);
-        if (run.members && !member) throw new Error(`Unknown batch member ${targetId}`);
-        const target = effectiveReviewTarget(run, member?.id);
-        if (target.kind !== "artifact") throw new Error("Automatic patches require an artifact target; file targets remain read-only");
-        const changes = entries.map((f) => ({ findingId: f.id, patch: f.patch! }));
-        const content = applyReviewPatches(target.snapshot, changes);
-        const stored = member?.handoffId ? handoffs.get(member.handoffId)
-          : [...handoffs.values()].find((h) => h.record.artifactId === target.ref);
-        if (stored && registry.getRunningChildren().some((c) => c.scope === stored.record.scope)) {
-          throw new Error(`Cannot amend ${stored.record.scope} while a child holds its lane`);
-        }
-        const amended = stored ? amendHandoff(stored.record, changes) : undefined;
-        plans.push({ target, content, stored, amended, revision: { targetId, previousHash: target.contentHash,
-          nextHash: hashContent(content), changes, at: new Date(now()).toISOString() } });
+      if (target.kind !== "artifact") throw new Error("Automatic patches require an artifact target; file targets remain read-only");
+      content = applyReviewPatches(target.snapshot, changes);
+      stored = [...handoffs.values()].find((h) => h.record.artifactId === target.ref);
+      if (stored && registry.getRunningChildren().some((c) => c.scope === stored!.record.scope)) {
+        throw new Error(`Cannot amend ${stored.record.scope} while a child holds its lane`);
       }
+      amended = stored ? amendHandoff(stored.record, changes) : undefined;
+      revision = {
+        targetId: target.ref,
+        previousHash: target.contentHash,
+        nextHash: hashContent(content),
+        changes,
+        at: new Date(now()).toISOString(),
+      };
     } catch (error) {
       return text(`Patches refused before any write: ${String(error)}. Resolve the structural decision; do not launch another reviewer automatically.`, { error: "invalid-review-patches" });
     }
+
     // Preflight dispositions too: a bad finding id must not cause partial writes.
     const explicit = (dispositions ?? []).filter((d) => !findings.some((f) => f.id === d.findingId));
-    const checked = explicit.length ? applyDispositions(run, explicit as any, { now: new Date(now()) }) : { ok: true, run, problems: [] };
+    const checked = explicit.length ? applyDispositions(run, explicit as any, { now: new Date(now()) }) : { ok: true, run, problems: [] as string[] };
     if (!checked.ok) return text(checked.problems.join("\n"), { error: "invalid-dispositions" });
-    let next = { ...checked.run, dispositions: { ...checked.run.dispositions }, patchRevisions: [...(run.patchRevisions ?? [])] };
-    for (const plan of plans) {
-      try {
-        const published = plan.amended ? await publishHandoffArtifact(ctx, plan.amended)
-          : await (async () => {
-              const result = await (ctx as any).executeTool("artifact_save", { id: plan.target.ref, title: plan.target.title, type: "spec", content: plan.content });
-              return result?.isError || result?.result?.isError ? { ok: false, message: "artifact_save failed" } : { ok: true };
-            })();
-        if (!published.ok || readArtifactForReview(ctx, plan.target.ref)?.content !== plan.content) throw new Error("Artifact publication could not be verified");
-        next.patchRevisions.push(plan.revision);
-        for (const change of plan.revision.changes) next.dispositions[change.findingId] = {
-          action: "fix", patched: true, rationale: "Exact reviewer-authored patch applied and read back", at: plan.revision.at, targetHash: plan.revision.previousHash,
-        };
-        // Record successful writes before the next one; retry never reapplies them.
-        if (plan.stored && plan.amended) {
-          plan.stored.record = plan.amended;
-          writeFileSync(plan.stored.path, plan.content, { mode: 0o600 });
-        }
-        specReviews.set(run.id, next);
-        persistState();
-      } catch (error) {
-        specReviews.set(run.id, next);
-        persistState();
-        return text(`Patch publication stopped: ${String(error)}. Successful amendments are recorded; retry resolve, not start.`, { error: "patch-publish-failed", runId: run.id });
+    let next: ReviewRun = { ...checked.run, dispositions: { ...checked.run.dispositions }, patchRevisions: [...(run.patchRevisions ?? [])] };
+    try {
+      const published = amended ? await publishHandoffArtifact(ctx, amended)
+        : await (async () => {
+            const result = await (ctx as any).executeTool("artifact_save", { id: target.ref, title: target.title, type: "spec", content });
+            return result?.isError || result?.result?.isError ? { ok: false, message: "artifact_save failed" } : { ok: true };
+          })();
+      if (!published.ok || readArtifactForReview(ctx, target.ref)?.content !== content) {
+        throw new Error("Artifact publication could not be verified");
       }
+      next.patchRevisions!.push(revision);
+      for (const change of revision.changes) {
+        next.dispositions[change.findingId] = {
+          action: "fix",
+          patched: true,
+          rationale: "Exact reviewer-authored patch applied and read back",
+          at: revision.at,
+          targetHash: revision.previousHash,
+        };
+      }
+      // Record the successful write before settling; a retry never reapplies it.
+      if (stored && amended) {
+        stored.record = amended;
+        writeFileSync(stored.path, content, { mode: 0o600 });
+      }
+      specReviews.set(run.id, next);
+      persistState();
+    } catch (error) {
+      specReviews.set(run.id, next);
+      persistState();
+      return text(`Patch publication stopped: ${String(error)}. Successful amendments are recorded; retry resolve, not start.`, { error: "patch-publish-failed", runId: run.id });
     }
-    next = { ...next, ...settleReadiness(next, { now: new Date(now()) }) };
+    next = settleReadiness(next, { now: new Date(now()) });
     specReviews.set(next.id, next);
     bindReviewedHandoffs(ctx, next);
     persistState();
     return text(renderRunSummary(next) + "\nReviewer-authored amendments applied. No re-review was launched.", {
-      runId: next.id, ready: next.readiness.ready, status: next.status, resolution: "reviewer-patched",
+      runId: next.id,
+      ready: next.readiness.ready,
+      status: next.status,
+      resolution: "reviewer-patched",
       targetHash: effectiveReviewTarget(next).contentHash,
-      members: next.members?.map((m) => ({ memberId: m.id, targetHash: effectiveReviewTarget(next, m.id).contentHash })),
     });
   }
 
@@ -2344,7 +2334,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       return hashContent(current) === member.currentHash ? undefined : "the document changed since it was reviewed";
     }
     const run = ref ? specReviews.get(ref.runId) : undefined;
-    return designRefProblem(ref, (id) => specReviews.get(id), run ? currentReviewContent(ctx, run, ref?.memberId) : null);
+    return designRefProblem(ref, (id) => specReviews.get(id), run ? currentReviewContent(ctx, run) : null);
   }
 
   function renderChunkRunSummary(run: ChunkRun): string {
@@ -2936,7 +2926,6 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         if (params.handoffIds?.length) {
           return startChunkWave(ctx, params, cwd);
         }
-        const preset = REVIEW_PRESET_SINGLE;
         if (!ctx.sessionManager.getSessionFile()) {
           return text("Error: no session file, so reviewer children cannot be tracked.", { error: "no-session-file" });
         }
@@ -2996,7 +2985,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           try { return effectiveReviewTarget(entry).contentHash === target.contentHash; } catch { return false; }
         };
         const identical = [...specReviews.values()]
-          .filter((entry) => entry.preset === preset && entry.status !== "cancelled" && entry.readiness.ready)
+          .filter((entry) => entry.status !== "cancelled" && entry.readiness.ready)
           .find(sameTarget);
         if (identical) {
           const hash = effectiveReviewTarget(identical).contentHash;
@@ -3048,10 +3037,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           );
         }
 
-        // The default preset is `single` (one devil's advocate). An explicit
-        // preset is honoured, so a genuinely contested design can still opt into
-        // a panel; a re-review that names none stays single.
-        const run = openReviewRun({ target, preset, now: new Date(now()), salt: String(specReviews.size + 1) });
+        // One reviewer, one gate rubric. A second opinion is a chunk split, not a
+        // panel over the same document.
+        const run = openReviewRun({ target, now: new Date(now()), salt: String(specReviews.size + 1) });
         // Machine-detectable defects are computed once, at pin time, and quoted
         // into every result. A reviewer that ignores them is still free to be
         // right; the cheap defects stop depending on attention.
@@ -3069,12 +3057,11 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         const launched: string[] = [];
         const failed: string[] = [];
         const modelNotes: string[] = [];
-        // One prompt for every lens: the lens differs by ticket, not by role.
+        // One reviewer prompt: the document is the assignment, not a lens.
         const reviewerPrompt = loadRolePrompt("devil-advocate", cwd);
         for (const slot of run.reviewers) {
           const ticket = renderReviewerTicket({
             runId: run.id,
-            lens: slot.lens,
             target,
             focus: params.focus,
             lint: run.lint,
@@ -3164,7 +3151,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             `Reviewers are isolated: no parent transcript, no artifacts, no write tool, no shell.`,
             `When a reviewer completes you are re-triggered; run collect then. ${RETRIGGER_CONTRACT}`,
           ].join("\n"),
-          { runId: run.id, targetHash: target.contentHash, preset, launched, failed, modelNotes },
+          { runId: run.id, targetHash: target.contentHash, launched, failed, modelNotes },
         );
       }
 
@@ -3390,11 +3377,6 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           slot.reason = `invalid report: ${parsed.problems.join("; ")}`;
           slot.updatedAt = new Date(now()).toISOString();
           problems.push(`${slot.lens}: ${slot.reason}`);
-          continue;
-        }
-        if (run.members && parsed.report.findings.some((f) => (f.memberId && !run.members!.some((m) => m.id === f.memberId)) || (f.patch && !f.memberId))) {
-          problems.push(`${slot.lens}: batch patch must name a known memberId`);
-          slot.status = "failed";
           continue;
         }
         run.reports[slot.lens] = parsed.report;

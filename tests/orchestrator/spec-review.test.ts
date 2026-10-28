@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  REVIEW_PRESETS,
+  DOCUMENT_LENS,
   allFindings,
   applyDispositions,
   designRefProblem,
@@ -16,10 +16,8 @@ import {
   reviewerScope,
   settleReadiness,
   stalenessProblem,
-  type ReviewPreset,
   type ReviewRun,
 } from "../../lib/orchestrator/spec-review.ts";
-import type { ReviewLens } from "../../lib/orchestrator/review-policy.ts";
 
 const BASE_TIME = new Date("2026-10-26T10:00:00.000Z");
 
@@ -34,35 +32,32 @@ function pinned(content = "# Spec\n\nUse the retry helper in `src/net/retry.ts`.
   });
 }
 
-function report(runId: string, lens: any, targetHash: string, findings: any[] = [], extra: any = {}) {
+function report(runId: string, targetHash: string, findings: any[] = [], extra: any = {}) {
   return {
     version: 1,
     runId,
-    lens,
+    lens: DOCUMENT_LENS,
     targetHash,
-    summary: `${lens} summary`,
+    summary: "judged the document",
     findings,
     // A clean report must state what it looked at; these fixtures are clean
-    // reports, so they carry coverage the way a real reviewer now must.
-    ...(findings.length === 0 ? { coverage: [`${lens} read the whole document`] } : {}),
+    // reports, so they carry coverage the way a real reviewer must.
+    ...(findings.length === 0 ? { coverage: ["read the whole document"] } : {}),
     ...extra,
   };
 }
 
-function runWithAllReports(overrides: { findings?: Record<string, any[]>; preset?: ReviewPreset; extra?: Record<string, any> } = {}): ReviewRun {
+/** A run whose single reviewer has filed `findings`. */
+function runWithReport(overrides: { findings?: any[]; extra?: any } = {}): ReviewRun {
   const target = pinned();
-  const preset: ReviewPreset = overrides.preset ?? "quick";
-  const run = openReviewRun({ target, preset, now: BASE_TIME });
-  for (const lens of REVIEW_PRESETS[preset] as ReviewLens[]) {
-    const parsed = parseReviewerReport(report(run.id, lens, target.contentHash, overrides.findings?.[lens] ?? [], overrides.extra?.[lens] ?? {}), {
-      runId: run.id,
-      lens,
-      targetHash: target.contentHash,
-    });
-    assert.equal(parsed.ok, true, `${lens} report should parse: ${parsed.problems.join("; ")}`);
-    run.reports[lens] = parsed.report!;
-  }
-  run.reviewers = run.reviewers.map((slot) => ({ ...slot, status: "submitted" }));
+  const run = openReviewRun({ target, now: BASE_TIME });
+  const parsed = parseReviewerReport(
+    report(run.id, target.contentHash, overrides.findings ?? [], overrides.extra ?? {}),
+    { runId: run.id, lens: DOCUMENT_LENS, targetHash: target.contentHash },
+  );
+  assert.equal(parsed.ok, true, parsed.problems.join("; "));
+  run.reports[DOCUMENT_LENS] = parsed.report!;
+  run.reviewers[0]!.status = "submitted";
   return run;
 }
 
@@ -76,30 +71,25 @@ test("the pinned target is identified by content, not by id", () => {
   assert.throws(() => pinned("   "), /empty/);
 });
 
-test("review run ids are deterministic per (ref, content, preset)", () => {
+test("a document run has exactly one reviewer, and its ids are deterministic", () => {
   const target = pinned();
-  assert.equal(reviewRunId(target, "quick"), reviewRunId(target, "quick"));
-  assert.notEqual(reviewRunId(target, "quick"), reviewRunId(target, "architecture"));
-  assert.notEqual(reviewRunId(target, "quick"), reviewRunId(pinned("other"), "quick"));
-});
+  assert.equal(reviewRunId(target), reviewRunId(target));
+  assert.notEqual(reviewRunId(target), reviewRunId(target, "salt-2"));
+  assert.notEqual(reviewRunId(target), reviewRunId(pinned("other")));
 
-test("reviewer scopes are unique per lens and safe as isolation keys", () => {
-  const target = pinned();
-  const run = openReviewRun({ target, preset: "architecture", now: BASE_TIME });
-  const scopes = run.reviewers.map((slot) => slot.scope);
-  assert.equal(new Set(scopes).size, scopes.length);
-  for (const scope of scopes) {
-    assert.match(scope, /^[a-z0-9_-]{1,64}$/);
-    assert.equal(scope, reviewerScope(run.id, scope.replace(`review-${run.id}-`, "") as any));
-  }
+  const run = openReviewRun({ target, now: BASE_TIME });
+  assert.equal(run.reviewers.length, 1, "a document is judged once, not by a panel");
+  assert.equal(run.reviewers[0]!.lens, DOCUMENT_LENS);
+  assert.match(run.reviewers[0]!.scope, /^[a-z0-9_-]{1,64}$/);
+  assert.equal(run.reviewers[0]!.scope, reviewerScope(run.id));
 });
 
 test("a report that reviews a different revision is rejected, not stitched in", () => {
   const target = pinned();
-  const run = openReviewRun({ target, preset: "quick", now: BASE_TIME });
-  const parsed = parseReviewerReport(report(run.id, "comprehension", "deadbeef"), {
+  const run = openReviewRun({ target, now: BASE_TIME });
+  const parsed = parseReviewerReport(report(run.id, "deadbeef"), {
     runId: run.id,
-    lens: "comprehension",
+    lens: DOCUMENT_LENS,
     targetHash: target.contentHash,
   });
   assert.equal(parsed.ok, false);
@@ -108,16 +98,16 @@ test("a report that reviews a different revision is rejected, not stitched in", 
 
 test("a report is validated as data: severities, locations, rationales, duplicate ids", () => {
   const target = pinned();
-  const run = openReviewRun({ target, preset: "quick", now: BASE_TIME });
+  const run = openReviewRun({ target, now: BASE_TIME });
   const parsed = parseReviewerReport(
-    report(run.id, "comprehension", target.contentHash, [
+    report(run.id, target.contentHash, [
       { id: "A", severity: "catastrophic", location: "x", discrepancy: "y", rationale: "z" },
       { id: "B", severity: "major", location: "", discrepancy: "y", rationale: "z" },
       { id: "C", severity: "major", location: "x", discrepancy: "y", rationale: "" },
       { id: "D", severity: "nit", location: "x", discrepancy: "y", rationale: "z" },
       { id: "D", severity: "nit", location: "x", discrepancy: "y", rationale: "z" },
     ]),
-    { runId: run.id, lens: "comprehension", targetHash: target.contentHash },
+    { runId: run.id, lens: DOCUMENT_LENS, targetHash: target.contentHash },
   );
   assert.equal(parsed.ok, false);
   const problems = parsed.problems.join("; ");
@@ -128,75 +118,82 @@ test("a report is validated as data: severities, locations, rationales, duplicat
 });
 
 test("a missing report is never a clean review", () => {
-  const run = openReviewRun({ target: pinned(), preset: "quick", now: BASE_TIME });
+  const run = openReviewRun({ target: pinned(), now: BASE_TIME });
   const verdict = evaluateReadiness(run);
   assert.equal(verdict.ready, false);
-  assert.match(verdict.reasons.join("; "), /no valid report from the comprehension reviewer/);
+  assert.match(verdict.reasons.join("; "), /no valid report from the reviewer/);
 });
 
 test("a malformed reviewer payload is rejected rather than treated as empty findings", () => {
-  const run = openReviewRun({ target: pinned(), preset: "quick", now: BASE_TIME });
-  assert.equal(parseReviewerReport("not json", { runId: run.id, lens: "comprehension", targetHash: run.target.contentHash }).ok, false);
-  assert.equal(parseReviewerReport({ ...report(run.id, "comprehension", run.target.contentHash), findings: undefined }, {
-    runId: run.id, lens: "comprehension", targetHash: run.target.contentHash,
-  }).ok, false);
+  const run = openReviewRun({ target: pinned(), now: BASE_TIME });
+  assert.equal(parseReviewerReport("not json", { runId: run.id, lens: DOCUMENT_LENS, targetHash: run.target.contentHash }).ok, false);
+  assert.equal(
+    parseReviewerReport({ ...report(run.id, run.target.contentHash), findings: undefined }, {
+      runId: run.id,
+      lens: DOCUMENT_LENS,
+      targetHash: run.target.contentHash,
+    }).ok,
+    false,
+  );
 });
 
-test("two clean reports make a quick review ready", () => {
-  const run = runWithAllReports();
+test("a clean report makes the document ready", () => {
+  const run = runWithReport();
   const verdict = evaluateReadiness(run);
   assert.equal(verdict.ready, true, verdict.reasons.join("; "));
   assert.equal(settleReadiness(run).status, "ready");
 });
 
 test("a blocked reviewer blocks readiness even with zero findings", () => {
-  const run = runWithAllReports({ extra: { comprehension: { verdict: "blocked" } } });
+  const run = runWithReport({ extra: { verdict: "blocked" } });
   const verdict = evaluateReadiness(run);
   assert.equal(verdict.ready, false);
-  assert.match(verdict.reasons.join("; "), /comprehension reviewer is blocked/);
+  assert.match(verdict.reasons.join("; "), /reviewer is blocked/);
   assert.equal(settleReadiness(run).status, "blocked");
 });
 
 test("unresolved missing context blocks readiness even with zero findings", () => {
-  const run = runWithAllReports({
-    extra: { readiness: { missingContext: ["src/net/retry.ts does not exist", "the rollback path is unstated"] } },
-  });
+  const run = runWithReport({ extra: { missingContext: ["src/net/retry.ts does not exist", "the rollback path is unstated"] } });
   const verdict = evaluateReadiness(run);
   assert.equal(verdict.ready, false);
-  assert.match(verdict.reasons.join("; "), /readiness reviewer reported missing context: src\/net\/retry\.ts does not exist/);
-});
-
-test("an explicit clean verdict with no findings is still ready", () => {
-  const run = runWithAllReports({ extra: { comprehension: { verdict: "clean" }, readiness: { verdict: "clean" } } });
-  assert.equal(evaluateReadiness(run).ready, true);
+  assert.match(verdict.reasons.join("; "), /missing context: src\/net\/retry\.ts does not exist/);
 });
 
 test("an invalid verdict is rejected, not silently treated as clean", () => {
-  const run = openReviewRun({ target: pinned(), preset: "quick", now: BASE_TIME });
-  const parsed = parseReviewerReport(
-    report(run.id, "comprehension", run.target.contentHash, [], { verdict: "looks-fine" }),
-    { runId: run.id, lens: "comprehension", targetHash: run.target.contentHash },
-  );
+  const run = openReviewRun({ target: pinned(), now: BASE_TIME });
+  const parsed = parseReviewerReport(report(run.id, run.target.contentHash, [], { verdict: "looks-fine" }), {
+    runId: run.id,
+    lens: DOCUMENT_LENS,
+    targetHash: run.target.contentHash,
+  });
   assert.equal(parsed.ok, false);
   assert.match(parsed.problems.join("; "), /invalid verdict/);
 });
 
 test("a report written before verdict existed is still a completed report", () => {
-  const run = runWithAllReports();
-  assert.equal("verdict" in run.reports.comprehension!, false, "legacy reports have no verdict field");
+  const run = runWithReport();
+  assert.equal("verdict" in run.reports[DOCUMENT_LENS]!, false, "legacy reports have no verdict field");
   assert.equal(evaluateReadiness(run).ready, true);
 });
 
-test("an empty findings array is a valid, clean report", () => {
-  const run = runWithAllReports({ findings: { comprehension: [], readiness: [] } });
+test("an empty findings array with coverage is a valid clean report; without coverage it is not", () => {
+  const run = runWithReport();
   assert.equal(evaluateReadiness(run).ready, true);
   assert.equal(allFindings(run).length, 0);
+
+  const target = pinned();
+  const bare = openReviewRun({ target, now: BASE_TIME });
+  const parsed = parseReviewerReport(report(bare.id, target.contentHash, [], { coverage: undefined }), {
+    runId: bare.id,
+    lens: DOCUMENT_LENS,
+    targetHash: target.contentHash,
+  });
+  assert.equal(parsed.ok, false);
+  assert.match(parsed.problems.join("; "), /needs coverage/);
 });
 
 test("a blocker blocks until it is explicitly disposed", () => {
-  const run = runWithAllReports({
-    findings: { comprehension: [{ id: "F1", severity: "blocker", location: "## Goal", discrepancy: "undefined term", rationale: "cannot implement" }] },
-  });
+  const run = runWithReport({ findings: [{ id: "F1", severity: "blocker", location: "## Goal", discrepancy: "undefined term", rationale: "cannot implement" }] });
   const before = evaluateReadiness(run);
   assert.equal(before.ready, false);
   assert.match(before.reasons.join("; "), /unresolved blocker: F1/);
@@ -204,6 +201,8 @@ test("a blocker blocks until it is explicitly disposed", () => {
   const fixed = applyDispositions(run, [{ findingId: "F1", action: "fix" }], { now: BASE_TIME });
   assert.equal(fixed.ok, true, fixed.problems.join("; "));
   // A fix edits the document, so the pinned revision is gone: re-review required.
+  // (A split review does not have this rule: its fix is an applied edit with a
+  // before/after hash, see chunk-run.ts.)
   const after = evaluateReadiness(fixed.run);
   assert.equal(after.ready, false);
   assert.equal(after.requiresReReview, true);
@@ -211,9 +210,7 @@ test("a blocker blocks until it is explicitly disposed", () => {
 });
 
 test("accepting a blocker without the user is refused", () => {
-  const run = runWithAllReports({
-    findings: { comprehension: [{ id: "F1", severity: "blocker", location: "## Goal", discrepancy: "d", rationale: "r" }] },
-  });
+  const run = runWithReport({ findings: [{ id: "F1", severity: "blocker", location: "## Goal", discrepancy: "d", rationale: "r" }] });
   const refused = applyDispositions(run, [{ findingId: "F1", action: "accepted", rationale: "we accept" }], { now: BASE_TIME });
   assert.equal(refused.ok, false);
   assert.match(refused.problems.join("; "), /needs the user's confirmation/);
@@ -224,7 +221,7 @@ test("accepting a blocker without the user is refused", () => {
 });
 
 test("an accepted major needs a rationale; a contested finding stays open", () => {
-  const run = runWithAllReports({ findings: { readiness: [{ id: "M1", severity: "major", location: "## Steps", discrepancy: "d", rationale: "r" }] } });
+  const run = runWithReport({ findings: [{ id: "M1", severity: "major", location: "## Steps", discrepancy: "d", rationale: "r" }] });
   assert.equal(applyDispositions(run, [{ findingId: "M1", action: "accepted" }], { now: BASE_TIME }).ok, false);
   const contested = applyDispositions(run, [{ findingId: "M1", action: "contested", rationale: "wrong because X" }], { now: BASE_TIME });
   assert.equal(contested.ok, true);
@@ -233,36 +230,19 @@ test("an accepted major needs a rationale; a contested finding stays open", () =
 });
 
 test("nits do not force a loop and do not block readiness", () => {
-  const run = runWithAllReports({
-    findings: { comprehension: [{ id: "N1", severity: "nit", location: "## Goal", discrepancy: "wording", rationale: "style" }] },
-  });
+  const run = runWithReport({ findings: [{ id: "N1", severity: "nit", location: "## Goal", discrepancy: "wording", rationale: "style" }] });
   const verdict = evaluateReadiness(run);
   assert.equal(verdict.ready, true, "an undisposed nit must not gate readiness");
   assert.equal(verdict.counts.nit, 1);
   assert.equal(verdict.counts.open, 0, "only findings that gate readiness count as open");
   assert.doesNotMatch(verdict.reasons.join("; "), /nit/);
   // A disposition on a nit is still accepted, and `accepted` still needs a rationale.
-  const settled = applyDispositions(run, [{ findingId: "N1", action: "accepted" }], { now: BASE_TIME });
-  assert.equal(settled.ok, false, "accepted still needs a rationale");
-  const fixed = applyDispositions(run, [{ findingId: "N1", action: "fix" }], { now: BASE_TIME });
-  assert.equal(fixed.ok, true);
-});
-
-test("an undisposed nit is visible but never blocks", () => {
-  const run = runWithAllReports({
-    findings: { readiness: [{ id: "N2", severity: "nit", location: "## Steps", discrepancy: "wording", rationale: "style" }] },
-  });
-  const verdict = evaluateReadiness(run);
-  assert.equal(verdict.counts.nit, 1);
-  assert.equal(verdict.counts.open, 0);
-  assert.deepEqual(verdict.reasons, []);
-  assert.equal(verdict.ready, true);
+  assert.equal(applyDispositions(run, [{ findingId: "N1", action: "accepted" }], { now: BASE_TIME }).ok, false);
+  assert.equal(applyDispositions(run, [{ findingId: "N1", action: "fix" }], { now: BASE_TIME }).ok, true);
 });
 
 test("duplicate or unknown dispositions are reported together", () => {
-  const run = runWithAllReports({
-    findings: { comprehension: [{ id: "F1", severity: "major", location: "x", discrepancy: "d", rationale: "r" }] },
-  });
+  const run = runWithReport({ findings: [{ id: "F1", severity: "major", location: "x", discrepancy: "d", rationale: "r" }] });
   const result = applyDispositions(run, [
     { findingId: "missing", action: "fix" },
     { findingId: "F1", action: "accepted" },
@@ -274,16 +254,14 @@ test("duplicate or unknown dispositions are reported together", () => {
 });
 
 test("a disposition is never applied to a finding from another revision", () => {
-  const run = runWithAllReports({
-    findings: { comprehension: [{ id: "F1", severity: "major", location: "x", discrepancy: "d", rationale: "r" }] },
-  });
-  const refused = applyDispositions(run, [{ findingId: "F1", action: "fix" }], { now: BASE_TIME });
-  assert.equal(refused.ok, true);
-  assert.equal(refused.run.dispositions.F1.targetHash, run.target.contentHash);
+  const run = runWithReport({ findings: [{ id: "F1", severity: "major", location: "x", discrepancy: "d", rationale: "r" }] });
+  const fixed = applyDispositions(run, [{ findingId: "F1", action: "fix" }], { now: BASE_TIME });
+  assert.equal(fixed.ok, true);
+  assert.equal(fixed.run.dispositions.F1!.targetHash, run.target.contentHash);
 });
 
 test("a changed document is stale, and a stale readiness cannot back a handoff", () => {
-  const run = settleReadiness(runWithAllReports());
+  const run = settleReadiness(runWithReport());
   assert.equal(run.readiness.ready, true);
   assert.equal(stalenessProblem(run, run.target.snapshot), undefined);
   assert.match(String(stalenessProblem(run, `${run.target.snapshot}\nmore text`)), /document changed/);
@@ -291,7 +269,7 @@ test("a changed document is stale, and a stale readiness cannot back a handoff",
 });
 
 test("designRef ties a worker to the exact reviewed revision", () => {
-  const run = settleReadiness(runWithAllReports());
+  const run = settleReadiness(runWithReport());
   const ref = { runId: run.id, targetHash: run.target.contentHash };
   const lookup = (id: string) => (id === run.id ? run : undefined);
   assert.equal(designRefProblem(ref, lookup, run.target.snapshot), undefined);
@@ -302,30 +280,26 @@ test("designRef ties a worker to the exact reviewed revision", () => {
 });
 
 test("an uncollected review cannot back a handoff even with a matching hash", () => {
-  const run = openReviewRun({ target: pinned(), preset: "quick", now: BASE_TIME });
+  const run = openReviewRun({ target: pinned(), now: BASE_TIME });
   const lookup = () => run;
   assert.match(String(designRefProblem({ runId: run.id, targetHash: run.target.contentHash }, lookup, run.target.snapshot)), /not ready/);
 });
 
 test("a cancelled run cannot become ready by later settlements", () => {
-  const run = { ...runWithAllReports(), status: "cancelled" as const };
+  const run = { ...runWithReport(), status: "cancelled" as const };
   assert.equal(settleReadiness(run).status, "cancelled");
   assert.equal(evaluateReadiness(run).ready, false);
 });
 
 test("the reviewer ticket embeds the pinned revision and the isolation facts", () => {
   const target = pinned();
-  const ticket = renderReviewerTicket({
-    runId: "sr-1",
-    lens: "readiness",
-    target,
-    policy: { roots: ["/repo"] },
-  });
+  const ticket = renderReviewerTicket({ runId: "sr-1", target, policy: { roots: ["/repo"] } });
   assert.ok(ticket.includes(target.snapshot), "the snapshot is inside the ticket");
   assert.ok(ticket.includes(target.contentHash), "the revision is named");
   assert.match(ticket, /did not inherit any parent conversation/);
   assert.match(ticket, /orch_spec_review_submit/);
   assert.match(ticket, /blocker \| major \| nit/);
-  // No author reasoning, no sibling scope, no parent path.
+  // No author reasoning, no sibling scope, no parent path, and no lens panel.
   assert.doesNotMatch(ticket, /orch_parent_recall/);
+  assert.doesNotMatch(ticket, /comprehension|zoom-out|critic/);
 });

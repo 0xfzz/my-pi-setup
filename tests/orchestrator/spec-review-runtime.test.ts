@@ -302,7 +302,7 @@ test("a target that never converges stops after two non-ready rounds", async () 
 test("a reviewer cannot broad-search the tree or read control-plane state", async () => {
   process.env.PI_SUBAGENT_REVIEW_POLICY = "spec-only";
   process.env.PI_SUBAGENT_REVIEW_RUN = "spec-review-test";
-  process.env.PI_SUBAGENT_REVIEW_LENS = "readiness";
+  process.env.PI_SUBAGENT_REVIEW_LENS = "gate";
   process.env.PI_SUBAGENT_REVIEW_TARGET = "a".repeat(64);
   process.env.PI_SUBAGENT_REVIEW_DIR = join(tmpdir(), "spec-review-test");
   const h = await harness();
@@ -370,7 +370,7 @@ test("a reviewer files its report into the run directory, and the gate rejects a
   try {
     process.env.PI_SUBAGENT_REVIEW_POLICY = "spec-only";
     process.env.PI_SUBAGENT_REVIEW_RUN = "run-1";
-    process.env.PI_SUBAGENT_REVIEW_LENS = "readiness";
+    process.env.PI_SUBAGENT_REVIEW_LENS = "gate";
     process.env.PI_SUBAGENT_REVIEW_TARGET = "a".repeat(64);
     process.env.PI_SUBAGENT_REVIEW_DIR = dir;
 
@@ -394,13 +394,13 @@ test("a reviewer files its report into the run directory, and the gate rejects a
         },
       ],
     });
-    assert.equal(filed.details.lens, "readiness");
-    const written = JSON.parse(await readFile(join(dir, "readiness.json"), "utf8"));
+    assert.equal(filed.details.lens, "gate");
+    const written = JSON.parse(await readFile(join(dir, "gate.json"), "utf8"));
     assert.equal(written.runId, "run-1");
-    assert.equal(written.lens, "readiness");
+    assert.equal(written.lens, "gate");
     assert.equal(written.targetHash, "a".repeat(64));
     assert.equal(written.findings[0].severity, "blocker");
-    assert.match(written.findings[0].id, /^F-readiness-1$/, "ids are derived, so a reviewer cannot collide with another lens");
+    assert.match(written.findings[0].id, /^F-gate-1$/, "ids are derived, so a reviewer cannot collide with another lens");
   } finally {
     await h.detach();
   }
@@ -495,7 +495,7 @@ test("a blocked reviewer report keeps its verdict and missing context", async ()
   try {
     process.env.PI_SUBAGENT_REVIEW_POLICY = "spec-only";
     process.env.PI_SUBAGENT_REVIEW_RUN = "run-blocked";
-    process.env.PI_SUBAGENT_REVIEW_LENS = "readiness";
+    process.env.PI_SUBAGENT_REVIEW_LENS = "gate";
     process.env.PI_SUBAGENT_REVIEW_TARGET = "b".repeat(64);
     process.env.PI_SUBAGENT_REVIEW_DIR = dir;
 
@@ -507,7 +507,7 @@ test("a blocked reviewer report keeps its verdict and missing context", async ()
     });
 
     assert.equal(filed.details.findings, 0);
-    const written = JSON.parse(await readFile(join(dir, "readiness.json"), "utf8"));
+    const written = JSON.parse(await readFile(join(dir, "gate.json"), "utf8"));
     assert.equal(written.verdict, "blocked", "a blocked report must not look like a clean one on disk");
     assert.deepEqual(written.missingContext, ["what happens after the third retry"]);
   } finally {
@@ -522,7 +522,7 @@ test("a reviewer cannot be resumed or steered with author context", async () => 
   registry.registerChild({
     id: "review-1",
     name: "Comprehension Reviewer",
-    scope: "review-sr-1-comprehension",
+    scope: "review-sr-1-gate",
     sessionFile,
     paneId: "pane-review",
     status: "running",
@@ -531,7 +531,7 @@ test("a reviewer cannot be resumed or steered with author context", async () => 
     updatedAt: new Date().toISOString(),
     purpose: "review",
     reviewRunId: "sr-1",
-    reviewLens: "comprehension",
+    reviewLens: "gate",
     targetHash: "a".repeat(64),
   });
 

@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { lintSpec, renderLintForReviewer } from "../../lib/orchestrator/spec-lint.ts";
 import { parseReviewerReport } from "../../lib/orchestrator/spec-review.ts";
 
-const RUN = { runId: "sr-x", lens: "readiness" as const, targetHash: "a".repeat(64) };
+const RUN = { runId: "sr-x", lens: "gate" as const, targetHash: "a".repeat(64) };
 
 describe("spec lint catches seeded defects", () => {
   it("flags a criterion anchored to a path that does not exist", async () => {

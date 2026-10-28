@@ -20,7 +20,7 @@ import {
 const env = (overrides: Record<string, string | undefined> = {}) => ({
   [REVIEW_POLICY_ENV]: SPEC_ONLY_POLICY,
   [REVIEW_RUN_ENV]: "sr-abc123",
-  [REVIEW_LENS_ENV]: "comprehension",
+  [REVIEW_LENS_ENV]: "gate",
   [REVIEW_TARGET_ENV]: "f".repeat(64),
   [REVIEW_DIR_ENV]: "/tmp/review/sr-abc123",
   ...overrides,
@@ -55,13 +55,20 @@ test("policy status distinguishes absent, valid and invalid", () => {
   const badLens = reviewPolicyStatus(env({ [REVIEW_LENS_ENV]: "vibes" }));
   assert.equal(badLens.state, "invalid");
   assert.ok(badLens.state === "invalid" && badLens.problems.some(problem => /not a known review lens/.test(problem)));
+
+  // A reviewer launched by the old panel build carries one of the retired
+  // names. It must fail closed instead of filing into a run it does not own.
+  for (const retired of ["comprehension", "readiness", "zoom-out", "critic"]) {
+    const stale = reviewPolicyStatus(env({ [REVIEW_LENS_ENV]: retired }));
+    assert.equal(stale.state, "invalid", `${retired} is no longer a lens`);
+  }
 });
 
 test("a complete policy resolves roots absolutely", () => {
   const policy = reviewPolicyFromEnv(env({ [REVIEW_ROOTS_ENV]: "/repo/a, /repo/b" }));
   assert.ok(policy);
   assert.equal(policy!.runId, "sr-abc123");
-  assert.equal(policy!.lens, "comprehension");
+  assert.equal(policy!.lens, "gate");
   assert.deepEqual(policy!.roots, ["/repo/a", "/repo/b"]);
   assert.deepEqual(reviewPolicyFromEnv(env())!.roots, []);
 });

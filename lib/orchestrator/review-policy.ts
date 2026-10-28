@@ -197,8 +197,16 @@ export function isSpecOnlyDeniedTool(name: string): boolean {
   return true;
 }
 
-/** Names accepted by `orch_spec_review_submit`; kept next to the policy so they cannot drift. */
-export const REVIEW_LENSES = ["gate", "comprehension", "readiness", "zoom-out", "critic"] as const;
+/**
+ * The only lens a document review has.
+ *
+ * The former panel (`comprehension`, `readiness`, `zoom-out`, `critic`) is gone:
+ * a second opinion is a chunk split, not a second reader of the same document.
+ * Keeping the identifier as a closed set is deliberate — a stale reviewer session
+ * launched by an older build carries one of the old names, and it must fail
+ * closed here rather than file a report into a run it no longer owns.
+ */
+export const REVIEW_LENSES = ["gate"] as const;
 export type ReviewLens = (typeof REVIEW_LENSES)[number];
 
 export function isReviewLens(value: unknown): value is ReviewLens {

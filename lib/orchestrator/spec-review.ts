@@ -1,12 +1,12 @@
 /**
- * spec-review.ts — a pinned specification, independent reviewer reports, and the
- * readiness gate that sits *before* implementation.
+ * spec-review.ts — one pinned DOCUMENT, one independent reviewer, one gate.
  *
- * This is the EGM (Elephant/Goldfish) property, reduced to what actually carries
- * it: a self-contained document is judged by readers who did not write it and
- * cannot consult the author. Everything here is pure — no child processes, no
- * panes, no clock reads that a test cannot inject — so the gate's rules can be
- * asserted without running an agent.
+ * Split reviews (a wave of work-unit specs, one reviewer per chunk) live in
+ * `chunk-run.ts` + `wave.ts` + `report-v2.ts`. This module used to carry that
+ * flow too — lens presets, a batch pin, a reviewer per lens — and the leftovers
+ * were how the old shape kept resurfacing. What is left is the single-reviewer
+ * path it is actually good at: a design document or a PRD judged by a reader who
+ * did not write it.
  *
  * Three invariants, each of which is a bug in the alternative:
  *
@@ -20,31 +20,19 @@
  *      blocker cannot be accepted without the user saying so.
  */
 import { createHash } from "node:crypto";
-import { replayReviewPatches, type ReviewPatch, type ReviewPatchRevision } from "./review-patches.ts";
 
+import { replayReviewPatches, type ReviewPatch, type ReviewPatchRevision } from "./review-patches.ts";
 import type { ReviewLens } from "./review-policy.ts";
 import { renderLintForReviewer, type SpecLintFinding } from "./spec-lint.ts";
 
-export const REVIEW_PRESET_SINGLE = "single";
-export const REVIEW_PRESET_QUICK = "quick";
-export const REVIEW_PRESET_ARCHITECTURE = "architecture";
-export type ReviewPreset =
-  | typeof REVIEW_PRESET_SINGLE
-  | typeof REVIEW_PRESET_QUICK
-  | typeof REVIEW_PRESET_ARCHITECTURE;
-
-/** Lens sets per preset. Flat dispatch: no synthesizer child, so no hidden context. */
-export const REVIEW_PRESETS: Record<ReviewPreset, ReviewLens[]> = {
-  // The default: one devil's advocate. A specification is authored by the
-  // orchestrator and attacked once; a panel is an explicit, expensive opt-in.
-  single: ["gate"],
-  quick: ["comprehension", "readiness"],
-  architecture: ["zoom-out", "comprehension", "critic", "readiness"],
-};
-
-export function isReviewPreset(value: unknown): value is ReviewPreset {
-  return value === REVIEW_PRESET_SINGLE || value === REVIEW_PRESET_QUICK || value === REVIEW_PRESET_ARCHITECTURE;
-}
+/**
+ * The only lens a document review has.
+ *
+ * The identify survives in the report and in the reviewer's evidence scope so a
+ * stale session from the old panel (`comprehension`, `critic`, …) fails closed
+ * instead of writing into a run it does not own.
+ */
+export const DOCUMENT_LENS = "gate" as const satisfies ReviewLens;
 
 export const RUBRIC_VERSION = "egm-lite-1";
 
@@ -109,7 +97,7 @@ export interface ReviewFinding {
   rationale: string;
   references?: string[];
   suggestion?: string;
-  /** Batch member id (handoff scope); absent for a single target. */
+  /** Chunk reviews tag a finding with the member it belongs to. */
   memberId?: string;
   /** Exact replacement proposed by the independent reviewer. */
   patch?: ReviewPatch;
@@ -152,7 +140,13 @@ export interface ParseResult {
   problems: string[];
 }
 
-/** Coerce one untrusted finding. Ids are synthesised only when absent. */
+/**
+ * Coerce one untrusted finding.
+ *
+ * Ids are synthesised only when absent. Both reviewers share this parser: a
+ * document report is one flat list, a chunk report is one list per member, so
+ * the same validation (severity, location, rationale, patch shape) applies.
+ */
 export function parseFindingEntry(
   raw: any,
   idPrefix: string,
@@ -191,7 +185,7 @@ export function parseFindingEntry(
       ...(memberId ? { memberId } : {}),
       ...(raw.patch ? { patch: { oldText: raw.patch.oldText, newText: raw.patch.newText } } : {}),
       id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim().slice(0, 80) : `F-${idPrefix}-${index + 1}`,
-      lens: options.lens ?? (typeof raw.lens === "string" && raw.lens.trim() ? raw.lens.trim() : "gate"),
+      lens: options.lens ?? (typeof raw.lens === "string" && raw.lens.trim() ? raw.lens.trim() : DOCUMENT_LENS),
       severity: severity as Severity,
       location,
       discrepancy,
@@ -203,7 +197,7 @@ export function parseFindingEntry(
 }
 
 /**
- * Validate a submitted report.
+ * Validate a submitted document report.
  *
  * Identity fields are checked against the run, not trusted from the payload: a
  * reviewer that reports on a different target (or a resumed session replaying an
@@ -255,16 +249,14 @@ export function parseReviewerReport(
   const missingContext = Array.isArray(value.missingContext)
     ? value.missingContext.filter((item: unknown): item is string => typeof item === "string" && item.trim() !== "")
     : undefined;
-
   const coverage = Array.isArray(value.coverage)
     ? value.coverage.filter((item: unknown): item is string => typeof item === "string" && item.trim() !== "")
     : undefined;
-  const rawFindingsCount = Array.isArray(value.findings) ? value.findings.length : 0;
-  // A `blocked` report is not claiming the document is clean — it is saying the lens
-  // could not complete, which already blocks readiness. Every other empty report
-  // has to state what it looked at, or "nothing found" is indistinguishable from
-  // "nothing looked at".
-  if (rawFindingsCount === 0 && value.verdict !== "blocked" && !coverage?.length) {
+  // A `blocked` report is not claiming the document is clean — it is saying the
+  // lens could not complete, which already blocks readiness. Every other empty
+  // report has to state what it looked at, or "nothing found" is indistinguishable
+  // from "nothing looked at".
+  if (findings.length === 0 && verdict !== "blocked" && !coverage?.length) {
     problems.push(
       "an empty findings array needs coverage[]: state what this lens checked and found adequate, "
         + "otherwise \"nothing found\" is indistinguishable from \"nothing looked at\"",
@@ -316,29 +308,18 @@ export interface Disposition {
   userConfirmed?: boolean;
   /** A replayable reviewer-authored patch closed this finding without another reader. */
   patched?: boolean;
-  /**
-   * The member content before and after the orchestrator's own fix.
-   *
-   * `afterHash` is what makes a `fix` settle: readiness only accepts it when it
-   * equals the member's current content, so "marked fixed" without an applied
-   * edit stays open. Absent for accepted/contested findings.
-   */
+  /** The document content before and after an orchestrator fix. */
   beforeHash?: string;
   afterHash?: string;
 }
 
 export type ReviewStatus = "collecting" | "collected" | "ready" | "blocked" | "cancelled";
 
-export interface ReviewMember { id: string; target: PinnedTarget; handoffId?: string }
-
 export interface ReviewRun {
   id: string;
-  /** Immutable batch members, in canonical scope order. */
-  members?: ReviewMember[];
-  program?: PinnedTarget;
-  patchRevisions?: ReviewPatchRevision[];
   target: PinnedTarget;
-  preset: ReviewPreset;
+  patchRevisions?: ReviewPatchRevision[];
+  /** Exactly one document reviewer; a chunk wave is a different record entirely. */
   reviewers: ReviewerSlot[];
   /** Full reports, keyed by lens. Only valid reports are stored. */
   reports: Partial<Record<ReviewLens, ReviewerReport>>;
@@ -357,7 +338,7 @@ export interface ReviewRun {
   /** Rewrites observed after the pin; the run is then stale by definition. */
   supersededBy?: string;
   /**
-   * Machine-detected defects computed at pin time, quoted into every ticket.
+   * Machine-detected defects computed at pin time, quoted into the ticket.
    *
    * A calibration aid, not a verdict: the reviewer must confirm or refute them,
    * and an empty list never means the document is good.
@@ -365,40 +346,40 @@ export interface ReviewRun {
   lint?: SpecLintFinding[];
 }
 
-export function reviewRunId(target: PinnedTarget, preset: ReviewPreset, salt = ""): string {
-  const digest = hashContent(`${target.kind}:${target.ref}:${target.contentHash}:${preset}:${salt}`).slice(0, 10);
+export function reviewRunId(target: PinnedTarget, salt = ""): string {
+  const digest = hashContent(`${target.kind}:${target.ref}:${target.contentHash}:${salt}`).slice(0, 10);
   return `sr-${digest}`;
 }
 
-export function reviewerScope(runId: string, lens: ReviewLens): string {
-  return `review-${runId}-${lens}`.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").slice(0, 64);
+export function reviewerScope(runId: string): string {
+  return `review-${runId}-${DOCUMENT_LENS}`.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").slice(0, 64);
 }
 
-export function openReviewRun(input: {
-  target: PinnedTarget;
-  preset: ReviewPreset;
-  now?: Date;
-  salt?: string;
-}): ReviewRun {
+export function openReviewRun(input: { target: PinnedTarget; now?: Date; salt?: string }): ReviewRun {
   const now = (input.now ?? new Date()).toISOString();
-  const id = reviewRunId(input.target, input.preset, input.salt);
-  const lenses = REVIEW_PRESETS[input.preset];
+  const id = reviewRunId(input.target, input.salt);
   return {
     id,
     target: input.target,
-    preset: input.preset,
-    reviewers: lenses.map((lens) => ({
-      lens,
-      scope: reviewerScope(id, lens),
-      status: "pending",
-      updatedAt: now,
-    })),
+    reviewers: [
+      {
+        lens: DOCUMENT_LENS,
+        scope: reviewerScope(id),
+        status: "pending",
+        updatedAt: now,
+      },
+    ],
     reports: {},
     dispositions: {},
     status: "collecting",
     createdAt: now,
     updatedAt: now,
-    readiness: { ready: false, decidedAt: now, reasons: ["no reviewer reports collected yet"], counts: { blocker: 0, major: 0, nit: 0, open: 0 } },
+    readiness: {
+      ready: false,
+      decidedAt: now,
+      reasons: ["no reviewer report collected yet"],
+      counts: { blocker: 0, major: 0, nit: 0, open: 0 },
+    },
   };
 }
 
@@ -407,75 +388,14 @@ export function allFindings(run: ReviewRun): ReviewFinding[] {
     .flatMap((report) => report?.findings ?? [])
     .sort((a, b) => {
       const rank = (severity: Severity) => (severity === "blocker" ? 0 : severity === "major" ? 1 : 2);
-      return rank(a.severity) - rank(b.severity) || a.lens.localeCompare(b.lens) || a.id.localeCompare(b.id);
+      return rank(a.severity) - rank(b.severity) || a.id.localeCompare(b.id);
     });
-}
-
-export interface FindingCluster {
-  /** Normalized location, used only as the grouping key. */
-  key: string;
-  /** First-seen spelling of the location, for display. */
-  location: string;
-  lenses: ReviewLens[];
-  severities: Severity[];
-  findingIds: string[];
-}
-
-function locationKey(location: string): string {
-  return String(location ?? "")
-    .toLowerCase()
-    .replace(/^[#§\s]+/, "")
-    .replace(/[`*_]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Group findings that point at the same place, across lenses.
- *
- * Two lenses describing one defect in two spellings is not two defects, and a
- * parent that counts them twice either double-fixes the document or treats two
- * consistent reports as corroboration that does not exist. Deterministic on
- * purpose: no referee child, no model, no extra context to leak.
- */
-export function clusterFindings(run: ReviewRun): FindingCluster[] {
-  const byKey = new Map<string, FindingCluster>();
-  for (const finding of allFindings(run)) {
-    const key = locationKey(finding.location);
-    const existing = byKey.get(key);
-    if (existing) {
-      if (!existing.lenses.includes(finding.lens)) existing.lenses.push(finding.lens);
-      if (!existing.severities.includes(finding.severity)) existing.severities.push(finding.severity);
-      existing.findingIds.push(finding.id);
-      continue;
-    }
-    byKey.set(key, {
-      key,
-      location: finding.location,
-      lenses: [finding.lens],
-      severities: [finding.severity],
-      findingIds: [finding.id],
-    });
-  }
-  return [...byKey.values()]
-    // Order inside a cluster must not depend on which lens reported first, or the
-    // same run summarised twice reads differently.
-    .map((cluster) => ({
-      ...cluster,
-      lenses: [...cluster.lenses].sort(),
-      severities: [...cluster.severities].sort(
-        (a, b) => SEVERITIES.indexOf(a) - SEVERITIES.indexOf(b),
-      ),
-    }))
-    .sort((a, b) => b.lenses.length - a.lenses.length || a.location.localeCompare(b.location));
 }
 
 /** Counts are what the parent reads: the full findings stay in the run record. */
 export function findingCounts(findings: readonly ReviewFinding[]): { blocker: number; major: number; nit: number; open: number } {
   const counts = { blocker: 0, major: 0, nit: 0, open: 0 };
-  for (const finding of findings) {
-    counts[finding.severity] += 1;
-  }
+  for (const finding of findings) counts[finding.severity] += 1;
   return counts;
 }
 
@@ -483,16 +403,15 @@ export interface ReadinessVerdict {
   ready: boolean;
   reasons: string[];
   counts: { blocker: number; major: number; nit: number; open: number };
-  /** True when at least one finding was resolved by editing the target. */
+  /** True when a finding was resolved by editing the target. */
   requiresReReview: boolean;
 }
 
 /**
  * The gate.
  *
- * Order matters only for the message: every reason is reported, so a parent sees
- * "two reports missing AND a blocker" rather than fixing one and re-discovering
- * the other.
+ * Every reason is reported, so a parent sees "report missing AND a blocker"
+ * rather than fixing one and re-discovering the other.
  */
 export function evaluateReadiness(run: ReviewRun, options: { now?: Date } = {}): ReadinessVerdict {
   const reasons: string[] = [];
@@ -501,33 +420,25 @@ export function evaluateReadiness(run: ReviewRun, options: { now?: Date } = {}):
 
   if (run.status === "cancelled") reasons.push("the review run was cancelled");
 
-  const lenses = REVIEW_PRESETS[run.preset];
-  const submitted = run.reviewers.filter((slot) => slot.status === "submitted");
-  for (const lens of lenses) {
-    const slot = run.reviewers.find((entry) => entry.lens === lens);
-    const report = run.reports[lens];
-    if (!report) {
-      reasons.push(`no valid report from the ${lens} reviewer (${slot?.status ?? "missing"})`);
-      continue;
-    }
+  const slot = run.reviewers[0];
+  const report = run.reports[DOCUMENT_LENS];
+  if (!report) {
+    reasons.push(`no valid report from the reviewer (${slot?.status ?? "missing"})`);
+  } else {
     if (report.targetHash !== run.target.contentHash) {
-      reasons.push(`the ${lens} report reviews a different target revision`);
+      reasons.push("the report reviews a different target revision");
     }
     // A reviewer that could not finish has not reviewed the document. Zero
     // findings from a blocked or context-starved pass is not a clean result.
-    if (report.verdict === "blocked") {
-      reasons.push(`the ${lens} reviewer is blocked: ${report.summary}`);
-    }
+    if (report.verdict === "blocked") reasons.push(`the reviewer is blocked: ${report.summary}`);
     if (report.missingContext?.length) {
       reasons.push(
-        `the ${lens} reviewer reported missing context: ${report.missingContext.slice(0, 3).join("; ")}`
+        `the reviewer reported missing context: ${report.missingContext.slice(0, 3).join("; ")}`
           + (report.missingContext.length > 3 ? ` (+${report.missingContext.length - 3} more)` : ""),
       );
     }
   }
-  if (submitted.length !== lenses.length) {
-    reasons.push(`${submitted.length} of ${lenses.length} reviewer reports are in`);
-  }
+  if (slot?.status !== "submitted") reasons.push("the reviewer report is not in yet");
 
   let open = 0;
   let requiresReReview = false;
@@ -535,12 +446,7 @@ export function evaluateReadiness(run: ReviewRun, options: { now?: Date } = {}):
     const disposition = run.dispositions[finding.id];
     // Nits never gate readiness. They are still counted by severity so the parent
     // can see them, but an undisposed nit must not hold a work unit hostage.
-    if (finding.severity === "nit") {
-      if (!disposition || disposition.action === "unresolved" || disposition.action === "contested") {
-        // nothing to do: a nit is advice
-      }
-      continue;
-    }
+    if (finding.severity === "nit") continue;
     if (!disposition) {
       open += 1;
       reasons.push(`unresolved ${finding.severity}: ${finding.id} (${finding.location})`);
@@ -552,14 +458,13 @@ export function evaluateReadiness(run: ReviewRun, options: { now?: Date } = {}):
       continue;
     }
     if (disposition.action === "fix" && disposition.patched) {
-      const targetId = finding.memberId ?? run.target.ref;
-      const original = finding.memberId ? run.members?.find((m) => m.id === finding.memberId)?.target : run.target;
       try {
-        if (!original || !run.patchRevisions?.some((r) => r.targetId === targetId && r.changes.some((c) => c.findingId === finding.id
-          && finding.patch && c.patch.oldText === finding.patch.oldText && c.patch.newText === finding.patch.newText))) {
-          throw new Error("missing reviewer patch receipt");
-        }
-        replayReviewPatches(original.snapshot, targetId, run.patchRevisions);
+        const recorded = run.patchRevisions?.some((revision) =>
+          revision.changes.some((change) => change.findingId === finding.id
+            && finding.patch && change.patch.oldText === finding.patch.oldText
+            && change.patch.newText === finding.patch.newText));
+        if (!recorded) throw new Error("missing reviewer patch receipt");
+        replayReviewPatches(run.target.snapshot, run.target.ref, run.patchRevisions);
       } catch {
         open += 1;
         reasons.push(`invalid patch receipt for ${finding.id}`);
@@ -588,7 +493,7 @@ export function evaluateReadiness(run: ReviewRun, options: { now?: Date } = {}):
     reasons.push("the specification was revised to resolve findings; a fresh review of the new content is required");
   }
 
-  const ready = reasons.length === 0 && submitted.length === lenses.length;
+  const ready = reasons.length === 0;
   return {
     ready,
     reasons: [...new Set(reasons)],
@@ -688,7 +593,11 @@ export function stalenessProblem(run: ReviewRun, currentContent: string | null):
   if (currentContent === null) return "the pinned target could not be read back, so its content cannot be confirmed";
   const currentHash = hashContent(currentContent);
   let expected: string;
-  try { expected = effectiveReviewTarget(run).contentHash; } catch { return "the reviewer patch chain is invalid"; }
+  try {
+    expected = effectiveReviewTarget(run).contentHash;
+  } catch {
+    return "the reviewer patch chain is invalid";
+  }
   if (currentHash !== expected) {
     return `the document changed since it was reviewed (reviewed ${expected.slice(0, 12)}, now ${currentHash.slice(0, 12)})`;
   }
@@ -702,22 +611,9 @@ export interface DesignRef {
   memberId?: string;
 }
 
-export function batchReviewContent(members: readonly ReviewMember[], program?: PinnedTarget): string {
-  return JSON.stringify({ program: program ? { ref: program.ref, content: program.snapshot } : null,
-    members: [...members].sort((a, b) => a.id.localeCompare(b.id)).map((m) => ({ id: m.id, content: m.target.snapshot })) }, null, 2);
-}
-
-/** Reports remain bound to the original pin; gates use replay-verified amendments. */
-export function effectiveReviewTarget(run: ReviewRun, memberId?: string): PinnedTarget {
-  if (memberId) {
-    const member = run.members?.find((m) => m.id === memberId);
-    if (!member) throw new Error(`Unknown batch member ${memberId}`);
-    const snapshot = replayReviewPatches(member.target.snapshot, member.id, run.patchRevisions);
-    return { ...member.target, snapshot, contentHash: hashContent(snapshot) };
-  }
-  const snapshot = run.members
-    ? batchReviewContent(run.members.map((m) => ({ ...m, target: effectiveReviewTarget(run, m.id) })), run.program)
-    : replayReviewPatches(run.target.snapshot, run.target.ref, run.patchRevisions);
+/** Reports remain bound to the original pin; the gate uses replay-verified amendments. */
+export function effectiveReviewTarget(run: ReviewRun): PinnedTarget {
+  const snapshot = replayReviewPatches(run.target.snapshot, run.target.ref, run.patchRevisions);
   return { ...run.target, snapshot, contentHash: hashContent(snapshot) };
 }
 
@@ -730,8 +626,11 @@ export function designRefProblem(
   const run = lookup(ref.runId);
   if (!run) return `design review ${ref.runId} is not known to this orchestrator`;
   let target: PinnedTarget;
-  try { target = effectiveReviewTarget(run, ref.memberId); } catch (error) { return String(error); }
-  if (run.members && !ref.memberId) return "a batch designRef must name its memberId";
+  try {
+    target = effectiveReviewTarget(run);
+  } catch (error) {
+    return String(error);
+  }
   if (target.contentHash !== ref.targetHash) {
     return `design review ${ref.runId} covered ${target.contentHash.slice(0, 12)}, not ${ref.targetHash.slice(0, 12)}`;
   }
@@ -743,30 +642,20 @@ export function designRefProblem(
   return hashContent(currentContent) === target.contentHash ? undefined : "the document changed since it was reviewed";
 }
 
-/** Rubrics. Our own wording; the method and the source are attributed, the text is not copied. */
-export const LENS_RUBRICS: Record<ReviewLens, string> = {
-  gate: `Judge whether a competent engineer who has never spoken to the author could implement this as written, and whether the result could be verified.
+/**
+ * The document rubric.
+ *
+ * The former lens panel is gone; this is the merged text a single reviewer
+ * applies. A second opinion is a chunk split, not a second reader of this text.
+ */
+export const GATE_RUBRIC = `Judge whether a competent engineer who has never spoken to the author could implement this as written, and whether the result could be verified.
 Flag every term, service, file, interface or prerequisite that is not defined in the document or reachable from the permitted repository paths.
 Flag hand-waving ("the system handles it"), assumed workflow steps, and any requirement whose acceptance cannot be observed.
 Check that named paths, modules, functions and interfaces exist or are created by this plan; that dependencies and migrations are named; and that a verification command could plausibly fail.
-Report contradictions between sections as findings, not as questions.`,
-  comprehension: `Judge whether a competent engineer who has never spoken to the author could implement this.
-Flag every term, service, file, interface or prerequisite that is not defined in the document or reachable from the permitted repository paths.
-Flag hand-waving ("the system handles it"), assumed workflow steps, and any requirement whose acceptance cannot be observed.`,
-  readiness: `Judge whether this can be built and verified as written.
-Check that named paths, modules, functions and interfaces exist or are created by this plan; that the acceptance criteria are observable; that dependencies and migrations are named; and that a verification command could plausibly fail.
-Report contradictions between sections as findings, not as questions.`,
-  "zoom-out": `Judge the shape, not the code.
-Flag speculative abstraction, premature optimisation, a local workaround where a root fix exists, placement in the wrong layer, and any reinvention of something the permitted repository paths already provide.
-Say what the simplest version that solves the stated problem would be.`,
-  critic: `Attack the design.
-Name the failure mode, the scale limit, the concurrency hazard, the security or data-integrity risk, and the operational cost the document does not address.
-Prefer one specific, falsifiable objection over a list of generic concerns.`,
-};
+Report contradictions between sections as findings, not as questions.`;
 
 export function renderReviewerTicket(input: {
   runId: string;
-  lens: ReviewLens;
   target: PinnedTarget;
   /** Extra instruction from the parent (still no author reasoning). */
   focus?: string;
@@ -774,11 +663,11 @@ export function renderReviewerTicket(input: {
   lint?: readonly SpecLintFinding[];
   policy: { roots: string[] };
 }): string {
-  const { target, lens } = input;
+  const { target } = input;
   const references = target.references.length
     ? target.references.map((reference) => `- \`${reference}\``).join("\n")
     : "- (none supplied — judge the document on its own text)";
-  return `# Independent specification review — ${lens}
+  return `# Independent specification review
 
 You are reviewing a specification you did not write. You have no history with its
 author and cannot ask them anything. A gap you cannot close from the document or
@@ -789,8 +678,8 @@ the permitted files below is a finding, not something to infer.
 - You have no write tool. The document is quoted below; you cannot change it.
 - If something is unclear, report it. Do not reconstruct the author's intent.
 
-## Lens: ${lens}
-${LENS_RUBRICS[lens]}
+## Rubric
+${GATE_RUBRIC}
 
 ## Permitted reference paths
 ${references}
@@ -818,34 +707,20 @@ Call \`orch_spec_review_submit\` exactly once, with:
 
 Blockers are reserved for defects that make implementation unsafe or impossible.
 Do not file style opinions as blockers. Do not report a finding you cannot tie to
-a location. If the document is genuinely adequate for your lens, submit an empty
-findings array WITH coverage, and say in the summary what makes you confident.
+a location. If the document is genuinely adequate, submit an empty findings array
+WITH coverage, and say in the summary what makes you confident.
 `;
 }
 
 export function renderRunSummary(run: ReviewRun): string {
   const counts = run.readiness.counts;
+  const slot = run.reviewers[0];
   const lines = [
-    `Spec review ${run.id} · ${run.preset} · target ${run.target.contentHash.slice(0, 12)} (${run.target.kind}: ${run.target.ref})`,
+    `Spec review ${run.id} · target ${run.target.contentHash.slice(0, 12)} (${run.target.kind}: ${run.target.ref})`,
     `Status: ${run.status}${run.readiness.ready ? " — READY" : ""}`,
     `Findings: ${counts.blocker} blocker, ${counts.major} major, ${counts.nit} nit · ${counts.open} open`,
-    `Reviewers: ${run.reviewers.map((slot) => `${slot.lens}=${slot.status}`).join(", ")}`,
+    `Reviewer: ${slot ? `${slot.lens}=${slot.status}` : "none"}`,
   ];
-  const clusters = clusterFindings(run).filter(
-    (cluster) => cluster.findingIds.length > 1 || cluster.lenses.length > 1,
-  );
-  if (clusters.length) {
-    lines.push(
-      `Overlap: ${clusters
-        .map(
-          (cluster) =>
-            `${cluster.location} ×${cluster.findingIds.length} (${cluster.lenses.join(", ")}; ${[
-              ...new Set(cluster.severities),
-            ].join("/")})`,
-        )
-        .join(" · ")}`,
-    );
-  }
   if (run.readiness.reasons.length) {
     lines.push(`Not ready:`, ...run.readiness.reasons.map((reason) => `- ${reason}`));
   }
@@ -855,8 +730,8 @@ export function renderRunSummary(run: ReviewRun): string {
     for (const finding of findings) {
       const disposition = run.dispositions[finding.id];
       lines.push(
-        `- ${finding.id} [${finding.severity}/${finding.lens}] ${finding.location} — ${finding.discrepancy}`
-        + (disposition ? ` → ${disposition.action}${disposition.rationale ? ` (${disposition.rationale})` : ""}` : ""),
+        `- ${finding.id} [${finding.severity}] ${finding.location} — ${finding.discrepancy}`
+          + (disposition ? ` → ${disposition.action}${disposition.rationale ? ` (${disposition.rationale})` : ""}` : ""),
       );
     }
   }
