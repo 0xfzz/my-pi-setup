@@ -366,8 +366,11 @@ Call \`artifact_recall({ id: "${spec.artifactId}" })\` before you start. It hold
 your goal, the acceptance criteria the review will check, the files you own (your
 lane), the files you must not touch, and the interfaces you must honour.
 
-It is the only spec you have. If the recall fails or returns something for a
-different scope, do NOT guess your lane — escalate with \`orch_ping\`.
+It is the only spec you have. The orchestrator verifies this recall in your
+transcript: \`orch_check\` and an approval are refused until the read is there,
+and the spec artifact itself is read-only to you. If the recall fails or returns
+something for a different scope, do NOT guess your lane — escalate with
+\`orch_ping\`.
 ${reviewedNote}
 ${assignment}
 ## Boundaries

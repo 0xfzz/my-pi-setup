@@ -125,6 +125,26 @@ A pause is not a status: `/orch-pause` closes the row with `closeReason: "paused
 `orch_resume` redeploys it. Reviewing a child records a verdict; it does not close the child —
 `orch_close` does that.
 
+#### The handoff is read, not assumed
+
+A ticket that says "call `artifact_recall`" is a request, not a mechanism. Nothing used to check
+that a worker did it, so a child could implement from the assignment paragraph alone and the review
+would still judge its diff against criteria it never saw. Two structural rules close that gap:
+
+1. **The read is a receipt.** `orch_check` and an `orch_review` approval inspect the child's own
+   transcript for a successful `artifact_recall({ id: "<handoff>" })`. No read → the check is refused
+   (`handoff-not-read`) and an approval cannot be recorded; a missing transcript is
+   `handoff-unverified`, never treated as compliance. A rejection or `revise` is still allowed — a
+   reviewer must be able to act on the suspicion. Resuming the child (or steering it to recall the
+   spec) is the only way to open the gate.
+2. **The spec is frozen.** A child may read a `handoff-*` artifact but `artifact_save`/`artifact_edit`
+   targeting it is refused. The document is pinned by content hash for review and re-read before every
+   spawn; letting the worker rewrite it would re-point an approval at text nobody reviewed. If it is
+   wrong, the child escalates and the **orchestrator** revises it with `orch_handoff`.
+
+The receipt carries the artifact version the child actually read, so a spec re-authored afterwards is
+visible as drift rather than silently re-attributed.
+
 **Durability.** The registry persists to an atomic versioned sidecar (`orchestrator-registry.json`) and is restored + reconciled on session start: dead panes are closed, live panes keep running, pending escalations survive. A watchdog enforces each child's wall-clock budget and stall-detects when the pane has not changed **and** the child's session file has not been written for ~90s — interrupting and steering the parent instead of burning tokens, without interrupting a child that is quietly running its test suite. `orch_running` lazily re-verifies pane liveness, so a child whose pane died never lingers as a zombie triggering cleanup loops across sessions; `orch_resume` refuses session paths that do not exist.
 
 ### Spawn shapes and mode policy

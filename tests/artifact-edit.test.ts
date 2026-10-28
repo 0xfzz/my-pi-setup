@@ -464,3 +464,42 @@ test("a child's own saved artifact is editable in place rather than re-saved in 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("a handoff spec is frozen for a child: it can read the document but not rewrite it", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-handoff-freeze-"));
+  const childSession = join(dir, "child.jsonl");
+  try {
+    const handoff = art({
+      id: "handoff-core-abc",
+      title: "Handoff: core — build it",
+      type: "spec",
+      scope: "core",
+      content: "# Work handoff: core\n## Goal\nBuild it.",
+    });
+    await publishChildSnapshot(dir, childSession, "core", [handoff]);
+    const child = harness({ isChild: true, childSession, childRun: "r1", childName: "Worker", childScope: "core" });
+
+    // The spec is readable: the receipt depends on exactly this call.
+    assert.match((await child.call("artifact_recall", { id: "handoff-core-abc" })).content[0].text, /Build it/);
+
+    // Rewriting it is refused, and nothing is staged by the refusal.
+    await assert.rejects(
+      () => child.call("artifact_save", { id: "handoff-core-abc", title: "Handoff", type: "spec", content: "# replaced" }),
+      /read-only for a worker/,
+    );
+    await assert.rejects(
+      () => child.call("artifact_edit", { id: "handoff-core-abc", mode: "append", content: "\nmore" }),
+      /read-only for a worker/,
+    );
+    assert.equal(
+      await readSidecarArtifact(`${childSession}.artifact.handoff-core-abc.json`),
+      undefined,
+      "a refused write must not leave a staged copy behind",
+    );
+
+    // The read still works after the refusals, so the freeze is narrow.
+    assert.match((await child.call("artifact_recall", { id: "handoff-core-abc" })).content[0].text, /Build it/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

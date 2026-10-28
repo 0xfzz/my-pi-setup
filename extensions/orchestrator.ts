@@ -53,6 +53,7 @@ import {
   saveRegistrySnapshot,
   type PersistedState,
 } from "../lib/orchestrator/registry-persistence.ts";
+import { handoffReceiptFromFile, handoffReceiptProblem } from "../lib/orchestrator/handoff-receipt.ts";
 import {
   ESCALATION_TYPE,
   EscalationError,
@@ -5181,6 +5182,22 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       const cwd = (ctx as any)?.cwd || process.cwd();
       const handoff = [...handoffs.values()].find((entry) => entry.record.scope === scope)?.record;
       const child = [...registry.getChildrenInScope(scope)].sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))[0];
+      // A check certifies a diff against the spec's criteria, so the spec being
+      // read is a precondition, not an assumption. This is evidence from the
+      // child's own transcript; a ticket sentence is not evidence.
+      if (handoff && child) {
+        const receipt = handoffReceiptFromFile(child.sessionFile, handoff.artifactId);
+        const problem = handoffReceiptProblem({ scope, artifactId: handoff.artifactId, receipt, action: "check" });
+        if (problem) {
+          return text(problem, {
+            error: receipt.inspected ? "handoff-not-read" : "handoff-unverified",
+            scope,
+            handoffId: handoff.id,
+            artifactId: handoff.artifactId,
+            handoff: receipt,
+          });
+        }
+      }
       const laneFiles = child?.laneFiles?.length ? child.laneFiles : (handoff?.laneFiles ?? []);
       const laneDeclared = Boolean(handoff || child?.laneFiles?.length);
       const criteria = child?.frozenCriteria?.length ? child.frozenCriteria : (handoff?.acceptanceCriteria ?? []);
@@ -5526,6 +5543,30 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             .join("; ")}). Use verdict "revise" or "rejected".`,
           { error: "contradictory-verdict", failed: failedCriteria.map((c) => c.criterion) },
         );
+      }
+
+      // An approval claims the work satisfies the handoff's criteria. If the child
+      // never read that handoff, the claim is about a document it never saw, so the
+      // approval is refused rather than recorded. Rejections and revisions stay
+      // available: a reviewer who suspects the spec was ignored must be able to act.
+      if (params.verdict === "approved" && handoff) {
+        const row = registry
+          .getChildrenInScope(scope)
+          .filter((c) => c.handoffId)
+          .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))[0];
+        if (row) {
+          const receipt = handoffReceiptFromFile(row.sessionFile, handoff.artifactId);
+          const problem = handoffReceiptProblem({ scope, artifactId: handoff.artifactId, receipt, action: "approve" });
+          if (problem) {
+            return text(problem, {
+              error: receipt.inspected ? "handoff-not-read" : "handoff-unverified",
+              scope,
+              handoffId: handoff.id,
+              artifactId: handoff.artifactId,
+              handoff: receipt,
+            });
+          }
+        }
       }
 
       // ── the frozen spec, not the current one ──────────────────────────────

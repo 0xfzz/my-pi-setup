@@ -644,3 +644,100 @@ test("head drift is reported, not silently tolerated", () => {
   assert.match(headDriftWarning("aaaaaaa111", "bbbbbbb222")!, /reviewed against HEAD aaaaaaa/);
   assert.match(headDriftWarning("aaaaaaa111", "bbbbbbb222")!, /bbbbbbb/);
 });
+
+test("concept 1: check and approval are refused until the child actually read its handoff", async () => {
+  const h = await harness();
+  const scope = uniqueScope("receipt");
+  try {
+    const authored = await h.call("orch_handoff", handoffParams({ scope }));
+    const artifactId = authored.details.artifactId;
+    const spawned = await h.call("orch_spawn", {
+      handoffId: authored.details.id,
+      name: "ReceiptWorker",
+      task: "Implement the handoff.",
+    });
+    assert.equal(spawned.details.status, "started");
+    const child = [...registry.getChildrenInScope(scope)][0]!;
+    assert.ok(child.sessionFile, "the child has a transcript path");
+
+    const recallLine = JSON.stringify({
+      type: "message",
+      timestamp: "2026-01-01T00:00:01.000Z",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "c1", name: "artifact_recall", arguments: { id: artifactId } }],
+      },
+    });
+    const resultLine = JSON.stringify({
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolCallId: "c1",
+        toolName: "artifact_recall",
+        isError: false,
+        content: [{ type: "text", text: `=== Artifact: [${artifactId}] "Handoff: ${scope}" (v1, spec, 8.5 KB) ===\n## Goal\nDo it.` }],
+      },
+    });
+
+    // (a) No transcript at all: unverifiable, which is not a pass. (The launcher
+    // creates the file; removing it is the only way to be truly unverifiable.)
+    await rm(child.sessionFile!, { force: true });
+    const unverifiable = await h.call("orch_check", { scope });
+    assert.equal(unverifiable.details.error, "handoff-unverified");
+
+    // (b) A transcript with no recall: the worker never read the spec.
+    await writeFile(child.sessionFile!, JSON.stringify({
+      type: "message",
+      message: { role: "assistant", content: [{ type: "text", text: "I will start from the task text." }] },
+    }) + "\n");
+    const unread = await h.call("orch_check", { scope });
+    assert.equal(unread.details.error, "handoff-not-read");
+    assert.match(unread.content[0].text, new RegExp(artifactId));
+
+    const refused = await h.call("orch_review", {
+      scope,
+      verdict: "approved",
+      criteriaNotes: [{
+        criterion: "Backoff is exponential",
+        evidence: "read the diff",
+        evidenceRefs: [{ kind: "cmd", cmd: "git diff --stat", exit: 0 }],
+        passed: true,
+      }],
+      laneCompliance: { inLane: true },
+      summary: "Criteria verified.",
+    });
+    assert.equal(refused.details.error, "handoff-not-read", "an approval cannot be recorded for a spec never read");
+
+    // A rejection is still allowed: a reviewer must be able to act on the suspicion.
+    const rejection = await h.call("orch_review", {
+      scope,
+      verdict: "revise",
+      criteriaNotes: [{ criterion: "Backoff is exponential", evidence: "the worker did not read the spec", passed: false }],
+      summary: "Spec was not read; revise against it.",
+    });
+    assert.notEqual(rejection.details.error, "handoff-not-read");
+
+    // (c) The recall is in the transcript: both gates open.
+    await writeFile(child.sessionFile!, [recallLine, resultLine].join("\n"));
+    const checked = await h.call("orch_check", { scope });
+    assert.notEqual(checked.details.error, "handoff-not-read");
+    assert.notEqual(checked.details.error, "handoff-unverified");
+
+    const approved = await h.call("orch_review", {
+      scope,
+      verdict: "approved",
+      criteriaNotes: [{
+        criterion: "Backoff is exponential",
+        evidence: "read the diff",
+        evidenceRefs: [{ kind: "cmd", cmd: "git diff --stat", exit: 0 }],
+        passed: true,
+      }],
+      laneCompliance: { inLane: true },
+      summary: "Criteria verified, and the child read the spec first.",
+    });
+    assert.equal(approved.details.verdict, "approved", approved.content[0].text);
+  } finally {
+    handoffs.clear();
+    await h.detach();
+  }
+});
