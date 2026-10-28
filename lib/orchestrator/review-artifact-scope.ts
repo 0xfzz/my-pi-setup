@@ -42,11 +42,13 @@ function clean(value: unknown): string | undefined {
  */
 export function artifactScopeFor(env: Env): ArtifactScopeRule | undefined {
   const runId = clean(env.PI_SUBAGENT_REVIEW_RUN);
-  const lens = clean(env.PI_SUBAGENT_REVIEW_LENS);
-  if (runId && lens) {
+  // A document reviewer is scoped by lens, a chunk reviewer by its chunk id. They
+  // are the same boundary: evidence for THIS assignment, never a sibling's.
+  const assignment = clean(env.PI_SUBAGENT_REVIEW_LENS) ?? clean(env.PI_SUBAGENT_REVIEW_CHUNK);
+  if (runId && assignment) {
     return {
-      scope: `review:${runId}:${lens}`,
-      idPrefix: `review-${runId}-${lens}-`,
+      scope: `review:${runId}:${assignment}`,
+      idPrefix: `review-${runId}-${assignment}-`,
       allowedTypes: EVIDENCE_TYPES,
       maxChars: EVIDENCE_MAX_CHARS,
     };

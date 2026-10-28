@@ -174,6 +174,44 @@ import {
   type ReviewLens,
 } from "../lib/orchestrator/review-policy.ts";
 import {
+  allRunFindings,
+  chunkRunId,
+  evaluateChunkRun,
+  ingestChunkReport,
+  markStatus,
+  memberContentHash,
+  memberFor,
+  openChunkRun,
+  recordMemberFix,
+  recordMemberReReview,
+  renderChunkProgress,
+  slotFor,
+  type ChunkRun,
+} from "../lib/orchestrator/chunk-run.ts";
+import {
+  chunkContentHash,
+  chunkFindings,
+  parseChunkReport,
+  renderChunkTicket,
+  type ChunkMemberPin,
+} from "../lib/orchestrator/report-v2.ts";
+import {
+  MAX_SPEC_REVIEWS_PER_WAVE,
+  planSpecChunks,
+  reReviewExhausted,
+  spawnGateProblem,
+  structuralChanges,
+  type MemberReportFacts,
+  type SpecChunk,
+  type WaveMember,
+} from "../lib/orchestrator/wave.ts";
+import {
+  contractFieldsOf,
+  contractFieldsOfRecord,
+  mergeHandoffDocument,
+  parseHandoffDocument,
+} from "../lib/orchestrator/handoff-document.ts";
+import {
   REVIEW_PRESET_QUICK,
   REVIEW_PRESET_SINGLE,
   allFindings,
@@ -225,6 +263,12 @@ export const handoffs = new Map<string, { record: HandoffRecord; path: string }>
  * not silently turn an approved design back into an unreviewed one.
  */
 export const specReviews = new Map<string, ReviewRun>();
+/**
+ * Split specification reviews: one run per wave, K chunk reviewers, readiness per
+ * member. Kept beside `specReviews` because both answer "what has been reviewed?";
+ * they differ in unit (a document vs a chunk of specs), not in purpose.
+ */
+export const chunkRuns = new Map<string, ChunkRun>();
 /**
  * Check receipts, keyed by receipt id.
  *
@@ -606,6 +650,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       handoffs: [...handoffs.entries()].map(([id, entry]) => ({ id, record: entry.record, path: entry.path })),
       escalations: escalations.all(),
       specReviews: [...specReviews.values()],
+      chunkRuns: [...chunkRuns.values()],
     };
     saveRegistrySnapshot(path, state);
   }
@@ -650,6 +695,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     handoffs.clear();
     escalations.clear();
     specReviews.clear();
+    chunkRuns.clear();
     checkReceipts.clear();
   }
 
@@ -675,6 +721,12 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       if (!run || typeof run !== "object") continue;
       if (typeof run.id !== "string" || !run.target?.contentHash || !Array.isArray(run.reviewers)) continue;
       specReviews.set(run.id, run as ReviewRun);
+    }
+    for (const run of snapshot.chunkRuns ?? []) {
+      // Same rule for a split run: no id, no members, or no chunks is not a review.
+      if (!run || typeof run !== "object") continue;
+      if (typeof run.id !== "string" || !Array.isArray(run.chunks) || !Array.isArray(run.members)) continue;
+      chunkRuns.set(run.id, run as ChunkRun);
     }
   }
 
@@ -2057,6 +2109,44 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         }),
       ),
       summary: Type.String({ minLength: 1, maxLength: 4000, description: "2-4 sentences: what you judged and what you concluded." }),
+      members: Type.Optional(
+        Type.Array(
+          Type.Object({
+            memberId: Type.String({ minLength: 1, description: "The work-unit scope this block judges." }),
+            verdict: Type.Optional(
+              Type.Union([Type.Literal("clean"), Type.Literal("findings"), Type.Literal("blocked")], {
+                description: "`blocked` means you could not finish this member; it is never a clean result.",
+              }),
+            ),
+            coverage: Type.Optional(
+              Type.Array(Type.String({ description: "What you checked and found adequate for this member." }), {
+                description: "Required for a member with no findings.",
+              }),
+            ),
+            findings: Type.Array(
+              Type.Object({
+                id: Type.Optional(Type.String({ maxLength: 80 })),
+                severity: Type.Union([Type.Literal("blocker"), Type.Literal("major"), Type.Literal("nit")]),
+                location: Type.String({ minLength: 1, description: "Section heading or line inside THIS member." }),
+                discrepancy: Type.String({ minLength: 1 }),
+                rationale: Type.String({ minLength: 1 }),
+                references: Type.Optional(Type.Array(Type.String())),
+                suggestion: Type.Optional(Type.String()),
+                patch: Type.Optional(
+                  Type.Object({ oldText: Type.String({ minLength: 1 }), newText: Type.String() }, {
+                    description: "Exact literal replacement in THIS member's pinned text.",
+                  }),
+                ),
+              }),
+              { description: "Findings for this member. An empty array needs coverage[]." },
+            ),
+          }),
+          {
+            description:
+              "One block per pinned member, each appearing exactly once. Required for a chunk review; the report is refused if a member is missing.",
+          },
+        ),
+      ),
       findings: Type.Array(
         Type.Object({
           id: Type.Optional(Type.String({ maxLength: 80, description: "Optional stable id; derived from your lens if omitted (F-<lens>-<n>)." })),
@@ -2098,6 +2188,52 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         );
       }
       const policy = status.policy;
+
+      // ── split review: one report, one block per pinned member ──────────────
+      if (policy.kind === "split") {
+        const chunkId = policy.chunkId!;
+        if (!params.members?.length) {
+          throw new Error(
+            `This is a chunk review (${chunkId}): submit a \`members\` block for EVERY pinned member `
+              + `(${(policy.members ?? []).join(", ")}). A report without member blocks is refused.`,
+          );
+        }
+        const parsed = parseChunkReport(
+          {
+            version: 2,
+            runId: policy.runId,
+            chunkId,
+            targetHash: policy.targetHash,
+            summary: params.summary,
+            members: params.members,
+            ...(params.missingContext?.length ? { missingContext: params.missingContext } : {}),
+            submittedAt: new Date(now()).toISOString(),
+          },
+          { runId: policy.runId, chunkId, targetHash: policy.targetHash, memberIds: policy.members ?? [] },
+        );
+        if (!parsed.ok || !parsed.report) {
+          throw new Error(`Report rejected by the review gate:\n${parsed.problems.map((problem) => `- ${problem}`).join("\n")}`);
+        }
+        const file = join(policy.reportDir, `${chunkId}.json`);
+        const temp = `${file}.${process.pid}.tmp`;
+        mkdirSync(policy.reportDir, { recursive: true, mode: 0o700 });
+        writeFileSync(temp, JSON.stringify(parsed.report, null, 2), { mode: 0o600 });
+        renameSync(temp, file);
+        const findings = chunkFindings(parsed.report);
+        const counts = findings.reduce(
+          (acc, finding) => ({ ...acc, [finding.severity]: acc[finding.severity] + 1 }),
+          { blocker: 0, major: 0, nit: 0 } as Record<string, number>,
+        );
+        return text(
+          [
+            `Review submitted for ${policy.runId} (${chunkId}, ${parsed.report.members.length} member(s)).`,
+            `${findings.length} finding(s): ${counts.blocker} blocker, ${counts.major} major, ${counts.nit} nit.`,
+            `The orchestrator collects it with orch_spec_review; you are done unless it resumes you with a question.`,
+          ].join("\n"),
+          { runId: policy.runId, chunkId, findings: findings.length, ...counts },
+        );
+      }
+
       if (!isReviewLens(policy.lens)) {
         throw new Error(`This reviewer session has an unknown lens (${policy.lens}); refusing to file a report.`);
       }
@@ -2140,44 +2276,572 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     },
   });
 
+  // ── split specification review: chunks, per-member fixes, per-member spawn ──
+  //
+  // The flow this implements, in order:
+  //
+  //   handoffs → chunks (3 specs per reviewer, at most 3 reviewers)
+  //            → ONE reviewer per chunk → fix a member → spawn that member
+  //
+  // Two corrections over the document/lens model it replaces:
+  //
+  //   1. The unit of review is a CHUNK. Fanning out by lens made K readers read
+  //      every spec; a wave of five became one reviewer for everything.
+  //   2. Readiness is PER MEMBER. Fixing one spec no longer invalidates its
+  //      siblings, and a prose fix keeps its approval instead of demanding a
+  //      re-review that the round budget then refused.
+  //
+  // A structural fix (lane, criteria, interfaces, report shape, vision) is still
+  // refused here: that is a different spec, and it goes back for a review of that
+  // member only.
+
+  function chunkReviewerScope(runId: string, chunkId: string): string {
+    return `review-${runId}-${chunkId}`.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").slice(0, 64);
+  }
+
+  /**
+   * Bind every READY member's handoff to the reviewed revision.
+   *
+   * Binding is provenance, not text: it never rewrites the artifact. A member is
+   * bound only when its current content still hashes to what the wave recorded, so
+   * an edit after approval cannot inherit the approval.
+   */
+  function bindChunkHandoffs(ctx: ExtensionContext, run: ChunkRun): void {
+    const evaluation = evaluateChunkRun(run);
+    for (const readiness of evaluation.members) {
+      if (!readiness.ready) continue;
+      const member = memberFor(run, readiness.scope);
+      if (!member) continue;
+      const stored = [...handoffs.values()].find((entry) => entry.record.scope === member.scope);
+      if (!stored) continue;
+      const current = readArtifactForReview(ctx, member.artifactId)?.content;
+      if (current === undefined || hashContent(current) !== member.currentHash) continue;
+      stored.record.designRef = { runId: run.id, targetHash: member.currentHash, memberId: member.scope };
+    }
+  }
+
+  /**
+   * The designRef gate for BOTH run kinds.
+   *
+   * A split designRef names a member; a document designRef names a revision. The
+   * caller does not need to know which kind of run it holds, and a spawn cannot
+   * pass one kind's check by claiming the other.
+   */
+  function designRefProblemAny(ctx: ExtensionContext, ref: DesignRef | undefined): string | undefined {
+    const chunkRun = ref ? chunkRuns.get(ref.runId) : undefined;
+    if (chunkRun) {
+      if (!ref!.memberId) return "a split designRef must name its memberId";
+      const member = memberFor(chunkRun, ref!.memberId);
+      if (!member) return `design review ${ref!.runId} has no member ${ref!.memberId}`;
+      if (chunkRun.status === "cancelled") return "the review run was cancelled";
+      const evaluation = evaluateChunkRun(chunkRun);
+      const readiness = evaluation.members.find((entry) => entry.scope === ref!.memberId);
+      if (!readiness?.ready) {
+        return `design review ${ref!.runId} is not ready for ${ref!.memberId}: ${readiness?.reasons.join("; ") || "no reason recorded"}`;
+      }
+      if (member.currentHash !== ref!.targetHash) {
+        return `design review ${ref!.runId} covered ${member.currentHash.slice(0, 12)}, not ${ref!.targetHash.slice(0, 12)}`;
+      }
+      const current = readArtifactForReview(ctx, member.artifactId)?.content ?? null;
+      if (current === null) return "the pinned target could not be read back, so its content cannot be confirmed";
+      return hashContent(current) === member.currentHash ? undefined : "the document changed since it was reviewed";
+    }
+    const run = ref ? specReviews.get(ref.runId) : undefined;
+    return designRefProblem(ref, (id) => specReviews.get(id), run ? currentReviewContent(ctx, run, ref?.memberId) : null);
+  }
+
+  function renderChunkRunSummary(run: ChunkRun): string {
+    const evaluation = evaluateChunkRun(run);
+    const counts = evaluation.counts;
+    const lines = [
+      `Split review ${run.id} — ${run.chunks.length} reviewer(s) over ${run.members.length} spec(s)`,
+      `Status: ${run.status}${evaluation.allReady ? " — EVERY MEMBER READY" : ""}`,
+      `Findings: ${counts.blocker} blocker, ${counts.major} major, ${counts.nit} nit · ${counts.open} open`,
+      `Chunks:`,
+      ...renderChunkProgress(run).map((line) => `- ${line}`),
+      `Members:`,
+      ...evaluation.members.map(
+        (entry) =>
+          `- ${entry.scope}: ${entry.ready ? "READY" : "not ready"}`
+          + (entry.reasons.length ? ` — ${entry.reasons.join("; ")}` : ""),
+      ),
+    ];
+    if (evaluation.ready.length) lines.push(`Spawnable now: ${evaluation.ready.join(", ")}.`);
+    const open = evaluation.findings.filter(
+      (finding) => finding.severity !== "nit" && (!run.dispositions[finding.id] || run.dispositions[finding.id]!.action === "unresolved"
+        || run.dispositions[finding.id]!.action === "contested"),
+    );
+    if (open.length) {
+      lines.push(`Open findings:`);
+      for (const finding of open.slice(0, 12)) {
+        lines.push(`- ${finding.id} [${finding.severity}] ${finding.memberId ?? "?"} · ${finding.location} — ${finding.discrepancy}`);
+      }
+      lines.push(
+        `Fix one with orch_spec_review({ action: "fix", runId: "${run.id}", findingId, memberId, patch, rationale }), `
+          + `or record accepted/contested with action "resolve".`,
+      );
+    }
+    return lines.join("\n");
+  }
+
+  /**
+   * Start a wave: pin every handoff, split, and launch one reviewer per chunk.
+   *
+   * Nothing is written and no pane opens if any check fails. A wave that is
+   * already under review is reused instead of re-pinned, so calling start twice
+   * cannot mint a second opinion by accident.
+   */
+  async function startChunkWave(ctx: ExtensionContext, params: any, cwd: string) {
+    if (!ctx.sessionManager.getSessionFile()) {
+      return text("Error: no session file, so reviewer children cannot be tracked.", { error: "no-session-file" });
+    }
+    const handoffIds: string[] = (params.handoffIds ?? []).map((id: string) => String(id).trim()).filter(Boolean);
+    const records = handoffIds.map((id) => resolveHandoff({ handoffId: id }));
+    const missing = handoffIds.filter((_, index) => !records[index]);
+    if (missing.length) {
+      return text(`Unknown handoff(s): ${missing.join(", ")}. Author them with orch_handoff first.`, { error: "unknown-handoff", missing });
+    }
+    const unique = new Map(records.map((record) => [record!.id, record!]));
+    if (unique.size !== records.length) {
+      return text("The same handoff is listed twice; a spec is reviewed once per wave.", { error: "duplicate-handoff" });
+    }
+    const ordered = [...unique.values()].sort((a, b) => a.scope.localeCompare(b.scope));
+    const plan = planSpecChunks(ordered.map((record) => record.scope), { reviewers: params.reviewers });
+    if (!plan.ok) return text(plan.problems.join("\n"), { error: "invalid-wave", problems: plan.problems });
+
+    // Exact path duplication is cheap to catch here. Runtime lane matching keeps
+    // enforcing globs and active-writer conflicts at spawn.
+    for (let i = 0; i < ordered.length; i += 1) {
+      for (let j = i + 1; j < ordered.length; j += 1) {
+        const a = ordered[i]!;
+        const b = ordered[j]!;
+        if (a.laneFiles.some((file) => b.laneFiles.includes(file))
+          && !a.dependsOn?.includes(b.scope) && !b.dependsOn?.includes(a.scope)) {
+          return text(
+            `Overlapping wave lanes: ${a.scope}, ${b.scope}. Serialize with dependsOn or split the lanes.`,
+            { error: "wave-lane-conflict" },
+          );
+        }
+      }
+    }
+
+    const pins = new Map<string, ChunkMemberPin>();
+    for (const record of ordered) {
+      const artifact = readArtifactForReview(ctx, record.artifactId);
+      if (!artifact) {
+        return text(
+          `Handoff ${record.scope}: artifact ${record.artifactId} is missing. Re-author it with orch_handoff.`,
+          { error: "missing-artifact", scope: record.scope },
+        );
+      }
+      if (artifact.content !== renderHandoffForChild(record)) {
+        return text(
+          `Handoff ${record.scope} differs from its artifact. Re-author it with orch_handoff before reviewing.`,
+          { error: "handoff-drift", scope: record.scope },
+        );
+      }
+      pins.set(record.scope, {
+        scope: record.scope,
+        artifactId: record.artifactId,
+        contentHash: hashContent(artifact.content),
+        content: artifact.content,
+        title: artifact.title,
+      });
+    }
+
+    let prd: ChunkRun["prd"] | undefined;
+    if (params.prdArtifactId) {
+      const source = readArtifactForReview(ctx, params.prdArtifactId);
+      if (!source) return text(`No PRD artifact [${params.prdArtifactId}]. Save it first.`, { error: "unknown-artifact" });
+      prd = { ref: String(params.prdArtifactId), title: source.title, contentHash: hashContent(source.content), snapshot: source.content };
+    }
+
+    const memberHashes: Record<string, string> = {};
+    for (const [scope, pin] of pins) memberHashes[scope] = pin.contentHash;
+    const runId = chunkRunId({ scopes: ordered.map((record) => record.scope), memberHashes });
+    const existing = chunkRuns.get(runId);
+    if (existing && existing.status !== "cancelled") {
+      const evaluation = evaluateChunkRun(existing);
+      return text(
+        renderChunkRunSummary(existing)
+          + `\nThis exact wave is already under review; nothing was launched. `
+          + (evaluation.ready.length ? `Spawnable now: ${evaluation.ready.join(", ")}.` : `Fix the open findings, then spawn.`),
+        { runId: existing.id, reused: true, launched: [], ready: evaluation.ready },
+      );
+    }
+
+    const members: WaveMember[] = ordered.map((record) => ({
+      scope: record.scope,
+      handoffId: record.id,
+      artifactId: record.artifactId,
+      chunkId: plan.chunks.find((chunk) => chunk.scopes.includes(record.scope))!.id,
+      reviewedHash: memberHashes[record.scope]!,
+      currentHash: memberHashes[record.scope]!,
+      revision: record.revision,
+      amendments: [],
+      reReviewRounds: 0,
+    }));
+    const run = openChunkRun({ id: runId, chunks: plan.chunks, members, prd, now: new Date(now()) });
+    run.chunks = run.chunks.map((slot) => ({
+      ...slot,
+      targetHash: chunkContentHash(slot.scopes.map((scope) => pins.get(scope)!)),
+    }));
+
+    const dir = reviewReportDir(ctx, run.id);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    chmodPrivate(dir);
+
+    const parentSessionId = ctx.sessionManager.getSessionId();
+    const parentSessionFile = ctx.sessionManager.getSessionFile()!;
+    const subagentSettings = loadSubagentSettings(cwd);
+    const budgetMinutes = Math.max(1, params.budgetMinutes ?? 20);
+    const tools = [...SPEC_ONLY_TOOLS].join(",");
+    const reviewerPrompt = loadRolePrompt("devil-advocate", cwd);
+    const roleModel = resolveChildModel(ctx, "devil-advocate", subagentSettings, params.model);
+    const lintByMember: Record<string, ReturnType<typeof lintSpec>> = {};
+    for (const slot of run.chunks) {
+      for (const scope of slot.scopes) {
+        lintByMember[scope] = lintSpec({ content: pins.get(scope)!.content, references: params.references ?? [], cwd });
+      }
+    }
+
+    const launched: string[] = [];
+    const failed: string[] = [];
+    for (const slot of run.chunks) {
+      const chunkMembers = slot.scopes.map((scope) => pins.get(scope)!);
+      const ticket = renderChunkTicket({
+        runId: run.id,
+        chunkId: slot.chunkId,
+        members: chunkMembers,
+        focus: params.focus,
+        lint: lintByMember,
+        roots: [cwd],
+      }) + `\n${renderPolicyForReviewer({ chunkId: slot.chunkId, roots: [cwd] })}\n`;
+      const reviewerScope = chunkReviewerScope(run.id, slot.chunkId);
+
+      let launch;
+      try {
+        launch = buildLaunchPlan(
+          {
+            name: `spec-${slot.chunkId}`,
+            task: ticket,
+            tools,
+            policy: "spec-only",
+            model: roleModel.model,
+            review: {
+              runId: run.id,
+              chunkId: slot.chunkId,
+              members: slot.scopes,
+              targetHash: slot.targetHash,
+              dir,
+              roots: [cwd],
+            },
+            scope: reviewerScope,
+          },
+          rolePromptDefs(null, reviewerPrompt.text),
+          {
+            sessionDir: ctx.sessionManager.getSessionDir(),
+            sessionId: `${parentSessionId}-${run.id}-${slot.chunkId}`,
+            parentSessionFile,
+            parentCwd: cwd,
+            defaultModel: subagentSettings.defaultModel,
+            env: process.env,
+          },
+        );
+      } catch (error: any) {
+        slot.status = "failed";
+        slot.reason = `launch failed: ${error?.message ?? error}`;
+        slot.updatedAt = new Date(now()).toISOString();
+        failed.push(`${slot.chunkId}: ${slot.reason}`);
+        continue;
+      }
+
+      try {
+        materializePlan(launch);
+        const started = await client.paneStart(launch.paneStart);
+        registry.recordPane(started.paneId);
+        armWatcher(
+          {
+            id: launch.id,
+            name: launch.name,
+            task: ticket,
+            paneId: started.paneId,
+            startTime: Date.now(),
+            sessionFile: launch.sessionFile,
+            launchScriptFile: launch.launchScriptFile,
+            interactive: launch.interactive,
+            autoExit: launch.autoExit,
+            scope: reviewerScope,
+          },
+          reviewerScope,
+          [],
+          undefined,
+          budgetMinutes * 60_000,
+          undefined,
+          { purpose: "review", reviewRunId: run.id, reviewLens: slot.chunkId, targetHash: slot.targetHash },
+        );
+        Object.assign(slot, {
+          status: "running",
+          childId: launch.id,
+          sessionFile: launch.sessionFile,
+          paneId: started.paneId,
+          updatedAt: new Date(now()).toISOString(),
+        });
+        launched.push(slot.chunkId);
+      } catch (error: any) {
+        slot.status = "failed";
+        slot.reason = `launch failed: ${error?.message ?? error}`;
+        slot.updatedAt = new Date(now()).toISOString();
+        failed.push(`${slot.chunkId}: ${slot.reason}`);
+      }
+    }
+
+    chunkRuns.set(run.id, run);
+    persistState();
+    return text(
+      [
+        renderChunkRunSummary(run),
+        ``,
+        `Split: ${run.chunks.map((slot) => `${slot.chunkId}=[${slot.scopes.join(", ")}]`).join(" · ")}`,
+        launched.length ? `Launched: ${launched.join(", ")} (one reviewer per chunk).` : "No reviewer was launched.",
+        ...(failed.length ? [`Failed: ${failed.join("; ")}`] : []),
+        ...(run.prd ? [`PRD: \`${run.prd.ref}\` pinned for every chunk.`] : []),
+        ``,
+        `Reviewers are isolated: no parent transcript, no artifacts, no write tool, no shell.`,
+        `One review round per wave. When reviewers finish you are re-triggered; run collect then, fix what is real with action "fix", and spawn each READY member. ${RETRIGGER_CONTRACT}`,
+      ].join("\n"),
+      {
+        runId: run.id,
+        launched,
+        failed,
+        chunks: run.chunks.map((slot) => ({ chunkId: slot.chunkId, scopes: slot.scopes, targetHash: slot.targetHash })),
+        members: run.members.map((member) => ({ scope: member.scope, handoffId: member.handoffId, targetHash: member.currentHash })),
+      },
+    );
+  }
+
+  /** Read the reports that have landed; readiness settles per member. */
+  function collectChunkRun(ctx: ExtensionContext, run: ChunkRun) {
+    const dir = reviewReportDir(ctx, run.id);
+    let next = run;
+    const waiting: string[] = [];
+    const problems: string[] = [];
+    for (const slot of run.chunks) {
+      if (slot.status === "submitted") continue;
+      const file = join(dir, `${slot.chunkId}.json`);
+      if (!existsSync(file)) {
+        if (slot.status === "running") waiting.push(slot.chunkId);
+        continue;
+      }
+      let raw: unknown;
+      try {
+        raw = JSON.parse(readFileSync(file, "utf8"));
+      } catch (error: any) {
+        problems.push(`${slot.chunkId}: report is not valid JSON (${error?.message ?? error})`);
+        next = {
+          ...next,
+          chunks: next.chunks.map((entry) =>
+            entry.chunkId === slot.chunkId
+              ? { ...entry, status: "failed" as const, reason: "report is not valid JSON", updatedAt: new Date(now()).toISOString() }
+              : entry,
+          ),
+        };
+        continue;
+      }
+      const ingested = ingestChunkReport(next, slot.chunkId, raw, { now: new Date(now()) });
+      next = ingested.run;
+      if (!ingested.ok) problems.push(`${slot.chunkId}: ${ingested.problems.join("; ")}`);
+    }
+    const allIn = next.chunks.every((slot) => slot.status === "submitted");
+    if (next.status !== "cancelled") next = markStatus(next, allIn ? "collected" : "collecting", new Date(now()));
+    chunkRuns.set(next.id, next);
+    bindChunkHandoffs(ctx, next);
+    persistState();
+    return { run: next, waiting, problems };
+  }
+
+  /**
+   * Apply the orchestrator's own edit to one member.
+   *
+   * This is the step the flow was missing: the parent fixes the spec, and the fix
+   * is what the worker will read. It is refused unless it leaves the contract
+   * (lane, criteria, interfaces, report shape, vision) untouched — those need
+   * re-authoring and a review of that member.
+   */
+  async function fixChunkMember(ctx: ExtensionContext, params: any, run: ChunkRun) {
+    const findingId = String(params.findingId ?? "").trim();
+    const memberId = String(params.memberId ?? "").trim();
+    const patch = params.patch;
+    const rationale = String(params.rationale ?? "").trim();
+    if (!findingId || !memberId || !patch) {
+      return text("fix needs findingId, memberId and patch { oldText, newText }.", { error: "fix-incomplete" });
+    }
+    if (run.chunks.some((slot) => slot.status === "running")) {
+      return text("The wave is still under review; collect the reports before fixing a member.", { error: "review-incomplete" });
+    }
+    const member = memberFor(run, memberId);
+    if (!member) return text(`No member "${memberId}" in ${run.id}. Members: ${run.members.map((entry) => entry.scope).join(", ")}.`, { error: "unknown-member" });
+    const finding = allRunFindings(run).find((entry) => entry.id === findingId);
+    if (!finding) {
+      return text(`Unknown finding ${findingId}. Run collect first; findings arrive with the reviewer's report.`, { error: "unknown-finding" });
+    }
+    if (finding.memberId !== memberId) {
+      return text(
+        `Finding ${findingId} belongs to ${finding.memberId ?? "no member"}, not ${memberId}. Patch the member the finding names.`,
+        { error: "finding-member-mismatch" },
+      );
+    }
+    const stored = [...handoffs.values()].find((entry) => entry.record.scope === memberId);
+    if (!stored) return text(`No handoff record for "${memberId}". Re-author it with orch_handoff.`, { error: "unknown-handoff" });
+    if (registry.getRunningChildren().some((child) => child.scope === memberId)) {
+      return text(`Cannot amend ${memberId} while a child holds its lane. Close or wait for that child.`, { error: "lane-held" });
+    }
+
+    const artifact = readArtifactForReview(ctx, member.artifactId);
+    if (!artifact) return text(`Artifact ${member.artifactId} is missing; re-author the handoff.`, { error: "missing-artifact" });
+    const beforeContent = artifact.content;
+    const beforeHash = hashContent(beforeContent);
+    if (beforeHash !== member.currentHash) {
+      return text(
+        `Refusing: the spec is ${beforeHash.slice(0, 12)} but the wave bound ${member.currentHash.slice(0, 12)}. `
+          + `Re-author the handoff and review that member again; an approval cannot migrate to text nobody read.`,
+        { error: "stale-member" },
+      );
+    }
+
+    let nextContent: string;
+    try {
+      nextContent = applyReviewPatches(beforeContent, [{ findingId, patch }]);
+    } catch (error: any) {
+      return text(`Patch refused before any write: ${error?.message ?? error}`, { error: "invalid-fix-patch" });
+    }
+    const parsed = parseHandoffDocument(nextContent);
+    if (!parsed.ok) {
+      return text(
+        `Patch refused: the handoff would no longer parse (${parsed.problems.join("; ")}). Nothing was written.`,
+        { error: "invalid-fix-document", problems: parsed.problems },
+      );
+    }
+    const beforeDoc = parseHandoffDocument(beforeContent);
+    if (!beforeDoc.ok) {
+      return text(`The current handoff document cannot be parsed (${beforeDoc.problems.join("; ")}); re-author it.`, {
+        error: "invalid-handoff-document",
+      });
+    }
+    const structural = structuralChanges(contractFieldsOf(beforeDoc.doc), contractFieldsOf(parsed.doc));
+    if (structural.length) {
+      return text(
+        `Refusing this fix: it changes ${structural.join(", ")}, which the review bound. `
+          + `Re-author the handoff with orch_handoff (revision ${stored.record.revision + 1}), then review that member with `
+          + `orch_spec_review({ action: "start", handoffIds: ["${memberId}"] }).`,
+        { error: "structural-change-needs-reauthor", fields: structural },
+      );
+    }
+    const merged = mergeHandoffDocument(stored.record, parsed.doc);
+    if (renderHandoffForChild(merged) !== nextContent) {
+      return text("Refusing this fix: the patch would desynchronise the handoff record and the worker-readable artifact.", {
+        error: "fix-desync",
+      });
+    }
+
+    const nextRecord = { ...merged, revision: stored.record.revision + 1 };
+    const published = await publishHandoffArtifact(ctx, nextRecord);
+    if (!published.ok) {
+      return text(`Fix NOT published: ${published.message}. Nothing was recorded.`, { error: "artifact-publish-failed" });
+    }
+    const afterContent = renderHandoffForChild(nextRecord);
+    if (readArtifactForReview(ctx, member.artifactId)?.content !== afterContent) {
+      return text("Fix NOT recorded: the published artifact could not be read back as the new revision.", {
+        error: "artifact-publish-failed",
+      });
+    }
+    stored.record = nextRecord;
+    writeFileSync(stored.path, afterContent, { mode: 0o600 });
+
+    const result = recordMemberFix(run, {
+      findingId,
+      memberId,
+      beforeHash,
+      afterHash: hashContent(afterContent),
+      rationale: rationale || `Resolved ${findingId} with an orchestrator edit`,
+      revision: nextRecord.revision,
+      structural: [],
+      now: new Date(now()),
+    });
+    if (!result.ok) return text(result.problems.join("\n"), { error: "fix-record-failed" });
+    chunkRuns.set(result.run.id, result.run);
+    bindChunkHandoffs(ctx, result.run);
+    persistState();
+    const evaluation = evaluateChunkRun(result.run);
+    const readiness = evaluation.members.find((entry) => entry.scope === memberId);
+    return text(
+      [
+        renderChunkRunSummary(result.run),
+        ``,
+        `Applied ${findingId} to ${memberId}: revision ${stored.record.revision}, ${beforeHash.slice(0, 12)} → ${hashContent(afterContent).slice(0, 12)}.`,
+        readiness?.ready
+          ? `${memberId} is READY: spawn it with orch_spawn({ handoffId: "${nextRecord.id}" }). No re-review was launched.`
+          : `${memberId} is not ready yet: ${readiness?.reasons.join("; ") ?? "no reason recorded"}.`,
+      ].join("\n"),
+      {
+        runId: result.run.id,
+        memberId,
+        findingId,
+        revision: nextRecord.revision,
+        beforeHash,
+        afterHash: hashContent(afterContent),
+        ready: readiness?.ready ?? false,
+      },
+    );
+  }
+
   // ── orch_spec_review — the parent's side of the same contract ───────────────
   pi.registerTool({
     name: "orch_spec_review",
     label: "Independent Spec Review",
     description:
-      "Run or resolve an independent, read-only review of a specification before implementation. Pins the document by content hash, launches isolated reviewer children (one per lens), validates their findings, and records readiness. Actions: lint | start | collect | resolve | status | cancel.",
+      "Run an independent, read-only review of specifications before implementation. With handoffIds, splits them into chunks (3 specs per reviewer, at most 3 reviewers) and launches ONE reviewer per chunk. With targetArtifactId/targetFile, reviews one document. Actions: plan | lint | start | collect | fix | resolve | status | cancel.",
     parameters: Type.Object({
       action: Type.Union([
+        Type.Literal("plan"),
         Type.Literal("lint"),
         Type.Literal("start"),
         Type.Literal("collect"),
+        Type.Literal("fix"),
         Type.Literal("resolve"),
         Type.Literal("status"),
         Type.Literal("cancel"),
-      ], { description: "lint = machine defects only, no reviewers; start = pin + launch the devil's advocate; collect = read submitted reports; resolve = record dispositions and readiness; status = read; cancel = stop the run." }),
-      handoffIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 5,
-        description: "Review 1–5 already-authored scoped handoffs together with ONE reviewer. Scope names or handoff ids. Automatically binds approved members for spawn." })),
-      prdArtifactId: Type.Optional(Type.String({ description: "PRD artifact pinned as shared reference for the handoff batch." })),
+      ], { description: "plan = show the chunk split, launch nothing; lint = machine defects only; start = pin + launch one reviewer per chunk; collect = read submitted reports; fix = apply the orchestrator's own edit to one member; resolve = record accepted/contested dispositions; status = read; cancel = stop the run." }),
+      handoffIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 2, maxItems: 9,
+        description: "2–9 already-authored scoped handoffs to review as a wave. Scope names or handoff ids. They are split into chunks of at most 3 and each chunk gets one reviewer." })),
+      reviewers: Type.Optional(Type.Number({ description: "Optional chunk count. It may raise the count above the minimum, never above 3 or below what 3-per-chunk requires." })),
+      prdArtifactId: Type.Optional(Type.String({ description: "PRD artifact pinned as the shared reference every chunk is judged against." })),
       targetArtifactId: Type.Optional(Type.String({ description: "Workspace artifact to review (preferred while the design is still an artifact)." })),
       targetFile: Type.Optional(Type.String({ description: "Repository file to review, relative to the working directory." })),
       title: Type.Optional(Type.String({ description: "Human title for the pinned target." })),
-      preset: Type.Optional(Type.Union([Type.Literal("single"), Type.Literal("quick"), Type.Literal("architecture")], {
-        description: "single = one devil's advocate with the merged gate lens (default). quick = comprehension + readiness. architecture = zoom-out, comprehension, critic, readiness (expensive; opt-in).",
-      })),
       references: Type.Optional(Type.Array(Type.String(), { description: "Repository paths reviewers may consult. Defaults to none." })),
       focus: Type.Optional(Type.String({ description: "Optional extra instruction. Never include author reasoning: reviewers must judge the document, not your intent." })),
       budgetMinutes: Type.Optional(Type.Number({ description: "Wall-clock budget per reviewer (default 20)." })),
       model: Type.Optional(Type.String({ description: "Model override for the reviewers; defaults to the devil-advocate role binding (/orch-model)." })),
-      runId: Type.Optional(Type.String({ description: "Existing review run id, for collect/resolve/status/cancel." })),
+      runId: Type.Optional(Type.String({ description: "Existing review run id, for collect/fix/resolve/status/cancel." })),
+      findingId: Type.Optional(Type.String({ description: "For action=fix: the finding the edit resolves." })),
+      memberId: Type.Optional(Type.String({ description: "For action=fix: the work-unit scope whose spec is edited." })),
+      patch: Type.Optional(
+        Type.Object({ oldText: Type.String({ minLength: 1 }), newText: Type.String() }, {
+          description:
+            "For action=fix: an exact, unique replacement in THAT member's handoff document. Prose only: a patch that changes the lane, acceptance criteria, interfaces, report shape or vision is refused and needs re-authoring.",
+        }),
+      ),
+      rationale: Type.Optional(Type.String({ description: "For action=fix: why this edit resolves the finding." })),
       dispositions: Type.Optional(
         Type.Array(
           Type.Object({
             findingId: Type.String({ minLength: 1 }),
-            action: Type.Union([Type.Literal("fix"), Type.Literal("contested"), Type.Literal("accepted"), Type.Literal("unresolved")]),
+            action: Type.Union([Type.Literal("contested"), Type.Literal("accepted"), Type.Literal("unresolved")]),
             rationale: Type.Optional(Type.String({ description: "Required for accepted/contested: why the finding is a trade-off or wrong." })),
             userConfirmed: Type.Optional(Type.Boolean({ description: "Set only after asking the user: required to accept a blocker." })),
           }),
-          { description: "For action=resolve: how each finding was handled." },
+          { description: "For action=resolve: accepted, contested or unresolved. A fix is action=fix, because a fix must be applied, not declared." },
         ),
       ),
     }),
@@ -2187,6 +2851,43 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       }
       const runId = params.runId ? String(params.runId).trim() : undefined;
       const lookup = (id: string) => specReviews.get(id);
+
+      // ── plan: show the split, spend nothing ────────────────────────────────
+      // The user's flow chunks the specs BEFORE paying for reviewers. Printing
+      // the split first makes the shape (5 → 2 + 3) a decision the orchestrator
+      // made on purpose, not a surprise discovered after two panes opened.
+      if (params.action === "plan") {
+        const handoffIds: string[] = (params.handoffIds ?? []).map((id: string) => String(id).trim()).filter(Boolean);
+        if (!handoffIds.length) {
+          return text("plan needs handoffIds: the specs to split across reviewers.", { error: "no-handoffs" });
+        }
+        const records = handoffIds.map((id) => resolveHandoff({ handoffId: id }));
+        const missing = handoffIds.filter((_, index) => !records[index]);
+        if (missing.length) {
+          return text(`Unknown handoff(s): ${missing.join(", ")}. Author them with orch_handoff first.`, { error: "unknown-handoff", missing });
+        }
+        if (new Set(records.map((record) => record!.id)).size !== records.length) {
+          return text("The same handoff is listed twice; a spec is reviewed once per wave.", { error: "duplicate-handoff" });
+        }
+        const plan = planSpecChunks(records.map((record) => record!.scope), { reviewers: params.reviewers });
+        if (!plan.ok) return text(plan.problems.join("\n"), { error: "invalid-wave", problems: plan.problems });
+        const byScope = new Map(records.map((record) => [record!.scope, record!]));
+        const chunks = plan.chunks.map((chunk) => ({ chunkId: chunk.id, scopes: chunk.scopes, reviewers: 1 }));
+        return text(
+          [
+            `Review split: ${records.length} spec(s) across ${plan.chunks.length} reviewer(s).`,
+            ...plan.chunks.map(
+              (chunk) =>
+                `- ${chunk.id}: ${chunk.scopes.length} spec(s) — `
+                + chunk.scopes.map((scope) => `${scope} (${byScope.get(scope)?.laneFiles.join(", ") || "no lane"})`).join(", "),
+            ),
+            ``,
+            `One reviewer per chunk, at most 3 specs each. Nothing was launched.`,
+            `Start it with orch_spec_review({ action: "start", handoffIds: ${JSON.stringify(records.map((record) => record!.scope))} }).`,
+          ].join("\n"),
+          { chunks, specs: records.length, reviewers: plan.chunks.length },
+        );
+      }
 
       // Pre-flight: name the machine-detectable defects before spending a
       // reviewer round on them. Zero children are launched.
@@ -2232,8 +2933,13 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         if (registry.isPaused()) {
           return text("The orchestrator is paused: no reviewers were launched.", { error: "orchestrator-paused" });
         }
-        const preset = params.preset && isReviewPreset(params.preset) ? params.preset : REVIEW_PRESET_SINGLE;
         const cwd = (ctx as any).cwd || process.cwd();
+        // A wave of handoffs is reviewed by ONE reviewer per chunk. The document
+        // path below is the single-document review (a design or a PRD).
+        if (params.handoffIds?.length) {
+          return startChunkWave(ctx, params, cwd);
+        }
+        const preset = REVIEW_PRESET_SINGLE;
         if (!ctx.sessionManager.getSessionFile()) {
           return text("Error: no session file, so reviewer children cannot be tracked.", { error: "no-session-file" });
         }
@@ -2241,41 +2947,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         let source: { title: string; content: string } | null = null;
         let kind: "artifact" | "file" = "artifact";
         let ref = "";
-        let members: ReviewMember[] | undefined;
-        let program: ReviewRun["program"];
         try {
-          if (params.handoffIds) {
-            if (params.targetArtifactId || params.targetFile || !params.handoffIds.length || params.handoffIds.length > 5) {
-              return text("A batch needs 1–5 handoffs and no other target.", { error: "invalid-batch" });
-            }
-            if (preset !== "single") return text("Batch reviews use one devil's advocate, not a panel.", { error: "batch-preset" });
-            const records = params.handoffIds.map((id) => resolveHandoff({ handoffId: id }));
-            if (records.some((r) => !r) || new Set(records.map((r) => r?.id)).size !== records.length) {
-              return text("Batch handoffs must exist and be unique.", { error: "invalid-batch" });
-            }
-            members = records.map((record) => {
-              const artifact = readArtifactForReview(ctx, record!.artifactId);
-              if (!artifact || artifact.content !== renderHandoffForChild(record!)) throw new Error(`Handoff ${record!.scope} differs from its artifact; re-author before review`);
-              return { id: record!.scope, handoffId: record!.id, target: pinTarget({ kind: "artifact", ref: record!.artifactId,
-                title: artifact.title, content: artifact.content, references: params.references, now: new Date(now()) }) };
-            }).sort((a, b) => a.id.localeCompare(b.id));
-            // Exact path duplication is cheap to catch here. Runtime lane matching
-            // continues to enforce globs and active-writer conflicts at spawn.
-            for (let i = 0; i < records.length; i++) for (let j = i + 1; j < records.length; j++) {
-              const a = records[i]!, b = records[j]!;
-              if (a.laneFiles.some((f) => b.laneFiles.includes(f)) && !a.dependsOn?.includes(b.scope) && !b.dependsOn?.includes(a.scope)) {
-                return text(`Overlapping batch lanes: ${a.scope}, ${b.scope}. Serialize with dependsOn or split the lanes.`, { error: "batch-lane-conflict" });
-              }
-            }
-            if (params.prdArtifactId) {
-              const prd = readArtifactForReview(ctx, params.prdArtifactId);
-              if (!prd) throw new Error("PRD artifact not found");
-              program = pinTarget({ kind: "artifact", ref: params.prdArtifactId, title: prd.title, content: prd.content });
-            }
-            ref = `batch:${members.map((m) => m.id).join(",")}`;
-            source = { title: params.title ?? "Scoped handoff batch", content: batchReviewContent(members, program) };
-            if (source.content.length > MAX_PINNED_CHARS) throw new Error("Batch exceeds the pinned content cap");
-          } else if (params.targetArtifactId) {
+          if (params.targetArtifactId) {
             ref = params.targetArtifactId.trim();
             source = readArtifactForReview(ctx, ref);
             if (!source) {
@@ -2382,10 +3055,6 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         // preset is honoured, so a genuinely contested design can still opt into
         // a panel; a re-review that names none stays single.
         const run = openReviewRun({ target, preset, now: new Date(now()), salt: String(specReviews.size + 1) });
-        if (members) {
-          run.members = members;
-          run.program = program;
-        }
         // Machine-detectable defects are computed once, at pin time, and quoted
         // into every result. A reviewer that ignores them is still free to be
         // right; the cheap defects stop depending on attention.
@@ -2413,8 +3082,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             focus: params.focus,
             lint: run.lint,
             policy: { roots: [cwd] },
-          }) + (members ? `\nBatch instructions: judge ALL ${members.length} handoffs against the pinned PRD, including shared-interface contradictions and missing scope. Include coverage for each member. For member findings set memberId to its scope. Patch oldText must be the literal member document text (not JSON-escaped). Return exact patches where safe; structural lane/criteria changes require a parent decision, not another automatic review.\n` : "")
-            + `\n${renderPolicyForReviewer({ lens: slot.lens, roots: [cwd] })}\n`;
+          }) + `\n${renderPolicyForReviewer({ lens: slot.lens, roots: [cwd] })}\n`;
           const roleModel = resolveChildModel(ctx, "devil-advocate", subagentSettings, params.model);
           let plan: LaunchPlan;
           try {
@@ -2499,23 +3167,134 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             `Reviewers are isolated: no parent transcript, no artifacts, no write tool, no shell.`,
             `When a reviewer completes you are re-triggered; run collect then. ${RETRIGGER_CONTRACT}`,
           ].join("\n"),
-          { runId: run.id, targetHash: target.contentHash, preset, launched, failed, modelNotes,
-            ...(members ? { members: members.map((m) => ({ memberId: m.id, handoffId: m.handoffId, targetHash: m.target.contentHash })) } : {}) },
+          { runId: run.id, targetHash: target.contentHash, preset, launched, failed, modelNotes },
         );
       }
 
       if (!runId) {
-        const known = [...specReviews.keys()];
+        const known = [...specReviews.keys(), ...chunkRuns.keys()];
         return text(
           `Give a runId. ${known.length ? `Known runs: ${known.join(", ")}.` : "No spec review has been started in this session."}`,
           { error: "run-required", known },
         );
       }
+
+      // ── split review: one record, per-member state ──────────────────────────
+      const chunkRun = chunkRuns.get(runId);
+      if (chunkRun) {
+        if (params.action === "status") {
+          const fingerprint = JSON.stringify([
+            chunkRun.status,
+            chunkRun.chunks.map((slot) => [slot.chunkId, slot.status]),
+            Object.keys(chunkRun.dispositions),
+          ]);
+          if (notePoll(ctx.sessionManager.getSessionId(), `status:${chunkRun.id}`, fingerprint)) {
+            return text(`No new events since your last check. ${RETRIGGER_CONTRACT}`, { error: "no-new-events", runId: chunkRun.id });
+          }
+          return text(renderChunkRunSummary(chunkRun), {
+            runId: chunkRun.id,
+            status: chunkRun.status,
+            ready: evaluateChunkRun(chunkRun).ready,
+          });
+        }
+
+        if (params.action === "cancel") {
+          for (const slot of chunkRun.chunks) {
+            if (slot.status !== "running") continue;
+            const child = slot.sessionFile ? registry.getChildBySession(slot.sessionFile) : undefined;
+            if (child) await settleChild(child, "scope-cancelled");
+            slot.status = "failed";
+            slot.reason = "run cancelled";
+          }
+          const cancelled = markStatus(chunkRun, "cancelled", new Date(now()));
+          chunkRuns.set(cancelled.id, cancelled);
+          persistState();
+          return text(renderChunkRunSummary(cancelled), { runId: cancelled.id, status: cancelled.status });
+        }
+
+        if (params.action === "collect") {
+          const collected = collectChunkRun(ctx, chunkRun);
+          const fingerprint = JSON.stringify([
+            collected.run.status,
+            collected.run.chunks.map((slot) => [slot.chunkId, slot.status]),
+            collected.problems,
+          ]);
+          if (notePoll(ctx.sessionManager.getSessionId(), `collect:${collected.run.id}`, fingerprint)) {
+            return text(`No new events since your last check. ${RETRIGGER_CONTRACT}`, { error: "no-new-events", runId: collected.run.id });
+          }
+          return text(
+            [
+              renderChunkRunSummary(collected.run),
+              ...(collected.waiting.length ? [``, `Waiting on: ${collected.waiting.join(", ")}.`] : []),
+              ...(collected.problems.length ? [``, `Report problems:`, ...collected.problems.map((problem) => `- ${problem}`)] : []),
+            ].join("\n"),
+            { runId: collected.run.id, status: collected.run.status, ready: evaluateChunkRun(collected.run).ready },
+          );
+        }
+
+        if (params.action === "fix") {
+          return fixChunkMember(ctx, params, chunkRun);
+        }
+
+        if (params.action === "resolve") {
+          if (chunkRun.chunks.some((slot) => slot.status === "running")) {
+            return text("The wave is still under review; collect the reports before recording dispositions.", { error: "review-incomplete" });
+          }
+          const inputs = (params.dispositions ?? []).map((entry: any) => ({
+            findingId: entry.findingId,
+            action: entry.action,
+            rationale: entry.rationale,
+            userConfirmed: entry.userConfirmed,
+          }));
+          if (!inputs.length) return text("resolve needs dispositions.", { error: "no-dispositions" });
+          const known = new Map(allRunFindings(chunkRun).map((finding) => [finding.id, finding]));
+          const problems: string[] = [];
+          const dispositions = { ...chunkRun.dispositions };
+          for (const input of inputs) {
+            const finding = known.get(input.findingId);
+            if (!finding) { problems.push(`unknown finding id: ${input.findingId}`); continue; }
+            if (input.action === "accepted" && finding.severity === "blocker" && input.userConfirmed !== true) {
+              problems.push(`${input.findingId} is a blocker; accepting it needs the user's confirmation`);
+              continue;
+            }
+            if ((input.action === "accepted" || input.action === "contested") && !String(input.rationale ?? "").trim()) {
+              problems.push(`${input.findingId} is ${input.action} and needs a rationale`);
+              continue;
+            }
+            dispositions[input.findingId] = {
+              action: input.action,
+              rationale: String(input.rationale ?? "").trim(),
+              at: new Date(now()).toISOString(),
+              targetHash: finding.memberId ? memberFor(chunkRun, finding.memberId)?.reviewedHash ?? "" : "",
+              ...(input.userConfirmed === true ? { userConfirmed: true } : {}),
+            };
+          }
+          if (problems.length) {
+            return text(`Dispositions refused — nothing was recorded:\n${problems.map((problem) => `- ${problem}`).join("\n")}`, {
+              error: "invalid-dispositions",
+              runId: chunkRun.id,
+              problems,
+            });
+          }
+          const next = { ...chunkRun, dispositions, updatedAt: new Date(now()).toISOString() };
+          chunkRuns.set(next.id, next);
+          bindChunkHandoffs(ctx, next);
+          persistState();
+          return text(renderChunkRunSummary(next), { runId: next.id, ready: evaluateChunkRun(next).ready });
+        }
+
+        return text(
+          `\`${params.action}\` does not apply to a split review. Use collect, fix, resolve, status or cancel.`,
+          { error: "invalid-action", runId: chunkRun.id },
+        );
+      }
+
       const run = lookup(runId);
       if (!run) {
-        return text(`No spec review \`${runId}\` in this session. Known runs: ${[...specReviews.keys()].join(", ") || "(none)"}.`, {
-          error: "unknown-run",
-        });
+        return text(
+          `No spec review \`${runId}\` in this session. Known runs: ${[...specReviews.keys(), ...chunkRuns.keys()].join(", ") || "(none)"}.`,
+          { error: "unknown-run" },
+        );
       }
 
       if (params.action === "status") {
@@ -2736,12 +3515,11 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         // A design reference is verified before the handoff exists. Failing at
         // spawn instead would leave a spec in the registry that can never be used.
         if (params.designRef) {
-          const reviewed = specReviews.get(String(params.designRef.runId).trim());
-          const problem = designRefProblem(
-            { runId: String(params.designRef.runId).trim(), targetHash: String(params.designRef.targetHash).trim().toLowerCase(), memberId: params.designRef.memberId },
-            (id) => specReviews.get(id),
-            reviewed ? currentReviewContent(ctx, reviewed, params.designRef.memberId) : null,
-          );
+          const problem = designRefProblemAny(ctx, {
+            runId: String(params.designRef.runId).trim(),
+            targetHash: String(params.designRef.targetHash).trim().toLowerCase(),
+            memberId: params.designRef.memberId,
+          });
           if (problem) {
             return text(
               `Refusing designRef: ${problem}. Run orch_spec_review({ action: "status", runId }) for the current state, ` +
@@ -3090,12 +3868,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       // current content is re-read here rather than trusted from the record.
       let driftWarning: string | undefined;
       if (handoff?.designRef) {
-        const run = specReviews.get(handoff.designRef.runId);
-        const problem = designRefProblem(
-          handoff.designRef,
-          (id) => specReviews.get(id),
-          run ? currentReviewContent(ctx, run, handoff.designRef.memberId) : null,
-        );
+        const problem = designRefProblemAny(ctx, handoff.designRef);
         if (problem) {
           return text(
             `Refusing to spawn \"${displayName}\": ${problem}. ` +
@@ -3103,14 +3876,12 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             { error: "design-ref-not-ready", scope, designRef: handoff.designRef },
           );
         }
-        if (run?.members) {
-          const member = run.members.find((m) => m.id === handoff.designRef!.memberId);
-          if (member?.handoffId !== handoff.id || effectiveReviewTarget(run, member.id).snapshot !== renderHandoffForChild(handoff)
-              || stalenessProblem(run, currentReviewContent(ctx, run))) {
-            return text("The handoff or its PRD/batch changed after review; restore or explicitly re-author it.", { error: "design-ref-not-ready", scope });
-          }
-        }
-        driftWarning = headDriftWarning(run?.target.repoBaseline?.head, repoHead((ctx as any).cwd || process.cwd()));
+        // The gate above already re-read the artifact and compared hashes, so a
+        // split member needs nothing more here: a drifted document fails the hash
+        // comparison, which is the only claim that matters. A document review also
+        // records a repo baseline, so its HEAD drift is reported as a warning.
+        const documentRun = specReviews.get(handoff.designRef.runId);
+        driftWarning = headDriftWarning(documentRun?.target.repoBaseline?.head, repoHead((ctx as any).cwd || process.cwd()));
       }
 
       // ── dependencies must be approved first ─────────────────────────────

@@ -23,6 +23,14 @@ export interface PersistedState extends RegistrySnapshot {
    * an unreviewed design back into an approvable one.
    */
   specReviews?: any[];
+  /**
+   * Split specification reviews: K chunk reviewers over N handoffs.
+   *
+   * Persisted with the same reasoning as `specReviews`: per-member readiness is a
+   * claim that a named revision was judged by a named reviewer. Dropping it on
+   * restart would turn a fixed-but-unreviewed spec back into a spawnable one.
+   */
+  chunkRuns?: any[];
 }
 
 export function saveRegistrySnapshot(path: string, state: PersistedState): void {

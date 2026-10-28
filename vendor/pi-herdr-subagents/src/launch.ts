@@ -61,7 +61,18 @@ export interface SubagentLaunchParams {
    */
   policy?: "spec-only";
   /** Review-job identity, written into the child's environment when policy is spec-only. */
-  review?: { runId: string; lens: string; targetHash: string; dir: string; roots?: string[] };
+  review?: {
+    runId: string;
+    /** Document review: the lens this child judges. */
+    lens?: string;
+    /** Split review: the chunk this child judges. Exactly one of lens/chunkId. */
+    chunkId?: string;
+    /** Split review: the member scopes this chunk must cover. */
+    members?: string[];
+    targetHash: string;
+    dir: string;
+    roots?: string[];
+  };
   /**
    * Read-only reading role. `research` investigates and `review` judges a result.
    * Exported as `PI_SUBAGENT_PURPOSE` so the child session can enforce its own
@@ -399,7 +410,11 @@ export function buildLaunchPlan(
     ? [
         `export PI_SUBAGENT_REVIEW_POLICY='spec-only'`,
         `export PI_SUBAGENT_REVIEW_RUN=${shellEscape(params.review.runId)}`,
-        `export PI_SUBAGENT_REVIEW_LENS=${shellEscape(params.review.lens)}`,
+        ...(params.review.lens ? [`export PI_SUBAGENT_REVIEW_LENS=${shellEscape(params.review.lens)}`] : []),
+        ...(params.review.chunkId ? [`export PI_SUBAGENT_REVIEW_CHUNK=${shellEscape(params.review.chunkId)}`] : []),
+        ...(params.review.members?.length
+          ? [`export PI_SUBAGENT_REVIEW_MEMBERS=${shellEscape(params.review.members.join(","))}`]
+          : []),
         `export PI_SUBAGENT_REVIEW_TARGET=${shellEscape(params.review.targetHash)}`,
         `export PI_SUBAGENT_REVIEW_DIR=${shellEscape(params.review.dir)}`,
         ...(params.review.roots?.length

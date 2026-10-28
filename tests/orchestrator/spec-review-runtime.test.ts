@@ -188,9 +188,9 @@ test("start pins the design, launches one devil's advocate by default, and leaks
     const started = await h.call("orch_spec_review", { action: "start", targetArtifactId: "retry-design" });
     const details = started.details;
     assert.ok(details.runId, `start must return a run id: ${started.content[0].text}`);
-    // The spec phase is the orchestrator plus ONE devil's advocate. A panel is an
-    // explicit opt-in, not the default that made every spec a review career.
-    assert.deepEqual(details.launched, ["gate"], "the default single preset launches one reviewer");
+    // One reviewer per document, with the merged gate lens. A panel is no longer
+    // a preset: a wave of specs is split across chunk reviewers instead.
+    assert.deepEqual(details.launched, ["gate"], "a document review launches one reviewer");
 
     const scripts = await h.launchScripts();
     assert.equal(scripts.length, 1, "one launch script for the one reviewer");
@@ -216,11 +216,7 @@ test("start pins the design, launches one devil's advocate by default, and leaks
       assert.match(toolsLine, /shell_read/);
     }
 
-    // A panel remains available, explicitly and expensively.
-    const panel = await h.call("orch_spec_review", { action: "start", targetArtifactId: "retry-design", preset: "quick" });
-    assert.deepEqual(panel.details.launched, ["comprehension", "readiness"], "quick stays opt-in");
-
-    // The pinned document itself is quoted into the ticket each reviewer receives.
+    // The pinned document itself is quoted into the ticket the reviewer receives.
     const run = details.runId;
     const dir = join(h.dir, "artifacts", "parent-session", "spec-reviews", run);
     assert.ok(dir.includes("spec-reviews"), "reports live under a run-scoped directory");

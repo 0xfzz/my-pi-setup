@@ -69,14 +69,19 @@ export function planSpecChunks(
     seen.add(scope);
   }
   if (duplicates.size) problems.push(`listed twice: ${[...duplicates].join(", ")}`);
-  if (cleaned.length > MAX_SPEC_UNITS_PER_WAVE) {
+  // Deterministic: the same set always produces the same chunks in the same order,
+  // so a `plan` call is a promise the `start` call can keep. Sorting here (not in
+  // the caller) is what makes a plan shown to the user identical to the wave that
+  // is launched, whatever order the handoffs were listed in.
+  const ordered = [...new Set(cleaned)].sort((a, b) => a.localeCompare(b));
+  if (ordered.length > MAX_SPEC_UNITS_PER_WAVE) {
     problems.push(
-      `at most ${MAX_SPEC_UNITS_PER_WAVE} specs per review wave (got ${cleaned.length}); split the wave or run a second round`,
+      `at most ${MAX_SPEC_UNITS_PER_WAVE} specs per review wave (got ${ordered.length}); split the wave or run a second round`,
     );
   }
   if (problems.length) return { ok: false, problems };
 
-  const minimum = chunkCount(cleaned.length, {
+  const minimum = chunkCount(ordered.length, {
     maxPerChunk: MAX_UNITS_PER_SPEC_REVIEWER,
     maxChunks: MAX_SPEC_REVIEWERS,
   });
@@ -89,7 +94,7 @@ export function planSpecChunks(
       return {
         ok: false,
         problems: [
-          `${cleaned.length} specs need at least ${minimum} reviewer(s) at ${MAX_UNITS_PER_SPEC_REVIEWER} specs each`,
+          `${ordered.length} specs need at least ${minimum} reviewer(s) at ${MAX_UNITS_PER_SPEC_REVIEWER} specs each`,
         ],
       };
     }
@@ -101,7 +106,7 @@ export function planSpecChunks(
 
   // Remainder on the later chunks, so five specs read as 2 + 3 — the same shape
   // the QA phase uses for five units.
-  const chunks = balancedChunks(cleaned, count).map((members, index) => ({
+  const chunks = balancedChunks(ordered, count).map((members, index) => ({
     id: `review-${index + 1}`,
     scopes: members,
   }));
