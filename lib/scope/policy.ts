@@ -31,6 +31,21 @@ export interface EvaluateOptions {
 }
 
 function unknownDecision(claim: UnknownClaim, state: ScopeState): ScopeDecision {
+  // A rule keyed on the tool name is the way out for a tool that declares
+  // nothing: `<tool> * allow` silences it for good, `<tool> * deny` blocks it for
+  // good. Without this the unknown default was a per-call tax with no exit, which
+  // is what made an unconfigured MCP server feel like a broken gate.
+  const matched = resolveRule(state.rules, claim.tool, "*");
+  if (matched) {
+    return {
+      effect: matched.effect,
+      reason: `rule ${matched.rule.action}:${matched.rule.resource} says ${matched.effect}`,
+      resource: "*",
+      external: true,
+      write: true,
+      rule: matched.rule,
+    };
+  }
   return {
     effect: state.defaults.unknown,
     reason: `${claim.tool} does not declare the paths it touches`,

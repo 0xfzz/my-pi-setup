@@ -168,6 +168,9 @@ export function createGate(deps: GateDeps): Gate {
   async function gate(tool: string, input: Record<string, unknown> | undefined): Promise<GateResult | undefined> {
     const claimSet = claimsFor(tool, input);
     if (claimSet.unknown) {
+      // A command the scanner cannot analyse is a parser limit, not a verdict:
+      // name it, and let a rule cover it, instead of letting it read as suspicion.
+      const opaque = claimSet.opaque;
       const decision = evaluateClaim({ tool, unknown: true }, deps.state());
       if (decision.effect === "deny") {
         return { block: true, reason: `Scope: ${claimSet.reason ?? decision.reason}. ${tool} was not run. ${DENY_HINT}` };
@@ -191,10 +194,21 @@ export function createGate(deps: GateDeps): Gate {
         };
         deps.onAsk?.(request);
         const answer = await deps.ask(request).catch(() => undefined);
-        if (answer?.kind === "rule") applyAnswer(answer, { tool, action: tool, absolute: deps.cwd(), resource: "*", write: false, posture: "unknown", external: true, kind: "unknown" });
+        if (answer?.kind === "rule") {
+          applyAnswer(answer, { tool, action: tool, absolute: deps.cwd(), resource: "*", write: false, posture: "unknown", external: true, kind: "unknown" });
+          // A rule that names the tool is the standing grant for "unknown paths".
+          const after = evaluateClaim({ tool, unknown: true }, deps.state());
+          if (after.effect === "allow") return undefined;
+          if (after.effect === "deny") return { block: true, reason: `Scope: ${after.reason}. ${tool} was not run. ${DENY_HINT}` };
+        }
         if (answer?.kind === "unavailable") return { block: true, reason: answer.message };
-        // There is no safe standing grant for "unknown paths": allow once only.
-        return answer?.kind === "once" ? undefined : { block: true, reason: `Scope: ${tool} was not run; it does not declare the paths it touches. ${DENY_HINT}` };
+        if (answer?.kind === "once") return undefined;
+        return {
+          block: true,
+          reason:
+            `Scope: ${tool} was not run; ${opaque ?? "it does not declare the paths it touches"}. ` +
+            `To stop asking, add the rule {"action":"${tool}","resource":"*","effect":"allow"} to .pi/scope.json. ${DENY_HINT}`,
+        };
       });
     }
 

@@ -129,3 +129,10 @@ test("a tool with unmapped inputs follows defaults.unknown, and yolo ro leaves i
     "allow",
   );
 });
+
+test("a rule keyed on the tool silences an unknown tool, permanently", () => {
+  const rules = [{ action: "mcp__fs", resource: "*", effect: "allow" as const, source: "config" as const }];
+  assert.equal(evaluateClaim({ tool: "mcp__fs", unknown: true }, state({ rules })).effect, "allow");
+  assert.equal(evaluateClaim({ tool: "mcp__other", unknown: true }, state({ rules })).effect, "ask", "the rule is per tool");
+  assert.equal(evaluateClaim({ tool: "mcp__fs", unknown: true }, state()).effect, "ask");
+});
