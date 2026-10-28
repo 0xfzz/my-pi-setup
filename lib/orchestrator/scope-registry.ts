@@ -62,6 +62,8 @@ export interface ScopedChild {
   reviewLens?: string;
   targetHash?: string;
   paneId?: string;
+  /** PID of the parent process that spawned this child, for the per-process cap. */
+  parentPid?: number;
   status: "running" | "completed" | "blocked" | "failed" | "closed";
   /** Audit copy of the handoff spec. Orchestrator-side evidence, never handed to the child. */
   specPath?: string;

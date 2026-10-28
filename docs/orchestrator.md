@@ -186,6 +186,14 @@ Three child roles can be bound to a model: `devil-advocate`, `worker`, and `qa-r
 /agent-model --project worker inherit         # write the project file instead of the global one
 ```
 
+`/agent max <n>` is a per-process concurrency ceiling, not a budget. It counts the running children this process spawned — worker, research and planner alike. Five running refuses the sixth spawn; when one completes its slot frees (5 → 4 → one spawn → 5, never 6). Children are tied to the process that registered them, so a second session has its own slots. Default is 5; the range is 1–20.
+
+```text
+/agent max            # effective cap and live count in this process
+/agent max 3          # write the global cap
+/agent max 3 --project  # write the per-repo cap
+```
+
 Each role also has a **system prompt**, resolved per workspace: `.pi/orch-agents/devil-advocate.md`, `worker.md`, `qa-reviewer.md` (the role-id alias `qa-review.md` is accepted), then a global file under the agent dir, then a built-in default. The prompt is passed as a real `--append-system-prompt` file, so pi's own prompt stays and the role brief refines it.
 
 ```text
@@ -232,7 +240,7 @@ is disposable.
 
 The old `subagent*`, `caller_ping` and `parent_*` names are **removed**, not aliased. Everything is `agent_*`; `/subagents on|off|status` is the single switch, and `lib/delegation-tools.ts` is the single capability table. A stale global install that registers a v1 name is stripped from the active set and refused at call time. A v1 child launched before the migration must be finished or closed before reloading: resuming it would call a tool that no longer exists.
 
-**Commands:** `/agent status | list | handoffs | escalations`, `/agent-model`, `/agent-prompts`.
+**Commands:** `/agent status | list | escalations | max [n]`, `/agent-model`, `/agent-prompts`.
 `agent_qa` is a tool, not a command: the parent calls it to fan a wave out to QA.
 
 ### Independent specification review: one reviewer per chunk

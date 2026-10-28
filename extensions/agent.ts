@@ -97,7 +97,7 @@ import {
   type ResolvedRoleModel,
   type RoleBinding,
 } from "../lib/orchestrator/role-models.ts";
-import { MAX_ACTIVE_WORKERS, workerLimitRefusal } from "../lib/orchestrator/qa-groups.ts";
+import { delegateCapRefusal, parseMaxDelegates, resolveMaxDelegates } from "../lib/orchestrator/delegate-cap.ts";
 import { codeMap, codeRead } from "../lib/orchestrator/code-tools.ts";
 import { createExecRunner, runSearch } from "../lib/orchestrator/search-engine.ts";
 import { shellReadCommand } from "../lib/orchestrator/shell-read.ts";
@@ -1162,6 +1162,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       scope,
       sessionFile: running.sessionFile,
       paneId: running.paneId,
+      parentPid: process.pid,
       status: "running",
       laneFiles,
       lastMilestoneFiles: [],
@@ -1401,7 +1402,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
     name: "agent_spawn",
     label: "Spawn Agent",
     description:
-      "Spawn one agent: an ad-hoc worker, a read-only research reader, or a read-only planner that writes a plan artifact. With planId/stepId the worker's lane and criteria come from one plan step. A child sees only its own ticket.",
+      "Spawn one agent: an ad-hoc worker, a read-only research reader, or a read-only planner that writes a plan artifact. With planId/stepId the worker's lane and criteria come from one plan step. A child sees only its own ticket. Spawns are capped per process; /agent max <n> changes the ceiling.",
     parameters: Type.Object({
       name: Type.Optional(
         Type.String({
@@ -1497,16 +1498,17 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       const refusal = spawnRefusal(modeId, purpose);
       if (refusal) return text(refusal, { error: "purpose-refused", mode: modeId, purpose });
 
-      // Breadth caps: a fan-out of panes still costs tokens. Counted before any
-      // row, pane or ticket exists, so a refused spawn leaves no trace.
-      const runningWorkers = registry.getAllChildren()
-        .filter((child) => child.status === "running" && child.purpose !== "research")
+      // Per-process concurrency ceiling: a fan-out of panes still costs tokens.
+      // Counted before any row, pane or ticket exists, so a refused spawn leaves
+      // no trace. Every purpose counts — research and planner children hold panes
+      // too. When a child completes, its slot frees: 5 -> 4 -> one spawn -> 5.
+      const delegateCap = resolveMaxDelegates(loadSubagentSettings(ctx.cwd));
+      const runningDelegates = registry.getAllChildren()
+        .filter((child) => child.status === "running" && child.parentPid === process.pid)
         .map((child) => child.scope);
-      if (purpose !== "research") {
-        const workerCap = workerLimitRefusal(runningWorkers);
-        if (workerCap) {
-          return text(workerCap, { error: "worker-limit", running: runningWorkers, cap: MAX_ACTIVE_WORKERS });
-        }
+      const capRefusal = delegateCapRefusal(runningDelegates, delegateCap);
+      if (capRefusal) {
+        return text(capRefusal, { error: "delegate-limit", running: runningDelegates, cap: delegateCap });
       }
 
       const scope = adhocScope(params);
@@ -2951,11 +2953,14 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
   }
 
   pi.registerCommand("agent", {
-    description: "agent status | list | escalations",
+    description: "agent status | list | escalations | max [n]",
     handler: async (arg, ctx) => {
       const sub = (arg ?? "").trim().split(/\s+/)[0]?.toLowerCase() || "status";
       const running = registry.getRunningChildren();
       const all = registry.getAllChildren();
+      const cwd = (ctx as any).cwd || process.cwd();
+      const delegateCap = resolveMaxDelegates(loadSubagentSettings(cwd));
+      const ownRunning = all.filter((child) => child.status === "running" && child.parentPid === process.pid);
 
       if (sub === "list") {
         ctx.ui.notify(
@@ -2964,6 +2969,26 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
             : "No running subagents.",
           "info",
         );
+        return;
+      }
+      if (sub === "max") {
+        const tokens = (arg ?? "").trim().split(/\s+/).filter(Boolean);
+        const project = tokens.includes("--project");
+        const raw = tokens.slice(1).find((token) => token !== "--project");
+        if (!raw) {
+          ctx.ui.notify(
+            `Max delegates: ${delegateCap}\nRunning in this process: ${ownRunning.length}\nUsage: /agent max <n> [--project]`,
+            "info",
+          );
+          return;
+        }
+        const parsed = parseMaxDelegates(raw);
+        if (!parsed.ok) {
+          ctx.ui.notify(`Not saved: ${parsed.problem}`, "error");
+          return;
+        }
+        saveSubagentSettings({ maxDelegates: parsed.value }, { scope: project ? "project" : "global", cwd });
+        ctx.ui.notify(`Max delegates: ${parsed.value}${project ? " (project)" : " (global)"}`, "info");
         return;
       }
       if (sub === "escalations") {
@@ -2983,11 +3008,12 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
         [
           `Orchestrator`,
           `Running: ${running.length} of ${all.length} tracked`,
+          `Delegates: ${ownRunning.length} running / ${delegateCap} cap (this process)`,
           registry.isPaused()
             ? `Paused: yes — ${registry.getPausedChildren().length} child(ren) await /agent-resume`
             : `Paused: no`,
           `Escalations: ${escalations.forOrchestrator().length} waiting on you, ${escalations.forUser().length} waiting on the user`,
-          `Usage: /agent status | list | escalations`,
+          `Usage: /agent status | list | escalations | max [n]`,
         ].join("\n"),
         "info",
       );

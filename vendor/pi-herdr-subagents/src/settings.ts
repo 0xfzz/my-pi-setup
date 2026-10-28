@@ -14,6 +14,8 @@ export interface SubagentSettings {
   roleModels?: Record<string, unknown>;
   /** Friendly names for awkward provider/model ids, resolved before validation. */
   modelAliases?: Record<string, { provider: string; model: string }>;
+  /** Max children this process may have running at once. Absent = default. */
+  maxDelegates?: number;
 }
 
 export function getSubagentSettingsFile(
