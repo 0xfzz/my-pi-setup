@@ -45,6 +45,20 @@ installed by `simple-git-hooks`). The hook is a ratchet: it only sees files you
 are already touching, so fix their warnings instead of bypassing it. Do not add
 new unused imports, variables, functions or exports.
 
+**Do not force a warning to green.** A warning is a signal to investigate, not a
+quota to clear:
+
+- If the warning is real, fix the cause — use the value, remove the dead code,
+  correct the construct.
+- If it is a false positive or an intentional construct (an ANSI
+  control-character regex, for example), keep the narrowest per-line suppression
+  and say in a comment why it is deliberate.
+- Never rename a binding to `_`, delete behaviour, or add a blanket rule `off`
+  just to make the checker pass. A green run bought that way hides the problem
+  and is worse than the warning.
+- If the right fix needs a decision you cannot make, leave the warning visible
+  and raise it. Silence is not a fix.
+
 ```sh
 npm run lint:smell   # oxlint, whole repo; fails on warnings
 npm run lint:dead    # knip: unused files, exports and dependencies
