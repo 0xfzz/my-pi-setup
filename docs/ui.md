@@ -62,6 +62,29 @@ primitives instead of hand-rolling rows, scrolling or hints.
 - Herdr children: `ask_user` still forwards through `agent_ping`; no user UI is
   opened there.
 
+## Prompt chrome
+
+`extensions/prompt-ui.ts` (implementation in `lib/prompt-ui.ts`) moves the model
+out of the footer and makes context usage readable at a glance:
+
+```text
+◆ deepseek-v4.1-flash · opencode-go · high        ← widget above the editor
+~/project (main) • Session title
+context [███████░░░░░░░░░] 27.5%  275k used · 725k left · 1.0M window
+↑1.5k ↓300 R5.0k W500 CH72.7% $0.150
+MCP: 1 server enabled
+```
+
+- The model badge is the `aboveEditor` widget `prompt-model`; it reads
+  `ctx.model` and `ctx.thinkingLevel` live, so `/model` updates it without a
+  reload.
+- The footer is a custom `ContextFooter`. It reads `ctx.getContextUsage()` every
+  frame (unknown usage renders `?`, not a fake percentage), colors the bar green
+  → amber → red at 70% / 90%, and keeps the cumulative token/cost line plus
+  extension statuses.
+- Parent TUI sessions only; Herdr children and RPC/print keep Pi's default
+  chrome. Removing the extension restores the built-in footer on shutdown.
+
 ## Verification
 
 `tests/ui-shell.test.ts`, `tests/ask-popup.test.ts`, `tests/artifact-viewer.test.ts`

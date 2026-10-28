@@ -1,0 +1,162 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
+import promptUi, {
+  ContextFooter,
+  ModelBadge,
+  collectUsage,
+  contextBar,
+  contextColor,
+  formatCwd,
+  formatTokens,
+} from "../lib/prompt-ui.ts";
+
+const theme = {
+  fg: (_token: string, text: string) => text,
+  bold: (text: string) => text,
+} as any;
+
+const footerData = {
+  getGitBranch: () => "main",
+  getExtensionStatuses: () => new Map([["mcp", "MCP: 1 server enabled"]]),
+  getAvailableProviderCount: () => 1,
+  onBranchChange: () => () => {},
+} as any;
+
+function fakeContext(overrides: Record<string, unknown> = {}) {
+  const entries = [
+    { type: "message", message: { role: "assistant", usage: { input: 1000, output: 200, cacheRead: 4000, cacheWrite: 500, cost: 0.12 } } },
+    { type: "usage", usage: { input: 500, output: 100, cacheRead: 1000, cacheWrite: 0, cost: 0.03 } },
+  ];
+  return {
+    mode: "tui",
+    model: { id: "deepseek-v4.1-flash", provider: "opencode-go", contextWindow: 1_000_000, reasoning: true },
+    thinkingLevel: "high",
+    getContextUsage: () => ({ tokens: 275_000, contextWindow: 1_000_000, percent: 27.5 }),
+    sessionManager: {
+      getCwd: () => "/home/faiz/projects/pi-workflow-extensions",
+      getSessionName: () => "Popup design system",
+      getEntries: () => entries,
+      getLeafId: () => "leaf-1",
+      getSessionFile: () => undefined,
+    },
+    ui: { setWidget() {}, setFooter() {} },
+    ...overrides,
+  } as any;
+}
+
+test("formatTokens matches the footer vocabulary", () => {
+  assert.equal(formatTokens(0), "0");
+  assert.equal(formatTokens(999), "999");
+  assert.equal(formatTokens(1500), "1.5k");
+  assert.equal(formatTokens(15_000), "15k");
+  assert.equal(formatTokens(1_500_000), "1.5M");
+  assert.equal(formatTokens(27_000_000), "27M");
+});
+
+test("contextBar renders an exact-width progress bar", () => {
+  assert.equal(contextBar(50, 10), "█████░░░░░");
+  assert.equal(contextBar(0, 4), "░░░░");
+  assert.equal(contextBar(100, 4), "████");
+  assert.equal(contextBar(null, 4), "░░░░");
+  assert.equal(visibleWidth(contextBar(27.5, 16)), 16);
+});
+
+test("contextColor escalates before the window is exhausted", () => {
+  assert.equal(contextColor(null), "dim");
+  assert.equal(contextColor(27.5), "success");
+  assert.equal(contextColor(75), "warning");
+  assert.equal(contextColor(95), "error");
+});
+
+test("formatCwd collapses the home prefix", () => {
+  assert.equal(formatCwd("/home/faiz/projects/app", "/home/faiz"), "~/projects/app");
+  assert.equal(formatCwd("/home/faiz", "/home/faiz"), "~");
+  assert.equal(formatCwd("/var/tmp", "/home/faiz"), "/var/tmp");
+});
+
+test("collectUsage sums message, usage, and cache hit rate", () => {
+  const totals = collectUsage([
+    { type: "message", message: { role: "assistant", usage: { input: 1000, output: 200, cacheRead: 4000, cacheWrite: 500, cost: 0.12 } } },
+    { type: "usage", usage: { input: 500, output: 100, cacheRead: 1000, cacheWrite: 0, cost: 0.03 } },
+    { type: "compaction", usage: { input: 100, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0.01 } },
+  ]);
+  assert.equal(totals.input, 1600);
+  assert.equal(totals.output, 300);
+  assert.equal(totals.cacheRead, 5000);
+  assert.equal(totals.cacheWrite, 500);
+  assert.equal(totals.cost, 0.16);
+  // Last assistant prompt is 1000 + 4000 + 500 = 5500; cacheRead 4000 = 72.7%.
+  assert.equal(totals.cacheHitRate?.toFixed(1), "72.7");
+});
+
+test("ModelBadge puts the model, provider and thinking level above the editor", () => {
+  const ctx = fakeContext();
+  const badge = new ModelBadge(() => ctx, theme);
+  const line = badge.render(80)[0]!;
+  assert.match(line, /deepseek-v4\.1-flash/);
+  assert.match(line, /opencode-go/);
+  assert.match(line, /high/);
+  assert.ok(visibleWidth(stripTerminalSequences(line)) <= 80);
+  assert.equal(badge.render(12)[0]!.length > 0, true);
+});
+
+test("ContextFooter explains used, left and window with a progress bar", () => {
+  const ctx = fakeContext();
+  const footer = new ContextFooter(() => ctx, theme, footerData);
+  const lines = footer.render(100).map(stripTerminalSequences);
+  const text = lines.join("\n");
+  assert.match(text, /~/);
+  assert.match(text, /\(main\)/);
+  assert.match(text, /Popup design system/);
+  assert.match(text, /context/i);
+  assert.match(text, /27\.5%/);
+  assert.match(text, /275k used/);
+  assert.match(text, /725k left/);
+  assert.match(text, /1\.0M window/);
+  assert.match(text, /█/);
+  assert.match(text, /↑1\.5k/);
+  assert.match(text, /\$0\.150/);
+  assert.match(text, /MCP: 1 server enabled/);
+  for (const line of lines) {
+    assert.ok(visibleWidth(line) <= 100, `line exceeds width: ${line}`);
+  }
+});
+
+test("ContextFooter handles an unknown context and narrow terminals", () => {
+  const ctx = fakeContext({
+    getContextUsage: () => ({ tokens: null, contextWindow: 1_000_000, percent: null }),
+  });
+  const footer = new ContextFooter(() => ctx, theme, footerData);
+  const lines = footer.render(30).map(stripTerminalSequences);
+  assert.match(lines.join("\n"), /\?/);
+  for (const line of lines) assert.ok(visibleWidth(line) <= 30);
+});
+
+test("promptUi installs the model widget above the editor and clears it on shutdown", () => {
+  const handlers = new Map<string, Function>();
+  const pi = { on: (name: string, fn: Function) => handlers.set(name, fn) } as any;
+  promptUi(pi);
+  const calls: Array<{ kind: string; key?: string; placement?: string }> = [];
+  const ctx = fakeContext();
+  ctx.ui = {
+    setWidget(key: string, content: unknown, options: { placement?: string }) {
+      calls.push({ kind: "widget", key, placement: options?.placement });
+    },
+    setFooter(content: unknown) {
+      calls.push({ kind: "footer", key: content === undefined ? "cleared" : "set" });
+    },
+  };
+
+  handlers.get("session_start")!({}, ctx);
+  assert.deepEqual(calls, [
+    { kind: "widget", key: "prompt-model", placement: "aboveEditor" },
+    { kind: "footer", key: "set" },
+  ]);
+
+  handlers.get("session_shutdown")!();
+  assert.deepEqual(calls.slice(-2), [
+    { kind: "widget", key: "prompt-model", placement: undefined },
+    { kind: "footer", key: "cleared" },
+  ]);
+});
