@@ -29,15 +29,6 @@ export const MAX_SPEC_REVIEWERS = 3;
 /** Largest wave one review round may cover; bigger splits are two rounds. */
 export const MAX_SPEC_UNITS_PER_WAVE = MAX_UNITS_PER_SPEC_REVIEWER * MAX_SPEC_REVIEWERS;
 
-/**
- * One review round per wave. A second opinion is the user's call, not a budget
- * the parent can mint by renaming the document — which is exactly what the old
- * `MAX_REVIEW_ROUNDS = 2` loop invited.
- */
-export const MAX_SPEC_REVIEWS_PER_WAVE = 1;
-/** One structural re-review per member, and only for the member that changed. */
-export const MAX_MEMBER_RE_REVIEWS = 1;
-
 export interface SpecChunk {
   /** `review-1` … `review-K`: the reviewer's identity and artifact scope. */
   id: string;
@@ -134,9 +125,6 @@ export interface WaveMember {
   /** Handoff revision bound to `currentHash`. */
   revision: number;
   amendments: MemberAmendment[];
-  reReviewRounds: number;
-  /** Set when a structural fix invalidated the approval for this member only. */
-  needsReReview?: { findingId: string; reason: string };
 }
 
 /** What the member's chunk reviewer reported about it. */
@@ -175,7 +163,7 @@ function gating(finding: ReviewFinding): boolean {
  * per tool call because the gate failed fast on the first is a cost multiplier.
  */
 export function evaluateMemberReadiness(input: {
-  member: Pick<WaveMember, "scope" | "reviewedHash" | "currentHash" | "needsReReview">;
+  member: Pick<WaveMember, "scope" | "reviewedHash" | "currentHash">;
   findings: readonly ReviewFinding[];
   dispositions: Record<string, Disposition>;
   report: MemberReportFacts;
@@ -193,9 +181,6 @@ export function evaluateMemberReadiness(input: {
   }
   if (report.submitted && !report.covered) {
     reasons.push("the reviewer filed no coverage for this member; an unread spec is not a clean one");
-  }
-  if (member.needsReReview) {
-    reasons.push(`the spec changed structurally (${member.needsReReview.reason}); it needs a fresh review`);
   }
 
   for (const finding of input.findings) {
@@ -287,7 +272,7 @@ export function evaluateWave(input: {
   return { phase, members, ready, allReady };
 }
 
-export type SpawnRefusalCode = "not-ready" | "document-changed" | "re-review-exhausted";
+export type SpawnRefusalCode = "not-ready" | "document-changed";
 
 /**
  * Why this member may not be spawned, or `undefined` when it may.
@@ -313,13 +298,6 @@ export function spawnGateProblem(input: {
   }
   if (!readiness.ready) {
     return { code: "not-ready", message: readiness.reasons.join("; ") };
-  }
-  if (member.needsReReview && member.reReviewRounds >= MAX_MEMBER_RE_REVIEWS) {
-    return {
-      code: "re-review-exhausted",
-      message:
-        `this member has already been re-reviewed after a structural change; the decision is the user's`,
-    };
   }
   return undefined;
 }
@@ -364,8 +342,4 @@ export function structuralChanges(before: HandoffContractFields, after: HandoffC
   if (before.reportShape.trim() !== after.reportShape.trim()) changes.push("report shape");
   if ((before.vision ?? "").trim() !== (after.vision ?? "").trim()) changes.push("vision");
   return changes;
-}
-
-export function reReviewExhausted(member: Pick<WaveMember, "reReviewRounds">): boolean {
-  return member.reReviewRounds >= MAX_MEMBER_RE_REVIEWS;
 }

@@ -21,11 +21,7 @@
  */
 import { createHash } from "node:crypto";
 
-import {
-  parseFindingEntry,
-  type ReviewFinding,
-  type Severity,
-} from "./spec-review.ts";
+import { parseFindingEntry, type ReviewFinding } from "./spec-review.ts";
 import type { MemberReportFacts } from "./wave.ts";
 import { renderLintForReviewer, type SpecLintFinding } from "./spec-lint.ts";
 
@@ -219,12 +215,6 @@ export function chunkMemberFacts(report: ChunkReport): Record<string, MemberRepo
 
 export function chunkFindings(report: ChunkReport): ReviewFinding[] {
   return report.members.flatMap((block) => block.findings);
-}
-
-export function chunkCounts(findings: readonly ReviewFinding[]): { blocker: number; major: number; nit: number } {
-  const counts = { blocker: 0, major: 0, nit: 0 };
-  for (const finding of findings) counts[finding.severity as Severity] += 1;
-  return counts;
 }
 
 /** The rubric for a chunk reviewer: the gate rubric plus the cross-member checks. */

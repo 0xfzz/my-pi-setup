@@ -191,6 +191,7 @@ import {
 } from "../lib/orchestrator/report-v2.ts";
 import {
   planSpecChunks,
+  spawnGateProblem,
   structuralChanges,
   type WaveMember,
 } from "../lib/orchestrator/wave.ts";
@@ -1861,9 +1862,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   /**
    * How many non-ready rounds one target may accumulate before the parent decides.
    *
-   * The spec phase is one devil's advocate plus one re-review of a fixed blocker.
-   * A third round is not a third opinion; it is a disagreement the orchestrator
-   * owns. `MAX_SESSION_REVIEW_ROUNDS` bounds the whole session so renaming the
+   * A document review is one reviewer plus at most one re-review of a fixed
+   * blocker. A third round is not a third opinion; it is a disagreement the
+   * orchestrator owns. `MAX_SESSION_REVIEW_ROUNDS` bounds the whole session so renaming the
    * document (and therefore the target ref) cannot mint a fresh budget.
    */
   const MAX_REVIEW_ROUNDS = 2;
@@ -2308,17 +2309,16 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       const member = memberFor(chunkRun, ref!.memberId);
       if (!member) return `design review ${ref!.runId} has no member ${ref!.memberId}`;
       if (chunkRun.status === "cancelled") return "the review run was cancelled";
-      const evaluation = evaluateChunkRun(chunkRun);
-      const readiness = evaluation.members.find((entry) => entry.scope === ref!.memberId);
-      if (!readiness?.ready) {
-        return `design review ${ref!.runId} is not ready for ${ref!.memberId}: ${readiness?.reasons.join("; ") || "no reason recorded"}`;
-      }
       if (member.currentHash !== ref!.targetHash) {
         return `design review ${ref!.runId} covered ${member.currentHash.slice(0, 12)}, not ${ref!.targetHash.slice(0, 12)}`;
       }
+      const readiness = evaluateChunkRun(chunkRun).members.find((entry) => entry.scope === ref!.memberId);
+      if (!readiness) return `design review ${ref!.runId} has no readiness for ${ref!.memberId}`;
       const current = readArtifactForReview(ctx, member.artifactId)?.content ?? null;
       if (current === null) return "the pinned target could not be read back, so its content cannot be confirmed";
-      return hashContent(current) === member.currentHash ? undefined : "the document changed since it was reviewed";
+      // One implementation of "may this member be spawned?", shared with the tests.
+      const problem = spawnGateProblem({ member, readiness, currentHash: hashContent(current) });
+      return problem ? `design review ${ref!.runId}: ${problem.message}` : undefined;
     }
     const run = ref ? specReviews.get(ref.runId) : undefined;
     return designRefProblem(ref, (id) => specReviews.get(id), run ? currentReviewContent(ctx, run) : null);
@@ -2453,7 +2453,6 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       currentHash: memberHashes[record.scope]!,
       revision: record.revision,
       amendments: [],
-      reReviewRounds: 0,
     }));
     const run = openChunkRun({ id: runId, chunks: plan.chunks, members, prd, now: new Date(now()) });
     run.chunks = run.chunks.map((slot) => ({
@@ -2739,7 +2738,6 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       afterHash: hashContent(afterContent),
       rationale: rationale || `Resolved ${findingId} with an orchestrator edit`,
       revision: nextRecord.revision,
-      structural: [],
       now: new Date(now()),
     });
     if (!result.ok) return text(result.problems.join("\n"), { error: "fix-record-failed" });
@@ -2961,9 +2959,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         // 1. A round must consume the previous round's findings. Re-reviewing
         //    revised text while abandoning the old run loses the decision the
         //    reviewer asked for and is how the spec phase became a career.
-        // 2. The spec phase is one devil's advocate plus one re-review; past
-        //    that, the disagreement is the orchestrator's (or the user's), not
-        //    another reviewer's.
+        // 2. A document is reviewed once and re-reviewed at most once for a fixed
+        //    blocker; past that, the disagreement is the orchestrator's (or the
+        //    user's), not another reviewer's.
         // Approval is never re-earned by re-reading text a reviewer already
         // approved. Only a READY identical run is reused: an unready one still
         // has findings the parent owns, and those gates must answer instead.

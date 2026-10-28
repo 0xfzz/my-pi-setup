@@ -8,7 +8,6 @@ import {
   evaluateMemberReadiness,
   evaluateWave,
   planSpecChunks,
-  reReviewExhausted,
   spawnGateProblem,
   structuralChanges,
   type HandoffContractFields,
@@ -27,7 +26,6 @@ const member = (overrides: Partial<WaveMember> = {}): WaveMember => ({
   currentHash: "a".repeat(64),
   revision: 1,
   amendments: [],
-  reReviewRounds: 0,
   ...overrides,
 });
 
@@ -220,17 +218,6 @@ test("a fix only settles when the amendment's afterHash is the content now", () 
   assert.equal(contested.ready, false, "a disagreement the orchestrator owns is not ready; the user decides");
 });
 
-test("a structural change sends the member back to review, and only that member", () => {
-  const gate = evaluateMemberReadiness({
-    member: member({ needsReReview: { findingId: "F-1", reason: "lane files" } }),
-    findings: [],
-    dispositions: {},
-    report: cleanReport,
-  });
-  assert.equal(gate.ready, false);
-  assert.match(gate.reasons.join("; "), /changed structurally/);
-});
-
 test("structuralChanges names the contract fields and ignores prose", () => {
   const before: HandoffContractFields = {
     scope: "alpha",
@@ -258,7 +245,7 @@ test("structuralChanges names the contract fields and ignores prose", () => {
   assert.deepEqual(structuralChanges(before, { ...before, laneFiles: ["src/a.ts"] }), []);
 });
 
-test("the spawn gate refuses unready members, drifted documents, and exhausted re-reviews", () => {
+test("the spawn gate refuses unready members and drifted documents", () => {
   const ready = evaluateMemberReadiness({ member: member(), findings: [], dispositions: {}, report: cleanReport });
   assert.equal(spawnGateProblem({ member: member(), readiness: ready, currentHash: "a".repeat(64) }), undefined);
 
@@ -274,11 +261,6 @@ test("the spawn gate refuses unready members, drifted documents, and exhausted r
   const refused = spawnGateProblem({ member: member(), readiness: unready, currentHash: "a".repeat(64) });
   assert.equal(refused?.code, "not-ready");
   assert.match(refused!.message, /F-review-1-1/);
-});
-
-test("a re-review budget is per member and does not gate a clean sibling", () => {
-  assert.equal(reReviewExhausted({ reReviewRounds: 0 }), false);
-  assert.equal(reReviewExhausted({ reReviewRounds: 1 }), true);
 });
 
 test("the wave phase is derived: one ready member is already spawnable", () => {

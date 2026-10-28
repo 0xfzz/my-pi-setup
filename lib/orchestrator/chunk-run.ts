@@ -16,9 +16,8 @@
 import { createHash } from "node:crypto";
 
 import { hashContent, type Disposition, type ReviewFinding } from "./spec-review.ts";
-import { chunkContentHash, chunkMemberFacts, parseChunkReport, type ChunkMemberPin, type ChunkReport } from "./report-v2.ts";
+import { chunkMemberFacts, parseChunkReport, type ChunkReport } from "./report-v2.ts";
 import {
-  MAX_MEMBER_RE_REVIEWS,
   evaluateWave,
   planSpecChunks,
   type MemberReportFacts,
@@ -27,7 +26,7 @@ import {
   type WaveMember,
 } from "./wave.ts";
 
-export const CHUNK_RUN_KIND = "split" as const;
+const CHUNK_RUN_KIND = "split" as const;
 
 export interface ChunkSlot {
   /** `review-1` … `review-K`. Also the reviewer's artifact scope. */
@@ -66,16 +65,6 @@ export function chunkRunId(input: { scopes: readonly string[]; memberHashes: Rec
   return `cr-${createHash("sha256").update(`${body}\n${input.salt ?? ""}`, "utf8").digest("hex").slice(0, 10)}`;
 }
 
-/** Hash of one member's pinned content: what a report and a designRef bind to. */
-export function memberContentHash(content: string): string {
-  return hashContent(content);
-}
-
-/** Hash over the whole chunk, matching `chunkContentHash` on the reviewer's side. */
-export function slotTargetHash(pins: readonly ChunkMemberPin[]): string {
-  return chunkContentHash(pins);
-}
-
 export function openChunkRun(input: {
   id: string;
   chunks: readonly SpecChunk[];
@@ -107,7 +96,7 @@ export function openChunkRun(input: {
   };
 }
 
-export function slotFor(run: ChunkRun, chunkId: string): ChunkSlot | undefined {
+function slotFor(run: ChunkRun, chunkId: string): ChunkSlot | undefined {
   return run.chunks.find((slot) => slot.chunkId === chunkId);
 }
 
@@ -199,10 +188,10 @@ export function evaluateChunkRun(run: ChunkRun): ChunkRunEvaluation {
 /**
  * Record the orchestrator's own fix of one member.
  *
- * `structural` is decided by the caller from the parsed document (see
- * `structuralChanges`). A prose fix keeps the approval and binds `afterHash`; a
- * structural fix records the amendment but marks the member as needing a fresh
- * review, for that member only.
+ * A fix is prose: `structuralChanges` has already refused anything that would
+ * move the contract (lane, criteria, interfaces, report shape, vision), so this
+ * keeps the approval and binds `afterHash`. A structural change is a different
+ * spec: it is re-authored and reviewed as a new member run, never patched here.
  */
 export function recordMemberFix(
   run: ChunkRun,
@@ -213,7 +202,6 @@ export function recordMemberFix(
     afterHash: string;
     rationale: string;
     revision: number;
-    structural: string[];
     now?: Date;
   },
 ): { ok: true; run: ChunkRun } | { ok: false; run: ChunkRun; problems: string[] } {
@@ -225,7 +213,6 @@ export function recordMemberFix(
   if (finding.memberId !== input.memberId) {
     return { ok: false, run, problems: [`finding ${input.findingId} belongs to ${finding.memberId ?? "no member"}, not ${input.memberId}`] };
   }
-  const structural = input.structural.length > 0;
   const next: ChunkRun = {
     ...run,
     updatedAt: now,
@@ -256,41 +243,11 @@ export function recordMemberFix(
                 at: now,
               },
             ],
-            ...(structural ? { needsReReview: { findingId: input.findingId, reason: input.structural.join(", ") } } : {}),
           }
         : entry,
     ),
   };
   return { ok: true, run: next };
-}
-
-/**
- * A fresh review round covering one member, after a structural change.
- *
- * Clears `needsReReview`, bumps that member's own re-review count, and rebinds the
- * reviewed hash. Only the affected member is re-reviewed; siblings keep theirs.
- */
-export function recordMemberReReview(
-  run: ChunkRun,
-  input: { memberId: string; reviewedHash: string; chunkId: string; now?: Date },
-): ChunkRun {
-  const now = (input.now ?? new Date()).toISOString();
-  return {
-    ...run,
-    updatedAt: now,
-    members: run.members.map((member) =>
-      member.scope === input.memberId
-        ? {
-            ...member,
-            reviewedHash: input.reviewedHash,
-            currentHash: input.reviewedHash,
-            chunkId: input.chunkId,
-            reReviewRounds: Math.min(MAX_MEMBER_RE_REVIEWS, member.reReviewRounds + 1),
-            needsReReview: undefined,
-          }
-        : member,
-    ),
-  };
 }
 
 export function markStatus(run: ChunkRun, status: ChunkRun["status"], now = new Date()): ChunkRun {

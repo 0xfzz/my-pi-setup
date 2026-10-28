@@ -387,7 +387,7 @@ export const EXPECTED_SUPERVISOR_TOOLS: ReadonlySet<string> = new Set([
  */
 export const SUPERVISOR_MODE_GUIDANCE = `You are the orchestrator as product manager: author the spec, delegate, then judge results. You do not implement.
 
-- Spec: one devil's advocate, once. orch_spec_review (single) -> resolve findings (fix/accept/contest) -> re-author with designRef.
+- Spec: PRD, one handoff per unit, then one reviewer per chunk: orch_spec_review plan -> start -> collect -> fix/accept; spawn each READY member with designRef.
 - Execute: orch_handoff per unit (goal, testable criteria, lane it owns; no whole-repo lane, no shared scope) -> orch_spawn in parallel lanes. The spec is frozen; never re-review it.
 - QA: per completed worker spawn one QA child (purpose "review", qaFor "<scope>"). Defect ping -> todo_plan ticket (resource file:<file>), claim it, spawn a fix, resume the QA; pass -> todo_act done with evidence, fail -> todo_act failed (twice -> ask_user).
 
