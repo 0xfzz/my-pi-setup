@@ -9,13 +9,16 @@ Mode: **Orchestrator** (`/mode orchestrator`). The supervisor decomposes a large
 The orchestrator is a product manager, not a reviewer career. Three phases, then it
 waits:
 
-1. **Spec — orchestrator + one devil's advocate, once.** Investigate with at most one
-   research child. Author the spec as a workspace artifact. Run `orch_spec_review`
-   once (the `single` preset: one merged `gate` lens); `quick` and `architecture` are
-   explicit, expensive opt-ins. Resolve every finding (fix / accept with rationale /
-   contest), re-author the handoff with `designRef`, and move on. A round must dispose
-   of the previous round's findings; at most two non-ready rounds per target and three
-   per session, cancelled rounds included. Past that the decision is the user's.
+1. **Spec — author the wave, review it in chunks, fix what is real.** Investigate
+   with at most one research child, author the PRD and one `orch_handoff` per work
+   unit, then `orch_spec_review({ action: "plan" })` to see the split before paying
+   for reviewers (five specs become 2 + 3). `start` launches **one reviewer per
+   chunk** — three specs each, at most three reviewers — and each reviewer's ticket
+   contains only its own chunk. `collect`, then resolve every finding: `fix` applies
+   the parent's own edit and keeps the approval, `accepted`/`contested` record a
+   decision the parent owns. A structural edit (lane, criteria, interfaces, report
+   shape, vision) is refused and needs re-authoring plus a review of that member
+   only. One review round per wave; a second opinion is the user's call.
 2. **Execute — workers in parallel lanes.** One `orch_handoff` per work unit, then
    `orch_spawn`. The spec is frozen here; it is never re-reviewed.
 3. **QA — parallel result review with immediate defect routing.** On each worker
@@ -82,16 +85,20 @@ revision, so an approval cannot transfer to text nobody read:
 
 ```mermaid
 flowchart LR
-    start["orch_spec_review start"] --> pin["pin by content hash<br/>+ machine lint"]
-    pin --> lenses["one isolated reviewer per lens<br/>default single: gate<br/>quick: comprehension + readiness<br/>architecture: + critic + zoom-out"]
-    lenses --> collect["collect<br/>reports bound to lens and revision"]
-    collect --> resolve{"resolve dispositions"}
-    resolve -->|"blocker open · fix applied · missing context"| start
-    resolve -->|"ready"| ref["designRef: runId + targetHash"]
-    ref --> handoff["orch_handoff carries designRef"]
-    handoff --> spawn["orch_spawn re-reads the content"]
-    spawn -->|"drifted or not ready"| refused(["refused"])
+    plan["plan<br/>5 specs → 2 + 3<br/>no pane opened"] --> pin["pin each member by content hash<br/>+ machine lint"]
+    pin --> chunks["one isolated reviewer per CHUNK<br/>≤ 3 specs · ≤ 3 reviewers"]
+    chunks --> collect["collect<br/>a v2 report with a block per member"]
+    collect --> fix{"per member"}
+    fix -->|"unresolved blocker/major"| edit["fix: the parent edits the spec<br/>beforeHash → afterHash"]
+    edit -->|"prose only"| ready
+    edit -->|"lane · criteria · interfaces"| reauthor["refused: re-author,<br/>re-review that member"]
+    fix -->|"acceptable trade-off"| accept["accepted (+ user for a blocker)<br/>or contested → the user decides"]
+    collect -->|"ready"| ready["designRef: runId + memberId + hash"]
+    ready --> handoff["orch_handoff carries designRef"]
+    handoff --> spawn["orch_spawn re-reads the artifact"]
+    spawn -->|"hash drifted or member not ready"| refused(["refused"])
     spawn -->|"matches"| worker(["worker starts"])
+    reauthor --> chunks
 ```
 
 **Child lifecycle** — these are the statuses the registry persists, so a restart reconciles
@@ -167,7 +174,7 @@ Each role also has a **system prompt**, resolved per workspace: `.pi/orch-agents
 /orch-prompts init --force    # regenerate them
 ```
 
-An empty file falls through instead of silencing the role. Worker prompts apply to `spec`, `implementation` and `adhoc` children, `qa-reviewer.md` to QA reviewers, and `devil-advocate.md` to every lens of a spec review; research readers are unchanged.
+An empty file falls through instead of silencing the role. Worker prompts apply to `spec`, `implementation` and `adhoc` children, `qa-reviewer.md` to QA reviewers, and `devil-advocate.md` to every specification reviewer; research readers are unchanged.
 
 Candidates come from the live model registry, so a provider added in pi appears with no code change. Bindings persist in `subagents.json` as `{ provider, model }` (project wins over global) and are read tolerantly: one malformed role never discards the rest. Precedence is explicit `model` argument → role binding → agent profile → global default; `inherit` passes no `--model` at all. A binding whose model vanished from the registry falls back to the next pool member, then to inherit, and every spawn/review result names the model and why it was chosen. Worker bindings cover `spec`, `implementation` and `adhoc` children; `research` readers keep the default and stay cheap.
 
@@ -181,7 +188,7 @@ writer. The tool surface is deliberately narrow on the write side and wide on th
 | Web | `web_research`, `web_fetch`, `web_read` | every source carries `url`, `fetchedAt`, `sha256`, excerpt; content is untrusted data |
 | Codebase | `code_map`, `code_search`, `code_read`, `read/grep/find/ls`, `ffgrep/fffind` | path-scoped; control-plane state stays denied |
 | History | `shell_read` | closed grammar (`git status/log/diff/show`, `rg`, `find`, `cat`, `wc`); no redirection, heredoc, `$()`, or unknown commands |
-| Evidence | `artifact_save/edit/recall` | scoped to `review:<runId>:<lens>` or `orch-research:<scope>`; `artifact_search/list` stay denied for reviewers |
+| Evidence | `artifact_save/edit/recall` | scoped to `review:<runId>:<chunkId>` or `orch-research:<scope>`; `artifact_search/list` stay denied for reviewers |
 
 Search is engine-backed, never a JavaScript directory walk: `rg --json` → `git grep` → `grep -r`,
 spawned with an argv array at most two at a time, with a 10 s timeout that returns partial results.
@@ -208,27 +215,76 @@ The old `subagent*`, `caller_ping` and `parent_*` names are **removed**, not ali
 **Commands:** `/orch status | list | handoffs | escalations`, `/orch-model`, `/orch-prompts`.
 `orch_qa` is a tool, not a command: the parent calls it to fan a wave out to QA.
 
-### Independent specification review (opt-in)
+### Independent specification review: one reviewer per chunk
 
-Reviewing only the finished diff catches problems after they are expensive. `orch_spec_review` puts an independent, **read-only** review in front of implementation:
+Reviewing only the finished diff catches problems after they are expensive. In front
+of implementation, a wave of work-unit specs is reviewed **in chunks**, because a
+reviewer who is handed everything reads one spec and skims the rest:
 
 ```text
-orch_spec_review({ action: "start", targetArtifactId: "retry-design" })
-  → pins the document by content hash, launches one isolated reviewer per lens
+orch_spec_review({ action: "plan", handoffIds: [a, b, c, d, e] })
+  → review-1 judges a, b · review-2 judges c, d, e   (nothing launched)
+
+orch_spec_review({ action: "start", handoffIds: [a, b, c, d, e], prdArtifactId: "prd" })
+  → pins each member by content hash, launches TWO isolated reviewers, one per chunk
+
 orch_spec_review({ action: "collect", runId })
-  → reads their reports; every finding is bound to its lens and revision
+  → reads one version-2 report per chunk; every member needs a block and coverage
+
+orch_spec_review({ action: "fix", runId, findingId, memberId, patch, rationale })
+  → applies the orchestrator's own edit, records beforeHash → afterHash, keeps the approval
+
 orch_spec_review({ action: "resolve", runId, dispositions: [...] })
-  → records how each finding was handled; readiness settles only when no blocker is open
+  → records accepted/contested; a blocker needs the user's confirmation
 ```
 
-Presets: `quick` (comprehension + readiness) and `architecture` (zoom-out, comprehension, critic, readiness). A reviewer gets a snapshot quoted into its ticket, `read`, named-path search, the todo tools, and `orch_spec_review_submit`, plus the read-only research surface: `code_map`/`code_search`/`code_read`, `web_read`/`web_research`/`web_fetch`, and `shell_read` (the closed grammar). It may write **evidence artifacts** scoped to `review:<runId>:<lens>` (`artifact_save/edit/recall`) — never a user artifact, never the work tree. It has **no** write/edit/patch, **no** general shell, **no** artifact discovery (`artifact_search`/`artifact_list`), **no** parent transcript pointer, and it is forced to `standalone` so an agent profile cannot widen its context. Broad search without a path and control-plane reads are refused; checkpoint and parent-brief injection are suppressed. That is enforced by the launcher and the parent's `tool_call` guard, not by prompt text. Review-ready is not human approval: the user still authorizes implementation. See [the role contract](#role-contract).
+The split is the shared wave chunker: at most **3 specs per reviewer**, at most **3
+reviewers**, balanced with the remainder on the later chunk (5 → 2 + 3). Scopes are
+sorted first, so the split a `plan` prints is the split `start` launches.
 
-Bind the result to the work unit with `designRef`, and the gate refuses a stale approval at both ends:
+A reviewer gets only its own chunk's pinned text, `read`, named-path search, the todo
+tools, and `orch_spec_review_submit`, plus the read-only research surface:
+`code_map`/`code_search`/`code_read`, `web_read`/`web_research`/`web_fetch`, and
+`shell_read` (the closed grammar). It may write **evidence artifacts** scoped to
+`review:<runId>:<chunkId>` (`artifact_save/edit/recall`) — never a user artifact,
+never the work tree. It has **no** write/edit/patch, **no** general shell, **no**
+artifact discovery (`artifact_search`/`artifact_list`), **no** parent transcript
+pointer, and it is forced to `standalone` so an agent profile cannot widen its
+context. Broad search without a path and control-plane reads are refused; checkpoint
+and parent-brief injection are suppressed. That is enforced by the launcher and the
+parent's `tool_call` guard, not by prompt text.
+
+**A version-2 report is judged per member.** Every pinned member must appear exactly
+once; a member with no findings must state `coverage[]`; a finding lives inside its
+own member's block. A reviewer that skips a spec produces an *incomplete* chunk, not
+a clean one — the same anti-rubber-stamp rule as before, now with a unit the reviewer
+cannot satisfy by reading a third of its assignment.
+
+**Readiness is per member.** One spec can go to a worker while its sibling is still
+being fixed. A member is ready when its chunk report covers it, every blocker and
+major finding has a settling disposition, and a `fix` has an applied `afterHash` that
+matches the spec now. Nits never gate.
+
+**A prose fix keeps the approval.** `action: "fix"` edits the worker-facing handoff
+document through the same authoring path (`revision++`, republished artifact) and
+records the amendment. `lane`, `acceptance criteria`, `interfaces`, `report shape`
+and `vision` may not change: those are the contract the review bound, so the edit is
+refused (`structural-change-needs-reauthor`) and the member must be re-authored and
+re-reviewed — that member only, not the wave. Two rounds are never spent on one
+member's prose, which is what the old `requiresReReview` rule did.
+
+Bind the result to the work unit with `designRef`, and the gate refuses a stale
+approval at both ends:
 
 ```text
-orch_handoff({ scope, …, designRef: { runId, targetHash } })   // refuses an unready or amended design
-orch_spawn({ handoffId, … })                                    // re-reads the content and refuses drift
+orch_handoff({ scope, …, designRef: { runId, memberId, targetHash } })  // refuses an unready member
+orch_spawn({ handoffId, … })                                            // re-reads the artifact, refuses drift
 ```
+
+A document review is still available and unchanged in shape: point `start` at
+`targetArtifactId` or `targetFile` instead of `handoffIds`, and one reviewer judges
+that document with the merged gate rubric. There are no lens presets: a design that
+needs several opinions is a design that should have been split into specs.
 
 **Check receipts.** `orch_check` now returns a `checkRunId`. `orch_review({ …, checkRunId })` refuses a verdict when the receipt is missing, belongs to another scope, was taken against different acceptance criteria, or was taken against a different tree. Without a receipt, `cmd`/`test` evidence is still accepted as *attested* (shape-verified) — the difference is now visible in the audit trail instead of being indistinguishable from a real run.
 
@@ -253,24 +309,30 @@ channel — not a persona name.
 
 These are three different facts:
 
-- **Review-ready**: every launched lens filed a complete report and no blocker or
-  missing-context finding remains open.
+- **Review-ready**: every chunk reviewer filed a complete report, each member in
+  its chunk has coverage, and no blocker or missing-context finding is open. It is
+  per member: one spec can be ready while its sibling is still being revised.
 - **Human-approved**: the user authorized implementation. Review readiness is
   never consent; a cancelled dialog is not consent either.
 - **Implemented**: a worker changed its lane and verification passed.
 
-A revised spec needs a fresh review. Approving a stale snapshot is refused at
-both the authoring and spawn ends.
+An edit after approval invalidates it, because the member's content hash moves. A
+prose fix moves the hash too — deliberately — and re-binds `designRef` to the revised
+revision with a recorded `beforeHash → afterHash`; that is what lets a fix become a
+worker without a second reviewer. A structural edit is not a fix: it is re-authored
+and re-reviewed.
 
 ## Supported subset
 
-Ported: pinned artifact/file review, the four review lenses, direct reviewer
-dispatch, findings and dispositions, stale-review detection, `designRef`
-admission, and read/write separation between roles.
+Ported: pinned artifact/file review, chunked spec review with one reviewer per
+chunk, direct reviewer dispatch, findings and dispositions, stale-review detection,
+`designRef` admission, and read/write separation between roles.
 
 Not ported: upstream skills/commands, the staged scheduler and review UI,
-bootstrap/drift machinery, and every upstream persona. The four lenses are
-implemented here as rubrics plus prompts; adding a lens is not a framework port.
+bootstrap/drift machinery, and every upstream persona. The former lens panel
+(`gate`, `comprehension`, `readiness`, `zoom-out`, `critic`) survives as the single
+merged gate rubric a chunk reviewer applies, plus the cross-member checks: a second
+opinion is a chunk split, not a second reader of the same text.
 
 Reviewer context is the ticket's pinned text, explicitly named references, and
 the read-only research surface (`code_map`/`code_search`/`code_read`,
@@ -296,7 +358,7 @@ All audit targets below are implemented and covered by regression tests:
   pointer, no checkpoint injection, no broad search, no control-plane reads.
 - Research tools are path-scoped and engine-backed; a search never walks the
   tree in JavaScript, and a timed-out engine returns partials with a warning.
-- Reviewer writes are artifact-only and scope-checked (`review:<runId>:<lens>`);
+- Reviewer writes are artifact-only and scope-checked (`review:<runId>:<chunkId>`);
   the work tree has no writer, and foreign/unknown artifact ids are refused
   identically.
 
