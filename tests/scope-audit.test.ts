@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatAudit, ScopeLog } from "../lib/scope/audit.ts";
+import { formatAudit, formatStats, ScopeLog } from "../lib/scope/audit.ts";
 
 test("the log keeps the newest entries and drops the oldest", () => {
   const log = new ScopeLog(3);
@@ -35,4 +35,18 @@ test("formatAudit shows the newest entries last and counts what it hides", () =>
 
 test("an empty log says so instead of rendering nothing", () => {
   assert.deepEqual(formatAudit([]), ["Scope log: nothing recorded yet"]);
+});
+
+test("stats group the audit by tool and by the paths that were asked about most", () => {
+  const log = new ScopeLog();
+  log.add({ tool: "bash", path: "/srv/data", write: true, outcome: "ask" });
+  log.add({ tool: "bash", path: "/srv/data", write: true, outcome: "ask" });
+  log.add({ tool: "read", path: "/srv/data", write: false, outcome: "ask" });
+  log.add({ tool: "write", path: "/work/a.ts", write: true, outcome: "allowed" });
+  log.add({ tool: "bash", path: "/etc/passwd", write: true, outcome: "deny" });
+  const lines = formatStats(log.list()).join("\n");
+  assert.match(lines, /5 decisions — 3 asked, 1 denied, 1 automatic, 4 writes/);
+  assert.match(lines, /bash {2,}3 {2,}2 {2,}1/);
+  assert.match(lines, /most-asked paths/);
+  assert.match(lines, /3 {2}\/srv\/data/);
 });
