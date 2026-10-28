@@ -11,14 +11,29 @@
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { popupOverlayOptions } from "../lib/popup.ts";
-import { createGate, type AskAnswer, type AskRequest } from "../lib/scope/gate.ts";
+import { formatAudit, ScopeLog } from "../lib/scope/audit.ts";
 import {
+  decisionLine,
+  parseScopeCommand,
+  ruleLines,
+  scopeCompletions,
+  statusLines,
+  usage,
+} from "../lib/scope/command.ts";
+import { createGate, type AskAnswer, type AskRequest } from "../lib/scope/gate.ts";
+import { classifyPath } from "../lib/scope/paths.ts";
+import { evaluateClaim } from "../lib/scope/policy.ts";
+import {
+  globalScopeFile,
   initialScopeState,
   loadScopeConfig,
+  projectScopeFile,
   scopeRecordFromBranch,
   scopeSnapshot,
+  writeScopeRoot,
+  writeScopeRule,
 } from "../lib/scope/state.ts";
-import { SCOPE_RECORD_TYPE, type ScopeState } from "../lib/scope/types.ts";
+import { SCOPE_RECORD_TYPE, type PathClaim, type ScopeRoot, type ScopeState } from "../lib/scope/types.ts";
 import { ScopeAskPopup } from "../lib/ui/scope-ask.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar-channel.ts";
 
@@ -26,11 +41,12 @@ export default function scopeExtension(pi: ExtensionAPI) {
   let state: ScopeState = initialScopeState(process.cwd());
   let cwd = process.cwd();
   let context: ExtensionContext | undefined;
-  let problems: string[] = [];
   let config = loadScopeConfig(cwd);
+  const log = new ScopeLog();
   let draw: (() => void) | undefined;
 
   const refresh = () => pi.events?.emit(REFRESH_EVENT, {});
+  const persist = () => pi.appendEntry?.(SCOPE_RECORD_TYPE, scopeSnapshot(state));
 
   const gate = createGate({
     cwd: () => cwd,
@@ -43,22 +59,38 @@ export default function scopeExtension(pi: ExtensionAPI) {
     ask: request => askUser(request),
     annotationsFor: tool => pi.getAllTools?.().find(candidate => candidate.name === tool)?.annotations,
     mcpPathFields: () => config.mcpPathFields,
-    onGrant: () => {
-      // A full snapshot, not a delta: replaying it (resume, fork) is idempotent.
-      pi.appendEntry?.(SCOPE_RECORD_TYPE, scopeSnapshot(state));
+    onGrant: persist,
+    onAsk: request => {
+      log.add({ tool: request.tool, path: request.display, write: request.write, outcome: "ask" });
+      draw?.();
+    },
+    onAutoApprove: (decision, claim) => {
+      log.add({
+        tool: claim?.tool ?? "unknown",
+        path: claim?.absolute ?? "(undeclared paths)",
+        write: claim?.write ?? true,
+        outcome: "auto",
+        detail: `yolo ${state.yolo?.strength ?? "ro"}`,
+      });
+      void decision;
+      refresh();
     },
   });
 
   function reload(ctx: ExtensionContext) {
     context = ctx;
     cwd = ctx.sessionManager?.getCwd?.() ?? process.cwd();
-    const records = scopeRecordFromBranch(ctx.sessionManager?.getBranch?.());
-    const loaded = loadScopeConfig(cwd, records);
+    const loaded = loadScopeConfig(cwd, scopeRecordFromBranch(ctx.sessionManager?.getBranch?.()));
     config = loaded;
     state = loaded.state;
-    problems = loaded.problems;
     draw?.();
-    for (const problem of problems) ctx.ui.notify(`Scope config: ${problem}`, "warning");
+    for (const problem of loaded.problems) ctx.ui.notify(`Scope config: ${problem}`, "warning");
+    if (state.yolo) {
+      ctx.ui.notify(
+        `Scope: yolo ${state.yolo.strength} is armed from this branch — outside paths are approved without asking. /scope yolo off disarms.`,
+        "warning",
+      );
+    }
   }
 
   /**
@@ -103,6 +135,142 @@ export default function scopeExtension(pi: ExtensionAPI) {
     };
   }
 
+  // ---- /scope -----------------------------------------------------------------
+
+  function configFileFor(target: "project" | "global"): string {
+    return target === "global" ? globalScopeFile() : projectScopeFile(cwd);
+  }
+
+  function addRoot(path: string, access: "ro" | "rw", source: ScopeRoot["source"]) {
+    const classified = classifyPath(cwd, state.roots, path);
+    const root: ScopeRoot = { path: classified.absolute, access, source };
+    const roots = state.roots.filter(existing => existing.path !== root.path);
+    state = { ...state, roots: [...roots, root] };
+    persist();
+    draw?.();
+    refresh();
+    return root;
+  }
+
+  function handleScope(args: string, ctx: ExtensionContext) {
+    const action = parseScopeCommand(args);
+    switch (action.kind) {
+      case "status":
+        ctx.ui.notify(statusLines(state, cwd, config.sources).join("\n"), "info");
+        return;
+      case "rules":
+        ctx.ui.notify(ruleLines(state).join("\n"), "info");
+        return;
+      case "log":
+        ctx.ui.notify(formatAudit(log.list(), action.limit).join("\n"), "info");
+        return;
+      case "allow": {
+        if (action.target === "session") {
+          const root = addRoot(action.path, action.access, "session");
+          ctx.ui.notify(`Scope: ${root.path} is ${action.access === "ro" ? "read-only" : "read-write"} for this session.`, "info");
+          return;
+        }
+        const file = configFileFor(action.target);
+        writeScopeRoot(file, cwd, action.path, action.access);
+        reload(ctx);
+        ctx.ui.notify(`Scope: added ${action.path} (${action.access}) to ${file}.`, "info");
+        return;
+      }
+      case "deny": {
+        const classified = classifyPath(cwd, state.roots, action.path);
+        const rule = { action: "*", resource: classified.external ? classified.absolute : classified.resource, effect: "deny" as const };
+        if (action.target === "session") {
+          state = { ...state, rules: [...state.rules, rule] };
+          persist();
+          draw?.();
+          refresh();
+          ctx.ui.notify(`Scope: denied ${rule.resource} for this session.`, "warning");
+          return;
+        }
+        const file = configFileFor(action.target);
+        writeScopeRule(file, rule);
+        reload(ctx);
+        ctx.ui.notify(`Scope: wrote deny rule ${rule.resource} to ${file}.`, "warning");
+        return;
+      }
+      case "remove": {
+        const classified = classifyPath(cwd, state.roots, action.path);
+        const before = state.roots.length;
+        state = { ...state, roots: state.roots.filter(root => root.path !== classified.absolute) };
+        if (state.roots.length === before) {
+          ctx.ui.notify(`Scope: no session root matches ${action.path}.`, "warning");
+          return;
+        }
+        persist();
+        draw?.();
+        refresh();
+        ctx.ui.notify(`Scope: removed ${classified.absolute}.`, "info");
+        return;
+      }
+      case "reset": {
+        state = { ...state, roots: state.roots.filter(root => root.source !== "session"), rules: state.rules.filter(rule => rule.source !== "session" && rule.source !== "branch") };
+        persist();
+        draw?.();
+        refresh();
+        ctx.ui.notify("Scope: session grants and rules cleared; workspace and config roots remain.", "info");
+        return;
+      }
+      case "test": {
+        const classified = classifyPath(cwd, state.roots, action.path);
+        const lines = (["read", "write"] as const).map(mode => {
+          const claim: PathClaim = {
+            tool: mode === "write" ? "write" : "read",
+            action: mode === "write" ? "write" : "read",
+            absolute: classified.absolute,
+            resource: classified.resource,
+            write: mode === "write",
+            external: classified.external,
+            kind: "unknown",
+          };
+          return `${mode}: ${decisionLine(evaluateClaim(claim, state))}`;
+        });
+        ctx.ui.notify([`Scope test: ${classified.absolute}`, ...lines].join("\n"), "info");
+        return;
+      }
+      case "yolo": {
+        if (action.mode === "status") {
+          ctx.ui.notify(state.yolo
+            ? `Scope: yolo ${state.yolo.strength}${state.yolo.persist ? " (persisted)" : ""}. /scope yolo off disarms.`
+            : "Scope: yolo is off.", "info");
+          return;
+        }
+        if (action.mode === "off") {
+          state = { ...state, yolo: undefined };
+          persist();
+          draw?.();
+          refresh();
+          ctx.ui.notify("Scope: yolo disarmed; outside paths ask again.", "info");
+          return;
+        }
+        const strength = action.mode === "all" ? "rw" : "ro";
+        state = { ...state, yolo: { strength, persist: action.persist, since: Date.now() } };
+        if (action.persist) persist();
+        draw?.();
+        refresh();
+        ctx.ui.notify(
+          `Scope: yolo ${strength} armed — ${strength === "ro" ? "reads outside the workspace" : "reads and writes outside the workspace"} run without asking. Deny rules still apply. /scope yolo off disarms.`,
+          "warning",
+        );
+        return;
+      }
+      default:
+        ctx.ui.notify(usage(action.kind === "usage" ? action.detail : ""), "warning");
+    }
+  }
+
+  pi.registerCommand?.("scope", {
+    description: "Workspace access scope: /scope status|allow|deny|remove|reset|rules|test|yolo|log",
+    getArgumentCompletions: (prefix: string) => scopeCompletions(prefix),
+    handler: async (args: string, ctx: ExtensionContext) => handleScope(args ?? "", ctx),
+  });
+
+  // ---- wiring ----------------------------------------------------------------
+
   pi.on("session_start", (_event, ctx) => {
     reload(ctx);
     if (ctx.mode === "tui") installSidebar(ctx);
@@ -112,8 +280,12 @@ export default function scopeExtension(pi: ExtensionAPI) {
 
   pi.on("tool_call", async (event, ctx) => {
     context = ctx;
-    const result = await gate.gate(event.toolName, event.input as Record<string, unknown> | undefined);
-    return result ? { block: true, reason: result.reason } : undefined;
+    const input = event.input as Record<string, unknown> | undefined;
+    const result = await gate.gate(event.toolName, input);
+    if (!result) return undefined;
+    log.add({ tool: event.toolName, path: String(input?.path ?? input?.command ?? "*"), write: true, outcome: "deny", detail: result.reason.slice(0, 80) });
+    draw?.();
+    return { block: true, reason: result.reason };
   });
 
   /** One quiet rail row; the sidebar owns the layout when it is installed. */

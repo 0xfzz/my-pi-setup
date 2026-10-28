@@ -14,7 +14,7 @@
  * sessions (issue #30779); a snapshot on the transcript cannot leak past the
  * branch that contains it.
  */
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { canonicalize, expandHome, lexicalInside } from "./paths.ts";
@@ -209,4 +209,42 @@ export function globalScopeFile(): string {
 /** Ensure the parent directory exists before a caller writes a config file. */
 export function scopeFileDirectory(file: string): string {
   return dirname(file);
+}
+
+/** Create `<file>`'s parent directory and merge a root into an existing config. */
+export function writeScopeRoot(file: string, base: string, path: string, access: ScopeAccess): void {
+  const canonical = canonicalize(resolve(base, expandHome(path)));
+  updateConfig(file, config => {
+    const roots = Array.isArray(config.roots) ? config.roots : [];
+    const exists = roots.some(entry => {
+      const value = typeof entry === "string" ? entry : entry?.path;
+      return typeof value === "string" && canonicalize(resolve(base, expandHome(value))) === canonical;
+    });
+    if (!exists) roots.push({ path: canonical, access });
+    return { ...config, roots };
+  });
+}
+
+/** Merge a deny/allow rule into an existing config file. */
+export function writeScopeRule(file: string, rule: ScopeRule): void {
+  updateConfig(file, config => {
+    const rules = Array.isArray(config.rules) ? config.rules.filter(isRule) : [];
+    const duplicate = rules.some(existing =>
+      existing.action === rule.action && existing.resource === rule.resource && existing.effect === rule.effect);
+    if (!duplicate) rules.push({ action: rule.action, resource: rule.resource, effect: rule.effect });
+    return { ...config, rules };
+  });
+}
+
+function updateConfig(file: string, mutate: (config: ScopeConfigFile) => ScopeConfigFile): void {
+  mkdirSync(scopeFileDirectory(file), { recursive: true });
+  let config: ScopeConfigFile = {};
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as ScopeConfigFile;
+    if (parsed && typeof parsed === "object") config = parsed;
+  } catch {
+    // A missing or broken file is replaced by the merge result; the caller has
+    // already reported parse problems through `loadScopeConfig`.
+  }
+  writeFileSync(file, `${JSON.stringify(mutate(config), null, 2)}\n`, "utf8");
 }
