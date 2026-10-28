@@ -242,7 +242,7 @@ test("mid-tool-loop inheritance: preserves analysis text and makes outstanding t
             {
               type: "toolCall",
               id: "tc-mid",
-              name: "orch_spawn",
+              name: "agent_spawn",
               arguments: { task: "fix line 42" },
             },
           ],
@@ -274,7 +274,7 @@ test("mid-tool-loop inheritance: preserves analysis text and makes outstanding t
     assert.equal(synthResult.type, "message");
     assert.equal(synthResult.message.role, "toolResult");
     assert.equal(synthResult.message.toolCallId, "tc-mid");
-    assert.equal(synthResult.message.toolName, "orch_spawn");
+    assert.equal(synthResult.message.toolName, "agent_spawn");
     assert.equal(synthResult.parentId, "a1");
     assert.equal(synthResult.message.isError, true, "a placeholder must not claim the parent tool succeeded");
     assert.match(synthResult.message.content[0].text, /no result at fork time; not executed by this child/);

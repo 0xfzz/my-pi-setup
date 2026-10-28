@@ -219,7 +219,7 @@ export function renderAttribution(resolved: ResolvedRoleModel): string {
 }
 
 /**
- * Parse the text form of `/orch-model <role> <value>`.
+ * Parse the text form of `/agent-model <role> <value>`.
  *
  * `known` is the registry's provider/model keys. A bare id is accepted only when
  * exactly one provider exposes it; otherwise the command reports the candidates

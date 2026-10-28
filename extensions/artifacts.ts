@@ -803,7 +803,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
 
   pi.on("tool_execution_end", async (event, context) => {
     ctx = context;
-    if (!event.isError && ["orch_spawn", "orch_resume"].includes(event.toolName)) {
+    if (!event.isError && ["agent_spawn", "agent_resume"].includes(event.toolName)) {
       const d = event.result?.details;
       const file = d?.sessionFile ?? d?.sessionPath;
       const scope = d?.scope ? sanitizeScope(d.scope) : undefined;
@@ -903,7 +903,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
         if (artId.startsWith("handoff-")) {
           throw new Error(
             `Refused: [${artId}] is a handoff spec and is read-only for a worker. `
-            + `If it is wrong, report that with orch_ping and let the orchestrator revise it with orch_handoff.`,
+            + `If it is wrong, report that with agent_ping and let the orchestrator revise it with agent_handoff.`,
           );
         }
         const existing = catalog.get(artId);
@@ -1158,7 +1158,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
       if (isChild && art.id.startsWith("handoff-")) {
         throw new Error(
           `Refused: [${art.id}] is a handoff spec and is read-only for a worker. `
-          + `If it is wrong, report that with orch_ping and let the orchestrator revise it with orch_handoff.`,
+          + `If it is wrong, report that with agent_ping and let the orchestrator revise it with agent_handoff.`,
         );
       }
 

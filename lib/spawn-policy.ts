@@ -2,7 +2,7 @@
  * spawn-policy.ts — which spawn shapes a mode admits, and what a child gets.
  *
  * Delegation is not a mode. Normal, Plan, Supervise and Orchestrator all reach
- * the same `orch_spawn`, so "may this spawn happen?" has to be answered from
+ * the same `agent_spawn`, so "may this spawn happen?" has to be answered from
  * (mode, purpose) rather than from which tool name happens to be registered.
  * Keeping the table here means a mode cannot drift from the spawn tool: both
  * read one function.
@@ -71,8 +71,8 @@ export function spawnRefusal(
 
 /**
  * A research child is a reader. It gets no write/edit/patch tool and no parent
- * surface; the launcher appends the mandatory child control tools (orch_done,
- * orch_ping, orch_progress) so the child can still report and escalate.
+ * surface; the launcher appends the mandatory child control tools (agent_done,
+ * agent_ping, agent_progress) so the child can still report and escalate.
  *
  * `undefined` means "canonical worker allowlist", which is the spec/adhoc shape.
  */
@@ -121,7 +121,7 @@ export function requiresReviewedSpec(modeId: string | undefined): boolean {
   return mode === "orchestrator" || mode === "supervise";
 }
 
-/** What `orch_brief` and `orch_check` should say when no lane was declared. */
+/** What `agent_brief` and `agent_check` should say when no lane was declared. */
 export function laneDeclaration(purpose: SpawnPurpose, laneFiles: readonly string[]): "declared" | "not-declared" {
   if (laneFiles.length > 0) return "declared";
   return purpose === "research" || purpose === "adhoc" ? "not-declared" : "declared";

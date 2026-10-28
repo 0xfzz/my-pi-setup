@@ -70,7 +70,7 @@ test("normalized shell reads files outside the working directory without changin
 });
 test("read-only tool annotations allow research but do not reopen opaque execution tools", () => {
   // Plan may delegate, because researching and reviewing is read-only for the parent.
-  for (const name of ["orch_spawn", "orch_running", "orch_escalate"]) {
+  for (const name of ["agent_spawn", "agent_running", "agent_escalate"]) {
     assert.equal(isPlanTool(name), true, `${name} is a plan-safe parent tool`);
   }
   assert.equal(isPlanTool("mcp__docs__search", { name: "mcp__docs__search", annotations: { readOnlyHint: true } }), true);

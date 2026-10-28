@@ -24,7 +24,7 @@ test("real Pi preserves delegated work across native compaction and a saved-sess
     captured.push(JSON.stringify(context.messages));
     const stream = createAssistantMessageEventStream();
     const tool = calls === 1;
-    const message: any = { role: "assistant", api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), content: tool ? [{ type: "toolCall", id: "child-launch", name: "orch_spawn", arguments: { task: "Inspect login regression" } }] : [{ type: "text", text: "Acknowledged." }], stopReason: tool ? "toolUse" : "stop", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
+    const message: any = { role: "assistant", api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), content: tool ? [{ type: "toolCall", id: "child-launch", name: "agent_spawn", arguments: { task: "Inspect login regression" } }] : [{ type: "text", text: "Acknowledged." }], stopReason: tool ? "toolUse" : "stop", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
     stream.push({ type: "start", partial: message }); stream.push({ type: "done", reason: message.stopReason, message });
     return stream;
   };
@@ -32,7 +32,7 @@ test("real Pi preserves delegated work across native compaction and a saved-sess
     const loader = new DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager: settings, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
       extensionFactories: [checkpoints, pi => {
         pi.registerProvider("checkpoint-test", { api: model.api, baseUrl: model.baseUrl, apiKey: "local-test-not-a-secret", models: [model], streamSimple: scripted });
-        pi.registerTool({ name: "orch_spawn", label: "Fixture child", description: "Fixture", parameters: Type.Object({ task: Type.String() }), async execute(_id, input) {
+        pi.registerTool({ name: "agent_spawn", label: "Fixture child", description: "Fixture", parameters: Type.Object({ task: Type.String() }), async execute(_id, input) {
           return { content: [{ type: "text", text: "Child started" }], details: { id: "fixture-run", status: "started", name: "Fixture child", task: input.task, sessionFile: file } };
         } });
         // Native compaction API with an offline summary fixture: no inference.
@@ -74,7 +74,7 @@ test("real Pi preserves delegated work across native compaction and a saved-sess
  * The seed is produced by the REAL Herdr patch and the child is a REAL Pi
  * session opened on that file, so this covers the seam the unit tests cannot:
  * inherited parent text reaching the model, the provenance mention reaching the
- * model, and `orch_parent_recall` doing a live round trip back to the parent file.
+ * model, and `agent_parent_recall` doing a live round trip back to the parent file.
  *
  * The task ticket itself is delivered through argv by Herdr's launch script
  * (covered by `launch.test.ts`), so it is deliberately absent here: a fork
@@ -134,7 +134,7 @@ test("a fork child inherits parent text, knows its provenance, and can pull from
       const message: any = {
         role: "assistant", api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(),
         content: wantsRecall
-          ? [{ type: "toolCall", id: "pull-parent", name: "orch_parent_recall", arguments: { query: "bcrypt" } }]
+          ? [{ type: "toolCall", id: "pull-parent", name: "agent_parent_recall", arguments: { query: "bcrypt" } }]
           : [{ type: "text", text: "Recalled the parent's decision." }],
         stopReason: wantsRecall ? "toolUse" : "stop",
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
@@ -172,8 +172,8 @@ test("a fork child inherits parent text, knows its provenance, and can pull from
     // 2. The child is told how it was seeded, so it can judge its own staleness.
     assert.ok(firstRequest.includes("your context: fork"), "the child's provenance reaches the model");
     // 3. The pull path is advertised and genuinely registered.
-    assert.ok(firstRequest.includes("orch_parent_recall"), "the child is told the pull tool exists");
-    assert.ok(session.getActiveToolNames().includes("orch_parent_recall"));
+    assert.ok(firstRequest.includes("agent_parent_recall"), "the child is told the pull tool exists");
+    assert.ok(session.getActiveToolNames().includes("agent_parent_recall"));
 
     // 4. A live pull reaches the parent file and its result reaches the provider.
     const afterTool = captured.at(-1)!;

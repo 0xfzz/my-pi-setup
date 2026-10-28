@@ -22,7 +22,7 @@ dependency is involved.
   dictionary and probes forward past names already claimed by the session, over
   the child ids **sorted**, so the same id keeps the same name across reloads,
   restarts and resumes, and adding a sibling cannot reshuffle the others.
-- An **explicit human name** chosen by the author of `orch_spawn` (or stored on an
+- An **explicit human name** chosen by the author of `agent_spawn` (or stored on an
   older registry row) always wins. A slug such as `api-worker` is never shown as a
   person: it is replaced by a dictionary name. Historical registry rows are not
   rewritten — the projection maps slugs to names on read.

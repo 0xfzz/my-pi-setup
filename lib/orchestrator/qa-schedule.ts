@@ -7,7 +7,7 @@
  * drift mid-wave.
  *
  * This is advice, not authority: it decides ordering and the cap, and the parent
- * still spawns through the ordinary `orch_spawn` gates (which enforce lane, caps
+ * still spawns through the ordinary `agent_spawn` gates (which enforce lane, caps
  * and military bookkeeping). Keeping it pure means the scheduling rules can be
  * asserted without a pane, a timer or a reviewer child.
  */

@@ -30,20 +30,20 @@ test("real Pi loads subagent-v2 with zero extension errors", async () => {
     await session.bindExtensions({ mode: "tui", onError: (e: unknown) => errors.push(e as { path: string; error: string }), uiContext: { setWidget() {}, setEditorComponent() {}, setStatus() {}, addAutocompleteProvider() {}, notify(t: string) { notices.push(t); }, async confirm() { return false; }, async input() { return ""; }, async select() { return ""; } } as any });
 
     const names = [...session.getActiveToolNames()].sort();
-    console.log("ACTIVE:", JSON.stringify(names.filter((n: string) => n.startsWith("orch_"))));
-    for (const t of ["orch_spawn", "orch_escalate", "orch_running", "orch_steer"]) {
+    console.log("ACTIVE:", JSON.stringify(names.filter((n: string) => n.startsWith("agent_"))));
+    for (const t of ["agent_spawn", "agent_escalate", "agent_running", "agent_steer"]) {
       assert.ok(names.includes(t), `${t} must be registered and active`);
     }
-    // `orch_route` is deferred on purpose: undeclared, but findable by `tool_search`
+    // `agent_route` is deferred on purpose: undeclared, but findable by `tool_search`
     // because the extension registered it with `exposure: "deferred"`. That is the
     // only kind of tool a mode may withhold — a `direct` tool removed from the
     // active set is unreachable for the rest of the session.
-    const route = (session as any).getAllTools().find((tool: any) => tool.name === "orch_route");
-    assert.ok(route, "orch_route must be registered");
-    assert.equal(route.exposure, "deferred", "orch_route must be deferred, or tool_search cannot return it");
-    assert.equal(names.includes("orch_route"), false, "a deferred tool is not declared");
+    const route = (session as any).getAllTools().find((tool: any) => tool.name === "agent_route");
+    assert.ok(route, "agent_route must be registered");
+    assert.equal(route.exposure, "deferred", "agent_route must be deferred, or tool_search cannot return it");
+    assert.equal(names.includes("agent_route"), false, "a deferred tool is not declared");
     const commands = session.extensionRunner.getRegisteredCommands?.() ?? [];
-    console.log("COMMANDS:", JSON.stringify((commands as any[]).map((c) => c.name).filter((n: string) => n === "orch" || n === "steer")));
+    console.log("COMMANDS:", JSON.stringify((commands as any[]).map((c) => c.name).filter((n: string) => n === "agent" || n === "steer")));
     console.log("ERRORS:", JSON.stringify(errors.map(String)));
     session.dispose();
   } finally { await rm(dir, { recursive: true, force: true }); }

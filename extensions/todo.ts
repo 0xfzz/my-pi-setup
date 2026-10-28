@@ -473,13 +473,13 @@ export default function todoExtension(pi: ExtensionAPI) {
   // ── The one remaining guard: do not report a finished committed plan early ─
   pi.on("tool_call", event => {
     if (!isTodoTool(event.toolName)) {
-      if (event.toolName !== "orch_done") return;
+      if (event.toolName !== "agent_done") return;
       if (!plan || plan.scope !== "committed" || plan.supersededAt) return;
       const open = G.unsettled(plan);
       if (!open.length) return;
       return {
         block: true,
-        reason: `Plan ${plan.id} still has ${open.length} unfinished task(s): ${open.slice(0, 3).map(task => `${task.id} ${task.title}`).join("; ")}. Settle each with todo_act, or call orch_ping to report a real blocker.`,
+        reason: `Plan ${plan.id} still has ${open.length} unfinished task(s): ${open.slice(0, 3).map(task => `${task.id} ${task.title}`).join("; ")}. Settle each with todo_act, or call agent_ping to report a real blocker.`,
       };
     }
     return;

@@ -14,7 +14,7 @@
  *     what the child last said) and drops everything else, with the truncation
  *     stated rather than implied.
  *   - `buildCheckReport` runs the checks a reviewer would otherwise run by hand
- *     and returns `evidenceRefs` already in the shape `orch_review` verifies, so
+ *     and returns `evidenceRefs` already in the shape `agent_review` verifies, so
  *     the model cites a result instead of transcribing one.
  *
  * Everything in this file is pure except `runVerifyCommand`, which is injected.
@@ -275,7 +275,7 @@ const ALLOWED_VERIFY_PREFIXES = [
 /**
  * Why a command may be refused.
  *
- * `orch_check` runs in a reviewer that cannot write. A general shell would be a
+ * `agent_check` runs in a reviewer that cannot write. A general shell would be a
  * write primitive wearing a test's name, so the grammar is a fixed set of test
  * runners and no shell metacharacters — the same reasoning as the read-only bash
  * narrowing in supervise mode, applied to the one command that has to run.
@@ -331,7 +331,7 @@ function failedNames(output: string): string[] {
 /**
  * Run the review's deterministic half.
  *
- * The returned `refs` are the point: `orch_review` refuses an approval without
+ * The returned `refs` are the point: `agent_review` refuses an approval without
  * verifiable evidence, so returning refs in that shape removes the transcription
  * step where a model can quietly cite a result it did not see.
  */

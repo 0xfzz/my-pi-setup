@@ -13,7 +13,7 @@
  *
  * Rules encoded here:
  *
- *   - `orch_*` is the only canonical namespace.
+ *   - `agent_*` is the only canonical namespace.
  *   - A child session never holds a parent-role tool, at any depth.
  *   - A retired name (the old v1 surface) is never authorizable. The mapping is
  *     for reading persisted state, not for permitting a call.
@@ -42,7 +42,7 @@ export type DelegationVerb =
   | "spec-review-submit";
 
 export interface DelegationTool {
-  /** Canonical name. Always `orch_`-prefixed. */
+  /** Canonical name. Always `agent_`-prefixed. */
   readonly name: string;
   /** Which session may hold it. A child never holds a `parent` tool. */
   readonly role: DelegationRole;
@@ -58,22 +58,22 @@ export const MAX_DELEGATION_DEPTH = 1;
 
 const TOOLS: readonly DelegationTool[] = [
   // ── Parent: authoring, delegation, review ────────────────────────────────
-  { name: "orch_spawn", role: "parent", planSafe: true, verb: "spawn" },
-  { name: "orch_resume", role: "parent", planSafe: true, verb: "resume" },
-  { name: "orch_interrupt", role: "parent", planSafe: true, verb: "interrupt" },
-  { name: "orch_close", role: "parent", planSafe: true, verb: "close" },
-  { name: "orch_steer", role: "parent", planSafe: true, verb: "steer" },
-  { name: "orch_route", role: "parent", planSafe: true, verb: "route", exposure: "deferred" },
-  { name: "orch_running", role: "parent", planSafe: true, verb: "list" },
-  { name: "orch_escalate", role: "parent", planSafe: true, verb: "escalate" },
-  { name: "orch_history", role: "parent", planSafe: true, verb: "history" },
+  { name: "agent_spawn", role: "parent", planSafe: true, verb: "spawn" },
+  { name: "agent_resume", role: "parent", planSafe: true, verb: "resume" },
+  { name: "agent_interrupt", role: "parent", planSafe: true, verb: "interrupt" },
+  { name: "agent_close", role: "parent", planSafe: true, verb: "close" },
+  { name: "agent_steer", role: "parent", planSafe: true, verb: "steer" },
+  { name: "agent_route", role: "parent", planSafe: true, verb: "route", exposure: "deferred" },
+  { name: "agent_running", role: "parent", planSafe: true, verb: "list" },
+  { name: "agent_escalate", role: "parent", planSafe: true, verb: "escalate" },
+  { name: "agent_history", role: "parent", planSafe: true, verb: "history" },
 
   // ── Child: report, ask, pull, submit ─────────────────────────────────────
-  { name: "orch_progress", role: "child", planSafe: false, verb: "progress" },
-  { name: "orch_done", role: "child", planSafe: false, verb: "done" },
-  { name: "orch_ping", role: "child", planSafe: false, verb: "ping" },
-  { name: "orch_parent_recall", role: "child", planSafe: false, verb: "parent-recall" },
-  { name: "orch_parent_digest", role: "child", planSafe: false, verb: "parent-digest" },
+  { name: "agent_progress", role: "child", planSafe: false, verb: "progress" },
+  { name: "agent_done", role: "child", planSafe: false, verb: "done" },
+  { name: "agent_ping", role: "child", planSafe: false, verb: "ping" },
+  { name: "agent_parent_recall", role: "child", planSafe: false, verb: "parent-recall" },
+  { name: "agent_parent_digest", role: "child", planSafe: false, verb: "parent-digest" },
 ];
 
 export const DELEGATION_TOOLS: readonly DelegationTool[] = Object.freeze(
@@ -113,16 +113,16 @@ export const RETIRED_V1_TOOLS: ReadonlySet<string> = new Set(RETIRED);
  * retired name outright.
  */
 const RETIRED_TARGETS = new Map<string, string>([
-  ["subagent", "orch_spawn"],
-  ["subagent_resume", "orch_resume"],
-  ["subagent_interrupt", "orch_interrupt"],
-  ["subagents_list", "orch_running"],
-  ["subagent_history", "orch_history"],
-  ["subagent_progress", "orch_progress"],
-  ["subagent_done", "orch_done"],
-  ["caller_ping", "orch_ping"],
-  ["parent_recall", "orch_parent_recall"],
-  ["parent_digest", "orch_parent_digest"],
+  ["subagent", "agent_spawn"],
+  ["subagent_resume", "agent_resume"],
+  ["subagent_interrupt", "agent_interrupt"],
+  ["subagents_list", "agent_running"],
+  ["subagent_history", "agent_history"],
+  ["subagent_progress", "agent_progress"],
+  ["subagent_done", "agent_done"],
+  ["caller_ping", "agent_ping"],
+  ["parent_recall", "agent_parent_recall"],
+  ["parent_digest", "agent_parent_digest"],
 ]);
 
 /**

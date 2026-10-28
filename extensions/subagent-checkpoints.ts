@@ -113,8 +113,8 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
   // resolving it needs a synchronous read of the child's own seed record.
   //
   // A spec-only reviewer never resolves one. Its whole value is that it judges a
-  // document without the author's reasoning, so the pull channel (`orch_parent_recall`,
-  // `orch_parent_digest`) and the digest brief are not registered and not injected.
+  // document without the author's reasoning, so the pull channel (`agent_parent_recall`,
+  // `agent_parent_digest`) and the digest brief are not registered and not injected.
   // Absence, not instruction, is what makes that hold.
   const specOnlyReviewer = process.env.PI_SUBAGENT_REVIEW_POLICY === "spec-only";
   const parentContext = childSession && !specOnlyReviewer ? resolveParentContext(childSession) : undefined;
@@ -128,7 +128,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
     try {
       const compiled = await compileSubagentSession(parentContext.sessionFile);
       if (compiled) parentBrief = clip(compiled, PARENT_BRIEF_MAX_CHARS);
-    } catch { /* fall back to no brief; orch_parent_recall still works */ }
+    } catch { /* fall back to no brief; agent_parent_recall still works */ }
     return parentBrief;
   }
 
@@ -383,12 +383,12 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
     message: {
       customType: "subagent-progress-guidance", display: false,
       content: [
-        "Report meaningful milestones using orch_progress when available: findings, changed files, verification, next steps, and blockers. Do not report each tool call. Workflow todo changes also publish checkpoints automatically. Progress is not completion; keep Herdr's existing orch_done/orch_ping protocol.",
+        "Report meaningful milestones using agent_progress when available: findings, changed files, verification, next steps, and blockers. Do not report each tool call. Workflow todo changes also publish checkpoints automatically. Progress is not completion; keep Herdr's existing agent_done/agent_ping protocol.",
         specOnlyReviewer
           ? "You are an independent reviewer with no parent history. Judge only the pinned document in your ticket and the permitted paths. Missing context is a finding, not a reason to reconstruct the author's intent."
           : "",
         parentContext
-          ? `Your parent session is ${parentContext.sessionFile} (your context: ${parentContext.provenance?.mode ?? "unknown"}). When you need context you do not have — a decision your parent made, a file it touched, or parent work newer than your snapshot — use orch_parent_recall (search) or orch_parent_digest (structured brief) instead of guessing or re-reading the repository. Both are read-only and never modify the parent session.`
+          ? `Your parent session is ${parentContext.sessionFile} (your context: ${parentContext.provenance?.mode ?? "unknown"}). When you need context you do not have — a decision your parent made, a file it touched, or parent work newer than your snapshot — use agent_parent_recall (search) or agent_parent_digest (structured brief) instead of guessing or re-reading the repository. Both are read-only and never modify the parent session.`
           : "",
       ].filter(Boolean).join(" "),
     },
@@ -399,7 +399,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
   // gain no dead tools. Both tools are read-only over the parent session file.
   if (parentContext) {
     pi.registerTool({
-      name: "orch_parent_recall", label: "Recall From Parent",
+      name: "agent_parent_recall", label: "Recall From Parent",
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       description:
         "Search your PARENT's session for context you were not seeded with: decisions it made, files it touched, or work it did after your snapshot. " +
@@ -430,16 +430,16 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
     });
 
     pi.registerTool({
-      name: "orch_parent_digest", label: "Parent Digest",
+      name: "agent_parent_digest", label: "Parent Digest",
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       description:
         "Get a compact structured brief of your PARENT's session (goal, files and changes, commits, key signals) compiled without any model call. " +
-        "Cheaper than orch_parent_recall when you need the shape of the parent's work rather than a specific detail. Read-only.",
+        "Cheaper than agent_parent_recall when you need the shape of the parent's work rather than a specific detail. Read-only.",
       parameters: Type.Object({}),
       async execute() {
         const brief = await compileSubagentSession(parentContext.sessionFile);
         if (!brief) {
-          throw new Error("Could not compile a parent brief (pi-vcc unavailable or the parent session is unreadable). Use orch_parent_recall instead, or proceed with your own context.");
+          throw new Error("Could not compile a parent brief (pi-vcc unavailable or the parent session is unreadable). Use agent_parent_recall instead, or proceed with your own context.");
         }
         const bounded = boundPull(`${parentPullHeader(parentContext, false)}\n\n${clip(brief, PARENT_BRIEF_MAX_CHARS)}`);
         return {
@@ -470,8 +470,8 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
   }
 
   if (childSession && childRun) pi.registerTool({
-    name: "orch_progress", label: "Report Milestone", executionMode: "sequential",
-    description: "Publish one meaningful milestone to the parent dashboard without ending the child or waking the parent model. Progress is not completion; use orch_ping for questions requiring an answer.",
+    name: "agent_progress", label: "Report Milestone", executionMode: "sequential",
+    description: "Publish one meaningful milestone to the parent dashboard without ending the child or waking the parent model. Progress is not completion; use agent_ping for questions requiring an answer.",
     parameters: Type.Object({
       summary: Type.String({ minLength: 1, maxLength: 1200 }),
       files: Type.Optional(Type.Array(Type.String({ maxLength: 300 }), { maxItems: 20 })),
@@ -484,7 +484,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "orch_history", label: "Delegated Work History", annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    name: "agent_history", label: "Delegated Work History", annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     description: "Review durable delegated-work checkpoints, run VCC-compiled digests, or perform targeted VCC searches over a child's session. Avoids full transcript dumps and saves tokens.",
     parameters: Type.Object({
       sessionPath: Type.Optional(Type.String({ description: "Target child session path" })),
@@ -725,7 +725,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
         context.ui.notify("This child changed while the dialog was open. Inspect its current pane/history before resuming.", "warning");
         return;
       }
-      pi.sendUserMessage(`Resume this ended Herdr child using orch_resume with these exact arguments: ${JSON.stringify({ sessionPath: record.sessionFile, name: record.name, message })}. Do not start a second writer if the original child is still running; verify that prerequisite first.`);
+      pi.sendUserMessage(`Resume this ended Herdr child using agent_resume with these exact arguments: ${JSON.stringify({ sessionPath: record.sessionFile, name: record.name, message })}. Do not start a second writer if the original child is still running; verify that prerequisite first.`);
     }
   }
 
@@ -788,12 +788,12 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
       case "help": {
         const helpText =
           "Delegation switch commands:\n" +
-          "  /subagents status  - show the orch_* surface and what is switched off\n" +
+          "  /subagents status  - show the agent_* surface and what is switched off\n" +
           "  /subagents on      - turn the delegation tools ON for this session\n" +
           "  /subagents off     - turn the delegation tools OFF for this session\n" +
           "  /subagents save    - persist the current preference to settings.json\n" +
           "  /subagents gc      - offer old fork copies for collection\n" +
-          "\nThere is one namespace (orch_*) and one switch. The v1 subagent surface\n" +
+          "\nThere is one namespace (agent_*) and one switch. The v1 subagent surface\n" +
           "no longer exists. The switch never touches unrelated tools: bash, MCP\n" +
           "servers and other extensions keep their loadout. It is a session decision\n" +
           "and it survives entering and leaving Plan/Supervise mode.";

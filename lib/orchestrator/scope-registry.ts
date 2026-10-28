@@ -16,7 +16,7 @@ export type CloseReason =
   | "auto-close-terminal"
   | "resume-superseded"
   | "scope-cancelled"
-  /** Closed by /orch-pause, intact for /orch-resume to redeploy. */
+  /** Closed by /agent-pause, intact for /agent-resume to redeploy. */
   | "paused"
   /** Paused, but its session file is gone: nothing left to redeploy. */
   | "paused-missing";
@@ -201,7 +201,7 @@ export interface RegistrySnapshot {
   /** Every pane this orchestrator ever opened, so orphans stay attributable. */
   panes?: string[];
   /**
-   * Set by /orch-pause, cleared by /orch-resume. A paused orchestrator refuses
+   * Set by /agent-pause, cleared by /agent-resume. A paused orchestrator refuses
    * new spawns — "paused" that still accepts work is not a pause.
    */
   paused?: boolean;
@@ -230,7 +230,7 @@ export class ScopeRegistry {
   /**
    * Insert a child, keeping exactly ONE live row per session file.
    *
-   * `orch_resume` mints a new id for an existing session file. The old code
+   * `agent_resume` mints a new id for an existing session file. The old code
    * inserted the new row and left the old one in `childrenById` as a permanent
    * "running" ghost that only the newest row's status updates could reach —
    * which is how one child produced budget notices quoting three different ids
@@ -330,7 +330,7 @@ export class ScopeRegistry {
   }
 
   /**
-   * Children /orch-pause closed and /orch-resume can redeploy.
+   * Children /agent-pause closed and /agent-resume can redeploy.
    *
    * Deliberately keyed on the close reason, not on a separate list: a resume
    * supersedes the row it came from, so a failed redeploy leaves the marker in

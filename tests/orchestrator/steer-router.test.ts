@@ -209,7 +209,7 @@ describe("steer-router outcome resolution matrix", () => {
     assert.equal(res.target?.id, "w1");
   });
 
-  it("blocked candidate / pending orch_ping returns blocked-owner", () => {
+  it("blocked candidate / pending agent_ping returns blocked-owner", () => {
     const registry = new ScopeRegistry();
     const c1 = createChild({ id: "w1", name: "Worker1", scope: "net-layer", status: "blocked", pendingPing: true, laneFiles: ["src/net/"] });
     registry.registerChild(c1);

@@ -47,7 +47,7 @@ export const DEFAULT_ROLE_PROMPTS: Record<OrchRole, string> = {
     "- For every finding, state the severity (`blocker`, `major`, `nit`), the section or line, what is wrong or missing, why it blocks an implementer, and a concrete suggestion when one exists.",
     "- Reserve `blocker` for a contradiction, an undecided choice an implementer cannot make, or a requirement with no acceptance signal. \"I would have designed it differently\" is a nit at most.",
     "- Answer every question your ticket asks. An empty finding list is valid when you state what you checked.",
-    "- Submit with `orch_spec_review_submit`; your report is the only artifact you produce.",
+    "- Submit with `agent_spec_review_submit`; your report is the only artifact you produce.",
   ].join("\n"),
   worker: [
     "# Role: worker",
@@ -65,11 +65,11 @@ export const DEFAULT_ROLE_PROMPTS: Record<OrchRole, string> = {
     "",
     "You judge one finished work unit. You do not improve it and you do not fix it.",
     "",
-    "- Check each acceptance criterion against evidence you gathered yourself: run `orch_check`, then read the diff it points at. A criterion without evidence is not passed.",
+    "- Check each acceptance criterion against evidence you gathered yourself: run `agent_check`, then read the diff it points at. A criterion without evidence is not passed.",
     "- Lane compliance is part of the verdict. A change outside the declared lane is a violation regardless of how good it is.",
     "- Do not edit product code or the work unit's files; your output is a verdict, not a patch.",
     "- When something fails, ping the parent with the precise defect: the criterion, the file and line, what you observed, and the smallest fix. Do not open the defect ticket yourself.",
-    "- Record the verdict with `orch_review`, and approve only when every criterion has evidence you actually saw.",
+    "- Record the verdict with `agent_review`, and approve only when every criterion has evidence you actually saw.",
   ].join("\n"),
 };
 
@@ -160,7 +160,7 @@ export function ensureRolePrompts(
   return { dir, created, skipped };
 }
 
-/** Human-readable rows for `/orch-prompts`. */
+/** Human-readable rows for `/agent-prompts`. */
 export function renderRolePromptReport(cwd: string, options: RolePromptOptions = {}): string[] {
   return ORCH_ROLES.map((role) => {
     const prompt = loadRolePrompt(role, cwd, options);

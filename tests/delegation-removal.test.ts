@@ -17,12 +17,12 @@ const restoreLoadout = (names: string[], disabled: string[] = []): string[] =>
 
 test("the restore path never resurrects a retired v1 tool", () => {
   assert.deepEqual(
-    restoreLoadout(["read", "bash", "subagent", "subagent_done", "caller_ping", "orch_spawn"]),
-    ["read", "bash", "orch_spawn"],
+    restoreLoadout(["read", "bash", "subagent", "subagent_done", "caller_ping", "agent_spawn"]),
+    ["read", "bash", "agent_spawn"],
   );
   // Even an explicit `disabled` list cannot make a retired name survive.
   assert.deepEqual(
-    restoreLoadout(["read", "subagent", "orch_done"], ["orch_done"]),
+    restoreLoadout(["read", "subagent", "agent_done"], ["agent_done"]),
     ["read"],
   );
 });
@@ -31,8 +31,8 @@ test("every retired name is dropped from a restored loadout, at any position", (
   const retired = [...RETIRED_V1_TOOLS];
   assert.deepEqual(restoreLoadout(retired), []);
   assert.deepEqual(
-    restoreLoadout(["read", ...retired, "orch_history", "read"]),
-    ["read", "orch_history"],
+    restoreLoadout(["read", ...retired, "agent_history", "read"]),
+    ["read", "agent_history"],
   );
 });
 
@@ -40,16 +40,16 @@ test("a switch decision keeps only names on the delegation surface", () => {
   const branch = [{
     type: "custom",
     customType: DELEGATE_SWITCH_TYPE,
-    data: { disabled: ["bash", "orch_history", "not_a_tool"] },
+    data: { disabled: ["bash", "agent_history", "not_a_tool"] },
   }];
   const { disabled } = switchStateFromBranch(branch);
-  assert.deepEqual([...disabled], ["orch_history"]);
+  assert.deepEqual([...disabled], ["agent_history"]);
   assert.equal(disabled.has("bash"), false, "a non-delegation name never enters the decision");
 });
 
 test("a later switch entry still wins", () => {
   const branch = [
-    { type: "custom", customType: DELEGATE_SWITCH_TYPE, data: { disabled: ["orch_history"] } },
+    { type: "custom", customType: DELEGATE_SWITCH_TYPE, data: { disabled: ["agent_history"] } },
     { type: "custom", customType: DELEGATE_SWITCH_TYPE, data: { disabled: [] } },
   ];
   assert.deepEqual([...switchStateFromBranch(branch).disabled], [], "the newest decision wins");

@@ -149,8 +149,8 @@ test("an invalid spec-only policy fails closed: only reporting tools remain", as
 
     // Reporting is the only remaining path: a reviewer with a broken policy must
     // be able to say so, not silently continue as an ordinary child.
-    assert.deepEqual(await f.emit("tool_call", { toolName: "orch_done" }, ctx), []);
-    assert.deepEqual(await f.emit("tool_call", { toolName: "orch_ping" }, ctx), []);
+    assert.deepEqual(await f.emit("tool_call", { toolName: "agent_done" }, ctx), []);
+    assert.deepEqual(await f.emit("tool_call", { toolName: "agent_ping" }, ctx), []);
   } finally {
     for (const [key, value] of Object.entries({
       PI_SUBAGENT_REVIEW_POLICY: saved.policy,
@@ -188,7 +188,7 @@ test("a delegated child never restores, watches, or writes the orchestrator regi
 
     // The orchestrator surface is parent-only: refuse it rather than spawn work the
     // parent cannot see, review, or stop.
-    const blocked = await f.emit("tool_call", { toolName: "orch_spawn" }, ctx);
+    const blocked = await f.emit("tool_call", { toolName: "agent_spawn" }, ctx);
     assert.equal(blocked.length, 1);
     assert.equal(blocked[0].block, true);
     assert.match(blocked[0].reason, /parent-only/);
@@ -196,7 +196,7 @@ test("a delegated child never restores, watches, or writes the orchestrator regi
     assert.equal(retired.length, 1);
     assert.equal(retired[0].block, true);
     assert.match(retired[0].reason, /removed/);
-    assert.deepEqual(await f.emit("tool_call", { toolName: "orch_done" }, ctx), [],
+    assert.deepEqual(await f.emit("tool_call", { toolName: "agent_done" }, ctx), [],
       "a child owns its completion tool");
     assert.deepEqual(await f.emit("tool_call", { toolName: "read" }, ctx), [],
       "ordinary tools stay untouched in a child");
@@ -287,7 +287,7 @@ test("a new session in the same process does not inherit the replaced session's 
 test("watchdog notices carry the facts that justify the interrupt", () => {
   const budget = budgetNotice({ name: "guards-core", scope: "guards-core", elapsedMs: 42 * 60_000, budgetMs: 30 * 60_000 });
   assert.match(budget, /42m elapsed of 30m/);
-  assert.match(budget, /orch_resume/);
+  assert.match(budget, /agent_resume/);
   assert.doesNotMatch(budget, /budget Decide/);
 
   const stall = stallNotice({ name: "guards-core", scope: "guards-core", strikes: 3, intervalMs: 30_000 });

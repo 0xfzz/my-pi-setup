@@ -195,12 +195,12 @@ describe("watchdog: one notice per trip", () => {
 });
 
 describe("pane lifecycle: close is a terminal transition", () => {
-  it("orch_close closes a live pane and marks the row closed", async () => {
+  it("agent_close closes a live pane and marks the row closed", async () => {
     const h = harness();
     const c = child({ id: "close-live" });
     registry.registerChild(c);
 
-    const result = await h.tools.get("orch_close").execute("t", { id: c.id, reason: "done" });
+    const result = await h.tools.get("agent_close").execute("t", { id: c.id, reason: "done" });
 
     assert.deepEqual(h.calls.close, [c.paneId]);
     const row = registry.getChildById(c.id)!;
@@ -218,26 +218,26 @@ describe("pane lifecycle: close is a terminal transition", () => {
     assert.equal(checkpoint.data.ended, true);
   });
 
-  it("orch_close is idempotent when the pane is already gone", async () => {
+  it("agent_close is idempotent when the pane is already gone", async () => {
     const h = harness({ paneGet: async () => null });
     const c = child({ id: "close-gone" });
     registry.registerChild(c);
 
-    const first = await h.tools.get("orch_close").execute("t", { id: c.id });
+    const first = await h.tools.get("agent_close").execute("t", { id: c.id });
     assert.equal(h.calls.close.length, 0, "nothing to close");
     assert.equal((first.details as any).paneState, "already-gone");
     assert.equal(registry.getChildById(c.id)?.status, "closed");
 
-    const second = await h.tools.get("orch_close").execute("t", { id: c.id });
+    const second = await h.tools.get("agent_close").execute("t", { id: c.id });
     assert.match(second.content[0].text, /already closed/);
   });
 
-  it("orch_interrupt with close:true interrupts then closes", async () => {
+  it("agent_interrupt with close:true interrupts then closes", async () => {
     const h = harness();
     const c = child({ id: "interrupt-close" });
     registry.registerChild(c);
 
-    const result = await h.tools.get("orch_interrupt").execute("t", { id: c.id, close: true });
+    const result = await h.tools.get("agent_interrupt").execute("t", { id: c.id, close: true });
 
     assert.deepEqual(h.calls.keys, [{ paneId: c.paneId, keys: ["esc"] }]);
     assert.deepEqual(h.calls.close, [c.paneId]);
@@ -245,12 +245,12 @@ describe("pane lifecycle: close is a terminal transition", () => {
     assert.equal((result.details as any).status, "closed");
   });
 
-  it("orch_interrupt reconciles a vanished pane instead of failing", async () => {
+  it("agent_interrupt reconciles a vanished pane instead of failing", async () => {
     const h = harness({ paneGet: async () => null });
     const c = child({ id: "interrupt-gone" });
     registry.registerChild(c);
 
-    const result = await h.tools.get("orch_interrupt").execute("t", { id: c.id });
+    const result = await h.tools.get("agent_interrupt").execute("t", { id: c.id });
 
     assert.equal((result.details as any).status, "already-gone");
     assert.equal(h.calls.keys.length, 0);
@@ -358,7 +358,7 @@ describe("ownership survives a failed probe", () => {
     });
     registry.registerChild(c);
 
-    const first = await h.tools.get("orch_close").execute("t", { id: c.id });
+    const first = await h.tools.get("agent_close").execute("t", { id: c.id });
     assert.equal((first.details as any).error, "permission denied");
     let row = registry.getChildById(c.id)!;
     assert.equal(row.status, "running", "a live pane must not sit in a status the watchdog ignores");
@@ -373,12 +373,12 @@ describe("ownership survives a failed probe", () => {
 });
 
 describe("targets and scopes stay honest after a close", () => {
-  it("orch_steer refuses a finished child instead of reviving it", async () => {
+  it("agent_steer refuses a finished child instead of reviving it", async () => {
     const h = harness();
     const c = child({ id: "steer-closed", status: "closed", closeReason: "review-approved" });
     registry.registerChild(c);
 
-    const result = await h.tools.get("orch_steer").execute("t", { id: c.id, message: "keep going" });
+    const result = await h.tools.get("agent_steer").execute("t", { id: c.id, message: "keep going" });
 
     assert.equal((result.details as any).error, "stale-target");
     assert.equal((result.details as any).childStatus, "closed");
@@ -406,7 +406,7 @@ describe("targets and scopes stay honest after a close", () => {
       };
 
       const result = await h.tools
-        .get("orch_resume")
+        .get("agent_resume")
         .execute("t", { sessionPath, message: "go" }, undefined, undefined, ctx);
 
       assert.equal((result.details as any).error, "resume-aborted");

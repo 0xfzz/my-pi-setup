@@ -185,7 +185,7 @@ describe("escalation ladder", () => {
 it("a QA defect question carries the ticket lifecycle, not just an answer prompt", async () => {
   const { escalationGuidance } = await import("../../extensions/orchestrator.ts");
   const text = escalationGuidance("esc-1").join("\n");
-  assert.match(text, /orch_escalate/);
+  assert.match(text, /agent_escalate/);
   assert.match(text, /todo_plan/);
   assert.match(text, /todo_act claim/);
   assert.match(text, /todo_act done/);

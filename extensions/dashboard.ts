@@ -75,7 +75,7 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
   /**
    * One-way latch: delegated work exists, so the graph must exist too.
    *
-   * A Normal-mode `orch_spawn` never passes through an Orchestrator transition,
+   * A Normal-mode `agent_spawn` never passes through an Orchestrator transition,
    * which used to be the only thing that started the producer. The latch is not
    * reset when the mode changes: leaving the mode keeps the lease and publishes
    * `mode: "normal"`, because the children are still running.

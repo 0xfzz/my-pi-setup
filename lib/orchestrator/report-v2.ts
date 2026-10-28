@@ -290,7 +290,7 @@ ${input.focus ? `\n## Focus requested by the orchestrator\n${input.focus}\n` : "
 ${blocks}
 
 ## How to report
-Call \`orch_spec_review_submit\` exactly once, with a version 2 report:
+Call \`agent_spec_review_submit\` exactly once, with a version 2 report:
 
 \`\`\`json
 {

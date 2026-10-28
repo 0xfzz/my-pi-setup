@@ -119,14 +119,14 @@ function child(partial: Partial<ScopedChild> = {}): ScopedChild {
 }
 
 async function pause(h: Harness) {
-  await h.commands.get("orch-pause").handler("", h.ctx);
+  await h.commands.get("agent-pause").handler("", h.ctx);
 }
 
 async function resume(h: Harness) {
-  await h.commands.get("orch-resume").handler("", h.ctx);
+  await h.commands.get("agent-resume").handler("", h.ctx);
 }
 
-describe("/orch-pause closes the run but keeps it resumable", () => {
+describe("/agent-pause closes the run but keeps it resumable", () => {
   beforeEach(() => registry.resetForTests());
 
   it("closes every active child, marks it paused, and refuses new spawns", async () => {
@@ -150,7 +150,7 @@ describe("/orch-pause closes the run but keeps it resumable", () => {
       assert.equal(registry.isPaused(), true);
       assert.equal(h.notices.at(-1)!.level, "info");
 
-      const spawned = await h.tools.get("orch_spawn").execute("t", {
+      const spawned = await h.tools.get("agent_spawn").execute("t", {
         name: "nope",
         task: "should not start",
         handoffId: "missing-but-irrelevant",
@@ -212,7 +212,7 @@ describe("/orch-pause closes the run but keeps it resumable", () => {
       assert.equal(row.closeReason, "scope-cancelled", "a reviewer must not claim to be resumable");
       assert.equal(registry.getPausedChildren().length, 0, "the paused set is for workers, not reviewers");
       assert.match(h.notices.at(-1)!.text, /cannot resume/);
-      assert.match(h.notices.at(-1)!.text, /orch_spec_review/);
+      assert.match(h.notices.at(-1)!.text, /agent_spec_review/);
     } finally {
       await h.emit("session_shutdown", {});
       await rm(dir, { recursive: true, force: true });
@@ -220,7 +220,7 @@ describe("/orch-pause closes the run but keeps it resumable", () => {
   });
 });
 
-describe("/orch-resume redeploys the paused run on its own sessions", () => {
+describe("/agent-resume redeploys the paused run on its own sessions", () => {
   beforeEach(() => registry.resetForTests());
 
   it("starts each paused child against its previous session file", async () => {

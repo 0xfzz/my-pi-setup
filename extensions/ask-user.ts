@@ -11,11 +11,11 @@ type AskResult = {
 
 const parentGuidance =
   "A Herdr child is waiting on you. Answer from reliable known context if possible. " +
-  "Otherwise ask the user with ask_user. Resume that child with orch_resume using the supplied session path and the answer. " +
+  "Otherwise ask the user with ask_user. Resume that child with agent_resume using the supplied session path and the answer. " +
   "Cancellation is unanswered, never consent: report that explicitly when resuming; do not invent an answer.";
 const childGuidance =
-  "In a Herdr child (PI_SUBAGENT_SESSION), never open user UI. Prefer calling orch_ping directly with your question, context, and options. " +
-  "orch_ping notifies the parent and shuts down this child until the parent uses orch_resume; " +
+  "In a Herdr child (PI_SUBAGENT_SESSION), never open user UI. Prefer calling agent_ping directly with your question, context, and options. " +
+  "agent_ping notifies the parent and shuts down this child until the parent uses agent_resume; " +
   "direct invocation avoids nested-tool shutdown interrupting ask_user's result. ask_user forwards through the same protocol, not a synchronous answer. " +
   "If forwarding is unavailable or denied, report the blocker; never fall back to user UI.";
 
@@ -57,7 +57,7 @@ export default function askUser(pi: ExtensionAPI) {
       "A cancelled dialog is unanswered, never approval. In Herdr children this forwards to the parent and exits, not a synchronous user answer.",
     exposure: "model-only",
     executionMode: "sequential",
-    reachesTools: () => ["orch_ping"],
+    reachesTools: () => ["agent_ping"],
     parameters: Type.Object({
       question: Type.String({ minLength: 1, description: "The single question to ask." }),
       context: Type.Optional(Type.String({ description: "Brief context needed to answer." })),
@@ -81,30 +81,30 @@ export default function askUser(pi: ExtensionAPI) {
       if (isSubagentChildSession(ctx)) {
         const unavailable = (reason: string) => result({
           status: "unavailable", question,
-          message: `Unanswered: ${reason}. Ensure the Herdr orch_ping tool is loaded and permitted in this child, then call orch_ping directly. No user UI was opened.`,
+          message: `Unanswered: ${reason}. Ensure the Herdr agent_ping tool is loaded and permitted in this child, then call agent_ping directly. No user UI was opened.`,
         });
-        if (typeof ctx.executeTool !== "function" || !ctx.tools.some(tool => tool.name === "orch_ping")) {
-          return unavailable("orch_ping is not callable");
+        if (typeof ctx.executeTool !== "function" || !ctx.tools.some(tool => tool.name === "agent_ping")) {
+          return unavailable("agent_ping is not callable");
         }
         const message = [
           `Question: ${question}`,
           context ? `Context: ${context}` : "",
           options?.length ? `Options:\n${options.map((option, i) => `${i + 1}. ${option}`).join("\n")}` : "",
-          "Answer from known context or ask the user, then resume this child with orch_resume. Cancellation is unanswered, not consent.",
+          "Answer from known context or ask the user, then resume this child with agent_resume. Cancellation is unanswered, not consent.",
         ].filter(Boolean).join("\n\n");
         try {
-          const outcome = await ctx.executeTool("orch_ping", { message }, { signal });
+          const outcome = await ctx.executeTool("agent_ping", { message }, { signal });
           if (outcome.isError || outcome.result.isError) {
-            return unavailable("orch_ping failed or was denied");
+            return unavailable("agent_ping failed or was denied");
           }
           // Success means handed to Herdr, not answered. Herdr owns sidecars and shutdown.
           return result({
             status: "forwarded", question,
-            message: "Forwarded to the Herdr parent; unanswered here. Wait for the parent to resume this child with orch_resume.",
+            message: "Forwarded to the Herdr parent; unanswered here. Wait for the parent to resume this child with agent_resume.",
           });
         } catch (error) {
           if (signal?.aborted) return cancelled();
-          return unavailable(`orch_ping could not complete (${error instanceof Error ? error.message : String(error)})`);
+          return unavailable(`agent_ping could not complete (${error instanceof Error ? error.message : String(error)})`);
         }
       }
 

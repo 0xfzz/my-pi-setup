@@ -217,7 +217,7 @@ test("subagents stage artifacts to atomic sidecars which parent ingests into mai
 
     // Parent simulates tool execution of subagent or completion
     await parentHarness.emit("tool_execution_end", {
-      toolName: "orch_spawn",
+      toolName: "agent_spawn",
       isError: false,
       result: { details: { sessionFile: childSession } }
     });
@@ -237,7 +237,7 @@ test("subagents stage artifacts to atomic sidecars which parent ingests into mai
       id: "parent-plan", title: "Parent plan", type: "plan", content: "Inherited parent context.",
     }, undefined, undefined, parentHarness.context);
     await parentHarness.emit("tool_execution_end", {
-      toolName: "orch_resume", isError: false, result: { details: { sessionFile: childSession } },
+      toolName: "agent_resume", isError: false, result: { details: { sessionFile: childSession } },
     });
     const mentioned = await childHarness.emit("input", {
       text: "Use @artifact:worker-findings and @artifact:parent-plan", source: "interactive",

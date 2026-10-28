@@ -3,7 +3,7 @@
  *
  * The EGM method depends on one property: a reviewer must not inherit the
  * author's reasoning. A persona prompt cannot deliver that. A child in this
- * harness can reach its parent's transcript (`orch_parent_recall`), inherit a forked
+ * harness can reach its parent's transcript (`agent_parent_recall`), inherit a forked
  * or digested branch, see every *global* artifact, or shell out to the session
  * state directory. So the policy is data, resolved from the environment the
  * launcher writes, and every consumer (launch planning, the child-side tool
@@ -149,8 +149,8 @@ export function reviewPolicyFromEnv(env: NodeJS.ProcessEnv | Record<string, stri
  *
  * Deliberately absent and load-bearing: `bash` (arbitrary interpreter), `write`
  * and `edit` (it must not be able to change the document it judges), `browser`,
- * `mcp`, `codemode`, every `orch_*` (it owns no children),
- * `orch_parent_recall`/`orch_parent_digest` and `orch_history` (the author's
+ * `mcp`, `codemode`, every `agent_*` (it owns no children),
+ * `agent_parent_recall`/`agent_parent_digest` and `agent_history` (the author's
  * reasoning), and artifact discovery (`artifact_search`/`artifact_list`). It may
  * research the web and the codebase read-only, and write *evidence* artifacts
  * scoped to its own review — never a user artifact, never the work tree.
@@ -165,18 +165,18 @@ export const SPEC_ONLY_TOOLS: ReadonlySet<string> = new Set([
   // Evidence is an artifact, scoped to this review (see review-artifact-scope).
   "artifact_save", "artifact_edit", "artifact_recall",
   "todo_plan", "todo_act", "todo_next", "workflow_todo",
-  "orch_ping", "orch_done", "orch_progress",
-  "orch_spec_review_submit",
+  "agent_ping", "agent_done", "agent_progress",
+  "agent_spec_review_submit",
 ]);
 
 /**
  * Names a reviewer must never reach even if an agent profile, an MCP server, or a
- * late registration were to expose them. `orch_spec_review_submit` and the read
+ * late registration were to expose them. `agent_spec_review_submit` and the read
  * instruments are the whole surface; anything else is refused by default.
  */
 export const SPEC_ONLY_DENIED_TOOLS: ReadonlySet<string> = new Set([
   "bash", "write", "edit", "multi_edit", "multiedit", "apply_patch", "applypatch", "patch",
-  "orch_parent_recall", "orch_parent_digest", "orch_history",
+  "agent_parent_recall", "agent_parent_digest", "agent_history",
   "browser", "browser_download", "browser_login",
   "mcp", "mcpScript", "codemode", "tool_search",
   // The search providers are reached through `web_research`, not directly, so a
@@ -186,14 +186,14 @@ export const SPEC_ONLY_DENIED_TOOLS: ReadonlySet<string> = new Set([
   "artifact_search", "artifact_list", "generate_image",
 ]);
 
-/** Any `orch_` tool is parent-only by definition, so the prefix is a blanket rule. */
+/** Any `agent_` tool is parent-only by definition, so the prefix is a blanket rule. */
 export function isSpecOnlyDeniedTool(name: string): boolean {
   if (!name) return true;
   if (SPEC_ONLY_DENIED_TOOLS.has(name)) return true;
   // The allowlist wins over the prefix rule: the reviewer's own submit tool is the
-  // one `orch_*` writer it is supposed to have.
+  // one `agent_*` writer it is supposed to have.
   if (SPEC_ONLY_TOOLS.has(name)) return false;
-  // Any other `orch_` tool is parent-only.
+  // Any other `agent_` tool is parent-only.
   return true;
 }
 

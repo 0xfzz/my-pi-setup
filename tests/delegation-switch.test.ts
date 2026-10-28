@@ -36,7 +36,7 @@ test("status reports the canonical surface, not a version split", () => {
   assert.deepEqual(status.disabledTools, [CANONICAL[3]]);
   assert.deepEqual(status.missingTools, []);
   assert.match(formatDelegationStatus(status), /Delegation: ON/);
-  assert.match(formatDelegationStatus(status), /orch_\* only/);
+  assert.match(formatDelegationStatus(status), /agent_\* only/);
 });
 
 test("off disables the whole canonical surface and leaves unrelated tools alone", () => {
@@ -67,8 +67,8 @@ test("the toggle never re-adds a retired v1 name", () => {
 
 test("reconcileLoadout strips retired names and honours the decision", () => {
   assert.deepEqual(
-    reconcileLoadout(["read", "subagent", "orch_spawn", "orch_history"], ["orch_history"]),
-    ["read", "orch_spawn"],
+    reconcileLoadout(["read", "subagent", "agent_spawn", "agent_history"], ["agent_history"]),
+    ["read", "agent_spawn"],
   );
 });
 
@@ -76,9 +76,9 @@ test("a pre-migration decision is mapped onto the canonical surface", () => {
   const branch = [{
     type: "custom",
     customType: DELEGATE_SWITCH_TYPE,
-    data: { disabled: ["subagent", "caller_ping", "orch_history", "bash"] },
+    data: { disabled: ["subagent", "caller_ping", "agent_history", "bash"] },
   }];
-  assert.deepEqual([...switchStateFromBranch(branch).disabled].sort(), ["orch_history", "orch_ping", "orch_spawn"]);
+  assert.deepEqual([...switchStateFromBranch(branch).disabled].sort(), ["agent_history", "agent_ping", "agent_spawn"]);
 });
 
 test("the command parser has one switch, not a version matrix", () => {

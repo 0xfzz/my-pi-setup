@@ -2,7 +2,7 @@
  * receipts.ts — a check that actually ran is a different fact from a check that
  * was quoted.
  *
- * Before this module, `orch_review` accepted `{ kind: "cmd", cmd, exit }` as
+ * Before this module, `agent_review` accepted `{ kind: "cmd", cmd, exit }` as
  * evidence and verified only its *shape*. A model could therefore cite
  * `npm test → exit 0` for a command it never ran, or for one it ran before the
  * last edit, and the gate had no way to tell. That is self-attestation with a
@@ -31,7 +31,7 @@ export interface CheckReceipt {
   /**
    * The command the HANDOFF declared, or null when it declared none.
    *
-   * Without this, `orch_check` could be pointed at any allowed test runner and a
+   * Without this, `agent_check` could be pointed at any allowed test runner and a
    * receipt from `npm run typecheck` would approve a work unit whose declared
    * check was `npm test` — the exact substitution that declaring the command at
    * authoring time exists to prevent.

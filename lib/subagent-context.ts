@@ -54,7 +54,7 @@ export interface ContextProvenance {
  * A fork always copies the parent branch in full. There is deliberately no size
  * cap that swaps the copy for a brief: Pi's compaction summarizes an oversized
  * branch on the child's first request but never deletes session entries, so the
- * raw parent transcript stays reachable through orch_parent_recall. Pre-emptively
+ * raw parent transcript stays reachable through agent_parent_recall. Pre-emptively
  * seeding a digest instead would discard detail the child can still summarize
  * and then pull on demand.
  */

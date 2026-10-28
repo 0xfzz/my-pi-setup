@@ -105,7 +105,7 @@ export function formatDelegationStatus(status: DelegationStatus): string {
   const lines = [headline];
   if (status.disabledTools.length) lines.push(`Switched off: ${status.disabledTools.join(", ")}`);
   if (status.missingTools.length) lines.push(`Not registered in this session: ${status.missingTools.join(", ")}`);
-  lines.push("Namespace: orch_* only. The v1 subagent/caller_ping surface has been removed.");
+  lines.push("Namespace: agent_* only. The v1 subagent/caller_ping surface has been removed.");
   return lines.join("\n");
 }
 
@@ -148,7 +148,7 @@ export function applyDelegationToggle(
   return {
     changed: !unchanged || disabled.join(",") !== [...prev].sort().join(","),
     message: enabled
-      ? `Delegation tools turned ON (${CANONICAL.size} tools in the orch_* surface).`
+      ? `Delegation tools turned ON (${CANONICAL.size} tools in the agent_* surface).`
       : `Delegation tools turned OFF for this session (${CANONICAL.size} tools). Unrelated tools are untouched.`,
     disabled: [...disabled].sort(),
     status: getDelegationStatus(pi),

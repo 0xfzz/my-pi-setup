@@ -30,7 +30,7 @@ const assistantMessage = (id = "a1", parentId = "m1") =>
 
 const lines = (...parts: string[]) => `${parts.join("\n")}\n`;
 
-const CHILD_TICKET = "Complete your task autonomously.\n\nYou did not inherit your parent's conversation. If the task depends on context you do not have — a decision the parent made — call orch_parent_recall.\n\nAudit the retry policy in src/net/retry.ts.";
+const CHILD_TICKET = "Complete your task autonomously.\n\nYou did not inherit your parent's conversation. If the task depends on context you do not have — a decision the parent made — call agent_parent_recall.\n\nAudit the retry policy in src/net/retry.ts.";
 
 test("a header parentSession proves a child, with no other signal", () => {
   const facts = readSessionFacts(lines(header({ parentSession: "/sessions/parent.jsonl" }), userMessage("please look at this")));

@@ -125,7 +125,7 @@ export function handoffReceiptFromFile(sessionFile: string | undefined, artifact
   return parseHandoffReceipt(transcript, artifactId);
 }
 
-/** The refusal text shared by `orch_check` and `orch_review`. */
+/** The refusal text shared by `agent_check` and `agent_review`. */
 export function handoffReceiptProblem(input: {
   scope: string;
   artifactId: string;
@@ -137,7 +137,7 @@ export function handoffReceiptProblem(input: {
   if (!input.receipt.inspected) {
     return `Refusing to ${input.action === "check" ? "check" : "approve"} "${input.scope}": its child's transcript is not on disk, `
       + `so there is no evidence it read the handoff (${input.artifactId}). A result cannot be ${verdict} against a spec `
-      + `nobody can prove was read. Restore the transcript, or resume the child with orch_steer and re-run.`;
+      + `nobody can prove was read. Restore the transcript, or resume the child with agent_steer and re-run.`;
   }
   return `Refusing to ${input.action === "check" ? "check" : "approve"} "${input.scope}": its child never recalled the handoff `
     + `spec (${input.artifactId}), so the work was done against something other than the spec the review judges. `

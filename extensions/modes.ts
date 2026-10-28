@@ -41,7 +41,7 @@ export default function modesExtension(pi: ExtensionAPI) {
    * So the only thing withheld here is what this package registered with
    * `exposure: "deferred"` (`DEFERRED_ORCH_TOOLS`), which `tool_search` can
    * genuinely return. The token win lives in the review itself — one bounded
-   * `orch_brief` packet instead of an ad-hoc read expedition — not in hiding the
+   * `agent_brief` packet instead of an ad-hoc read expedition — not in hiding the
    * instruments the loop may need.
    */
   pi.events?.on(REFRESH_EVENT, () => draw?.());
@@ -106,7 +106,7 @@ export default function modesExtension(pi: ExtensionAPI) {
     pi.setActiveTools(active.filter(name => !isRetiredDelegationTool(name)));
     if (ctx.hasUI) {
       try {
-        ctx.ui.notify(`Removed v1 delegation tool(s): ${removed.join(", ")}. The delegation namespace is orch_*.`, "warning");
+        ctx.ui.notify(`Removed v1 delegation tool(s): ${removed.join(", ")}. The delegation namespace is agent_*.`, "warning");
       } catch {
         // A notification is a courtesy; the strip already happened.
       }
@@ -368,7 +368,7 @@ export default function modesExtension(pi: ExtensionAPI) {
       !(message.role === "custom" && message.customType === INPUT_MODE_CONTEXT_TYPE));
     messages.push({
       role: "custom", customType: INPUT_MODE_CONTEXT_TYPE, display: false, timestamp: Date.now(),
-      content: `<current-input-mode>\nLive mode for this request, derived from the selected branch. This supersedes historical mode instructions, assistant statements and compaction summaries; it does not grant permissions beyond the current tools and normal safety rules.\n${inputModeGuidance(registry.current)}\nDelegation tools use the orch_* namespace only. Removed and unavailable: ${describeRetiredTools()}.\n</current-input-mode>`,
+      content: `<current-input-mode>\nLive mode for this request, derived from the selected branch. This supersedes historical mode instructions, assistant statements and compaction summaries; it does not grant permissions beyond the current tools and normal safety rules.\n${inputModeGuidance(registry.current)}\nDelegation tools use the agent_* namespace only. Removed and unavailable: ${describeRetiredTools()}.\n</current-input-mode>`,
     });
     return { messages };
   });

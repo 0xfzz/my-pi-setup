@@ -65,7 +65,7 @@ test("identity needs positive evidence at every stage, including load time", () 
   const env = { PI_SUBAGENT_SESSION: "/s/child.jsonl" };
   // At extension load there is no context, so argv is the only evidence; a real
   // child always has --session. This is what stops a plain `pi` from registering
-  // child-only tools such as orch_progress.
+  // child-only tools such as agent_progress.
   assert.equal(isSubagentChildProcess({ env, argv: ["node", "pi"] }), false);
   assert.equal(isSubagentChildProcess({ env, argv: ["node", "pi", "--session", "/s/child.jsonl"] }), true);
   // No session file at all cannot be a Herdr child either, because Herdr passes
@@ -187,8 +187,8 @@ async function boot(opts: { env: Record<string, string>; argv: string[]; session
       sessionFile,
       request,
       childGuidance: request.includes("In a Herdr child"),
-      parentRecall: created.session.getActiveToolNames().includes("orch_parent_recall"),
-      progressTool: created.session.getActiveToolNames().includes("orch_progress"),
+      parentRecall: created.session.getActiveToolNames().includes("agent_parent_recall"),
+      progressTool: created.session.getActiveToolNames().includes("agent_progress"),
       dispose: () => created.session.dispose(),
     };
   } finally {

@@ -20,7 +20,7 @@ machine.
 
 | Path | Needed by |
 |:--|:--|
-| `src/launch.ts` | `orch_spawn` / `orch_resume` launch planning, `buildSubagentToolAllowlist` |
+| `src/launch.ts` | `agent_spawn` / `agent_resume` launch planning, `buildSubagentToolAllowlist` |
 | `src/herdr/client.ts`, `src/herdr/events.ts` | pane lifecycle (`paneStart`, `paneRead`, `paneSendKeys`), event stream |
 | `src/watcher.ts`, `src/messages.ts` | child outcome detection and the messages delivered to the orchestrator |
 | `src/agents.ts`, `src/settings.ts` | agent profiles (`tools:`, `model:`, `thinking:`) and subagent settings |

@@ -78,7 +78,7 @@ export interface HandoffSpec {
   /**
    * Scopes this work unit depends on.
    *
-   * `orch_spawn` refuses a dependent until each one has an `approved` review, so a
+   * `agent_spawn` refuses a dependent until each one has an `approved` review, so a
    * child cannot build against an interface nobody has agreed to yet. The graph is
    * data rather than prose because "B waits for A" written in `guidance` is a
    * sentence, and a sentence cannot refuse a spawn.
@@ -87,7 +87,7 @@ export interface HandoffSpec {
   /** What the report must contain beyond a prose summary. */
   reportShape?: string;
   /**
-   * The command that decides the review (`orch_check` runs it).
+   * The command that decides the review (`agent_check` runs it).
    *
    * Declared at authoring time rather than chosen at review time: a verification
    * command picked after seeing the diff can be picked to pass. It is restricted
@@ -104,7 +104,7 @@ export interface HandoffSpec {
    * The independent specification review backing this work unit.
    *
    * Optional on purpose: existing handoffs must keep working. When present,
-   * `orch_spawn` refuses a run that is not ready or whose target has changed, so
+   * `agent_spawn` refuses a run that is not ready or whose target has changed, so
    * a worker cannot be started against an approval that no longer describes the
    * document. Presence never authorises implementation by itself — it only binds
    * the work unit to a reviewed revision.
@@ -279,7 +279,7 @@ understand the code; write only inside your lane.
 
 ## If you are unsure — escalate, never guess
 Two routes, in order:
-1. **Ask the orchestrator** with \`orch_ping\`: state the question, what you
+1. **Ask the orchestrator** with \`agent_ping\`: state the question, what you
    already checked, and the options you see. This pauses your session; the
    orchestrator resumes you with an answer.
 2. **If the orchestrator cannot answer**, it escalates to the user and resumes
@@ -367,10 +367,10 @@ your goal, the acceptance criteria the review will check, the files you own (you
 lane), the files you must not touch, and the interfaces you must honour.
 
 It is the only spec you have. The orchestrator verifies this recall in your
-transcript: \`orch_check\` and an approval are refused until the read is there,
+transcript: \`agent_check\` and an approval are refused until the read is there,
 and the spec artifact itself is read-only to you. If the recall fails or returns
 something for a different scope, do NOT guess your lane — escalate with
-\`orch_ping\`.
+\`agent_ping\`.
 ${reviewedNote}
 ${assignment}
 ## Boundaries
@@ -379,7 +379,7 @@ understand the code; write only inside your lane.
 
 ## If you are unsure — escalate, never guess
 Two routes, in order:
-1. **Ask the orchestrator** with \`orch_ping\`: state the question, what you
+1. **Ask the orchestrator** with \`agent_ping\`: state the question, what you
    already checked, and the options you see. This pauses your session; the
    orchestrator resumes you with an answer.
 2. **If the orchestrator cannot answer**, it escalates to the user and resumes
@@ -435,7 +435,7 @@ ${lane}
 ${criteria}
 
 ## If you are unsure — escalate, never guess
-Use \`orch_ping\` with the question, what you already checked, and the options you see.
+Use \`agent_ping\` with the question, what you already checked, and the options you see.
 This pauses your session; the orchestrator resumes you with an answer. If the
 orchestrator cannot answer, it escalates to the user. Never resolve an ambiguity
 by picking the interpretation that lets you proceed.
@@ -481,7 +481,7 @@ export function buildQaTicket(input: {
   const criteria = handoff.acceptanceCriteria.map((c, i) => `${i + 1}. ${c}`).join("\n");
   const lane = handoff.laneFiles.map((f) => `- \`${f}\``).join("\n");
   const verify = handoff.verifyCommand
-    ? `The declared verification command is \`${handoff.verifyCommand}\`. The orchestrator's orch_check receipt quotes its result; treat a failing receipt as a defect.`
+    ? `The declared verification command is \`${handoff.verifyCommand}\`. The orchestrator's agent_check receipt quotes its result; treat a failing receipt as a defect.`
     : `No verification command was declared. Judge the evidence in the worker's report and the lane diff.`;
   const assignment = String(input.task ?? "").trim();
 
@@ -502,9 +502,9 @@ ${lane}
 ${verify}
 
 ## What to do
-- **Satisfied** → call \`orch_done\` with the evidence summary: for each
+- **Satisfied** → call \`agent_done\` with the evidence summary: for each
   criterion, what you checked and what proves it.
-- **Defect** → call \`orch_ping\` IMMEDIATELY. Say which criterion fails, the
+- **Defect** → call \`agent_ping\` IMMEDIATELY. Say which criterion fails, the
   file and line, what is wrong, and the smallest fix you would accept. The
   orchestrator opens a defect ticket, spawns a fix unit, and resumes you to
   re-verify. Do not wait for the review to finish elsewhere.
@@ -536,7 +536,7 @@ export function buildQaGroupTicket(input: {
       const criteria = handoff.acceptanceCriteria.map((criterion, i) => `   ${i + 1}. ${criterion}`).join("\n");
       const lane = handoff.laneFiles.map((file) => `   - \`${file}\``).join("\n") || "   (not declared)";
       const verify = handoff.verifyCommand
-        ? `   verify: \`${handoff.verifyCommand}\` (a failing orch_check receipt is a defect)`
+        ? `   verify: \`${handoff.verifyCommand}\` (a failing agent_check receipt is a defect)`
         : "   no verify command declared: judge the evidence and the lane diff";
       return `### ${index + 1}. \`${handoff.scope}\` (worker: ${workerName})\n\nAcceptance criteria:\n${criteria}\n\nLane:\n${lane}\n\n${verify}`;
     })
@@ -554,9 +554,9 @@ ${sections}
 
 ## What to do
 - Judge each unit against ITS acceptance criteria, in the order above.
-- **Satisfied** → call \`orch_done\` with one section per unit: the verdict, then
+- **Satisfied** → call \`agent_done\` with one section per unit: the verdict, then
   per criterion what you checked and the evidence.
-- **Defect** → call \`orch_ping\` IMMEDIATELY, naming the unit's scope, the failing
+- **Defect** → call \`agent_ping\` IMMEDIATELY, naming the unit's scope, the failing
   criterion, the file and line, and the smallest fix you would accept. The
   orchestrator opens one defect ticket per failing unit and resumes you to
   re-verify that unit. Do not wait until the whole batch is finished.

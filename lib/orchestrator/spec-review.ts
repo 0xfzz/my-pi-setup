@@ -769,7 +769,7 @@ ${input.context.snapshot}
 ` : ""}
 ${renderLintForReviewer(input.lint ?? [])}
 ## How to report
-Call \`orch_spec_review_submit\` exactly once, with:
+Call \`agent_spec_review_submit\` exactly once, with:
 - verdict-level \`summary\` (2-4 sentences, plain English, no praise);
 - \`findings[]\` — each with \`severity\` (blocker | major | nit), \`location\`
   (section heading or line number inside the pinned text), \`discrepancy\`
@@ -824,7 +824,7 @@ export function renderRunSummary(run: ReviewRun): string {
       );
     }
     lines.push(
-      `Answer one with orch_spec_review({ action: "resolve", dispositions: [{ findingId: "C-gate-1", action: "accepted", rationale: "..." }] }) — `
+      `Answer one with agent_spec_review({ action: "resolve", dispositions: [{ findingId: "C-gate-1", action: "accepted", rationale: "..." }] }) — `
         + `that is how "the plan was not supplied" gets closed without another review round.`,
     );
   }

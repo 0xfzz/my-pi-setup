@@ -10,7 +10,7 @@
  *
  * The partition is balanced, with the remainder on the later groups: five units
  * become 2 + 3, which is the shape the user asked for. Labels are `qa-1…qa-K`,
- * one per reviewer, so `orch_review` and the dashboard name the same thing the
+ * one per reviewer, so `agent_review` and the dashboard name the same thing the
  * parent sees.
  *
  * The arithmetic itself lives in `chunking.ts` and is shared with the spec-review
@@ -110,6 +110,6 @@ export function qaLimitRefusal(runningScopes: readonly string[], incoming = 1): 
   const running = runningScopes.length ? runningScopes.join(", ") : "none";
   return (
     `Refused: ${runningScopes.length} QA reviewer(s) are already running (${running}), and this adds ${incoming}. `
-    + `The cap is ${MAX_ACTIVE_QA}. Collect the running verdicts with orch_review before spawning more.`
+    + `The cap is ${MAX_ACTIVE_QA}. Collect the running verdicts with agent_review before spawning more.`
   );
 }

@@ -297,7 +297,7 @@ export function watchSubagent(
       if (!outcome) return;
 
       // Summary race guard: the child writes its final message to the session
-      // file just before orch_done, but "just before" is not transactional —
+      // file just before agent_done, but "just before" is not transactional —
       // the sidecar can land while the message flush is still in flight. A null
       // summary then reported "Sub-agent exited without output" even though the
       // report existed moments later (observed live: watcher resolved at

@@ -33,7 +33,7 @@ function setup() {
     // faithful stub reports the file the environment names — exactly what a real
     // Herdr child has, since it is launched with `--session <that file>`.
     sessionManager: { getSessionFile: () => process.env.PI_SUBAGENT_SESSION },
-    tools: [{ name: "orch_ping" }],
+    tools: [{ name: "agent_ping" }],
     ui: {
       input: async (...args: any[]) => { calls.push(["input", ...args]); return "answer"; },
       select: async (...args: any[]) => { calls.push(["select", ...args]); return "no"; },
@@ -71,7 +71,7 @@ test("model-only sequential tool, schema and nested-tool declaration", () => {
   assert.equal(tool.name, "ask_user");
   assert.equal(tool.exposure, "model-only");
   assert.equal(tool.executionMode, "sequential");
-  assert.deepEqual(tool.reachesTools({}), ["orch_ping"]);
+  assert.deepEqual(tool.reachesTools({}), ["agent_ping"]);
   assert.deepEqual(tool.parameters.required, ["question"]);
   assert.equal(tool.parameters.properties.options.minItems, 1);
   assert.equal(tool.parameters.properties.options.uniqueItems, true);
@@ -153,7 +153,7 @@ test("no UI and invalid selection fail explicitly without guessing", () => withS
   status(await run({ question: "   " }), "unavailable");
 }));
 
-test("child forwards full question through orch_ping with signal, never direct UI", () => withSession(true, async () => {
+test("child forwards full question through agent_ping with signal, never direct UI", () => withSession(true, async () => {
   const { run, ctx, calls } = setup();
   ctx.hasUI = true; // Child isolation must not depend on this flag.
   const signal = new AbortController().signal;
@@ -161,15 +161,15 @@ test("child forwards full question through orch_ping with signal, never direct U
   status(out, "forwarded");
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0], "nested");
-  assert.equal(calls[0][1], "orch_ping");
+  assert.equal(calls[0][1], "agent_ping");
   assert.match(calls[0][2].message, /Question: Proceed\?/);
   assert.match(calls[0][2].message, /Context: Destructive operation/);
   assert.match(calls[0][2].message, /1\. yes\n2\. no/);
-  assert.match(calls[0][2].message, /orch_resume/);
+  assert.match(calls[0][2].message, /agent_resume/);
   assert.deepEqual(calls[0][3], { signal });
 }));
 
-test("missing nested API or unavailable orch_ping never falls back to UI", () => withSession(true, async () => {
+test("missing nested API or unavailable agent_ping never falls back to UI", () => withSession(true, async () => {
   for (const absent of ["api", "tool"]) {
     const { run, ctx, calls } = setup();
     if (absent === "api") delete ctx.executeTool;
@@ -191,7 +191,7 @@ test("denied and thrown forwarding failures are actionable and never use UI", ()
     };
     const out = await run();
     status(out, "unavailable");
-    assert.match(out.details.message, /orch_ping directly/);
+    assert.match(out.details.message, /agent_ping directly/);
     assert.deepEqual(calls, []);
   }
 }));
@@ -225,8 +225,8 @@ test("a child always gets its guidance, and it composes without replacing the pr
     assert.deepEqual(Object.keys(out), ["message"]);
     assert.equal(event.systemPrompt, "Other extension instructions");
     assert.equal(out.message.display, false);
-    assert.match(out.message.content, /orch_resume/);
-    assert.match(out.message.content, /Prefer calling orch_ping directly/);
+    assert.match(out.message.content, /agent_resume/);
+    assert.match(out.message.content, /Prefer calling agent_ping directly/);
     assert.match(out.message.content, /nested-tool shutdown/);
     assert.match(out.message.content, /never open user UI/);
   });
@@ -239,7 +239,7 @@ test("the parent gets ping guidance only on a ping, not on every turn", async ()
     assert.equal(out.message.display, false);
     assert.match(out.message.content, /Herdr child is waiting on you/);
     assert.match(out.message.content, /Otherwise ask the user/);
-    assert.match(out.message.content, /orch_resume/);
+    assert.match(out.message.content, /agent_resume/);
     assert.match(out.message.content, /Cancellation is unanswered/);
   });
 });

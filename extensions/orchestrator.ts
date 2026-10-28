@@ -5,8 +5,8 @@
  * than asked for in a prompt:
  *
  * 1. THE ORCHESTRATOR ONLY HANDS OFF AND REVIEWS.
- *    Its product is a handoff spec (orch_handoff), and its second act is a verdict
- *    (orch_review). It has no edit/write tool. An orchestrator that implements
+ *    Its product is a handoff spec (agent_handoff), and its second act is a verdict
+ *    (agent_review). It has no edit/write tool. An orchestrator that implements
  *    produces diffs nobody owns and a review that is not independent of the work.
  *
  * 2. A CHILD RECEIVES ITS OWN HANDOFF AND NOTHING ELSE.
@@ -285,13 +285,13 @@ export function childPurposeFromEnv(env: NodeJS.ProcessEnv = process.env): "rese
  */
 export function escalationGuidance(escalationId: string): string[] {
   return [
-    `Answer it with orch_escalate({ id: "${escalationId}", action: "answer", answer: "..." }) if you know from context you have.`,
+    `Answer it with agent_escalate({ id: "${escalationId}", action: "answer", answer: "..." }) if you know from context you have.`,
     `If you do not, use action: "to-user" with your reason — the user decides, and a cancelled dialog is not an answer.`,
     ``,
     `If this is a QA defect (a completed result that fails a criterion), open a ticket instead of answering in prose:`,
     `  1. todo_plan add: "Fix defect <scope>: <criterion>", resource file:<defective file>, the finding as the note;`,
-    `  2. todo_act claim that task, author a fix handoff scoped to the defective file, and orch_spawn the fix worker;`,
-    `  3. when the fix completes, orch_resume this QA child to re-verify;`,
+    `  2. todo_act claim that task, author a fix handoff scoped to the defective file, and agent_spawn the fix worker;`,
+    `  3. when the fix completes, agent_resume this QA child to re-verify;`,
     `  4. QA passes → todo_act done with the QA evidence; QA still fails → todo_act failed (reopen; twice → ask the user).`,
   ];
 }
@@ -516,7 +516,7 @@ function text(value: string, details?: unknown) {
  *
  * Both strings are built from concatenated template literals, and an earlier
  * revision dropped the interpolations: the parent read "exceeded its wall-clock
- * budget Decide: orch_resume…" and "showed no visible progress for It was
+ * budget Decide: agent_resume…" and "showed no visible progress for It was
  * interrupted", i.e. the only numbers that justified the interrupt were missing.
  * Keep the facts (elapsed/budget, strikes/elapsed checks) in the sentence.
  */
@@ -535,7 +535,7 @@ export function budgetNotice(params: {
     : `It was interrupted (Esc) and is paused.`;
   return `Watchdog: child "${params.name}" (scope: ${params.scope}) exceeded its wall-clock budget `
     + `(${elapsed}m elapsed of ${budget}m). ${outcome} `
-    + `Decide: orch_resume to grant more time, or orch_close to end it and re-scope.`;
+    + `Decide: agent_resume to grant more time, or agent_close to end it and re-scope.`;
 }
 
 export function stallNotice(params: {
@@ -553,7 +553,7 @@ export function stallNotice(params: {
     : `It was interrupted and is paused.`;
   return `Watchdog: child "${params.name}" (scope: ${params.scope}) showed no visible progress across `
     + `${strikes} consecutive checks (${span}). ${outcome} `
-    + `Inspect its pane, then orch_resume with direction, or orch_close to end it.`;
+    + `Inspect its pane, then agent_resume with direction, or agent_close to end it.`;
 }
 
 export default function orchestratorExtension(pi: ExtensionAPI, deps?: OrchestratorDeps): void {
@@ -898,7 +898,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
 
   /**
    * Reconcile restored children against live panes. A child whose pane is gone
-   * is closed — pretending it still runs makes orch_running lie. A child with a
+   * is closed — pretending it still runs makes agent_running lie. A child with a
    * live pane is re-watched: after a restart nobody else would report its end.
    */
   async function reconcileRestoredChildren(): Promise<{ restored: number; closed: number }> {
@@ -1031,7 +1031,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
               ? `Watchdog: child "${child.name}" (scope: ${child.scope}) ignored ${failures} interrupts. `
                 + `Its pane was closed (${settled.paneState}) so it cannot keep running unowned.`
               : `Watchdog: child "${child.name}" (scope: ${child.scope}) ignored ${failures} interrupts, and closing it failed (${settled.reason}). `
-                + `It stays under watchdog retry — use orch_close on pane ${child.paneId}.`,
+                + `It stays under watchdog retry — use agent_close on pane ${child.paneId}.`,
             display: true,
             details: {
               id: child.id,
@@ -1055,7 +1055,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
               `Watchdog: child "${child.name}" (scope: ${child.scope}) exceeded its limit, but the interrupt did not land `
               + `(${liveness.state === "unknown" ? "herdr is unreachable" : "the pane refused keys"}). `
               + `It was kept in the watchdog and will retry; if that keeps failing it is closed. `
-              + `Decide now: orch_resume with direction, or orch_close.`,
+              + `Decide now: agent_resume with direction, or agent_close.`,
             display: true,
             details: {
               id: child.id,
@@ -1277,7 +1277,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       try {
         await client.paneClose(child.paneId);
       } catch {
-        continue; // leave it for the next tick / orch_close
+        continue; // leave it for the next tick / agent_close
       }
       detachWatcher(child.sessionFile);
       registry.markPaneSwept(child.sessionFile, "auto-close-terminal");
@@ -1343,12 +1343,12 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     const parked = registry.getRunningChildren().filter((c) => c.status === "blocked");
     ctx.ui.notify(
       [
-        "orchestrator active: author a handoff with orch_handoff, then delegate with orch_spawn.",
+        "orchestrator active: author a handoff with agent_handoff, then delegate with agent_spawn.",
         restored.restored || restored.closed
           ? `Restored ${restored.restored} live child(ren); closed ${restored.closed} whose pane was gone.`
           : "",
         swept.closed ? `Closed ${swept.closed} orphaned pane(s) this parent had opened.` : "",
-        parked.length ? `${parked.length} child(ren) waiting on your decision — run orch_running.` : "",
+        parked.length ? `${parked.length} child(ren) waiting on your decision — run agent_running.` : "",
       ]
         .filter(Boolean)
         .join(" "),
@@ -1381,11 +1381,11 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     if (policyStatus.state === "invalid") {
       // Fail closed. An ordinary child has no policy at all; a half-written
       // reviewer policy is not ordinary. Let it report the blocker and nothing else.
-      if (event.toolName === "orch_ping" || event.toolName === "orch_done") return;
+      if (event.toolName === "agent_ping" || event.toolName === "agent_done") return;
       return {
         block: true,
         reason: `This session declares a spec-only review policy that cannot be read in full (${policyStatus.problems.join("; ")}). `
-          + `Only orch_ping/orch_done are available so it can report the blocker; it must not continue as an ordinary child.`,
+          + `Only agent_ping/agent_done are available so it can report the blocker; it must not continue as an ordinary child.`,
       };
     }
     // ── artifact scope: evidence, not user artifacts ────────────────────────
@@ -1414,7 +1414,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       if (isSpecOnlyDeniedTool(event.toolName)) {
         return {
           block: true,
-          reason: `${event.toolName} is not available to a spec-only reviewer. You have read instruments and \`orch_spec_review_submit\`.`,
+          reason: `${event.toolName} is not available to a spec-only reviewer. You have read instruments and \`agent_spec_review_submit\`.`,
         };
       }
       // A default search walks the whole working tree, including control-plane
@@ -1460,7 +1460,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         return {
           block: true,
           reason: `${readingRole === "review" ? "QA" : "Research"} child: bash is read-only. `
-            + `Report what you need with orch_ping; you never fix or write.`,
+            + `Report what you need with agent_ping; you never fix or write.`,
         };
       }
       event.input.command = command;
@@ -1484,19 +1484,19 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       }
       return;
     }
-    const parentOnly = `${event.toolName} is parent-only: this session is a delegated child. Report back with orch_ping or orch_done instead.`;
+    const parentOnly = `${event.toolName} is parent-only: this session is a delegated child. Report back with agent_ping or agent_done instead.`;
     // A retired name may still be registered by a foreign extension. Refuse it
     // before the capability lookup, which deliberately has no entry for it.
     if (isRetiredDelegationTool(event.toolName)) {
-      return { block: true, reason: `${event.toolName} was removed from this package; use the orch_* delegation tools instead.` };
+      return { block: true, reason: `${event.toolName} was removed from this package; use the agent_* delegation tools instead.` };
     }
-    // A child owns its reporting/pull tools (orch_done, orch_ping, …) but never a
+    // A child owns its reporting/pull tools (agent_done, agent_ping, …) but never a
     // parent-role delegation tool. This is the call-time half of the capability
     // table; the `--tools` allowlist is the first half.
     if (isDelegationTool(event.toolName)) {
       return mayUseDelegationTool(event.toolName, "child") ? undefined : { block: true, reason: parentOnly };
     }
-    if (!event.toolName.startsWith("orch_")) return;
+    if (!event.toolName.startsWith("agent_")) return;
     return { block: true, reason: parentOnly };
   });
 
@@ -1624,7 +1624,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
                 `Subagent "${running.name}" watcher error: ${error?.message ?? String(error)}. `
                 + (settled?.ok
                   ? "Its pane was closed instead of leaving an unwatched process behind."
-                  : `Its pane could NOT be closed${settled ? `: ${settled.reason}` : ""} — it stays under watchdog retry (orch_close also works).`),
+                  : `Its pane could NOT be closed${settled ? `: ${settled.reason}` : ""} — it stays under watchdog retry (agent_close also works).`),
               display: true,
               details: {
                 id: running.id,
@@ -1657,7 +1657,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
 
     if (outcome.kind === "ping") {
       // A child that asked a question is *paused*, not failed. It stays in the
-      // registry as blocked so orch_steer refuses to type into a dead pane and the
+      // registry as blocked so agent_steer refuses to type into a dead pane and the
       // escalation ladder owns it.
       registry.updateStatus(running.sessionFile, "blocked", { pendingPing: true });
       const escalation = escalations.open({
@@ -1707,7 +1707,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
    *
    * The cap is derived (`floor(workers/2)`, 1..3) and the queue is ordered by
    * completion, so the parent does not have to count panes or guess how many
-   * reviewers it may start. It is advice: spawning still goes through orch_spawn.
+   * reviewers it may start. It is advice: spawning still goes through agent_spawn.
    */
   function qaAdviceLine(): string | undefined {
     const children = registry.getAllChildren();
@@ -1729,7 +1729,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     if (!advice.queue.length && !advice.active) return undefined;
     return [
       `QA scheduling: ${advice.cap} reviewer(s) for ${workerScopes.length} unit(s) · ${advice.active} busy · ${advice.freeSlots} free.`,
-      advice.spawnNow.length ? `Spawn now: ${advice.spawnNow.join(", ")} (orch_spawn purpose review, qaFor).` : undefined,
+      advice.spawnNow.length ? `Spawn now: ${advice.spawnNow.join(", ")} (agent_spawn purpose review, qaFor).` : undefined,
       advice.deferred.length ? `Waiting for a slot: ${advice.deferred.join(", ")}.` : undefined,
     ].filter(Boolean).join(" ");
   }
@@ -1800,8 +1800,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   /**
    * A scope for a spawn with no handoff to name it.
    *
-   * Deterministic from the name or the first words of the task, so `orch_running`,
-   * `orch_steer` and `orch_check` all address the same unit. `sanitizeScope` is
+   * Deterministic from the name or the first words of the task, so `agent_running`,
+   * `agent_steer` and `agent_check` all address the same unit. `sanitizeScope` is
    * allowed to reject the slug ("global" is reserved), in which case the neutral
    * fallback is still a valid scope rather than a crash after the pane started.
    */
@@ -1845,7 +1845,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   // is judged by readers who did not write it and cannot consult the author. The
   // pinned snapshot travels *inside* the reviewer's ticket, so the reviewer needs
   // no artifact reader and cannot see a sibling's report, a global note, or the
-  // parent transcript. `orch_spec_review` is the parent's whole surface: start,
+  // parent transcript. `agent_spec_review` is the parent's whole surface: start,
   // collect, resolve, status, cancel.
 
   /** Reports are control-plane files: written by the child's submit tool, read by the parent. */
@@ -2181,7 +2181,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         lines.push(`- ${note.id} [${note.chunkId}]: ${note.text}` + (disposition ? ` → ${disposition.action}` : " → unresolved"));
       }
       lines.push(
-        `Answer one with orch_spec_review({ action: "resolve", runId: "${run.id}", dispositions: `
+        `Answer one with agent_spec_review({ action: "resolve", runId: "${run.id}", dispositions: `
           + `[{ findingId: "${evaluation.missingContext[0]!.id}", action: "accepted", rationale: "..." }] }).`,
       );
     }
@@ -2195,7 +2195,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         lines.push(`- ${finding.id} [${finding.severity}] ${finding.memberId ?? "?"} · ${finding.location} — ${finding.discrepancy}`);
       }
       lines.push(
-        `Fix one with orch_spec_review({ action: "fix", runId: "${run.id}", findingId, memberId, patch, rationale }), `
+        `Fix one with agent_spec_review({ action: "fix", runId: "${run.id}", findingId, memberId, patch, rationale }), `
           + `or record accepted/contested with action "resolve".`,
       );
     }
@@ -2217,7 +2217,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     const records = handoffIds.map((id) => resolveHandoff({ handoffId: id }));
     const missing = handoffIds.filter((_, index) => !records[index]);
     if (missing.length) {
-      return text(`Unknown handoff(s): ${missing.join(", ")}. Author them with orch_handoff first.`, { error: "unknown-handoff", missing });
+      return text(`Unknown handoff(s): ${missing.join(", ")}. Author them with agent_handoff first.`, { error: "unknown-handoff", missing });
     }
     const unique = new Map(records.map((record) => [record!.id, record!]));
     if (unique.size !== records.length) {
@@ -2248,13 +2248,13 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       const artifact = readArtifactForReview(ctx, record.artifactId);
       if (!artifact) {
         return text(
-          `Handoff ${record.scope}: artifact ${record.artifactId} is missing. Re-author it with orch_handoff.`,
+          `Handoff ${record.scope}: artifact ${record.artifactId} is missing. Re-author it with agent_handoff.`,
           { error: "missing-artifact", scope: record.scope },
         );
       }
       if (artifact.content !== renderHandoffForChild(record)) {
         return text(
-          `Handoff ${record.scope} differs from its artifact. Re-author it with orch_handoff before reviewing.`,
+          `Handoff ${record.scope} differs from its artifact. Re-author it with agent_handoff before reviewing.`,
           { error: "handoff-drift", scope: record.scope },
         );
       }
@@ -2558,7 +2558,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       );
     }
     const stored = [...handoffs.values()].find((entry) => entry.record.scope === memberId);
-    if (!stored) return text(`No handoff record for "${memberId}". Re-author it with orch_handoff.`, { error: "unknown-handoff" });
+    if (!stored) return text(`No handoff record for "${memberId}". Re-author it with agent_handoff.`, { error: "unknown-handoff" });
     if (registry.getRunningChildren().some((child) => child.scope === memberId)) {
       return text(`Cannot amend ${memberId} while a child holds its lane. Close or wait for that child.`, { error: "lane-held" });
     }
@@ -2598,8 +2598,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     if (structural.length) {
       return text(
         `Refusing this fix: it changes ${structural.join(", ")}, which the review bound. `
-          + `Re-author the handoff with orch_handoff (revision ${stored.record.revision + 1}), then review that member with `
-          + `orch_spec_review({ action: "start", handoffIds: ["${memberId}"] }).`,
+          + `Re-author the handoff with agent_handoff (revision ${stored.record.revision + 1}), then review that member with `
+          + `agent_spec_review({ action: "start", handoffIds: ["${memberId}"] }).`,
         { error: "structural-change-needs-reauthor", fields: structural },
       );
     }
@@ -2645,7 +2645,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         ``,
         `Applied ${findingId} to ${memberId}: revision ${stored.record.revision}, ${beforeHash.slice(0, 12)} → ${hashContent(afterContent).slice(0, 12)}.`,
         readiness?.ready
-          ? `${memberId} is READY: spawn it with orch_spawn({ handoffId: "${nextRecord.id}" }). No re-review was launched.`
+          ? `${memberId} is READY: spawn it with agent_spawn({ handoffId: "${nextRecord.id}" }). No re-review was launched.`
           : `${memberId} is not ready yet: ${readiness?.reasons.join("; ") ?? "no reason recorded"}.`,
       ].join("\n"),
       {
@@ -2660,11 +2660,11 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     );
   }
 
-  // ── orch_spec_review — the parent's side of the same contract ───────────────
-  // ── orch_handoff — the orchestrator's first act ─────────────────────────────
-  // ── orch_spawn ─────────────────────────────────────────────────────────────
+  // ── agent_spec_review — the parent's side of the same contract ───────────────
+  // ── agent_handoff — the orchestrator's first act ─────────────────────────────
+  // ── agent_spawn ─────────────────────────────────────────────────────────────
   pi.registerTool({
-    name: "orch_spawn",
+    name: "agent_spawn",
     label: "Spawn Orchestrator",
     description:
       "Spawn a worker. With handoffId it gets exactly one handoff spec inlined into its ticket; without one it gets an ad-hoc ticket and no lane. The child cannot see any other work unit's spec, scope name, or paths.",
@@ -2676,11 +2676,11 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         }),
       ),
       task: Type.String({ description: "The specific assignment. For an ad-hoc spawn this is the whole brief; for a spec spawn it must stay inside the handoff's lane." }),
-      handoffId: Type.Optional(Type.String({ description: "Handoff id returned by orch_handoff (its scope is accepted too). Omit it for an ad-hoc spawn." })),
+      handoffId: Type.Optional(Type.String({ description: "Handoff id returned by agent_handoff (its scope is accepted too). Omit it for an ad-hoc spawn." })),
       qaFor: Type.Optional(
         Type.Union(
           [Type.String(), Type.Array(Type.String())],
-          { description: "QA spawns only: the completed work-unit scope(s) whose results this child judges. Used with purpose \"review\"; an array makes one reviewer judge a batch. Prefer orch_qa for a whole wave." },
+          { description: "QA spawns only: the completed work-unit scope(s) whose results this child judges. Used with purpose \"review\"; an array makes one reviewer judge a batch. Prefer agent_qa for a whole wave." },
         ),
       ),
       qaScope: Type.Optional(
@@ -2703,7 +2703,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       ),
       laneFiles: Type.Optional(
         Type.Array(Type.String(), {
-          description: "Ad-hoc only: files this child owns. Omit it and orch_check reports lane: not-declared instead of inventing a lane.",
+          description: "Ad-hoc only: files this child owns. Omit it and agent_check reports lane: not-declared instead of inventing a lane.",
         }),
       ),
       acceptanceCriteria: Type.Optional(
@@ -2721,8 +2721,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         // A pause that still accepts work is not a pause. Checked before the
         // handoff lookup so a refused spawn writes nothing at all.
         return text(
-          `The orchestrator is paused (/orch-pause): no child was spawned and nothing was written. `
-            + `${registry.getPausedChildren().length} paused child(ren) are waiting for /orch-resume.`,
+          `The orchestrator is paused (/agent-pause): no child was spawned and nothing was written. `
+            + `${registry.getPausedChildren().length} paused child(ren) are waiting for /agent-resume.`,
           { error: "orchestrator-paused", paused: registry.getPausedChildren().map((c) => c.id) },
         );
       }
@@ -2751,7 +2751,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       }
       if (params.qaFor || params.purpose === "review" || params.purpose === "spec" || params.purpose === "implementation") {
         return text(
-          "The orchestrator pipeline was removed (orch_handoff, orch_spec_review, orch_qa, orch_check, orch_review, "
+          "The orchestrator pipeline was removed (agent_handoff, agent_spec_review, agent_qa, agent_check, agent_review, "
             + "and the spec/implementation/review purposes). Use purpose \"adhoc\" for a worker, or \"research\" for a read-only reader.",
           { error: "pipeline-removed" },
         );
@@ -2905,8 +2905,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             ? [`Role prompt: ${rolePrompt.source}${rolePrompt.path ? ` (${relative(ctx.cwd, rolePrompt.path)})` : ""}.`]
             : []),
           ``,
-          `The scope (${scope}) is the identity: use it in orch_steer, orch_interrupt, orch_close, orch_running.`,
-          `The outcome (or an orch_ping escalation) arrives automatically.`,
+          `The scope (${scope}) is the identity: use it in agent_steer, agent_interrupt, agent_close, agent_running.`,
+          `The outcome (or an agent_ping escalation) arrives automatically.`,
           RETRIGGER_CONTRACT,
         ].join("\n"),
         {
@@ -2938,11 +2938,11 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     if (!isSpecReviewer(child)) return undefined;
     return `"${child!.name}" is an independent specification reviewer (run ${child!.reviewRunId ?? "unknown"}). `
       + `Author instructions or answers would contaminate the review. Start a fresh review of the pinned revision with `
-      + `orch_spec_review({ action: "start", ... }); this session stays recorded for audit.`;
+      + `agent_spec_review({ action: "start", ... }); this session stays recorded for audit.`;
   }
 
   /**
-   * The launch half of a resume, shared by `orch_resume` and by an answered
+   * The launch half of a resume, shared by `agent_resume` and by an answered
    * escalation. One implementation, so "answer the child" cannot drift from
    * "resume the child" — that drift produced a second pi process on one session
    * file and a fresh registry row per answer.
@@ -2975,7 +2975,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     if (!existsSync(params.sessionPath)) {
       return text(
         `Refused to resume: session file ${params.sessionPath} does not exist. ` +
-          `Check orch_running for what is actually active; if the scope was cancelled, close it out with orch_review instead of resuming it.`,
+          `Check agent_running for what is actually active; if the scope was cancelled, close it out with agent_review instead of resuming it.`,
         { error: "session-not-found", sessionPath: params.sessionPath },
       );
     }
@@ -3007,7 +3007,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             if (after.state !== "gone") {
               return text(
                 `Refusing to resume "${child.name}": closing its live pane ${child.paneId} failed (${message}). `
-                  + `Nothing was started. Close it with orch_close, then retry.`,
+                  + `Nothing was started. Close it with agent_close, then retry.`,
                 { error: "resume-aborted", reason: message, paneId: child.paneId },
               );
             }
@@ -3095,7 +3095,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     });
   }
 
-  // ── orch_qa: fan a finished wave out to QA reviewers ───────────────────────
+  // ── agent_qa: fan a finished wave out to QA reviewers ───────────────────────
   // ── read-only research surface ─────────────────────────────────────────────
   // Engine-backed code views and cited web evidence for the orchestrator and the
   // devil's advocate. Every path goes through the same policy the review uses,
@@ -3368,9 +3368,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     },
   });
 
-  // ── orch_resume ────────────────────────────────────────────────────────────
+  // ── agent_resume ────────────────────────────────────────────────────────────
   pi.registerTool({
-    name: "orch_resume",
+    name: "agent_resume",
     label: "Resume Orchestrator",
     description: "Resume an ended or paused child, optionally delivering an answer or correction.",
     parameters: Type.Object({
@@ -3384,9 +3384,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     },
   });
 
-  // ── orch_interrupt ─────────────────────────────────────────────────────────
+  // ── agent_interrupt ─────────────────────────────────────────────────────────
   pi.registerTool({
-    name: "orch_interrupt",
+    name: "agent_interrupt",
     label: "Interrupt Orchestrator",
     description:
       "Send Escape to a running child's active turn. By default the pane, session, and watcher are kept; pass close:true to end the child instead of parking it.",
@@ -3463,7 +3463,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         if (!settled.ok) {
           return text(
             `Interrupted "${target.name}" [${target.id}], but closing pane ${target.paneId} failed: ${settled.reason}. ` +
-              `The child is paused and still open; retry orch_close or resume it.`,
+              `The child is paused and still open; retry agent_close or resume it.`,
             { id: target.id, status: "interrupted", closed: false, error: settled.reason },
           );
         }
@@ -3475,15 +3475,15 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
 
       persistState();
       return text(
-        `Interrupted "${target.name}" [${target.id}] (scope: ${target.scope}). Pane and session kept; use orch_close to end it.`,
+        `Interrupted "${target.name}" [${target.id}] (scope: ${target.scope}). Pane and session kept; use agent_close to end it.`,
         { id: target.id, status: "interrupted" },
       );
     },
   });
 
-  // ── orch_close ─────────────────────────────────────────────────────────────
+  // ── agent_close ─────────────────────────────────────────────────────────────
   pi.registerTool({
-    name: "orch_close",
+    name: "agent_close",
     label: "Close Orchestrator Child",
     description:
       "Close a child's pane and mark it closed — the terminal transition for a paused, blocked, completed, or already-vanished child. Idempotent, and reports what it observed.",
@@ -3530,9 +3530,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     },
   });
 
-  // ── orch_steer ─────────────────────────────────────────────────────────────
+  // ── agent_steer ─────────────────────────────────────────────────────────────
   pi.registerTool({
-    name: "orch_steer",
+    name: "agent_steer",
     label: "Steer Orchestrator",
     description:
       "Deliver a correction to a child: 'interrupt' (Esc, wait for the prompt, then type) or 'queue' (type without interrupting). Reports what was observed, not what was attempted.",
@@ -3563,12 +3563,12 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         if (stale) {
           return text(
             `No running child matched: "${stale.name}" [${stale.id}] is ${stale.status} (${stale.closeReason ?? "no reason recorded"}). `
-              + `Use orch_resume to continue it, or orch_close to clean it up.`,
+              + `Use agent_resume to continue it, or agent_close to clean it up.`,
             { status: "stale-target", error: "stale-target", id: stale.id, childStatus: stale.status },
           );
         }
         return text(
-          `No running child matched. Running: ${describeRunning()}. Use orch_resume for an ended or paused child.`,
+          `No running child matched. Running: ${describeRunning()}. Use agent_resume for an ended or paused child.`,
           { status: "not-running", error: "no-target" },
         );
       }
@@ -3629,9 +3629,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     },
   });
 
-  // ── orch_route ─────────────────────────────────────────────────────────────
+  // ── agent_route ─────────────────────────────────────────────────────────────
   pi.registerTool({
-    name: "orch_route",
+    name: "agent_route",
     label: "Route Steering v2",
     // Declared in no request; `tool_search` can return it because it is deferred
     // on purpose. Deferring is only safe for tools this package registers — a
@@ -3675,9 +3675,9 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     },
   });
 
-  // ── orch_running ───────────────────────────────────────────────────────────
+  // ── agent_running ───────────────────────────────────────────────────────────
   pi.registerTool({
-    name: "orch_running",
+    name: "agent_running",
     label: "Running Subagents v2",
     description: "Enumerate running children with their scope, lane, status, and pending escalation. The orchestrator cannot route to what it cannot see.",
     parameters: Type.Object({
@@ -3746,16 +3746,16 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     },
   });
 
-  // ── orch_brief — the review packet ─────────────────────────────────────────
-  // ── orch_check — the deterministic half of the review ──────────────────────
-  // ── orch_escalate — the uncertainty ladder ─────────────────────────────────
+  // ── agent_brief — the review packet ─────────────────────────────────────────
+  // ── agent_check — the deterministic half of the review ──────────────────────
+  // ── agent_escalate — the uncertainty ladder ─────────────────────────────────
   pi.registerTool({
-    name: "orch_escalate",
+    name: "agent_escalate",
     label: "Escalate / Answer Child Question",
     description:
       "Resolve a child's question. action 'answer' answers from context you actually have and resumes the child. action 'to-user' hands the decision to the user with a required reason. action 'relay-user' delivers a decision the user made. action 'cancel' resumes the child with an explicit NOT-approved message.",
     parameters: Type.Object({
-      id: Type.String({ description: "Escalation id, e.g. from a subagent_ping message or orch_running." }),
+      id: Type.String({ description: "Escalation id, e.g. from a subagent_ping message or agent_running." }),
       action: Type.Union([
         Type.Literal("answer"),
         Type.Literal("to-user"),
@@ -3819,7 +3819,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
    * Deliver a settled escalation by actually resuming the child.
    *
    * The old path marked the child closed and told the parent to call
-   * `orch_resume` itself. That manual step is what produced a second pi process
+   * `agent_resume` itself. That manual step is what produced a second pi process
    * on one session file and a fresh registry row per answer — the ghost factory.
    */
   async function deliverAnswer(ctx: ExtensionContext, id: string) {
@@ -3844,7 +3844,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           + `${escalation.sessionFile}`
           + (current ? ` (now ${current.id}, ${current.status})` : " (no row)")
           + `. Nothing was resumed — answering a stale question would supersede the live child. `
-          + `Run orch_running for the current state; the decision text is below if you still want it.`,
+          + `Run agent_running for the current state; the decision text is below if you still want it.`,
         {
           error: "stale-escalation",
           status: escalation.stage,
@@ -3874,7 +3874,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         resumedOk
           ? `The child was resumed with the decision in pane ${resumeDetails.paneId ?? "(unknown)"}.`
           : `Automatic resume failed (${resumeDetails.error}); deliver it with ` +
-            `orch_resume({ sessionPath: "${escalation.sessionFile}", message: <below> }).`,
+            `agent_resume({ sessionPath: "${escalation.sessionFile}", message: <below> }).`,
         ``,
         message,
         ``,
@@ -3942,7 +3942,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     return typeof answer === "string" && answer.trim() ? answer : undefined;
   }
 
-  // ── orch_review — the orchestrator's second act ────────────────────────────
+  // ── agent_review — the orchestrator's second act ────────────────────────────
   // ── helpers ───────────────────────────────────────────────────────────────
 
   /**
@@ -4037,7 +4037,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   }
 
   // ── Commands ──────────────────────────────────────────────────────────────
-  // ── /orch-pause · /orch-resume ─────────────────────────────────────────────
+  // ── /agent-pause · /agent-resume ─────────────────────────────────────────────
   /**
    * Pausing is a lifecycle operation, not a mode.
    *
@@ -4052,7 +4052,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   }
 
   /**
-   * `/orch-resume` also works outside orchestrator mode, but only to resolve a
+   * `/agent-resume` also works outside orchestrator mode, but only to resolve a
    * pause this session already owns. Otherwise a user who switched to normal to
    * fix something would have to switch back just to bring the run up.
    */
@@ -4070,16 +4070,16 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     cancelledReviewers: string[],
   ): string {
     return [
-      `Orchestrator paused (${mode}). New spawns are refused until /orch-resume.`,
+      `Orchestrator paused (${mode}). New spawns are refused until /agent-resume.`,
       closed.length ? `Closed ${closed.length} child(ren):\n${closed.join("\n")}` : "No running children were open.",
       stillLive.length
         ? `Still live — close failed, so the watchdog keeps retrying (these are NOT paused):\n${stillLive.map((c) => `${c.name} — ${c.reason}`).join("\n")}`
         : "",
       cancelledReviewers.length
-        ? `Independent reviewers were closed and cannot resume (resuming would attach author context). Restart them with orch_spec_review:\n${cancelledReviewers.join("\n")}`
+        ? `Independent reviewers were closed and cannot resume (resuming would attach author context). Restart them with agent_spec_review:\n${cancelledReviewers.join("\n")}`
         : "",
       closed.length > cancelledReviewers.length
-        ? "Every paused worker keeps its session file, so /orch-resume continues the same conversation."
+        ? "Every paused worker keeps its session file, so /agent-resume continues the same conversation."
         : "",
     ].filter(Boolean).join("\n\n");
   }
@@ -4087,7 +4087,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   async function pauseOrchestrator(ctx: ExtensionContext): Promise<void> {
     const status = orchestratorMode(ctx);
     if (!status.ok) {
-      ctx.ui.notify(`/orch-pause needs orchestrator mode (/mode orchestrator): ${status.reason}. Nothing was closed.`, "error");
+      ctx.ui.notify(`/agent-pause needs orchestrator mode (/mode orchestrator): ${status.reason}. Nothing was closed.`, "error");
       return;
     }
 
@@ -4121,7 +4121,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
 
   function resumeNotice(child: ScopedChild): string {
     return [
-      "The orchestrator paused this run with /orch-pause and has just resumed it with /orch-resume.",
+      "The orchestrator paused this run with /agent-pause and has just resumed it with /agent-resume.",
       child.task ? `Your assignment (unchanged):\n${child.task}` : "",
       "Continue from where you stopped — same session, same lane. Do not redo finished work. "
         + "Report what is done, what remains, and the evidence for each.",
@@ -4131,7 +4131,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   async function resumeOrchestrator(ctx: ExtensionContext): Promise<void> {
     const status = resumable(ctx);
     if (!status.ok) {
-      ctx.ui.notify(`/orch-resume needs orchestrator mode (/mode orchestrator): ${status.reason}. Nothing was started.`, "error");
+      ctx.ui.notify(`/agent-resume needs orchestrator mode (/mode orchestrator): ${status.reason}. Nothing was started.`, "error");
       return;
     }
 
@@ -4142,7 +4142,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     if (!paused.length) {
       registry.setPaused(false);
       persistState();
-      ctx.ui.notify("Nothing to resume: no child in this session was closed by /orch-pause.", "info");
+      ctx.ui.notify("Nothing to resume: no child in this session was closed by /agent-pause.", "info");
       return;
     }
 
@@ -4152,7 +4152,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     for (const child of paused) {
       if (!existsSync(child.sessionFile)) {
         // A paused row with no conversation cannot continue; marking it keeps
-        // every later /orch-resume from reporting the same phantom.
+        // every later /agent-resume from reporting the same phantom.
         registry.markPausedMissing(child.sessionFile);
         gone.push(`${child.name} [${child.id}] — ${child.sessionFile}`);
         continue;
@@ -4186,7 +4186,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     ctx.ui.notify(lines.join("\n\n"), failed.length || gone.length ? "warning" : "info");
   }
 
-  pi.registerCommand("orch", {
+  pi.registerCommand("agent", {
     description: "orchestrator status | list | handoffs | escalations",
     handler: async (arg, ctx) => {
       const sub = (arg ?? "").trim().split(/\s+/)[0]?.toLowerCase() || "status";
@@ -4228,18 +4228,18 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           `Orchestrator`,
           `Running: ${running.length} of ${all.length} tracked`,
           registry.isPaused()
-            ? `Paused: yes — ${registry.getPausedChildren().length} child(ren) await /orch-resume`
+            ? `Paused: yes — ${registry.getPausedChildren().length} child(ren) await /agent-resume`
             : `Paused: no`,
           `Handoffs: ${handoffs.size}`,
           `Escalations: ${escalations.forOrchestrator().length} waiting on you, ${escalations.forUser().length} waiting on the user`,
-          `Usage: /orch status | list | handoffs | escalations`,
+          `Usage: /agent status | list | handoffs | escalations`,
         ].join("\n"),
         "info",
       );
     },
   });
 
-  // ── /orch-model: which model each child role runs on ───────────────────────
+  // ── /agent-model: which model each child role runs on ───────────────────────
 
   /** The live registry is the only candidate source, so a new provider appears here for free. */
   function registryModelChoices(ctx: ExtensionContext): { choices: { id: string; name?: string }[]; auth: Map<string, boolean> } {
@@ -4341,8 +4341,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     });
   }
 
-  pi.registerCommand("orch-model", {
-    description: "Bind a model per child role: /orch-model [devil-advocate|worker|qa-review] [inherit|provider/model,...] [--project]",
+  pi.registerCommand("agent-model", {
+    description: "Bind a model per child role: /agent-model [devil-advocate|worker|qa-review] [inherit|provider/model,...] [--project]",
     handler: async (arg, ctx) => {
       const tokens = String(arg ?? "").trim().split(/\s+/).filter(Boolean);
       const project = tokens.includes("--project");
@@ -4365,7 +4365,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       // opens the same picker the role path uses.
       if (!role) {
         if (rest.length) {
-          ctx.ui.notify("Usage: /orch-model [devil-advocate|worker|qa-review] [inherit|provider/model,...] [--project]", "error");
+          ctx.ui.notify("Usage: /agent-model [devil-advocate|worker|qa-review] [inherit|provider/model,...] [--project]", "error");
           return;
         }
         const rows = renderRoleMenu(roleModels);
@@ -4401,7 +4401,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       const selection = await providerModelPicker(ctx as any, pickerChoices, bindingIds(roleModels[role]));
       if (!selection) return;
       if ("manual" in selection) {
-        ctx.ui.notify(`Enter it explicitly: /orch-model ${role} provider/model`, "info");
+        ctx.ui.notify(`Enter it explicitly: /agent-model ${role} provider/model`, "info");
         return;
       }
       const models = selection.ids.filter((id) => id !== "inherit");
@@ -4425,8 +4425,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     },
   });
 
-  pi.registerCommand("orch-prompts", {
-    description: "Role system prompts: /orch-prompts inspects, /orch-prompts init [--force] writes the defaults into .pi/orch-agents/",
+  pi.registerCommand("agent-prompts", {
+    description: "Role system prompts: /agent-prompts inspects, /agent-prompts init [--force] writes the defaults into .pi/orch-agents/",
     handler: async (arg, ctx) => {
       const tokens = String(arg ?? "").trim().split(/\s+/).filter(Boolean);
       const cwd = (ctx as any).cwd || process.cwd();
@@ -4445,7 +4445,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       }
 
       if (tokens.length) {
-        ctx.ui.notify("Usage: /orch-prompts | /orch-prompts init [--force]", "error");
+        ctx.ui.notify("Usage: /agent-prompts | /agent-prompts init [--force]", "error");
         return;
       }
 
@@ -4453,14 +4453,14 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     },
   });
 
-  pi.registerCommand("orch-pause", {
-    description: "Pause the orchestrator: close every child, keep the run, refuse new spawns until /orch-resume",
+  pi.registerCommand("agent-pause", {
+    description: "Pause the orchestrator: close every child, keep the run, refuse new spawns until /agent-resume",
     handler: async (_arg, ctx) => {
       await pauseOrchestrator(ctx);
     },
   });
 
-  pi.registerCommand("orch-resume", {
+  pi.registerCommand("agent-resume", {
     description: "Resume a paused orchestrator: redeploy every paused child on its previous session",
     handler: async (_arg, ctx) => {
       await resumeOrchestrator(ctx);

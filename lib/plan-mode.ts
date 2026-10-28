@@ -56,7 +56,7 @@ export function pendingPlanDeferredTools(branch: readonly any[]): string[] {
  *
  * Membership here is an ALLOWLIST, not an assertion of presence. Plenty of these
  * tools are registered conditionally — `tool_search` by the MCP gateway,
- * `orch_running` only while the orchestrator extension is loaded, `google_search` only with the Antigravity
+ * `agent_running` only while the orchestrator extension is loaded, `google_search` only with the Antigravity
  * provider, and so on — so an absent name usually means "that feature is off",
  * not "someone renamed a tool". See `EXPECTED_PLAN_TOOLS` for the subset whose
  * absence really is a bug.
@@ -78,7 +78,7 @@ export const PLAN_TOOLS: ReadonlySet<string> = new Set([
   // `google_search` carries no readOnlyHint, so its explicit entry is load-bearing.
   // `fetch_content`/`source_check` are deliberately absent: they write page caches
   // and clone repositories, so their non-read-only annotation is honoured.
-  "google_search", "web_search", "web_read", "vcc_recall", "orch_history", "orch_running", "tool_search",
+  "google_search", "web_search", "web_read", "vcc_recall", "agent_history", "agent_running", "tool_search",
   // The MCP resource tools are NOT listed: Pi declares all three with
 
   // `readOnlyHint: true`, so they pass through the annotation path, and they are
@@ -123,7 +123,7 @@ export interface PlanToolInfo {
 export function isPlanTool(name: string, tool?: PlanToolInfo): boolean {
   if (UNSAFE_TOOLS.has(name) || tool?.annotations?.destructiveHint === true) return false;
   // Explicit allowlisting wins, so `ask_user` stays usable even though it is a
-  // dispatcher (it reaches `orch_ping` when a child cannot ask directly).
+  // dispatcher (it reaches `agent_ping` when a child cannot ask directly).
   if (PLAN_TOOLS.has(name)) return true;
   // A dispatcher invokes tools whose behaviour is not visible from here, so a
   // read-only claim on the dispatcher says nothing about what it actually runs.
@@ -156,6 +156,6 @@ Workflow (adapt to the conversation; do not force a questionnaire or repeat alre
 5. Create or refine artifacts with proposals, agreed decisions, open questions, and refined plans. Preserve useful content and distinguish proposals from agreed decisions; suggestions are not approval. New artifact IDs are allowed.
 6. Summarize decisions, unresolved blockers, and what would be needed for implementation. Stop before implementation; do not automatically leave Plan mode or launch work.
 Use the available read-only tools, artifact_list, artifact_recall, artifact_search, artifact_save, and artifact_edit. ask_user and the todo tools (todo_plan, todo_act, todo_next) are conversation/workflow controls; todos describe research/discussion steps, and a todo title is never permission to implement.
-Shell inspection is limited to supported read-only commands (including pipelines and cd path && command). No redirection, expansion, interpreters, installs, builds, tests that write, or arbitrary scripts. Use read/search tools for unsupported inspection commands. Unannotated third-party tools and opaque script/browser/MCP gateways are blocked unless their read-only behavior can be enforced; direct MCP tools explicitly annotated read-only are allowed. The orch_* parent delegation tools are allowed: delegate research or review, and spec work with a handoff. Ad-hoc and implementation delegation are refused until you leave Plan mode. Do not attempt another route around a blocked operation.
+Shell inspection is limited to supported read-only commands (including pipelines and cd path && command). No redirection, expansion, interpreters, installs, builds, tests that write, or arbitrary scripts. Use read/search tools for unsupported inspection commands. Unannotated third-party tools and opaque script/browser/MCP gateways are blocked unless their read-only behavior can be enforced; direct MCP tools explicitly annotated read-only are allowed. The agent_* parent delegation tools are allowed: delegate research or review, and spec work with a handoff. Ad-hoc and implementation delegation are refused until you leave Plan mode. Do not attempt another route around a blocked operation.
 If no artifacts exist, create one with artifact_save when useful, or continue in chat. Read a long artifact by line range (artifact_recall offset/limit) and locate text in it with artifact_search instead of pulling the whole document. Only the user can leave this mode with /plan off or /mode normal, or Shift+Tab; do not claim to switch it yourself.
 This workflow applies only while the live current-mode briefing says Plan is ON. The request-local current-input-mode reminder reflects the current branch policy and supersedes historical Plan instructions, assistant claims, and compaction summaries. When input_mode says Plan is OFF (also confirmed by the live reminder), follow the current mode instead.`;

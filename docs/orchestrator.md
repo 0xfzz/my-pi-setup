@@ -10,8 +10,8 @@ The orchestrator is a product manager, not a reviewer career. Three phases, then
 waits:
 
 1. **Spec — author the wave, review it in chunks, fix what is real.** Investigate
-   with at most one research child, author the PRD and one `orch_handoff` per work
-   unit, then `orch_spec_review({ action: "plan" })` to see the split before paying
+   with at most one research child, author the PRD and one `agent_handoff` per work
+   unit, then `agent_spec_review({ action: "plan" })` to see the split before paying
    for reviewers (five specs become 2 + 3). `start` launches **one reviewer per
    chunk** — three specs each, at most three reviewers — and each reviewer's ticket
    contains only its own chunk. `collect`, then resolve every finding: `fix` applies
@@ -19,12 +19,12 @@ waits:
    decision the parent owns. A structural edit (lane, criteria, interfaces, report
    shape, vision) is refused and needs re-authoring plus a review of that member
    only. One review round per wave; a second opinion is the user's call.
-2. **Execute — workers in parallel lanes.** One `orch_handoff` per work unit, then
-   `orch_spawn`. The spec is frozen here; it is never re-reviewed.
+2. **Execute — workers in parallel lanes.** One `agent_handoff` per work unit, then
+   `agent_spawn`. The spec is frozen here; it is never re-reviewed.
 3. **QA — parallel result review with immediate defect routing.** On each worker
    completion, one QA child judges the RESULT against the frozen criteria
-   (`orch_spawn({ purpose: "review", qaFor: "<scope>" })`), or the whole wave is
-   fanned out at once with `orch_qa({ scopes: [...] })` — at most 3 reviewers,
+   (`agent_spawn({ purpose: "review", qaFor: "<scope>" })`), or the whole wave is
+   fanned out at once with `agent_qa({ scopes: [...] })` — at most 3 reviewers,
    3 units each (see [waves](#waves-worker-and-qa-concurrency)). A defect pings the
    orchestrator at once; the orchestrator opens a ticket on the todo ledger
    (`todo_plan`, resource = the defective file), claims it, spawns a defect-scoped
@@ -42,11 +42,11 @@ call with no new event is answered with one line. Idle is the normal state.
 
 **The loop:**
 
-1. **Author** — `orch_handoff` writes one spec per work unit (scope slug, goal, acceptance criteria, lane files, out-of-lane files, interfaces, guidance) and publishes it as a **scoped artifact**. A child recalls its spec by id and sees nothing else: no sibling scope, no sibling path.
-2. **Delegate** — `orch_spawn` takes a `handoffId` (spec work), or runs an **ad-hoc** child with `purpose`, optional `laneFiles`/`acceptanceCriteria`, and `budgetMinutes` (default 30). The child runs in its own Herdr pane; workers with disjoint lanes run in parallel. Purpose is resolved before any pane exists, so a refused spawn leaves no trace.
-3. **Steer** — `orch_steer` (Esc→settle→type→observe delivery, confirmed by echo), `orch_route` (deterministic owner resolution), `orch_interrupt`/`orch_resume`. `orch_running` reports every child with scope, lane, and pending escalations.
-4. **Review** — `orch_review` records each criterion against evidence the orchestrator gathered itself; an approved verdict with a failing criterion or an out-of-lane diff is refused in code. Two consecutive `revise` rounds stop the loop and move the decision to the user.
-5. **Escalate** — `orch_escalate` is the ladder: `answer` / `to-user` (through the ask-user extension — a cancelled dialog is unanswered, never consent) / `relay-user` / `cancel`.
+1. **Author** — `agent_handoff` writes one spec per work unit (scope slug, goal, acceptance criteria, lane files, out-of-lane files, interfaces, guidance) and publishes it as a **scoped artifact**. A child recalls its spec by id and sees nothing else: no sibling scope, no sibling path.
+2. **Delegate** — `agent_spawn` takes a `handoffId` (spec work), or runs an **ad-hoc** child with `purpose`, optional `laneFiles`/`acceptanceCriteria`, and `budgetMinutes` (default 30). The child runs in its own Herdr pane; workers with disjoint lanes run in parallel. Purpose is resolved before any pane exists, so a refused spawn leaves no trace.
+3. **Steer** — `agent_steer` (Esc→settle→type→observe delivery, confirmed by echo), `agent_route` (deterministic owner resolution), `agent_interrupt`/`agent_resume`. `agent_running` reports every child with scope, lane, and pending escalations.
+4. **Review** — `agent_review` records each criterion against evidence the orchestrator gathered itself; an approved verdict with a failing criterion or an out-of-lane diff is refused in code. Two consecutive `revise` rounds stop the loop and move the decision to the user.
+5. **Escalate** — `agent_escalate` is the ladder: `answer` / `to-user` (through the ask-user extension — a cancelled dialog is unanswered, never consent) / `relay-user` / `cancel`.
 
 ### The flow
 
@@ -55,23 +55,23 @@ registry row, no pane, no ticket.
 
 ```mermaid
 flowchart TD
-    req(["Request"]) --> author["1 · orch_handoff<br/>scope · criteria · lane · dependsOn"]
+    req(["Request"]) --> author["1 · agent_handoff<br/>scope · criteria · lane · dependsOn"]
     author --> design{"ready spec review?"}
     design -->|"no designRef in Orchestrator/Supervise"| refuseA(["refused — nothing written"])
     design -->|"ready, or not required"| deps{"dependsOn approved?"}
     deps -->|"no"| refuseB(["refused — dependency-unapproved"])
-    deps -->|"yes"| spawn["2 · orch_spawn<br/>purpose · budgetMinutes"]
+    deps -->|"yes"| spawn["2 · agent_spawn<br/>purpose · budgetMinutes"]
     spawn --> admit{"admission"}
     admit -->|"depth · breadth · scope busy · orchestrator paused"| refuseC(["refused — no row, no pane, no ticket"])
     admit -->|"admitted"| work["3 · worker in its own pane<br/>its handoff artifact is its only spec"]
-    work -->|"orch_ping"| ladder{"4 · escalation ladder"}
-    ladder -->|"orchestrator knows"| answer["orch_escalate answer"]
+    work -->|"agent_ping"| ladder{"4 · escalation ladder"}
+    ladder -->|"orchestrator knows"| answer["agent_escalate answer"]
     ladder -->|"does not know"| user{"ask the user"}
     user -->|"answered"| answer
     user -->|"cancelled is not consent"| blocker(["child reports the blocker"])
     answer -->|"resume"| work
-    work -->|"orch_done"| check["5 · orch_check<br/>lane from git · declared verifyCommand · receipt"]
-    check --> review{"6 · orch_review"}
+    work -->|"agent_done"| check["5 · agent_check<br/>lane from git · declared verifyCommand · receipt"]
+    check --> review{"6 · agent_review"}
     review -->|"failing criterion · out of lane · prose only · unreadable tree · substituted check"| revise["revise"]
     revise -->|"round 1–2"| work
     revise -->|"round 3"| handOver(["decision moves to the user"])
@@ -94,8 +94,8 @@ flowchart LR
     edit -->|"lane · criteria · interfaces"| reauthor["refused: re-author,<br/>re-review that member"]
     fix -->|"acceptable trade-off"| accept["accepted (+ user for a blocker)<br/>or contested → the user decides"]
     collect -->|"ready"| ready["designRef: runId + memberId + hash"]
-    ready --> handoff["orch_handoff carries designRef"]
-    handoff --> spawn["orch_spawn re-reads the artifact"]
+    ready --> handoff["agent_handoff carries designRef"]
+    handoff --> spawn["agent_spawn re-reads the artifact"]
     spawn -->|"hash drifted or member not ready"| refused(["refused"])
     spawn -->|"matches"| worker(["worker starts"])
     reauthor --> chunks
@@ -108,22 +108,22 @@ instead of guessing:
 stateDiagram-v2
     direction LR
     [*] --> running: spawn admitted
-    running --> blocked: orch_ping — question
-    blocked --> running: answer delivered · orch_resume
-    running --> completed: orch_done
-    running --> failed: pane ends without orch_done
-    running --> closed: orch_close · pane gone · /orch-pause (closeReason=paused)
-    completed --> running: orch_resume
-    failed --> running: orch_resume
-    completed --> closed: orch_close
-    failed --> closed: orch_close
-    closed --> running: orch_resume (a paused close is redeployed)
+    running --> blocked: agent_ping — question
+    blocked --> running: answer delivered · agent_resume
+    running --> completed: agent_done
+    running --> failed: pane ends without agent_done
+    running --> closed: agent_close · pane gone · /agent-pause (closeReason=paused)
+    completed --> running: agent_resume
+    failed --> running: agent_resume
+    completed --> closed: agent_close
+    failed --> closed: agent_close
+    closed --> running: agent_resume (a paused close is redeployed)
     closed --> [*]
 ```
 
-A pause is not a status: `/orch-pause` closes the row with `closeReason: "paused"`, and
-`orch_resume` redeploys it. Reviewing a child records a verdict; it does not close the child —
-`orch_close` does that.
+A pause is not a status: `/agent-pause` closes the row with `closeReason: "paused"`, and
+`agent_resume` redeploys it. Reviewing a child records a verdict; it does not close the child —
+`agent_close` does that.
 
 #### The handoff is read, not assumed
 
@@ -131,7 +131,7 @@ A ticket that says "call `artifact_recall`" is a request, not a mechanism. Nothi
 that a worker did it, so a child could implement from the assignment paragraph alone and the review
 would still judge its diff against criteria it never saw. Two structural rules close that gap:
 
-1. **The read is a receipt.** `orch_check` and an `orch_review` approval inspect the child's own
+1. **The read is a receipt.** `agent_check` and an `agent_review` approval inspect the child's own
    transcript for a successful `artifact_recall({ id: "<handoff>" })`. No read → the check is refused
    (`handoff-not-read`) and an approval cannot be recorded; a missing transcript is
    `handoff-unverified`, never treated as compliance. A rejection or `revise` is still allowed — a
@@ -140,12 +140,12 @@ would still judge its diff against criteria it never saw. Two structural rules c
 2. **The spec is frozen.** A child may read a `handoff-*` artifact but `artifact_save`/`artifact_edit`
    targeting it is refused. The document is pinned by content hash for review and re-read before every
    spawn; letting the worker rewrite it would re-point an approval at text nobody reviewed. If it is
-   wrong, the child escalates and the **orchestrator** revises it with `orch_handoff`.
+   wrong, the child escalates and the **orchestrator** revises it with `agent_handoff`.
 
 The receipt carries the artifact version the child actually read, so a spec re-authored afterwards is
 visible as drift rather than silently re-attributed.
 
-**Durability.** The registry persists to an atomic versioned sidecar (`orchestrator-registry.json`) and is restored + reconciled on session start: dead panes are closed, live panes keep running, pending escalations survive. A watchdog enforces each child's wall-clock budget and stall-detects when the pane has not changed **and** the child's session file has not been written for ~90s — interrupting and steering the parent instead of burning tokens, without interrupting a child that is quietly running its test suite. `orch_running` lazily re-verifies pane liveness, so a child whose pane died never lingers as a zombie triggering cleanup loops across sessions; `orch_resume` refuses session paths that do not exist.
+**Durability.** The registry persists to an atomic versioned sidecar (`orchestrator-registry.json`) and is restored + reconciled on session start: dead panes are closed, live panes keep running, pending escalations survive. A watchdog enforces each child's wall-clock budget and stall-detects when the pane has not changed **and** the child's session file has not been written for ~90s — interrupting and steering the parent instead of burning tokens, without interrupting a child that is quietly running its test suite. `agent_running` lazily re-verifies pane liveness, so a child whose pane died never lingers as a zombie triggering cleanup loops across sessions; `agent_resume` refuses session paths that do not exist.
 
 ### Spawn shapes and mode policy
 
@@ -154,12 +154,12 @@ visible as drift rather than silently re-attributed.
 | `purpose` | Normal | Plan | Child policy |
 |---|---|---|---|
 | `research` (Plan default) | ✅ | ✅ | read-only tools + `bash`/web inspection; no `write`/`edit`/patch |
-| `review` | `orch_qa` / `qaFor` | `orch_qa` / `qaFor` | isolated reviewer: read-only research, `shell_read`, scoped evidence; no write/edit |
+| `review` | `agent_qa` / `qaFor` | `agent_qa` / `qaFor` | isolated reviewer: read-only research, `shell_read`, scoped evidence; no write/edit |
 | `spec` (`handoffId`) | ✅ | ✅ | worker allowlist, lane frozen |
 | `adhoc` (Normal default) | ✅ | ❌ | worker allowlist; no lane unless declared |
 | `implementation` | ✅ | ❌ without an execution approval | worker allowlist |
 
-Plan is read-only for the **parent**; delegating research, review or spec work is not implementation. Plan refuses `adhoc` and `implementation` with an explicit message. `orch_check` reports `lane: not-declared` for an ad-hoc unit with no `laneFiles` (it is not a failure), and `orch_review` treats an empty lane as "nothing to violate".
+Plan is read-only for the **parent**; delegating research, review or spec work is not implementation. Plan refuses `adhoc` and `implementation` with an explicit message. `agent_check` reports `lane: not-declared` for an ad-hoc unit with no `laneFiles` (it is not a failure), and `agent_review` treats an empty lane as "nothing to violate".
 
 A delegated child may not spawn again (`PI_SUBAGENT_DEPTH`, default max-depth 1), and one parent may hold at most 8 running children (`PI_SUBAGENT_MAX_CHILDREN`). Both are hard stops before a pane exists and both are overridable.
 
@@ -168,30 +168,30 @@ A delegated child may not spawn again (`PI_SUBAGENT_DEPTH`, default max-depth 1)
 A wave runs in two tiers: at most **5 concurrent workers** (`spec`, `implementation`, `adhoc`), then at most **3 QA reviewers**, each judging at most **3 units**. These caps are concurrency, not lifetime quotas — a completed child frees its slot, which is what makes wave → review → next wave work. Research readers are not workers and hold no slot; a running specification reviewer is not QA and holds no QA slot, so a live spec review cannot silently halve QA capacity.
 
 ```text
-orch_qa({ scopes: ["a", "b", "c", "d", "e"] })
+agent_qa({ scopes: ["a", "b", "c", "d", "e"] })
   → qa-1 judges a, b
   → qa-2 judges c, d, e
 ```
 
-The split is balanced with the remainder on later groups, and each reviewer gets a batch ticket naming only its own units, criteria, lanes and verify commands — a finding never crosses verdicts. Capacity is checked for the whole batch before the first pane opens, so a wave is never half-reviewed. `orch_spawn({ purpose: "review", qaFor: [...] })` is the manual single-reviewer form; `orch_qa` is the wave form. Labels are `qa-1…qa-K` and are reused once an earlier reviewer is closed.
+The split is balanced with the remainder on later groups, and each reviewer gets a batch ticket naming only its own units, criteria, lanes and verify commands — a finding never crosses verdicts. Capacity is checked for the whole batch before the first pane opens, so a wave is never half-reviewed. `agent_spawn({ purpose: "review", qaFor: [...] })` is the manual single-reviewer form; `agent_qa` is the wave form. Labels are `qa-1…qa-K` and are reused once an earlier reviewer is closed.
 
 ### Which model and system prompt a child runs on
 
 Three child roles can be bound to a model: `devil-advocate`, `worker`, and `qa-review`. A binding is `inherit` (follow the parent), one provider-qualified model, or a pool rolled **once per spawned child** — a pooled panel is diverse by construction, and a resume replays the recorded roll instead of switching mid-task.
 
 ```text
-/orch-model                                  # role menu, then the picker
-/orch-model worker                           # picker, current binding pre-ticked
-/orch-model worker zai/glm-5.3-flash,deepseek/deepseek-4.1-flash   # text form
-/orch-model --project worker inherit         # write the project file instead of the global one
+/agent-model                                  # role menu, then the picker
+/agent-model worker                           # picker, current binding pre-ticked
+/agent-model worker zai/glm-5.3-flash,deepseek/deepseek-4.1-flash   # text form
+/agent-model --project worker inherit         # write the project file instead of the global one
 ```
 
 Each role also has a **system prompt**, resolved per workspace: `.pi/orch-agents/devil-advocate.md`, `worker.md`, `qa-reviewer.md` (the role-id alias `qa-review.md` is accepted), then a global file under the agent dir, then a built-in default. The prompt is passed as a real `--append-system-prompt` file, so pi's own prompt stays and the role brief refines it.
 
 ```text
-/orch-prompts                 # role → source (project | global | builtin) and path
-/orch-prompts init            # write the three defaults; never overwrites authored content
-/orch-prompts init --force    # regenerate them
+/agent-prompts                 # role → source (project | global | builtin) and path
+/agent-prompts init            # write the three defaults; never overwrites authored content
+/agent-prompts init --force    # regenerate them
 ```
 
 An empty file falls through instead of silencing the role. Worker prompts apply to `spec`, `implementation` and `adhoc` children, `qa-reviewer.md` to QA reviewers, and `devil-advocate.md` to every specification reviewer; research readers are unchanged.
@@ -230,10 +230,10 @@ is disposable.
 
 ### v1 removal and cut-over
 
-The old `subagent*`, `caller_ping` and `parent_*` names are **removed**, not aliased. Everything is `orch_*`; `/subagents on|off|status` is the single switch, and `lib/delegation-tools.ts` is the single capability table. A stale global install that registers a v1 name is stripped from the active set and refused at call time. A v1 child launched before the migration must be finished or closed before reloading: resuming it would call a tool that no longer exists.
+The old `subagent*`, `caller_ping` and `parent_*` names are **removed**, not aliased. Everything is `agent_*`; `/subagents on|off|status` is the single switch, and `lib/delegation-tools.ts` is the single capability table. A stale global install that registers a v1 name is stripped from the active set and refused at call time. A v1 child launched before the migration must be finished or closed before reloading: resuming it would call a tool that no longer exists.
 
-**Commands:** `/orch status | list | handoffs | escalations`, `/orch-model`, `/orch-prompts`.
-`orch_qa` is a tool, not a command: the parent calls it to fan a wave out to QA.
+**Commands:** `/agent status | list | handoffs | escalations`, `/agent-model`, `/agent-prompts`.
+`agent_qa` is a tool, not a command: the parent calls it to fan a wave out to QA.
 
 ### Independent specification review: one reviewer per chunk
 
@@ -242,19 +242,19 @@ of implementation, a wave of work-unit specs is reviewed **in chunks**, because 
 reviewer who is handed everything reads one spec and skims the rest:
 
 ```text
-orch_spec_review({ action: "plan", handoffIds: [a, b, c, d, e] })
+agent_spec_review({ action: "plan", handoffIds: [a, b, c, d, e] })
   → review-1 judges a, b · review-2 judges c, d, e   (nothing launched)
 
-orch_spec_review({ action: "start", handoffIds: [a, b, c, d, e], prdArtifactId: "prd" })
+agent_spec_review({ action: "start", handoffIds: [a, b, c, d, e], prdArtifactId: "prd" })
   → pins each member by content hash, launches TWO isolated reviewers, one per chunk
 
-orch_spec_review({ action: "collect", runId })
+agent_spec_review({ action: "collect", runId })
   → reads one version-2 report per chunk; every member needs a block and coverage
 
-orch_spec_review({ action: "fix", runId, findingId, memberId, patch, rationale })
+agent_spec_review({ action: "fix", runId, findingId, memberId, patch, rationale })
   → applies the orchestrator's own edit, records beforeHash → afterHash, keeps the approval
 
-orch_spec_review({ action: "resolve", runId, dispositions: [...] })
+agent_spec_review({ action: "resolve", runId, dispositions: [...] })
   → records accepted/contested; a blocker needs the user's confirmation
 ```
 
@@ -274,7 +274,7 @@ without it the honest report is "the plan was not supplied", which used to be a 
 nobody could answer.
 
 A reviewer gets only its own chunk's pinned text, `read`, named-path search, the todo
-tools, and `orch_spec_review_submit`, plus the read-only research surface:
+tools, and `agent_spec_review_submit`, plus the read-only research surface:
 `code_map`/`code_search`/`code_read`, `web_read`/`web_research`/`web_fetch`, and
 `shell_read` (the closed grammar). It may write **evidence artifacts** scoped to
 `review:<runId>:<chunkId>` (`artifact_save/edit/recall`) — never a user artifact,
@@ -301,7 +301,7 @@ stable ids (`C-gate-1`, `C-review-2-1`) and gate readiness until the parent answ
 them with a recorded disposition:
 
 ```text
-orch_spec_review({ action: "resolve", runId, dispositions: [
+agent_spec_review({ action: "resolve", runId, dispositions: [
   { findingId: "C-gate-1", action: "accepted", rationale: "the plan is pinned as prdArtifactId" },
 ] })
 ```
@@ -326,7 +326,7 @@ had failed looked from the parent (it kept collecting a dead pane for the rest o
 run). The same reconciliation applies to a document review's single reviewer.
 
 **The retired-tool list names the successor.** The mode block says
-`spec_review_submit (use orch_spec_review_submit)`, not a bare "spec_review_submit is
+`spec_review_submit (use agent_spec_review_submit)`, not a bare "spec_review_submit is
 unavailable". A reviewer whose submit failed on malformed JSON read the old sentence
 as "my submit tool was removed", saved its report as an artifact, and the run never
 collected it.
@@ -343,8 +343,8 @@ Bind the result to the work unit with `designRef`, and the gate refuses a stale
 approval at both ends:
 
 ```text
-orch_handoff({ scope, …, designRef: { runId, memberId, targetHash } })  // refuses an unready member
-orch_spawn({ handoffId, … })                                            // re-reads the artifact, refuses drift
+agent_handoff({ scope, …, designRef: { runId, memberId, targetHash } })  // refuses an unready member
+agent_spawn({ handoffId, … })                                            // re-reads the artifact, refuses drift
 ```
 
 A document review is still available and unchanged in shape: point `start` at
@@ -352,7 +352,7 @@ A document review is still available and unchanged in shape: point `start` at
 that document with the merged gate rubric. There are no lens presets: a design that
 needs several opinions is a design that should have been split into specs.
 
-**Check receipts.** `orch_check` now returns a `checkRunId`. `orch_review({ …, checkRunId })` refuses a verdict when the receipt is missing, belongs to another scope, was taken against different acceptance criteria, or was taken against a different tree. Without a receipt, `cmd`/`test` evidence is still accepted as *attested* (shape-verified) — the difference is now visible in the audit trail instead of being indistinguishable from a real run.
+**Check receipts.** `agent_check` now returns a `checkRunId`. `agent_review({ …, checkRunId })` refuses a verdict when the receipt is missing, belongs to another scope, was taken against different acceptance criteria, or was taken against a different tree. Without a receipt, `cmd`/`test` evidence is still accepted as *attested* (shape-verified) — the difference is now visible in the audit trail instead of being indistinguishable from a real run.
 
 **Known limitations:** receipts live in memory for the process that observed the run (a restart cannot vouch for work it did not watch); `treeDigest` covers the whole worktree, so two lanes in one checkout invalidate each other's receipt; reviewer isolation is harness isolation, not an OS sandbox.
 

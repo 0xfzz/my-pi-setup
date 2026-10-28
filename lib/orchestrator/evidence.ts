@@ -1,7 +1,7 @@
 /**
  * Evidence that a review can actually check.
  *
- * `orch_review` used to take `evidence: string` — prose the orchestrator wrote
+ * `agent_review` used to take `evidence: string` — prose the orchestrator wrote
  * about itself. That is self-attestation wearing a lab coat: it cannot tell "the
  * child added the retry budget" from "I edited this file five minutes ago and
  * then described it". With the orchestrator restricted to read-only tools the

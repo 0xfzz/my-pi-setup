@@ -39,7 +39,7 @@ export const MAIN_PREFIX = "main";
  */
 const TICKET_MARKERS = [
   "Complete your task autonomously.",
-  "When finished, call the orch_done tool.",
+  "When finished, call the agent_done tool.",
   "You did not inherit your parent's conversation",
   "The conversation above was copied from your parent at launch",
 ];
@@ -155,12 +155,12 @@ export function readSessionFacts(text: string): SessionFacts {
  * neighbours.
  */
 const WRAPPER_PATTERNS = [
-  /call orch_parent_recall/i,
-  /call orch_parent_digest/i,
+  /call agent_parent_recall/i,
+  /call agent_parent_digest/i,
   /Never modify the parent session/i,
   /Your FINAL assistant message/i,
   /The user can interact with you at any time/i,
-  /^When finished, call the orch_done tool/i,
+  /^When finished, call the agent_done tool/i,
   // `modeHint`, split off from the sentence that follows it.
   /^Complete your task\.?$/i,
   /^Complete your task autonomously\.?$/i,

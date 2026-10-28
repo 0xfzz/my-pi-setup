@@ -117,7 +117,7 @@ test("capability facts and rules mention only tools that exist", () => {
   assert.doesNotMatch(rules, /todo list/);
   assert.doesNotMatch(rules, /browser/i);
 
-  const rich = [tool("read"), tool("bash"), tool("orch_spawn"), tool("todo_plan"), tool("ask_user")];
+  const rich = [tool("read"), tool("bash"), tool("agent_spawn"), tool("todo_plan"), tool("ask_user")];
   const richRules = derivedRules(rich).join("\n");
   assert.match(richRules, /sub-agent/);
   assert.match(richRules, /todo_plan/);

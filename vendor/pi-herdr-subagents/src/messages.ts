@@ -9,8 +9,8 @@
 // rely on them; do not rename.
 //
 // Refinements over the reference (plan §10):
-//   (a) exit-0-without-orch_done gets distinct honest phrasing
-//       ("closed by user, no orch_done") instead of a generic "completed";
+//   (a) exit-0-without-agent_done gets distinct honest phrasing
+//       ("closed by user, no agent_done") instead of a generic "completed";
 //   (b) pane-killed / gap-exit still deliver the last assistant message from
 //       the child session file (written incrementally) + the session path so
 //       the orchestrator can resume.
@@ -140,7 +140,7 @@ export function buildOutcomeMessage(
       return {
         customType: "subagent_result",
         content:
-          `Sub-agent "${running.name}" exited (session closed by user, no orch_done) ` +
+          `Sub-agent "${running.name}" exited (session closed by user, no agent_done) ` +
           `after ${formatElapsed(elapsed)} — last message:\n\n` +
           `${outcome.summary}${sessionRef(running.sessionFile)}${usageSuffix}`,
         display: true,
@@ -265,7 +265,7 @@ function statusText(disposition: string | undefined, exitCode: number): string {
     case "completed":
       return "completed";
     case "completed-user-exit":
-      return "closed by user (no orch_done)";
+      return "closed by user (no agent_done)";
     case "launch-failed":
       return `failed to launch (exit ${exitCode})`;
     case "pane-killed":

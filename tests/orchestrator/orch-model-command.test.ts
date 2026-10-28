@@ -71,7 +71,7 @@ async function harness() {
   return {
     dir,
     ctx,
-    smoke: async (arg: string) => commands.get("orch-model").handler(arg, ctx),
+    smoke: async (arg: string) => commands.get("agent-model").handler(arg, ctx),
     settingsFile: () => join(dir, ".pi", "subagents.json"),
     readSettings: async () => JSON.parse(await readFile(join(dir, ".pi", "subagents.json"), "utf8")),
     exists: () => existsSync(join(dir, ".pi", "subagents.json")),
