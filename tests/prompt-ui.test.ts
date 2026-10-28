@@ -3,12 +3,13 @@ import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import promptUi, {
   ContextFooter,
-  ModelBadge,
   collectUsage,
   contextBar,
   contextColor,
   formatCwd,
   formatTokens,
+  modelLabel,
+  renderModelTopBorder,
 } from "../lib/prompt-ui.ts";
 
 const theme = {
@@ -90,15 +91,25 @@ test("collectUsage sums message, usage, and cache hit rate", () => {
   assert.equal(totals.cacheHitRate?.toFixed(1), "72.7");
 });
 
-test("ModelBadge puts the model, provider and thinking level above the editor", () => {
+test("modelLabel joins model, provider and thinking variant", () => {
   const ctx = fakeContext();
-  const badge = new ModelBadge(() => ctx, theme);
-  const line = badge.render(80)[0]!;
-  assert.match(line, /deepseek-v4\.1-flash/);
-  assert.match(line, /opencode-go/);
+  assert.equal(modelLabel(ctx), "deepseek-v4.1-flash · opencode-go · high");
+  assert.equal(modelLabel(undefined), undefined);
+});
+
+test("renderModelTopBorder embeds the model in the editor top rule", () => {
+  const border = (text: string) => text;
+  const line = renderModelTopBorder("deepseek-v4.1-flash · opencode-go · high", 60, border);
+  assert.ok(line.startsWith("── deepseek-v4.1-flash"), line);
   assert.match(line, /high/);
-  assert.ok(visibleWidth(stripTerminalSequences(line)) <= 80);
-  assert.equal(badge.render(12)[0]!.length > 0, true);
+  assert.equal(visibleWidth(line), 60);
+
+  const narrow = renderModelTopBorder("a-very-long-model-name · provider · high", 20, border);
+  assert.ok(visibleWidth(narrow) <= 20, narrow);
+  assert.match(narrow, /…/);
+
+  const scrolled = renderModelTopBorder("deepseek", 40, border, 3);
+  assert.match(scrolled, /↑3/);
 });
 
 test("ContextFooter explains used, left and window with a progress bar", () => {
@@ -133,15 +144,15 @@ test("ContextFooter handles an unknown context and narrow terminals", () => {
   for (const line of lines) assert.ok(visibleWidth(line) <= 30);
 });
 
-test("promptUi installs the model widget above the editor and clears it on shutdown", () => {
+test("promptUi installs the model border editor and clears it on shutdown", () => {
   const handlers = new Map<string, Function>();
   const pi = { on: (name: string, fn: Function) => handlers.set(name, fn) } as any;
   promptUi(pi);
-  const calls: Array<{ kind: string; key?: string; placement?: string }> = [];
+  const calls: Array<{ kind: string; key?: string }> = [];
   const ctx = fakeContext();
   ctx.ui = {
-    setWidget(key: string, content: unknown, options: { placement?: string }) {
-      calls.push({ kind: "widget", key, placement: options?.placement });
+    setEditorComponent(content: unknown) {
+      calls.push({ kind: "editor", key: content === undefined ? "cleared" : "set" });
     },
     setFooter(content: unknown) {
       calls.push({ kind: "footer", key: content === undefined ? "cleared" : "set" });
@@ -150,13 +161,13 @@ test("promptUi installs the model widget above the editor and clears it on shutd
 
   handlers.get("session_start")!({}, ctx);
   assert.deepEqual(calls, [
-    { kind: "widget", key: "prompt-model", placement: "aboveEditor" },
+    { kind: "editor", key: "set" },
     { kind: "footer", key: "set" },
   ]);
 
   handlers.get("session_shutdown")!();
   assert.deepEqual(calls.slice(-2), [
-    { kind: "widget", key: "prompt-model", placement: undefined },
+    { kind: "editor", key: "cleared" },
     { kind: "footer", key: "cleared" },
   ]);
 });

@@ -1,22 +1,28 @@
 /**
- * Prompt chrome: a model badge above the editor and a more explainable footer.
+ * Prompt chrome: model label in the editor's top border and a more explainable footer.
  *
  * Pi's stock footer puts the model on the far right and crams context usage into
- * `27.5%/1.0M`. This module moves the model next to the prompt and renders a
- * labeled context bar with used/window/remaining tokens, while keeping the
- * cumulative token/cost stats and extension statuses.
+ * `27.5%/1.0M`. This module embeds the model/provider/variant in the prompt
+ * border and renders a labeled context bar with used/window/remaining tokens,
+ * while keeping the cumulative token/cost stats and extension statuses.
  */
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { truncateToWidth, type Component } from "@earendil-works/pi-tui";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-  ReadonlyFooterDataProvider,
-  Theme,
+import {
+  truncateToWidth,
+  visibleWidth,
+  type Component,
+  type EditorTheme,
+  type TUI,
+} from "@earendil-works/pi-tui";
+import {
+  CustomEditor,
+  type ExtensionAPI,
+  type ExtensionContext,
+  type KeybindingsManager,
+  type ReadonlyFooterDataProvider,
+  type Theme,
 } from "@earendil-works/pi-coding-agent";
 import { isSubagentChildSession } from "./subagent-context.ts";
-
-export const MODEL_WIDGET_KEY = "prompt-model";
 
 export interface ContextUsageLike {
   tokens: number | null;
@@ -124,46 +130,59 @@ function usageLine(totals: UsageTotals): string {
 }
 
 /**
- * Model/provider badge shown above the editor.
- * Reads the live context each frame, so `/model` and thinking changes appear
- * without reinstalling the widget.
+ * `deepseek-v4.1-flash · opencode-go · high`, or undefined when no model is set.
  */
-export class ModelBadge implements Component {
-  private readonly context: () => ExtensionContext | undefined;
-  private readonly theme: Theme;
+export function modelLabel(ctx: ExtensionContext | undefined): string | undefined {
+  const model = ctx?.model;
+  if (!model) return undefined;
+  const variant = model.reasoning && ctx?.thinkingLevel ? ctx.thinkingLevel : undefined;
+  return [model.id, model.provider, variant].filter(Boolean).join(" · ");
+}
+
+/**
+ * Model label embedded in the editor's top rule:
+ * `── deepseek-v4.1-flash · opencode-go · high ────────────`
+ */
+export function renderModelTopBorder(
+  label: string | undefined,
+  width: number,
+  borderColor: (text: string) => string,
+  hiddenLineCount = 0,
+): string {
+  const safeWidth = Math.max(1, Math.floor(width));
+  const prefix = "── ";
+  const gap = " ";
+  const suffix = hiddenLineCount > 0 ? ` ↑${hiddenLineCount} ` : "";
+  const budget = safeWidth - visibleWidth(prefix) - visibleWidth(gap) - visibleWidth(suffix);
+
+  if (!label || budget < 4) {
+    const fallback = hiddenLineCount > 0
+      ? `↑${hiddenLineCount} ${"─".repeat(Math.max(0, safeWidth - String(hiddenLineCount).length - 2))}`
+      : "─".repeat(safeWidth);
+    return borderColor(truncateToWidth(fallback, safeWidth, ""));
+  }
+
+  const fitted = truncateToWidth(label, budget, "…");
+  const fill = Math.max(0, safeWidth - visibleWidth(prefix) - visibleWidth(fitted) - visibleWidth(gap) - visibleWidth(suffix));
+  return borderColor(prefix) + fitted + borderColor(gap + "─".repeat(fill)) + borderColor(suffix);
+}
+
+/** Editor whose top rule carries the live model/provider/thinking label. */
+export class ModelBorderEditor extends CustomEditor {
+  private readonly label: () => string | undefined;
 
   constructor(
-    context: () => ExtensionContext | undefined,
-    theme: Theme,
+    tui: TUI,
+    theme: EditorTheme,
+    keybindings: KeybindingsManager,
+    label: () => string | undefined,
   ) {
-    this.context = context;
-    this.theme = theme;
+    super(tui, theme, keybindings);
+    this.label = label;
   }
 
-  invalidate(): void {
-    /* live reads; no cache */
-  }
-
-  dispose(): void {
-    /* nothing to release */
-  }
-
-  render(width: number): string[] {
-    const ctx = this.context();
-    const model = ctx?.model;
-    if (!model) return [];
-    const level = model.reasoning && ctx?.thinkingLevel ? ctx.thinkingLevel : undefined;
-    const pieces = [
-      this.theme.fg("accent", "◆"),
-      this.theme.bold(model.id),
-      this.theme.fg("dim", "·"),
-      this.theme.fg("muted", model.provider),
-    ];
-    if (level) {
-      pieces.push(this.theme.fg("dim", "·"), this.theme.fg("muted", level));
-    }
-    const line = ` ${pieces.join(" ")}`;
-    return [truncateToWidth(line, Math.max(1, width), this.theme.fg("dim", "…"))];
+  protected override renderTopBorder(width: number, hiddenLineCount: number): string {
+    return renderModelTopBorder(this.label(), width, this.borderColor, hiddenLineCount);
   }
 }
 
@@ -268,7 +287,7 @@ export class ContextFooter implements Component {
   }
 }
 
-/** Install the model badge and context footer for TUI parent sessions. */
+/** Install the model border and context footer for TUI parent sessions. */
 export default function promptUi(pi: ExtensionAPI) {
   let context: ExtensionContext | undefined;
   let installed = false;
@@ -276,11 +295,12 @@ export default function promptUi(pi: ExtensionAPI) {
   const apply = (ctx: ExtensionContext) => {
     context = ctx;
     if (ctx.mode !== "tui" || isSubagentChildSession(ctx)) return;
-    if (typeof ctx.ui.setWidget === "function") {
-      ctx.ui.setWidget(
-        MODEL_WIDGET_KEY,
-        (_tui, theme) => new ModelBadge(() => context, theme),
-        { placement: "aboveEditor" },
+    // Replacing the editor keeps the model in the prompt's own top rule instead
+    // of spending an extra row above it. CustomEditor preserves app keybindings
+    // and only the top border changes.
+    if (typeof ctx.ui.setEditorComponent === "function") {
+      ctx.ui.setEditorComponent((tui, editorTheme, keybindings) =>
+        new ModelBorderEditor(tui, editorTheme, keybindings, () => modelLabel(context)),
       );
     }
     if (typeof ctx.ui.setFooter === "function") {
@@ -296,7 +316,7 @@ export default function promptUi(pi: ExtensionAPI) {
   pi.on("session_shutdown", () => {
     if (!installed || !context) return;
     try {
-      context.ui.setWidget(MODEL_WIDGET_KEY, undefined);
+      context.ui.setEditorComponent(undefined);
       context.ui.setFooter(undefined);
     } finally {
       context = undefined;

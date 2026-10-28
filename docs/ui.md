@@ -64,26 +64,28 @@ primitives instead of hand-rolling rows, scrolling or hints.
 
 ## Prompt chrome
 
-`extensions/prompt-ui.ts` (implementation in `lib/prompt-ui.ts`) moves the model
-out of the footer and makes context usage readable at a glance:
+`extensions/prompt-ui.ts` (implementation in `lib/prompt-ui.ts`) draws the model
+into the prompt border and makes context usage readable at a glance:
 
 ```text
-◆ deepseek-v4.1-flash · opencode-go · high        ← widget above the editor
-~/project (main) • Session title
-context [███████░░░░░░░░░] 27.5%  275k used · 725k left · 1.0M window
-↑1.5k ↓300 R5.0k W500 CH72.7% $0.150
-MCP: 1 server enabled
+── deepseek-v4.1-flash · opencode-go · high ─────────────────
+❯ 
+──────────────────────────────────────────────────────────────
 ```
 
-- The model badge is the `aboveEditor` widget `prompt-model`; it reads
-  `ctx.model` and `ctx.thinkingLevel` live, so `/model` updates it without a
-  reload.
+- The model label is embedded in the editor's own top rule by
+  `ModelBorderEditor`, a `CustomEditor` subclass that overrides
+  `renderTopBorder`. It reads `ctx.model` and `ctx.thinkingLevel` live, so
+  `/model` updates it without a reload and without spending an extra row above
+  the prompt. Long labels truncate with `…`; the `↑N` scroll indicator is
+  preserved.
 - The footer is a custom `ContextFooter`. It reads `ctx.getContextUsage()` every
   frame (unknown usage renders `?`, not a fake percentage), colors the bar green
   → amber → red at 70% / 90%, and keeps the cumulative token/cost line plus
   extension statuses.
 - Parent TUI sessions only; Herdr children and RPC/print keep Pi's default
-  chrome. Removing the extension restores the built-in footer on shutdown.
+  chrome. Removing the extension restores the built-in editor and footer on
+  shutdown.
 
 ## Verification
 
