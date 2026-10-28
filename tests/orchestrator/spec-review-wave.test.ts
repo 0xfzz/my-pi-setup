@@ -435,3 +435,26 @@ test("the whole flow: 5 specs → 2 reviewers → fix 2 members → spawn 5 → 
     await h.detach();
   }
 });
+
+test("a legacy preset argument cannot bring the lens panel back", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    await authorHandoffs(h, FIVE);
+    // An old prompt (or an old saved call) may still pass `preset`. It is ignored:
+    // the wave is chunked, not panel-reviewed, so five specs stay two reviewers.
+    const started = await h.call("orch_spec_review", {
+      action: "start",
+      handoffIds: scopes(5),
+      preset: "architecture",
+    });
+    assert.equal(h.started.length, 2, "one reviewer per chunk, never a lens panel");
+    assert.deepEqual(started.details.launched, ["review-1", "review-2"]);
+    const run = chunkRuns.get(started.details.runId)!;
+    assert.equal(run.members.length, 5);
+    assert.ok(run.chunks.every((slot) => slot.status === "running"));
+  } finally {
+    await h.detach();
+  }
+});
