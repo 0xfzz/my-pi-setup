@@ -366,3 +366,72 @@ test("a wave already under review is reused, never re-launched", async () => {
     await h.detach();
   }
 });
+
+test("the whole flow: 5 specs → 2 reviewers → fix 2 members → spawn 5 → QA in 2 groups", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    await authorHandoffs(h, FIVE);
+
+    // 1. The split is decided before any pane opens.
+    const planned = await h.call("orch_spec_review", { action: "plan", handoffIds: scopes(5) });
+    assert.equal(planned.details.reviewers, 2);
+    assert.equal(h.started.length, 0);
+
+    // 2. One reviewer per chunk.
+    const started = await h.call("orch_spec_review", { action: "start", handoffIds: scopes(5) });
+    const runId = started.details.runId;
+    assert.equal(h.started.length, 2);
+
+    // 3. Two specs have a finding; both chunks are otherwise clean.
+    fileReport(h, runId, "review-1", [
+      { memberId: "alpha", findings: [finding("alpha")] },
+      { memberId: "beta" },
+    ]);
+    fileReport(h, runId, "review-2", [
+      { memberId: "delta", findings: [finding("delta")] },
+      { memberId: "epsilon" },
+      { memberId: "gamma" },
+    ]);
+    const collected = await h.call("orch_spec_review", { action: "collect", runId });
+    assert.deepEqual(collected.details.ready.sort(), ["beta", "epsilon", "gamma"]);
+
+    // 4. The orchestrator fixes each finding itself, and the wave stays spawnable.
+    for (const scope of ["alpha", "delta"]) {
+      const fixed = await h.call("orch_spec_review", {
+        action: "fix",
+        runId,
+        findingId: `F-${scope}-1`,
+        memberId: scope,
+        patch: {
+          oldText: `Implement the ${scope} retry policy`.replace("retry", scope === "delta" ? "route" : "retry"),
+          newText: `Implement the ${scope} policy with a 3-attempt bound`,
+        },
+        rationale: "stated the bound",
+      });
+      assert.equal(fixed.details.ready, true, fixed.content[0].text);
+    }
+    assert.equal(h.started.length, 2, "fixes never launch a reviewer");
+
+    // 5. Every member spawns against the reviewed revision.
+    const handoffIds = [...handoffs.values()].map((entry) => entry.record.id);
+    for (const [index, handoffId] of handoffIds.entries()) {
+      const spawned = await h.call("orch_spawn", { name: `Worker${index}`, task: "Implement it.", handoffId });
+      assert.equal(spawned.details.status, "started", spawned.content[0].text);
+    }
+    assert.equal(h.started.length, 7, "5 workers after 2 reviewers");
+
+    // 6. QA fans the finished wave out in 2 + 3, unchanged from before the rewrite.
+    for (const child of registry.getAllChildren()) registry.updateStatus(child.sessionFile, "completed");
+    const qa = await h.call("orch_qa", { scopes: scopes(5) });
+    assert.equal(qa.details.groups.length, 2, qa.content[0].text);
+    assert.deepEqual(qa.details.groups.map((group: any) => group.scopes), [
+      ["alpha", "beta"],
+      ["gamma", "delta", "epsilon"],
+    ]);
+    assert.equal(h.started.length, 9, "2 QA reviewers open after the 5 workers");
+  } finally {
+    await h.detach();
+  }
+});
