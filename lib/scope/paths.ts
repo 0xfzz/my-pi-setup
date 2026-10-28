@@ -13,6 +13,7 @@
  */
 import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { globMatch } from "./glob.ts";
 import { isUnsafeRoot, type ScopeAccess, type ScopeRoot, type ScopeSuggestion } from "./types.ts";
 
 /** Expand `~`, `~/…`, `$HOME` and `%USERPROFILE%` at the start of a pattern/path. */
@@ -93,20 +94,54 @@ export function classifyPath(
 }
 
 function rootFor(roots: readonly ScopeRoot[], absolute: string): ScopeRoot | undefined {
-  // Longest match wins, so a nested rw root inside a ro root upgrades only itself.
+  return rootCovering(roots, absolute);
+}
+
+/** Does this root pattern contain a wildcard? */
+const GLOB = /[*?]/;
+
+/** The literal part of a pattern before its first wildcard: the part a `*` cannot escape. */
+export function literalPrefix(pattern: string): string {
+  const index = pattern.search(/[*?]/);
+  return index < 0 ? pattern : pattern.slice(0, index);
+}
+
+/** Does `root` cover `absolute`? A glob root matches by pattern, a literal one by prefix. */
+export function rootCovers(root: ScopeRoot, absolute: string): boolean {
+  return GLOB.test(root.path) ? globMatch(root.path, absolute) : lexicalInside(root.path, absolute);
+}
+
+/**
+ * The most specific root covering `absolute`.
+ *
+ * Specificity is the **literal prefix**, not the pattern length: `~/projects/*`
+ * beats `~/projects`, because the literal part says how narrow the grant is. A
+ * tie keeps the later root, so a grant added for this session overrides the
+ * config entry it repeats.
+ */
+export function rootCovering(roots: readonly ScopeRoot[], absolute: string): ScopeRoot | undefined {
   let best: ScopeRoot | undefined;
+  let bestLength = -1;
   for (const root of roots) {
-    if (!lexicalInside(root.path, absolute)) continue;
-    if (!best || root.path.length > best.path.length) best = root;
+    if (!rootCovers(root, absolute)) continue;
+    const length = literalPrefix(root.path).length;
+    if (length >= bestLength) {
+      best = root;
+      bestLength = length;
+    }
   }
   return best;
 }
 
 function describe(cwd: string, absolute: string, root: ScopeRoot): ClassifiedPath {
-  const rel = toResourceSlash(relative(root.path, absolute) || ".");
   // Resources stay relative to the session cwd while inside it, so rules written
-  // as `src/**` keep meaning the same thing after a root is added.
-  const resource = lexicalInside(cwd, absolute) ? toResourceSlash(relative(cwd, absolute) || ".") : rel;
+  // as `src/**` keep meaning the same thing after a root is added. A glob root has
+  // no single directory to be relative to, so its resources are absolute.
+  const resource = lexicalInside(cwd, absolute)
+    ? toResourceSlash(relative(cwd, absolute) || ".")
+    : GLOB.test(root.path)
+      ? toResourceSlash(absolute)
+      : toResourceSlash(relative(root.path, absolute) || ".");
   return { absolute, resource, external: false, root };
 }
 

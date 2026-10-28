@@ -14,12 +14,13 @@
  * sessions (issue #30779); a snapshot on the transcript cannot leak past the
  * branch that contains it.
  */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { canonicalize, expandHome, lexicalInside } from "./paths.ts";
+import { canonicalize, expandHome, lexicalInside, literalPrefix, toResourceSlash } from "./paths.ts";
 import {
   DEFAULT_SCOPE_DEFAULTS,
+  isUnsafeRoot,
   SCOPE_RECORD_TYPE,
   type ScopeAccess,
   type ScopeEffect,
@@ -55,15 +56,52 @@ function relativeTo(base: string, path: string): string {
   return canonicalize(resolved);
 }
 
-function normalizeRoots(roots: ScopeConfigFile["roots"], base: string, source: ScopeRoot["source"]): ScopeRoot[] {
+/**
+ * Normalize configured roots, refusing patterns that would re-expose the machine.
+ *
+ * A root may be a glob (`~/projects/*`). Safety is decided by the **literal
+ * prefix**, which a `*` can never escape — the same test `suggestGrant` applies
+ * to a dialog answer. A pattern with no directory to stand on is reported rather
+ * than stored, because an inert root is indistinguishable from a granted one.
+ */
+function normalizeRoots(
+  roots: ScopeConfigFile["roots"],
+  base: string,
+  source: ScopeRoot["source"],
+  problems: string[],
+): ScopeRoot[] {
   const out: ScopeRoot[] = [];
   for (const entry of roots ?? []) {
     const raw = typeof entry === "string" ? entry : entry.path;
     if (typeof raw !== "string" || !raw.trim()) continue;
     const access = typeof entry === "string" ? "rw" : (entry.access ?? "rw");
-    out.push({ path: relativeTo(base, raw), access, source });
+    const path = relativeTo(base, raw);
+    if (/[*?]/.test(path)) {
+      const prefix = literalPrefix(path).replace(/\/+$/, "");
+      if (!prefix || isUnsafeRoot(prefix, homedir()) || lexicalInside(prefix, base)) {
+        problems.push(
+          `Ignoring root ${raw}: a pattern there would re-expose ${prefix || "/"} or a directory containing the workspace.`,
+        );
+        continue;
+      }
+      if (!existsSync(prefix)) {
+        problems.push(`Root pattern ${raw} grants nothing: ${prefix} does not exist.`);
+        continue;
+      }
+    }
+    out.push({ path, access, source });
   }
   return out;
+}
+
+/**
+ * `~`, `~/` and `$HOME` at the start of a rule resource expand.
+ *
+ * Without this the rule spelling of a folder grant is dead on arrival: external
+ * resources are absolute, so `~/projects/*` could never match one.
+ */
+function expandRuleResource(resource: string): string {
+  return toResourceSlash(expandHome(resource));
 }
 
 /** Read and merge the two config files. Missing files are normal, not errors. */
@@ -86,13 +124,13 @@ export function loadScopeConfig(cwd: string, records?: ScopeRecord | undefined):
     const parsed = readConfig(file.path, problems);
     if (!parsed) continue;
     sources.push(file.path);
-    for (const root of normalizeRoots(parsed.roots, file.base, file.source)) upsertRoot(roots, root);
+    for (const root of normalizeRoots(parsed.roots, file.base, file.source, problems)) upsertRoot(roots, root);
     for (const rule of parsed.rules ?? []) {
       if (!isRule(rule)) {
         problems.push(`${file.path}: ignoring a rule without action/resource/effect`);
         continue;
       }
-      rules.push({ ...rule, source: file.source });
+      rules.push({ ...rule, resource: expandRuleResource(rule.resource), source: file.source });
     }
     if (parsed.defaults?.external && isEffect(parsed.defaults.external)) defaults.external = parsed.defaults.external;
     if (parsed.defaults?.readExternal && isEffect(parsed.defaults.readExternal)) defaults.readExternal = parsed.defaults.readExternal;

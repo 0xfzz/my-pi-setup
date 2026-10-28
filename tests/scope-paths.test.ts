@@ -96,3 +96,14 @@ test("suggestGrant degrades to one file instead of granting home, root or the wo
   assert.ok(isUnsafeRoot("/", undefined));
   assert.ok(isUnsafeRoot("C:\\", undefined));
 });
+
+test("a wildcard root covers the tree it names, and the literal prefix decides specificity", () => {
+  const roots: ScopeRoot[] = [root("/data/projects"), { ...root("/data/projects/*", "ro"), source: "config" }];
+  const inside = classifyPath("/data/projects/a", roots, "/data/projects/app/src/a.ts");
+  assert.equal(inside.external, false, "a glob root covers a descendant");
+  assert.equal(inside.root?.path, "/data/projects/*", "the narrower literal prefix wins");
+  assert.equal(inside.resource, "/data/projects/app/src/a.ts", "a glob root has no directory to be relative to");
+
+  const outside = classifyPath("/data/projects/a", [root("/data/projects/*")], "/data/other/a.ts");
+  assert.equal(outside.external, true, "a glob root covers only what it matches");
+});

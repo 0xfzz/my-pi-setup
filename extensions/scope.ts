@@ -34,6 +34,7 @@ import {
   writeScopeRule,
 } from "../lib/scope/state.ts";
 import { SCOPE_RECORD_TYPE, type PathClaim, type ScopeRoot, type ScopeState } from "../lib/scope/types.ts";
+import { childContextState, isSubagentChildProcess } from "../lib/subagent-context.ts";
 import { ScopeAskPopup } from "../lib/ui/scope-ask.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar-channel.ts";
 
@@ -80,7 +81,16 @@ export default function scopeExtension(pi: ExtensionAPI) {
   function reload(ctx: ExtensionContext) {
     context = ctx;
     cwd = ctx.sessionManager?.getCwd?.() ?? process.cwd();
-    const loaded = loadScopeConfig(cwd, scopeRecordFromBranch(ctx.sessionManager?.getBranch?.()));
+    const branch = ctx.sessionManager?.getBranch?.();
+    // A fork-seeded child carries its parent's branch verbatim. Replaying that
+    // snapshot would hand a worker every folder the orchestrator's own reading was
+    // granted, plus the parent's persisted yolo arm — the opposite of "a child
+    // inherits configuration, not approvals". The seed marker, not the
+    // environment, decides: `modes.ts` and `subagent-checkpoints.ts` filter the
+    // same way for the same reason.
+    const header = (ctx.sessionManager as { getHeader?: () => unknown } | undefined)?.getHeader?.();
+    const seeded = childContextState(branch, header, isSubagentChildProcess()).seeded;
+    const loaded = loadScopeConfig(cwd, seeded ? undefined : scopeRecordFromBranch(branch));
     config = loaded;
     state = loaded.state;
     draw?.();

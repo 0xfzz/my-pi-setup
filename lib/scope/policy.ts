@@ -16,7 +16,7 @@
  */
 import { resolveRule } from "./glob.ts";
 import { tmpdir } from "node:os";
-import { toResourceSlash } from "./paths.ts";
+import { rootCovering, toResourceSlash } from "./paths.ts";
 import type {
   Claim,
   ScopeDecision,
@@ -182,14 +182,10 @@ export function evaluateClaim(claim: Claim, state: ScopeState, options: Evaluate
 }
 
 function coveringRoot(state: ScopeState, absolute: string): ScopeState["roots"][number] | undefined {
-  // Longest match wins: a nested read-only root must not be shadowed by the
-  // workspace root that happens to come first in the list.
-  let best: ScopeState["roots"][number] | undefined;
-  for (const root of state.roots) {
-    if (!(root.path === absolute || absolute.startsWith(`${root.path}/`) || absolute.startsWith(`${root.path}\\`))) continue;
-    if (!best || root.path.length > best.path.length) best = root;
-  }
-  return best;
+  // Most specific literal prefix wins: a nested read-only root must not be
+  // shadowed by the workspace root that happens to come first in the list, and a
+  // wildcard root (`~/projects/*`) matches by pattern instead of by prefix.
+  return rootCovering(state.roots, absolute);
 }
 
 /** yolo converts a question into an approval. It never touches `deny`. */

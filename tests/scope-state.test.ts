@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { canonicalize } from "../lib/scope/paths.ts";
+import { canonicalize, expandHome, toResourceSlash } from "../lib/scope/paths.ts";
 import {
   initialScopeState,
   loadScopeConfig,
@@ -132,4 +132,38 @@ test("a snapshot persists session and branch roots, not config or global ones", 
   assert.deepEqual(snapshot.rules, [{ action: "bash", resource: "rm *", effect: "deny" }], "provenance is not persisted");
   assert.deepEqual(snapshot.yolo, { strength: "ro" });
   assert.equal(initialScopeState("/work").roots[0]?.path, canonicalize("/work"));
+});
+
+test("a rule resource expands ~ the way a root does", async () => {
+  const f = await fixture({ rules: [{ action: "read", resource: "~/projects/*", effect: "allow" }] });
+  try {
+    const loaded = loadScopeConfig(f.dir);
+    const expected = toResourceSlash(expandHome("~/projects/*"));
+    assert.ok(loaded.state.rules.some(rule => rule.resource === expected), JSON.stringify(loaded.state.rules));
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("a wildcard root is kept when its prefix exists and refused when it would re-expose home", async () => {
+  const f = await fixture();
+  try {
+    const areas = join(f.dir, "areas");
+    await mkdir(areas, { recursive: true });
+    await mkdir(join(f.dir, ".pi"), { recursive: true });
+    await writeFile(join(f.dir, ".pi", "scope.json"), JSON.stringify({ roots: ["./areas/*"] }));
+    const kept = loadScopeConfig(f.dir);
+    assert.ok(kept.state.roots.some(root => root.path === `${canonicalize(areas)}/*`), JSON.stringify(kept.state.roots));
+  } finally {
+    await f.cleanup();
+  }
+
+  const home = await fixture({ roots: [`${homedir()}/*`] });
+  try {
+    const refused = loadScopeConfig(home.dir);
+    assert.equal(refused.state.roots.length, 1, "only the workspace root survives");
+    assert.match(refused.problems.join("\n"), /Ignoring root/);
+  } finally {
+    await home.cleanup();
+  }
 });
