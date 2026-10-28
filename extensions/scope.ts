@@ -10,6 +10,8 @@
  * leave the workspace; `docs/scope.md` states the exact limits.
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { dirname } from "node:path";
+import { Type } from "typebox";
 import { popupOverlayOptions } from "../lib/popup.ts";
 import { formatAudit, ScopeLog } from "../lib/scope/audit.ts";
 import {
@@ -34,7 +36,7 @@ import {
   writeScopeRule,
 } from "../lib/scope/state.ts";
 import { SCOPE_RECORD_TYPE, type PathClaim, type ScopeRoot, type ScopeState } from "../lib/scope/types.ts";
-import { childContextState, isSubagentChildProcess } from "../lib/subagent-context.ts";
+import { childContextState, isSubagentChildProcess, isSubagentChildSession } from "../lib/subagent-context.ts";
 import { ScopeAskPopup } from "../lib/ui/scope-ask.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar-channel.ts";
 
@@ -58,6 +60,10 @@ export default function scopeExtension(pi: ExtensionAPI) {
       refresh();
     },
     ask: request => askUser(request),
+    // A child has nobody watching its pane: its questions go up the ladder
+    // (agent_ping -> orchestrator -> agent_escalate) and come back as an answer
+    // this session applies with scope_answer.
+    isChild: () => isSubagentChildSession(context),
     annotationsFor: tool => pi.getAllTools?.().find(candidate => candidate.name === tool)?.annotations,
     mcpPathFields: () => config.mcpPathFields,
     onGrant: persist,
@@ -160,6 +166,48 @@ export default function scopeExtension(pi: ExtensionAPI) {
     draw?.();
     refresh();
     return root;
+  }
+
+  /**
+   * Apply the decision a parent gave for a child's out-of-workspace path.
+   *
+   * The child was blocked rather than asked, so the retry only succeeds if the
+   * answer lands where the gate reads it. Everything is recorded on the child's
+   * own branch and in the audit, so a fork cannot inherit the grant by accident.
+   */
+  function applyParentDecision(
+    decision: "allow-once" | "allow-folder" | "deny",
+    path: string,
+    access: "ro" | "rw",
+  ): string {
+    const classified = classifyPath(cwd, state.roots, path);
+    if (decision === "deny") {
+      const resource = classified.external ? classified.absolute : classified.resource;
+      const rules = [
+        { action: "*", resource, effect: "deny" as const, source: "session" as const },
+        { action: "*", resource: `${resource.replace(/\/+$/, "")}/*`, effect: "deny" as const, source: "session" as const },
+      ];
+      state = { ...state, rules: [...state.rules, ...rules] };
+      persist();
+      draw?.();
+      refresh();
+      log.add({ tool: "scope_answer", path: classified.absolute, write: true, outcome: "deny", detail: "parent denied" });
+      return `Recorded the parent's denial for ${classified.absolute}. Report the blocker instead of retrying.`;
+    }
+    const target = decision === "allow-once" ? classified.absolute : dirname(classified.absolute);
+    const root: ScopeRoot = { path: target, access, source: "session" };
+    state = { ...state, roots: [...state.roots.filter(existing => existing.path !== root.path), root] };
+    persist();
+    draw?.();
+    refresh();
+    log.add({
+      tool: "scope_answer",
+      path: target,
+      write: access === "rw",
+      outcome: "auto",
+      detail: `parent ${decision}`,
+    });
+    return `Applied the parent's ${decision}: ${target} is ${access === "ro" ? "read-only" : "read-write"} for this session. Retry the call.`;
   }
 
   function handleScope(args: string, ctx: ExtensionContext) {
@@ -287,6 +335,48 @@ export default function scopeExtension(pi: ExtensionAPI) {
     description: "Workspace access scope: /scope status|allow|deny|remove|reset|rules|test|yolo|log",
     getArgumentCompletions: (prefix: string) => scopeCompletions(prefix),
     handler: async (args: string, ctx: ExtensionContext) => handleScope(args ?? "", ctx),
+  });
+
+  // ---- scope_answer ------------------------------------------------------------
+
+  /**
+   * The child half of the escalation ladder.
+   *
+   * `gate.ts` blocks instead of opening a dialog in a child, and the block message
+   * tells the child to `agent_ping` its parent. This is where the answer lands:
+   * a decision, applied to this session only, so the retry is judged by the same
+   * policy as everything else.
+   */
+  pi.registerTool?.({
+    name: "scope_answer",
+    label: "Apply a parent's scope decision",
+    description:
+      "Apply the allow/deny decision your parent gave for a path outside the workspace. " +
+      "Call it after agent_ping returns an answer; it makes the retry succeed, or records the denial so you stop asking.",
+    parameters: Type.Object({
+      decision: Type.Union([
+        Type.Literal("allow-once", { description: "Approve this one path." }),
+        Type.Literal("allow-folder", { description: "Approve the directory that contains it." }),
+        Type.Literal("deny", { description: "Refuse it and record the refusal." }),
+      ]),
+      path: Type.String({ description: "The absolute path the parent decided about." }),
+      access: Type.Optional(
+        Type.Union([Type.Literal("ro"), Type.Literal("rw")], {
+          description: "Read-only or read-write. Defaults to read-write, matching the blocked call.",
+        }),
+      ),
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    async execute(_id, params) {
+      if (!isSubagentChildSession(context)) {
+        return {
+          content: [{ type: "text", text: "scope_answer applies only inside a delegated child session; a parent has its own dialog." }],
+          details: { applied: false, decision: params.decision },
+        };
+      }
+      const text = applyParentDecision(params.decision, params.path, params.access ?? "rw");
+      return { content: [{ type: "text", text }], details: { applied: true, decision: params.decision } };
+    },
   });
 
   // ---- wiring ----------------------------------------------------------------

@@ -52,6 +52,14 @@ export interface GateDeps {
   onGrant?: (grant: { root: ScopeRoot; rule?: ScopeRule }) => void;
   /** Tool metadata, so unmapped tools can honour `readOnlyHint`. */
   annotationsFor?: (tool: string) => ClaimOptions["annotations"];
+  /**
+   * Is this a delegated child session?
+   *
+   * A child has no user watching its pane, so a question must go up the ladder —
+   * `agent_ping` → the orchestrator → `agent_escalate` — instead of opening a
+   * dialog nobody will answer. The caller answers with `scope_answer`.
+   */
+  isChild?: () => boolean;
   mcpPathFields?: () => Readonly<Record<string, string>> | undefined;
   /** Called for every question the gate had to ask (audit / sidebar). */
   onAsk?: (request: AskRequest) => void;
@@ -126,6 +134,7 @@ export function createGate(deps: GateDeps): Gate {
       kind: claim.kind,
       access: claim.write ? "rw" : "ro",
     });
+    if (deps.isChild?.()) return escalate(tool, claim, suggestion);
     const request: AskRequest = {
       tool,
       display: displayPath(deps.cwd(), claim.absolute),
@@ -141,6 +150,37 @@ export function createGate(deps: GateDeps): Gate {
       // A dialog failure is not an approval. Fail closed.
       return { kind: "deny" };
     }
+  }
+
+  /**
+   * What a child is told instead of a question.
+   *
+   * The child does not contact the user itself — that is the same ladder
+   * `lib/orchestrator/handoff.ts` states for every other uncertainty — so the
+   * block carries the exact ask, the narrowest grant, and the tool that applies
+   * the answer.
+   */
+  function escalate(tool: string, claim: PathClaim, suggestion: ScopeSuggestion): AskAnswer {
+    const need = claim.posture === "read" ? "read" : "write";
+    return {
+      kind: "unavailable",
+      message:
+        `Scope: ${tool} needs ${need} access to ${claim.absolute}, which is outside the workspace. ` +
+        `Do not ask the user: ask your parent with agent_ping and then apply the answer.\n` +
+        `  agent_ping({ message: "scope: ${tool} wants ${need} ${claim.absolute} — allow-once, allow-folder (${suggestion.glob}), or deny?" })\n` +
+        `  scope_answer({ decision: "allow-once" | "allow-folder" | "deny", path: "${claim.absolute}", access: "${claim.write ? "rw" : "ro"}" })\n` +
+        `Nothing was run.`,
+    };
+  }
+
+  function escalateUnknown(tool: string): AskAnswer {
+    return {
+      kind: "unavailable",
+      message:
+        `Scope: ${tool} does not declare the paths it touches, so it cannot be judged. ` +
+        `Do not ask the user: agent_ping your parent for a decision, then apply it with ` +
+        `scope_answer or ask them to allow the tool by rule.`,
+    };
   }
 
   function applyAnswer(answer: AskAnswer, claim: PathClaim): void {
@@ -193,7 +233,7 @@ export function createGate(deps: GateDeps): Gate {
           queued: Math.max(0, queue.size - 1),
         };
         deps.onAsk?.(request);
-        const answer = await deps.ask(request).catch(() => undefined);
+        const answer = deps.isChild?.() ? escalateUnknown(tool) : await deps.ask(request).catch(() => undefined);
         if (answer?.kind === "rule") {
           applyAnswer(answer, { tool, action: tool, absolute: deps.cwd(), resource: "*", write: false, posture: "unknown", external: true, kind: "unknown" });
           // A rule that names the tool is the standing grant for "unknown paths".
