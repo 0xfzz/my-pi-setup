@@ -1,0 +1,92 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { insertClipboard, type PasteDeps } from "../extensions/clipboard-paste.ts";
+import type { ClipboardRead } from "../lib/clipboard.ts";
+
+function editor() {
+  const inserted: string[] = [];
+  return {
+    inserted,
+    insertTextAtCursor(text: string) { inserted.push(text); },
+  };
+}
+
+function deps(read: ClipboardRead | undefined | Error, overrides: Partial<PasteDeps> = {}) {
+  const notices: Array<{ message: string; level: string }> = [];
+  const images: string[] = [];
+  return {
+    notices,
+    images,
+    deps: {
+      platform: "linux" as const,
+      read: async () => {
+        if (read instanceof Error) throw read;
+        return read;
+      },
+      notify: (message: string, level: "warning" | "info") => { notices.push({ message, level }); },
+      writeImage: (image: NonNullable<ClipboardRead["image"]>) => {
+        const path = `/tmp/clip.${image.mimeType.split("/")[1]}`;
+        images.push(path);
+        return path;
+      },
+      ...overrides,
+    } satisfies PasteDeps,
+  };
+}
+
+test("text is inserted at the cursor", async () => {
+  const target = editor();
+  const h = deps({ text: "multi\nline", attempts: [] });
+  assert.equal(await insertClipboard(target, h.deps), "pasted");
+  assert.deepEqual(target.inserted, ["multi\nline"]);
+  assert.deepEqual(h.notices, []);
+});
+
+test("copied files become newline-separated paths", async () => {
+  const target = editor();
+  const h = deps({ files: ["/a/one.txt", "/a/two.txt"], attempts: [] });
+  assert.equal(await insertClipboard(target, h.deps), "pasted");
+  assert.deepEqual(target.inserted, ["/a/one.txt\n/a/two.txt"]);
+});
+
+test("an image is written to a temp file and its path inserted", async () => {
+  const target = editor();
+  const h = deps({ image: { bytes: Buffer.from("png"), mimeType: "image/png" }, attempts: [] });
+  assert.equal(await insertClipboard(target, h.deps), "pasted");
+  assert.deepEqual(target.inserted, ["/tmp/clip.png"]);
+  assert.deepEqual(h.images, ["/tmp/clip.png"]);
+});
+
+test("an empty clipboard warns and names the terminal's own paste", async () => {
+  const target = editor();
+  const h = deps({ attempts: ["wl-paste --no-newline", "xclip -selection clipboard -out"] });
+  assert.equal(await insertClipboard(target, h.deps), "empty");
+  assert.deepEqual(target.inserted, []);
+  assert.equal(h.notices.length, 1);
+  assert.equal(h.notices[0]?.level, "warning");
+  assert.match(h.notices[0]!.message, /nothing readable/i);
+  assert.match(h.notices[0]!.message, /Ctrl\+Shift\+V/);
+});
+
+test("a reader that throws is treated as an empty clipboard, not a crash", async () => {
+  const target = editor();
+  const h = deps(new Error("spawn failed"));
+  assert.equal(await insertClipboard(target, h.deps), "empty");
+  assert.equal(h.notices.length, 1);
+});
+
+test("non-Linux platforms delegate to pi without notifying", async () => {
+  const target = editor();
+  const h = deps({ text: "ignored", attempts: [] }, { platform: "darwin" });
+  assert.equal(await insertClipboard(target, h.deps), "delegated");
+  assert.deepEqual(target.inserted, []);
+  assert.deepEqual(h.notices, [], "macOS keeps pi's Finder-aware paste; no warning");
+});
+
+test("an editor without insertTextAtCursor falls back to insertText", async () => {
+  const inserted: string[] = [];
+  const target = { insertText: (text: string) => inserted.push(text) };
+  const h = deps({ text: "hello", attempts: [] });
+  assert.equal(await insertClipboard(target, h.deps), "pasted");
+  assert.deepEqual(inserted, ["hello"]);
+});

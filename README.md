@@ -38,6 +38,7 @@ diff record, not documentation.
 | [Smart timeout](docs/smart-timeout.md) | Wall-clock and idle limits for `bash`, explicit budgets, and timeout diagnostics. |
 | [Scope](docs/scope.md) | Which paths agent tools may touch: workspace by default, an asking dialog outside it, `/scope` grants, and `/scope yolo`. |
 | [Sidebar](docs/sidebar.md) | The right rail, the `Alt+W` prefix menu, and the detail popups. |
+| [Clipboard](docs/clipboard.md) | Pasting in every Linux terminal: Wayland, X11, tmux and Termux backends, and why plain `Ctrl+V` used to do nothing. |
 | [UI](docs/ui.md) | The shared popup frame, list, markdown viewer, ask popup, keys and responsive rules. |
 | [Providers](docs/providers.md) | Adding and editing providers and models in the TUI, including compatibility flags. |
 | [Accounts](docs/accounts.md) | Pooling several accounts per provider and routing each request. |

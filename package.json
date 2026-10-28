@@ -28,6 +28,7 @@
       "./extensions/sidebar.ts",
     "./extensions/prompt-ui.ts",
     "./extensions/scope.ts",
+    "./extensions/clipboard-paste.ts",
       "./extensions/providers.ts",
       "./extensions/antigravity-accounts.ts",
       "./extensions/account-router.ts",
