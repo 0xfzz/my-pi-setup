@@ -74,6 +74,59 @@ describe("spec lint catches seeded defects", () => {
     assert.match(rendered, /confirm or refute/i);
     assert.match(rendered, /not treat this list as complete/i);
   });
+
+  it("exempts paths declared via createdPaths input", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "orch-lint-"));
+    try {
+      const findings = lintSpec({
+        cwd: dir,
+        content: "## Acceptance\n- retry lives in `src/net/does-not-exist.ts` and verify with `npm test`\n",
+        createdPaths: ["src/net/does-not-exist.ts"],
+      });
+      assert.deepEqual(findings, []);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("exempts paths declared in creates: YAML lists and `path # new`", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "orch-lint-"));
+    try {
+      const findings = lintSpec({
+        cwd: dir,
+        content: [
+          "creates:",
+          "  - src/net/yaml-new.ts",
+          "",
+          "## Acceptance",
+          "- `src/net/yaml-new.ts` works with `src/net/inline-new.ts # new`",
+          "- verify with `npm test`",
+        ].join("\n"),
+      });
+      assert.deepEqual(findings, []);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("lane alone is NOT automatically new; undeclared references still produce findings", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "orch-lint-"));
+    try {
+      const findings = lintSpec({
+        cwd: dir,
+        content: [
+          "laneFiles:",
+          "  - src/net/lane-not-new.ts",
+          "",
+          "## Acceptance",
+          "- `src/net/lane-not-new.ts` works; verify with `npm test`",
+        ].join("\n"),
+      });
+      assert.ok(findings.some((f) => f.severity === "major" && f.discrepancy.includes("lane-not-new.ts")));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("attestation: an empty report must say what it looked at", () => {

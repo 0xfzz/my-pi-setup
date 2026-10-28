@@ -26,10 +26,29 @@ export interface SpecLintFinding {
   suggestion?: string;
 }
 
+export interface LintSpecInput {
+  content: string;
+  references?: readonly string[];
+  createdPaths?: readonly string[];
+  cwd: string;
+}
+
 /** Path-shaped tokens: a slash, or a known source/document extension. */
-const PATH_TOKEN = /`([^`\s]+)`/g;
+const PATH_TOKEN = /`([^`]+)`/g;
 const PATHLIKE = /(^|\/)[\w.-]+\.(ts|tsx|js|jsx|mjs|cjs|json|md|py|go|rs|toml|yaml|yml|sql|sh)$|^[\w.-]+\/[\w./-]+$/i;
 const OBSERVABLE = /\b(test|tests|assert|verify|command|exit code|curl|grep|snapshot|benchmark|log line|metric)\b/i;
+
+function cleanPath(raw: string): string {
+  return raw
+    .replace(/#.*$/, "")
+    .trim()
+    .replace(/^[`"']+|[`"']+$/g, "")
+    .trim()
+    .replace(/^(?:path|file):\s*/i, "")
+    .trim()
+    .replace(/^(\.\/)+/, "")
+    .replace(/\\/g, "/");
+}
 
 function lineOf(content: string, needle: string): number {
   const index = content.indexOf(needle);
@@ -40,8 +59,16 @@ function lineOf(content: string, needle: string): number {
 function pathTokens(content: string): string[] {
   const found: string[] = [];
   for (const match of content.matchAll(PATH_TOKEN)) {
-    const token = match[1]!.trim();
+    let token = match[1]!.trim();
     if (!token || token.includes("*") || /^https?:/i.test(token) || token.startsWith("-")) continue;
+    if (/\s/.test(token)) {
+      const newMatch = token.match(/^([^\s`]+)\s+(?:\(\s*)?#\s*new\b/i);
+      if (newMatch) {
+        token = newMatch[1]!;
+      } else {
+        continue;
+      }
+    }
     if (!PATHLIKE.test(token)) continue;
     found.push(token);
   }
@@ -49,22 +76,153 @@ function pathTokens(content: string): string[] {
 }
 
 /**
+ * Extract unambiguous declarations of created / new paths from spec content
+ * and explicit createdPaths input.
+ *
+ * Supported document declarations:
+ * 1. `creates:` YAML lists (block style or flow `[a, b]` style)
+ * 2. `path # new` (inline code, list items, or plain text)
+ *
+ * Note: A lane declaration alone does NOT exempt missing references.
+ */
+export function extractCreatedPaths(input: {
+  content?: string;
+  createdPaths?: readonly string[];
+  cwd?: string;
+}): string[] {
+  const result = new Set<string>();
+
+  // 1. Explicit input
+  for (const raw of input.createdPaths ?? []) {
+    const cleaned = cleanPath(String(raw ?? ""));
+    if (cleaned && PATHLIKE.test(cleaned)) {
+      result.add(cleaned);
+    }
+  }
+
+  const content = String(input.content ?? "");
+  if (!content) return [...result];
+
+  const lines = content.split("\n");
+
+  // 2. `creates:` YAML lists
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+
+    // Flow style: creates: [a, b, c]
+    const flowMatch = line.match(/^\s*(?:-\s*)?creates?:\s*\[(.*?)\]/i);
+    if (flowMatch) {
+      const items = flowMatch[1]!.split(",");
+      for (const item of items) {
+        const cleaned = cleanPath(item);
+        if (cleaned && PATHLIKE.test(cleaned)) {
+          result.add(cleaned);
+        }
+      }
+      continue;
+    }
+
+    // Block style: creates:\n  - a\n  - b
+    const blockMatch = line.match(/^(\s*)(?:-\s*)?creates?:\s*(?:#.*)?$/i);
+    if (blockMatch) {
+      const baseIndent = blockMatch[1]!.length;
+      let j = i + 1;
+      while (j < lines.length) {
+        const nextLine = lines[j]!;
+        if (/^\s*$/.test(nextLine)) {
+          j++;
+          continue;
+        }
+        const itemMatch = nextLine.match(/^(\s*)-\s*([^#\n]+)(?:#.*)?$/);
+        if (!itemMatch) break;
+        const itemIndent = itemMatch[1]!.length;
+        if (baseIndent > 0 && itemIndent <= baseIndent) break;
+
+        const rawItem = itemMatch[2]!;
+        // Avoid treating a subsequent YAML mapping key like "lane: foo" as a list item
+        if (/^\w+:\s/.test(rawItem.trim()) && !/^(?:path|file):\s*/i.test(rawItem.trim())) {
+          break;
+        }
+        const cleaned = cleanPath(rawItem);
+        if (cleaned && PATHLIKE.test(cleaned)) {
+          result.add(cleaned);
+        }
+        j++;
+      }
+    }
+  }
+
+  // 3. `path # new` declarations
+  // Inside backticks: `path # new`
+  for (const match of content.matchAll(/`([^`\s]+)\s+(?:\(\s*)?#\s*new\b[^`]*`/gi)) {
+    const cleaned = cleanPath(match[1]!);
+    if (cleaned && PATHLIKE.test(cleaned)) {
+      result.add(cleaned);
+    }
+  }
+
+  // Backticks followed by # new: `path` # new or `path` (# new)
+  for (const match of content.matchAll(/`([^`\s]+)`\s*(?:\(\s*)?#\s*new\b/gi)) {
+    const cleaned = cleanPath(match[1]!);
+    if (cleaned && PATHLIKE.test(cleaned)) {
+      result.add(cleaned);
+    }
+  }
+
+  // List item or line with path # new: - path # new or * path # new
+  for (const match of content.matchAll(/^\s*[-*]\s*([^\s`]+)\s+(?:\(\s*)?#\s*new\b/gmi)) {
+    const cleaned = cleanPath(match[1]!);
+    if (cleaned && PATHLIKE.test(cleaned)) {
+      result.add(cleaned);
+    }
+  }
+
+  return [...result];
+}
+
+function buildCreatedLookup(paths: readonly string[], cwd: string): Set<string> {
+  const set = new Set<string>();
+  for (const p of paths) {
+    const cleaned = cleanPath(p);
+    if (!cleaned) continue;
+    set.add(cleaned);
+    set.add(resolve(cwd, cleaned));
+    set.add(resolve(cwd, cleaned).replace(/\\/g, "/"));
+  }
+  return set;
+}
+
+function isCreated(token: string, lookup: Set<string>, cwd: string): boolean {
+  const cleaned = cleanPath(token);
+  if (lookup.has(cleaned)) return true;
+  if (lookup.has(resolve(cwd, token))) return true;
+  if (lookup.has(resolve(cwd, token).replace(/\\/g, "/"))) return true;
+  if (lookup.has(resolve(cwd, cleaned))) return true;
+  if (lookup.has(resolve(cwd, cleaned).replace(/\\/g, "/"))) return true;
+  return false;
+}
+
+/**
  * Findings a computer can make about a spec. Empty means "nothing machine-detectable",
  * never "the spec is good".
  */
-export function lintSpec(input: {
-  content: string;
-  references?: readonly string[];
-  cwd: string;
-}): SpecLintFinding[] {
+export function lintSpec(input: LintSpecInput): SpecLintFinding[] {
   const content = String(input.content ?? "");
   const findings: SpecLintFinding[] = [];
+
+  const createdList = extractCreatedPaths({
+    content,
+    createdPaths: input.createdPaths,
+    cwd: input.cwd,
+  });
+  const createdLookup = buildCreatedLookup(createdList, input.cwd);
 
   for (const token of pathTokens(content)) {
     // A spec may deliberately name a file it CREATES. Only a missing path that is
     // also not described as new is a defect, and that distinction is prose — so
     // this is a major, not a blocker, and the reviewer decides.
     if (existsSync(resolve(input.cwd, token))) continue;
+    if (isCreated(token, createdLookup, input.cwd)) continue;
     findings.push({
       id: `L-path-${findings.length + 1}`,
       severity: "major",
