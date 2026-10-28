@@ -75,7 +75,36 @@ test("model-only sequential tool, schema and nested-tool declaration", () => {
   assert.deepEqual(tool.parameters.required, ["question"]);
   assert.equal(tool.parameters.properties.options.minItems, 1);
   assert.equal(tool.parameters.properties.options.uniqueItems, true);
+  assert.equal(tool.parameters.properties.recommended.minimum, 1);
 });
+
+test("invalid recommended option is unavailable before any UI is opened", () => withSession(false, async () => {
+  const { run, calls } = setup();
+  const out = await run({ question: "Pick", options: ["a"], recommended: 2 } as any);
+  status(out, "unavailable");
+  assert.match(out.details.message, /1-based option number/);
+  assert.deepEqual(calls, []);
+}));
+
+test("TUI custom popup resolves the recommended choice through AskUserPopup", () => withSession(false, async () => {
+  const { run, ctx } = setup();
+  ctx.ui.custom = async (factory: any) => {
+    let result: string | undefined;
+    const done = (value: string | undefined) => { result = value; };
+    const component = factory(
+      { terminal: { rows: 24 }, requestRender() {} },
+      { fg: (_token: string, text: string) => text, bold: (text: string) => text },
+      {},
+      done,
+    );
+    component.focused = true;
+    component.handleInput("\r");
+    return result;
+  };
+  const out = await run({ question: "Pick", options: ["a", "b"], recommended: 2 } as any);
+  status(out, "answered");
+  assert.equal(out.details.answer, "a");
+}));
 
 test("free-text answer includes context and passes cancellation options", () => withSession(false, async () => {
   const { run, calls } = setup();

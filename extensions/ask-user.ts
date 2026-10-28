@@ -1,6 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { isSubagentChildSession } from "../lib/subagent-context.ts";
+import { AskUserPopup } from "../lib/ui/ask.ts";
+import { popupOverlayOptions } from "../lib/popup.ts";
 
 type AskResult = {
   status: "answered" | "cancelled" | "forwarded" | "unavailable";
@@ -66,9 +68,13 @@ export default function askUser(pi: ExtensionAPI) {
         uniqueItems: true,
         description: "Exact choices; omit for a free-text answer.",
       })),
+      recommended: Type.Optional(Type.Integer({
+        minimum: 1,
+        description: "1-based option number to mark as the recommended answer. It is only a label; the user must still choose.",
+      })),
     }),
     async execute(_id, params, signal, _onUpdate, ctx) {
-      const { question, context, options } = params;
+      const { question, context, options, recommended } = params;
       const cancelled = () => result({
         status: "cancelled", question,
         message: "Unanswered. No consent or approval was given.",
@@ -76,6 +82,12 @@ export default function askUser(pi: ExtensionAPI) {
       if (signal?.aborted) return cancelled();
       if (!question.trim()) {
         return result({ status: "unavailable", question, message: "Provide a non-empty question." });
+      }
+      if (recommended !== undefined && (!options?.length || !Number.isInteger(recommended) || recommended < 1 || recommended > options.length)) {
+        return result({
+          status: "unavailable", question,
+          message: "recommended must be a 1-based option number within the supplied options.",
+        });
       }
 
       if (isSubagentChildSession(ctx)) {
@@ -115,10 +127,53 @@ export default function askUser(pi: ExtensionAPI) {
         });
       }
       const title = context ? `${question}\n\n${context}` : question;
+
+      // The custom popup is the TUI path: it can scroll, mark a recommendation and
+      // always offer free text. RPC/print keep the native dialogs below.
+      if (ctx.mode === "tui" && typeof ctx.ui.custom === "function") {
+        let component: AskUserPopup | undefined;
+        const onAbort = () => component?.cancel();
+        if (signal?.aborted) return cancelled();
+        signal?.addEventListener("abort", onAbort, { once: true });
+        try {
+          const answer = await ctx.ui.custom<string | undefined>((tui, theme, _keys, done) => {
+            component = new AskUserPopup({
+              question, context, options, recommended,
+              theme,
+              terminalRows: () => tui.terminal.rows,
+              onDone: done,
+            });
+            return component;
+          }, { overlay: true, overlayOptions: popupOverlayOptions("84%", 46, "90%") as any });
+          if (signal?.aborted || answer === undefined || !answer.trim()) return cancelled();
+          if (options?.length && !options.includes(answer)) {
+            return result({
+              status: "unavailable", question,
+              message: "Unanswered: UI returned an invalid choice. Ask again; do not infer consent.",
+            });
+          }
+          return result({ status: "answered", question, answer });
+        } catch (error) {
+          if (signal?.aborted) return cancelled();
+          return result({
+            status: "unavailable", question,
+            message: `Unanswered: user dialog failed (${error instanceof Error ? error.message : String(error)}). Retry using a supported UI.`,
+          });
+        } finally {
+          signal?.removeEventListener("abort", onAbort);
+        }
+      }
+
       try {
-        const answer = options?.length
-          ? await ctx.ui.select(title, options, { signal })
+        const labels = options?.map((option, index) =>
+          recommended === index + 1 ? `${option}  (recommended answer)` : option) ?? [];
+        const byLabel = new Map(labels.map((label, index) => [label, options![index]!]));
+        const selected = options?.length
+          ? await ctx.ui.select(title, labels, { signal })
           : await ctx.ui.input(title, undefined, { signal });
+        const answer = options?.length && selected !== undefined
+          ? (byLabel.get(selected) ?? selected)
+          : selected;
         if (signal?.aborted || answer === undefined || !answer.trim()) return cancelled();
         if (options?.length && !options.includes(answer)) {
           return result({ status: "unavailable", question, message: "Unanswered: UI returned an invalid choice. Ask again; do not infer consent." });
