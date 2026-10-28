@@ -342,29 +342,14 @@ export function getLeafId(sessionFile: string): string | null {
  * the result widget. Best-effort: returns null for a missing/empty/mangled file.
  */
 export function getSessionId(sessionFile: string): string | null {
-  return readChildSessionIdentity(sessionFile).sessionId;
-}
-
-/**
- * Read trusted child session identity from the session file header line on disk.
- */
-export function readChildSessionIdentity(sessionFile: string): {
-  sessionId: string | null;
-  parentSession: string | null;
-  cwd: string | null;
-} {
   try {
     const raw = readFileSync(sessionFile, "utf8");
     const firstLine = raw.split("\n").find((line) => line.trim());
-    if (!firstLine) return { sessionId: null, parentSession: null, cwd: null };
-    const header = JSON.parse(firstLine) as { id?: unknown; parentSession?: unknown; cwd?: unknown };
-    return {
-      sessionId: typeof header.id === "string" && header.id ? header.id : null,
-      parentSession: typeof header.parentSession === "string" && header.parentSession ? header.parentSession : null,
-      cwd: typeof header.cwd === "string" && header.cwd ? header.cwd : null,
-    };
+    if (!firstLine) return null;
+    const id = (JSON.parse(firstLine) as { id?: unknown }).id;
+    return typeof id === "string" && id ? id : null;
   } catch {
-    return { sessionId: null, parentSession: null, cwd: null };
+    return null;
   }
 }
 

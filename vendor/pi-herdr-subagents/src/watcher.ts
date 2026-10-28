@@ -29,13 +29,6 @@ import { basename, dirname } from "node:path";
 
 import type { PaneInfo } from "./herdr/client.ts";
 import { findLastAssistantMessage, getNewEntries } from "./session.ts";
-import {
-  type ChildCompletionReport,
-  type ChildDefectReport,
-  type ChildMessageCorrelation,
-  type ChildSourceIdentity,
-  validateExitSidecar,
-} from "../../../lib/orchestrator/child-messages.ts";
 
 export interface RunningSubagent {
   id: string;
@@ -53,30 +46,9 @@ export interface RunningSubagent {
 }
 
 export type SubagentOutcome =
-  | {
-      kind: "completed";
-      summary: string;
-      exitCode: 0;
-      report?: ChildCompletionReport;
-      correlation?: ChildMessageCorrelation;
-      sourceIdentity?: ChildSourceIdentity;
-      validationError?: string;
-    }
-  | {
-      kind: "completed-user-exit";
-      summary: string;
-      exitCode: 0;
-      sourceIdentity?: ChildSourceIdentity;
-    } // no .exit sidecar
-  | {
-      kind: "ping";
-      name: string;
-      message: string;
-      defect?: ChildDefectReport;
-      correlation?: ChildMessageCorrelation;
-      sourceIdentity?: ChildSourceIdentity;
-      validationError?: string;
-    }
+  | { kind: "completed"; summary: string; exitCode: 0 }
+  | { kind: "completed-user-exit"; summary: string; exitCode: 0 } // no .exit sidecar
+  | { kind: "ping"; name: string; message: string }
   | { kind: "launch-failed"; exitCode: number; heldOpen: boolean; paneOutput: string | null }
   | { kind: "crashed"; exitCode: number; summary: string | null; paneOutput: string | null }
   | { kind: "pane-killed"; summary: string | null }
@@ -194,7 +166,7 @@ export function watchSubagent(
       });
     }
 
-    function readExitSidecar(): Record<string, unknown> | null {
+    function readExitSidecar(): { type?: string; name?: string; message?: string } | null {
       try {
         return JSON.parse(readFileSync(exitFile, "utf8"));
       } catch {
@@ -227,68 +199,19 @@ export function watchSubagent(
 
     function classify(trigger: Trigger): SubagentOutcome | null {
       const exitData = readExitSidecar();
-      if (exitData !== null && typeof exitData === "object") {
-        // A sidecar stamped with a different run's id is definitively not ours
-        // (resume reuses the session path). Consume it and keep watching.
-        if (typeof exitData.runId === "string" && exitData.runId !== running.id) {
-          try {
-            rmSync(exitFile, { force: true });
-          } catch {}
-          return null;
-        }
-
-        const trustedIdentity: ChildSourceIdentity = {
-          childId: running.id,
-          scope: running.scope,
-          name: running.name,
-          sessionFile: running.sessionFile,
+      if (exitData?.type === "ping") {
+        return {
+          kind: "ping",
+          name: exitData.name ?? running.name,
+          message: exitData.message ?? "",
         };
-
-        const validation = validateExitSidecar(exitData);
-        if (!validation.ok) {
-          // Reject invalid typed payload rather than silently downgrading!
-          if (exitData.type === "ping") {
-            return {
-              kind: "ping",
-              name: typeof exitData.name === "string" && exitData.name ? exitData.name : running.name,
-              message: typeof exitData.message === "string" ? exitData.message : "",
-              validationError: validation.error,
-              sourceIdentity: trustedIdentity,
-            };
-          }
-          if (exitData.type === "done") {
-            return {
-              kind: "completed",
-              summary: readSummary() ?? "Sub-agent exited without output",
-              exitCode: 0,
-              validationError: validation.error,
-              sourceIdentity: trustedIdentity,
-            };
-          }
-          return null;
-        }
-
-        const validData = validation.value;
-        if (validData.type === "ping") {
-          return {
-            kind: "ping",
-            name: validData.name || running.name,
-            message: validData.message || "",
-            ...(validData.defect ? { defect: validData.defect } : {}),
-            ...(validData.correlation ? { correlation: validData.correlation } : {}),
-            sourceIdentity: trustedIdentity,
-          };
-        }
-        if (validData.type === "done") {
-          return {
-            kind: "completed",
-            summary: readSummary() ?? "Sub-agent exited without output",
-            exitCode: 0,
-            ...(validData.report ? { report: validData.report } : {}),
-            ...(validData.correlation ? { correlation: validData.correlation } : {}),
-            sourceIdentity: trustedIdentity,
-          };
-        }
+      }
+      if (exitData?.type === "done") {
+        return {
+          kind: "completed",
+          summary: readSummary() ?? "Sub-agent exited without output",
+          exitCode: 0,
+        };
       }
 
       const exitInfo = readExitCode();
@@ -309,12 +232,6 @@ export function watchSubagent(
             kind: "completed-user-exit",
             summary: readSummary() ?? "Sub-agent exited without output",
             exitCode: 0,
-            sourceIdentity: {
-              childId: running.id,
-              scope: running.scope,
-              name: running.name,
-              sessionFile: running.sessionFile,
-            },
           };
         }
         const withinStartupWindow = now() - running.startTime < startupWindowMs;

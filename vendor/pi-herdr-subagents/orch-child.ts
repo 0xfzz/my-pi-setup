@@ -16,20 +16,11 @@
  */
 import type { ContextUsage, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
+import { Type } from "@sinclair/typebox";
 import { writeFileSync } from "node:fs";
 
 import { writeContextUsageSidecar } from "./src/context-usage.ts";
 import { getActiveSubagentCount } from "./src/runtime-state.ts";
-import {
-  type ChildCompletionReport,
-  type ChildDefectReport,
-  type ChildMessageCorrelation,
-  type ExitSidecarData,
-  createChildCorrelation,
-  validateCompletionReport,
-  validateDefectReport,
-} from "../../lib/orchestrator/child-messages.ts";
 
 export function shouldMarkUserTookOver(agentStarted: boolean): boolean {
   return agentStarted;
@@ -136,36 +127,21 @@ export function detectTerminalFailure(branch: readonly any[] | undefined): strin
   return undefined;
 }
 
-export type { ExitSidecarData } from "../../lib/orchestrator/child-messages.ts";
+export type ExitSidecarData =
+  | { type: "done" }
+  | { type: "ping"; name: string; message: string };
 
 /**
  * Write the completion sidecar the orchestrator's watcher classifies from.
- * Byte-shape matches pi-interactive-subagents exactly for legacy payloads:
+ * Byte-shape must match pi-interactive-subagents exactly (key order included):
  *   {"type":"done"}
  *   {"type":"ping","name":"...","message":"..."}
- * Additive typed payloads append defect, report, correlation, and runId metadata.
  */
 export function writeExitSidecar(sessionFile: string, data: ExitSidecarData): void {
-  let payload: Record<string, unknown>;
-  if (data.type === "done") {
-    payload = {
-      type: "done",
-      ...(data.report ? { report: data.report } : {}),
-      ...(data.correlation ? { correlation: data.correlation } : {}),
-      ...(data.runId ? { runId: data.runId } : {}),
-      ...(data.schemaVersion ? { schemaVersion: data.schemaVersion } : {}),
-    };
-  } else {
-    payload = {
-      type: "ping",
-      name: data.name,
-      message: data.message,
-      ...(data.defect ? { defect: data.defect } : {}),
-      ...(data.correlation ? { correlation: data.correlation } : {}),
-      ...(data.runId ? { runId: data.runId } : {}),
-      ...(data.schemaVersion ? { schemaVersion: data.schemaVersion } : {}),
-    };
-  }
+  const payload =
+    data.type === "done"
+      ? { type: "done" as const }
+      : { type: "ping" as const, name: data.name, message: data.message };
   writeFileSync(`${sessionFile}.exit`, JSON.stringify(payload));
 }
 
@@ -303,18 +279,9 @@ export default function (pi: ExtensionAPI) {
       // Preserve shutdown and use the existing resumable parent ping protocol.
       const unfinished = unfinishedWorkflowMessage(ctx.sessionManager?.getBranch());
       snapshotContextUsage(ctx);
-      const subagentId = process.env.PI_SUBAGENT_ID;
       signalTerminalSidecar(unfinished
-        ? {
-            type: "ping",
-            name: process.env.PI_SUBAGENT_NAME ?? "subagent",
-            message: unfinished,
-            ...(subagentId ? { runId: subagentId } : {}),
-          }
-        : {
-            type: "done",
-            ...(subagentId ? { runId: subagentId } : {}),
-          });
+        ? { type: "ping", name: process.env.PI_SUBAGENT_NAME ?? "subagent", message: unfinished }
+        : { type: "done" });
       ctx.shutdown();
       return;
     }
@@ -341,7 +308,6 @@ export default function (pi: ExtensionAPI) {
         type: "ping",
         name: process.env.PI_SUBAGENT_NAME ?? "subagent",
         message: `Subagent halted: model limit or fatal error reached: ${failureReason}`,
-        ...(process.env.PI_SUBAGENT_ID ? { runId: process.env.PI_SUBAGENT_ID } : {}),
       });
       ctx.shutdown();
     }
@@ -371,24 +337,8 @@ export default function (pi: ExtensionAPI) {
       "Use when you're stuck, need clarification, or need the parent to take action.",
     parameters: Type.Object({
       message: Type.String({ description: "What you need help with" }),
-      defect: Type.Optional(
-        Type.Object(
-          {
-            scope: Type.Optional(Type.String({ description: "Target work-unit/scope where defect was observed" })),
-            criterionId: Type.Optional(Type.String({ description: "Criterion ID or title that failed" })),
-            file: Type.Optional(Type.String({ description: "Optional repo-relative file path" })),
-            line: Type.Optional(Type.Integer({ description: "Optional line number", minimum: 1 })),
-            expected: Type.String({ description: "Expected behavior or contract" }),
-            observed: Type.String({ description: "Observed failure or behavior" }),
-            severity: Type.Optional(Type.Union([Type.Literal("blocker"), Type.Literal("major"), Type.Literal("nit")])),
-          },
-          { description: "Optional typed defect details" },
-        ),
-      ),
-      replyTo: Type.Optional(Type.String({ description: "Message ID being replied to" })),
-      attempt: Type.Optional(Type.Integer({ description: "Attempt / retry counter (1-based)", minimum: 1 })),
     }),
-    async execute(_toolCallId, params: any, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const sessionFile = process.env.PI_SUBAGENT_SESSION;
       if (!sessionFile) {
         throw new Error(
@@ -397,31 +347,11 @@ export default function (pi: ExtensionAPI) {
         );
       }
 
-      let validatedDefect: ChildDefectReport | undefined;
-      if (params.defect !== undefined) {
-        const val = validateDefectReport(params.defect);
-        if (!val.ok) {
-          throw new Error(`Invalid defect payload in orch_ping: ${val.error}`);
-        }
-        validatedDefect = val.value;
-      }
-
-      const subagentId = process.env.PI_SUBAGENT_ID;
-      const correlation = createChildCorrelation({
-        replyTo: params.replyTo,
-        attempt: params.attempt,
-        runId: subagentId,
-      });
-
       snapshotContextUsage(ctx);
       signalTerminalSidecar({
         type: "ping",
         name: process.env.PI_SUBAGENT_NAME ?? "subagent",
         message: params.message,
-        ...(validatedDefect ? { defect: validatedDefect } : {}),
-        correlation,
-        ...(subagentId ? { runId: subagentId } : {}),
-        schemaVersion: 1,
       });
 
       ctx.shutdown();
@@ -429,10 +359,7 @@ export default function (pi: ExtensionAPI) {
         content: [
           { type: "text", text: "Ping sent. Session will exit and parent will be notified." },
         ],
-        details: {
-          correlationId: correlation.messageId,
-          ...(validatedDefect ? { defect: validatedDefect } : {}),
-        },
+        details: {},
       };
     },
   });
@@ -444,55 +371,12 @@ export default function (pi: ExtensionAPI) {
       "Call this tool when you have completed your task. " +
       "It will close this session and return your results to the main session. " +
       "Your LAST assistant message before calling this becomes the summary returned to the caller.",
-    parameters: Type.Object({
-      report: Type.Optional(
-        Type.Object(
-          {
-            status: Type.Optional(Type.Union([Type.Literal("ok"), Type.Literal("partial"), Type.Literal("failed")])),
-            filesTouched: Type.Optional(Type.Array(Type.String())),
-            criteriaNotes: Type.Optional(
-              Type.Array(
-                Type.Object({
-                  criterion: Type.String(),
-                  passed: Type.Boolean(),
-                  evidence: Type.Optional(Type.String()),
-                }),
-              ),
-            ),
-          },
-          { description: "Optional structured completion report" },
-        ),
-      ),
-      replyTo: Type.Optional(Type.String({ description: "Message ID being replied to" })),
-      attempt: Type.Optional(Type.Integer({ description: "Attempt / retry counter (1-based)", minimum: 1 })),
-    }),
-    async execute(_toolCallId, params: any, _signal, _onUpdate, ctx) {
+    parameters: Type.Object({}),
+    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
       const sessionFile = process.env.PI_SUBAGENT_SESSION;
       if (sessionFile) {
-        let validatedReport: ChildCompletionReport | undefined;
-        if (params.report !== undefined) {
-          const val = validateCompletionReport(params.report);
-          if (!val.ok) {
-            throw new Error(`Invalid report payload in orch_done: ${val.error}`);
-          }
-          validatedReport = val.value;
-        }
-
-        const subagentId = process.env.PI_SUBAGENT_ID;
-        const correlation = createChildCorrelation({
-          replyTo: params.replyTo,
-          attempt: params.attempt,
-          runId: subagentId,
-        });
-
         snapshotContextUsage(ctx);
-        signalTerminalSidecar({
-          type: "done",
-          ...(validatedReport ? { report: validatedReport } : {}),
-          correlation,
-          ...(subagentId ? { runId: subagentId } : {}),
-          schemaVersion: 1,
-        });
+        signalTerminalSidecar({ type: "done" });
       }
       ctx.shutdown();
       return {
