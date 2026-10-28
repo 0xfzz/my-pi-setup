@@ -1644,28 +1644,11 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             "",
             outcome.message,
             "",
-            ...(outcome.defect
-              ? [
-                  `Typed defect${outcome.defect.criterionId ? ` on ${outcome.defect.criterionId}` : ""}:`,
-                  `- expected: ${outcome.defect.expected}`,
-                  `- observed: ${outcome.defect.observed}`,
-                  ...(outcome.defect.file ? [`- where: ${outcome.defect.file}${outcome.defect.line ? `:${outcome.defect.line}` : ""}`] : []),
-                  `Open the defect ticket from these fields; do not re-derive them from the prose above.`,
-                  "",
-                ]
-              : []),
             `Escalation id: ${escalation.id}`,
             ...escalationGuidance(escalation.id),
           ].join("\n"),
           display: true,
-          details: {
-            id: running.id,
-            name: running.name,
-            scope,
-            escalationId: escalation.id,
-            question: outcome.message,
-            ...(outcome.defect ? { defect: outcome.defect } : {}),
-          },
+          details: { id: running.id, name: running.name, scope, escalationId: escalation.id, question: outcome.message },
         },
         { triggerTurn: true, deliverAs: "steer" },
       );
