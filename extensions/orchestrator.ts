@@ -35,7 +35,6 @@ import {
   buildQaGroupTicket,
   buildQaTicket,
   handoffArtifactPayload,
-  handoffIdFor,
   leakedSiblingScopes,
   renderHandoffForChild,
   sanitizeScope,
@@ -46,7 +45,6 @@ import {
 import {
   ScopeRegistry,
   type CloseReason,
-  type ReviewRecord,
   type ScopedChild,
   type SteerRecord,
 } from "../lib/orchestrator/scope-registry.ts";
@@ -64,7 +62,6 @@ import { isControlPlanePath } from "../lib/orchestrator/control-plane.ts";
 import {
   deliverSteer,
   INTERRUPT_KEY,
-  matchOwner,
   routeUpdate,
   type SteerResolution,
 } from "../lib/orchestrator/steer-router.ts";
@@ -179,13 +176,10 @@ import {
   evaluateChunkRun,
   ingestChunkReport,
   markStatus,
-  memberContentHash,
   memberFor,
   openChunkRun,
   recordMemberFix,
-  recordMemberReReview,
   renderChunkProgress,
-  slotFor,
   type ChunkRun,
 } from "../lib/orchestrator/chunk-run.ts";
 import {
@@ -196,18 +190,12 @@ import {
   type ChunkMemberPin,
 } from "../lib/orchestrator/report-v2.ts";
 import {
-  MAX_SPEC_REVIEWS_PER_WAVE,
   planSpecChunks,
-  reReviewExhausted,
-  spawnGateProblem,
   structuralChanges,
-  type MemberReportFacts,
-  type SpecChunk,
   type WaveMember,
 } from "../lib/orchestrator/wave.ts";
 import {
   contractFieldsOf,
-  contractFieldsOfRecord,
   mergeHandoffDocument,
   parseHandoffDocument,
 } from "../lib/orchestrator/handoff-document.ts";
@@ -223,7 +211,6 @@ import {
   pinTarget,
   renderReviewerTicket,
   renderRunSummary,
-  reviewerScope,
   settleReadiness,
   stalenessProblem,
   type DesignRef,
@@ -1402,7 +1389,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     }
     // ── artifact scope: evidence, not user artifacts ────────────────────────
     // This is the authorization layer around the existing artifact tool, not a
-    // second store. It applies to reviewers (`review:<run>:<lens>`) and research
+    // second store. It applies to reviewers (`review:<run>:<chunkId>`) and research
     // children (`orch-research:<scope>`) alike, so it sits outside the spec-only
     // branch. Foreign and unknown ids are refused with the same message.
     const artifactRule = artifactScopeFor(process.env);
@@ -2088,7 +2075,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     name: "orch_spec_review_submit",
     label: "Submit Specification Review",
     description:
-      "Submit your independent specification review. Only available in a spec-only reviewer session; the run, lens and pinned revision come from your session, not from arguments.",
+      "Submit your independent specification review. Only available in a spec-only reviewer session; the run, chunk (or document lens) and pinned revision come from your session, not from arguments.",
     parameters: Type.Object({
       verdict: Type.Optional(
         Type.Union([Type.Literal("clean"), Type.Literal("findings"), Type.Literal("blocked")], {
@@ -2136,19 +2123,19 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       ),
       findings: Type.Array(
         Type.Object({
-          id: Type.Optional(Type.String({ maxLength: 80, description: "Optional stable id; derived from your lens if omitted (F-<lens>-<n>)." })),
+          id: Type.Optional(Type.String({ maxLength: 80, description: "Optional stable id; derived from your assignment if omitted (F-<member-or-lens>-<n>)." })),
           severity: Type.Union([Type.Literal("blocker"), Type.Literal("major"), Type.Literal("nit")]),
           location: Type.String({ minLength: 1, description: "Section heading or line number inside the pinned document." }),
           discrepancy: Type.String({ minLength: 1, description: "What is wrong or missing." }),
           rationale: Type.String({ minLength: 1, description: "Why it matters for implementation." }),
           references: Type.Optional(Type.Array(Type.String({ description: "Permitted repository path supporting the finding." }))),
           suggestion: Type.Optional(Type.String({ description: "Optional concrete replacement or addition." })),
-          memberId: Type.Optional(Type.String({ description: "Handoff scope for batch findings; required for a member-specific patch." })),
+          memberId: Type.Optional(Type.String({ description: "Handoff scope for chunk findings; required for a member-specific finding or patch." })),
           patch: Type.Optional(Type.Object({ oldText: Type.String({ minLength: 1 }), newText: Type.String() }, {
             description: "Exact, unique, non-overlapping replacement in the pinned document. The parent can apply it without another reviewer. No structural lane/criteria changes.",
           })), 
         }),
-        { description: "Findings for your lens. An empty array is a valid clean answer." },
+        { description: "Findings for this document, or for this chunk when members[] is used. An empty array is a valid clean answer." },
       ),
       missingContext: Type.Optional(
         Type.Array(Type.String({ description: "Anything you needed and could not find in the document or permitted paths." })),
@@ -5675,6 +5662,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         ...(workUnitTokens > 0 ? { tokens: workUnitTokens } : {}),
         ...(specRevision !== undefined ? { specRevision } : {}),
         ...(receiptId ? { checkRunId: receiptId } : {}),
+        ...(receiptNote ? { note: receiptNote } : {}),
         ...(findings.length ? { findings } : {}),
       });
       persistState();

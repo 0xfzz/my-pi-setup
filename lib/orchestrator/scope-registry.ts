@@ -182,6 +182,12 @@ export interface ReviewRecord {
   tokens?: number;
   /** Check receipt this verdict relied on, when one was cited. */
   checkRunId?: string;
+  /**
+   * Provenance note for the verdict, e.g. "no receipt cited — evidence is
+   * attested". Recorded so an attested approval is distinguishable from a
+   * receipt-backed one in the audit trail.
+   */
+  note?: string;
   /** Non-fatal findings, e.g. "handoff was revised after spawn". */
   findings?: string[];
 }
