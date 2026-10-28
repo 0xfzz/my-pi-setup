@@ -33,6 +33,8 @@ export interface PathRequest {
   kind: "file" | "directory" | "unknown";
   /** Rule action: the tool name, so per-tool rules keep working. */
   action: string;
+  /** The raw shell segment this claim came from, for command-prefix rules. */
+  command?: string;
 }
 
 export interface ClaimSet {
@@ -239,20 +241,43 @@ const SPECS: Readonly<Record<string, PathSpec>> = {
   node: { operands: true, posture: EITHER },
 };
 
-/** Split a token list into one segment per `|` / `&` / `;`. */
-function segments(tokens: readonly string[]): string[][] {
-  const out: string[][] = [];
-  let current: string[] = [];
-  for (const token of tokens) {
-    if (OPERATORS.has(token)) {
-      if (current.length) out.push(current);
-      current = [];
+/**
+ * Split a command into its raw segments on unquoted `|`, `&` and `;`.
+ *
+ * The raw text is kept because it is what a command rule is written against:
+ * `git -C ../other status *` is one grant per habit, and it has to match the
+ * command the user will type again, not a re-joined token list.
+ */
+function rawSegments(command: string): string[] {
+  const out: string[] = [];
+  let current = "";
+  let quoted: string | undefined;
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index]!;
+    if (quoted) {
+      current += char;
+      if (char === quoted && command[index - 1] !== "\\") quoted = undefined;
       continue;
     }
-    current.push(token);
+    if (char === "'" || char === '"') {
+      quoted = char;
+      current += char;
+      continue;
+    }
+    if (char === "\\") {
+      current += char + (command[index + 1] ?? "");
+      index++;
+      continue;
+    }
+    if (char === "|" || char === "&" || char === ";") {
+      out.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
   }
-  if (current.length) out.push(current);
-  return out;
+  out.push(current);
+  return out.map(segment => segment.trim()).filter(Boolean);
 }
 
 const stripQuotes = (word: string): string => word.replace(/^["']|["']$/g, "");
@@ -409,15 +434,24 @@ export function shellClaim(command: unknown, cwd: string): ClaimSet {
   const paths: PathRequest[] = [];
   const seen = new Set<string>();
 
-  const push = (word: string, posture: ScopePosture, kind?: PathRequest["kind"]): void => {
+  const claim = (word: string, posture: ScopePosture, kind?: PathRequest["kind"], source?: string): void => {
     const raw = stripQuotes(word);
     if (!raw || raw === "-" || /^[<>|&;()]+$/.test(raw) || seen.has(raw)) return;
     if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(raw)) return;
     seen.add(raw);
-    paths.push({ raw, write: posture === "write", posture, kind: kind ?? kindOf(cwd, raw), action: "bash" });
+    paths.push({
+      raw,
+      write: posture === "write",
+      posture,
+      kind: kind ?? kindOf(cwd, raw),
+      action: "bash",
+      ...(source ? { command: source } : {}),
+    });
   };
 
-  for (const segment of segments(words(command))) {
+  for (const text of rawSegments(command)) {
+    const segment = words(text);
+    const push = (word: string, posture: ScopePosture, kind?: PathRequest["kind"]) => claim(word, posture, kind, text);
     // Redirection targets first: `>` writes, `<` reads. `2>/dev/null` leaves the `2`
     // as an ordinary word, which is not path-shaped and is dropped.
     for (let index = 0; index < segment.length; index++) {

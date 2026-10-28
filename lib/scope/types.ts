@@ -90,6 +90,8 @@ export interface PathClaim {
   write: boolean;
   /** Whether the call reads, writes, or cannot be told apart. */
   posture: ScopePosture;
+  /** The raw shell segment the claim came from, so a command rule can match it. */
+  command?: string;
   external: boolean;
   /** Set when the claim is a directory (grants widen to the directory). */
   kind: "file" | "directory" | "unknown";

@@ -36,3 +36,9 @@ test("an empty rule set has no opinion instead of defaulting to allow", () => {
   assert.equal(resolveRule([], "read", "src/a.ts"), undefined);
   assert.equal(resolveRule([rule("bash", "*", "deny")], "read", "src/a.ts"), undefined);
 });
+
+test("a command pattern ending in ` *` also matches the command without arguments", () => {
+  assert.ok(globMatch("git status *", "git status"), "a bare command is covered by its own prefix rule");
+  assert.ok(globMatch("git status *", "git status --short"));
+  assert.ok(!globMatch("git status *", "git stash"));
+});

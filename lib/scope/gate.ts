@@ -120,6 +120,7 @@ export function createGate(deps: GateDeps): Gate {
       posture: request.posture,
       external: classified.external,
       kind: request.kind,
+      ...(request.command ? { command: request.command } : {}),
     };
   }
 

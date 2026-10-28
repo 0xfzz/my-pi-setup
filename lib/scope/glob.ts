@@ -30,7 +30,11 @@ function compile(pattern: string): RegExp {
 /** Does `resource` match this rule's resource glob? */
 export function globMatch(pattern: string, resource: string): boolean {
   if (pattern === "*" || pattern === resource) return true;
-  return compile(pattern).test(resource);
+  if (compile(pattern).test(resource)) return true;
+  // opencode's rule for shell patterns: one ending in ` *` also matches the
+  // command without arguments, so a saved `git status *` covers a bare
+  // `git status`. Without it a command grant would silently miss the short form.
+  return pattern.endsWith(" *") && compile(pattern.slice(0, -2)).test(resource);
 }
 
 export interface RuleMatch {

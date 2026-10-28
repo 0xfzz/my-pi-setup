@@ -139,6 +139,13 @@ export function evaluateClaim(claim: Claim, state: ScopeState, options: Evaluate
   if (boundary?.effect === "deny") {
     return { ...base, effect: "deny", reason: reasonForDeny(boundary.rule, "external_directory"), rule: boundary.rule };
   }
+  // A command rule speaks about the whole segment, not about one path:
+  // `{"action":"bash","resource":"git -C ../other status *","effect":"allow"}`
+  // is one grant per habit instead of a folder grant per path.
+  const byCommand = pathClaim.command ? resolveRule(state.rules, pathClaim.tool, pathClaim.command) : undefined;
+  if (byCommand?.effect === "deny") {
+    return { ...base, effect: "deny", reason: reasonForDeny(byCommand.rule, pathClaim.tool), rule: byCommand.rule };
+  }
 
   // 2. Device, /proc and temp targets are never a boundary question. `cmd
   //    2>/dev/null` must not prompt, and a scratch file under $TMPDIR is not an
@@ -157,7 +164,11 @@ export function evaluateClaim(claim: Claim, state: ScopeState, options: Evaluate
   }
 
   // 4. Explicit allow rule, then a covering root.
-  const allowed = denied?.effect === "allow" ? denied : boundary?.effect === "allow" ? boundary : undefined;
+  const allowed =
+    denied?.effect === "allow" ? denied
+    : boundary?.effect === "allow" ? boundary
+    : byCommand?.effect === "allow" ? byCommand
+    : undefined;
   if (allowed) {
     return { ...base, effect: "allow", reason: `allowed by rule ${allowed.rule.action}:${allowed.rule.resource}`, rule: allowed.rule };
   }

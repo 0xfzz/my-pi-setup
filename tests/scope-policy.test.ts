@@ -136,3 +136,26 @@ test("a rule keyed on the tool silences an unknown tool, permanently", () => {
   assert.equal(evaluateClaim({ tool: "mcp__other", unknown: true }, state({ rules })).effect, "ask", "the rule is per tool");
   assert.equal(evaluateClaim({ tool: "mcp__fs", unknown: true }, state()).effect, "ask");
 });
+
+test("a command rule is one grant per habit, and it beats the write default", () => {
+  const rules = [{ action: "bash", resource: "git -C ../other status *", effect: "allow" as const }];
+  const covered = evaluateClaim(
+    { ...claim({ tool: "bash", action: "bash", absolute: "/other/src/a.ts", resource: "/other/src/a.ts", external: true, posture: "read" }), command: "git -C ../other status" },
+    state({ rules }),
+  );
+  assert.equal(covered.effect, "allow");
+  assert.equal(covered.rule?.resource, "git -C ../other status *");
+
+  const other = evaluateClaim(
+    { ...claim({ tool: "bash", action: "bash", absolute: "/other/src/a.ts", resource: "/other/src/a.ts", external: true, posture: "read" }), command: "git -C ../other push" },
+    state({ rules }),
+  );
+  assert.equal(other.effect, "allow", "an ordinary outside read stays open; the point is that the rule did not decide it");
+  assert.equal(other.rule, undefined);
+
+  const denied = evaluateClaim(
+    { ...claim({ tool: "bash", action: "bash", absolute: "/other/src/a.ts", resource: "/other/src/a.ts", external: true, posture: "write" }), command: "git -C ../other push" },
+    state({ rules: [{ action: "bash", resource: "git -C ../other push *", effect: "deny" as const }] }),
+  );
+  assert.equal(denied.effect, "deny");
+});
