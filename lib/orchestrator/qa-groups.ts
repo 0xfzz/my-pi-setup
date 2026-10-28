@@ -13,9 +13,14 @@
  * one per reviewer, so `orch_review` and the dashboard name the same thing the
  * parent sees.
  *
+ * The arithmetic itself lives in `chunking.ts` and is shared with the spec-review
+ * phase: a wave split 2 + 3 for review must not be split 3 + 2 for QA, or "five
+ * units became 2 + 3" stops being a fact a user can hold in their head.
+ *
  * Pure: no I/O and no pi imports, so the arithmetic that decides how many panes
  * open is testable without launching anything.
  */
+import { balancedChunks, chunkCount } from "./chunking.ts";
 
 export const MAX_ACTIVE_WORKERS = 5;
 export const MAX_ACTIVE_QA = 3;
@@ -32,8 +37,7 @@ export type QaPlan = { ok: true; groups: QaGroup[] } | { ok: false; problems: st
 
 /** The smallest reviewer count that keeps every group within the per-reviewer cap. */
 export function qaGroupCount(unitCount: number): number {
-  if (unitCount <= 0) return 0;
-  return Math.min(MAX_ACTIVE_QA, Math.ceil(unitCount / MAX_UNITS_PER_QA));
+  return chunkCount(unitCount, { maxPerChunk: MAX_UNITS_PER_QA, maxChunks: MAX_ACTIVE_QA });
 }
 
 /**
@@ -82,16 +86,11 @@ export function planQaGroups(scopes: readonly string[], options: { reviewers?: n
     count = options.reviewers;
   }
 
-  const base = Math.floor(cleaned.length / count);
-  const remainder = cleaned.length % count;
-  const groups: QaGroup[] = [];
-  let cursor = 0;
-  for (let index = 0; index < count; index += 1) {
-    // Remainder goes to the later groups, so 5 units split as 2 + 3.
-    const size = base + (index >= count - remainder ? 1 : 0);
-    groups.push({ label: `qa-${index + 1}`, scopes: cleaned.slice(cursor, cursor + size) });
-    cursor += size;
-  }
+  // Remainder goes to the later groups, so 5 units split as 2 + 3.
+  const groups: QaGroup[] = balancedChunks(cleaned, count).map((scopes, index) => ({
+    label: `qa-${index + 1}`,
+    scopes,
+  }));
   return { ok: true, groups };
 }
 
