@@ -44,7 +44,7 @@
     "typecheck": "tsc --noEmit",
     "build:dashboard": "node scripts/build-dashboard.mjs",
     "build:wasm": "cargo build --manifest-path crates/ascii-anim-engine/Cargo.toml --target wasm32-unknown-unknown --release && cp crates/ascii-anim-engine/target/wasm32-unknown-unknown/release/ascii_anim_engine.wasm lib/ascii_anim_engine.wasm",
-    "lint:smell": "oxlint extensions lib tests",
+    "lint:smell": "oxlint --deny-warnings extensions lib tests",
     "lint:dead": "knip",
     "lint:dup": "jscpd extensions lib tests --threshold 12 --min-lines 12 --min-tokens 80",
     "smell": "npm run lint:dead && npm run lint:dup",

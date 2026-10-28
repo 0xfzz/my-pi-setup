@@ -46,7 +46,7 @@ are already touching, so fix their warnings instead of bypassing it. Do not add
 new unused imports, variables, functions or exports.
 
 ```sh
-npm run lint:smell   # oxlint, whole repo (reports the existing warnings)
+npm run lint:smell   # oxlint, whole repo; fails on warnings
 npm run lint:dead    # knip: unused files, exports and dependencies
 npm run lint:dup     # jscpd: duplicated blocks above 12%
 npm run smell        # dead + dup
