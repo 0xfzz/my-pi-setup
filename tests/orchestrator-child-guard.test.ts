@@ -254,7 +254,7 @@ test("watchdog notices carry the facts that justify the interrupt", () => {
   assert.doesNotMatch(stall, /progress for It/);
 });
 
-test("a research or QA child's shell is read-only even when the pane holds bash", async () => {
+test("a research child's shell is read-only even when the pane holds bash", async () => {
   const previous = process.env.PI_SUBAGENT_PURPOSE;
   try {
     const f = fixture();
@@ -283,11 +283,6 @@ test("a research or QA child's shell is read-only even when the pane holds bash"
     assert.equal(readResult, undefined, "read-only inspection is still allowed");
     assert.match(readEvent.input.command, /status/, "the grammar re-quotes the command");
 
-    process.env.PI_SUBAGENT_PURPOSE = "review";
-    const qaWrite = { toolName: "bash", input: { command: "tee f" } };
-    const [qaResult] = await f.emit("tool_call", qaWrite, ctx);
-    assert.ok(qaResult?.block, "a QA child cannot write through bash");
-    assert.match(qaResult.reason, /QA child: bash is read-only/);
   } finally {
     if (previous === undefined) delete process.env.PI_SUBAGENT_PURPOSE;
     else process.env.PI_SUBAGENT_PURPOSE = previous;

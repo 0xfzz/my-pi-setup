@@ -128,14 +128,13 @@ export const escalations = new EscalationLedger();
 /**
  * The reading role a child declared for itself, from the launcher-written env.
  *
- * A research or QA child is a reader by contract. The `--tools` allowlist is the
+ * A research child is a reader by contract. The `--tools` allowlist is the
  * first line, but a resumed or user-touched child can hold a wider set, and bash
  * is a writer whatever the ticket says. Resolving the role from the environment
  * keeps that claim enforceable in the child's own process.
  */
-export function childPurposeFromEnv(env: NodeJS.ProcessEnv = process.env): "research" | "review" | undefined {
-  const value = env.PI_SUBAGENT_PURPOSE;
-  return value === "research" || value === "review" ? value : undefined;
+export function childPurposeFromEnv(env: NodeJS.ProcessEnv = process.env): "research" | undefined {
+  return env.PI_SUBAGENT_PURPOSE === "research" ? "research" : undefined;
 }
 
 /**
@@ -151,11 +150,6 @@ export function escalationGuidance(escalationId: string): string[] {
     `Answer it with agent_escalate({ id: "${escalationId}", action: "answer", answer: "..." }) if you know from context you have.`,
     `If you do not, use action: "to-user" with your reason — the user decides, and a cancelled dialog is not an answer.`,
     ``,
-    `If this is a QA defect (a completed result that fails a criterion), open a ticket instead of answering in prose:`,
-    `  1. todo_plan add: "Fix defect <scope>: <criterion>", resource file:<defective file>, the finding as the note;`,
-    `  2. todo_act claim that task, author a fix handoff scoped to the defective file, and agent_spawn the fix worker;`,
-    `  3. when the fix completes, agent_resume this QA child to re-verify;`,
-    `  4. QA passes → todo_act done with the QA evidence; QA still fails → todo_act failed (reopen; twice → ask the user).`,
   ];
 }
 
@@ -1175,7 +1169,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
      * would reintroduce the ghost-row class of bug this registry was rewritten to
      * remove.
      */
-    meta?: Pick<ScopedChild, "purpose" | "reviewRunId" | "reviewLens" | "targetHash" | "qaForScope" | "qaForScopes">,
+    meta?: Pick<ScopedChild, "purpose">,
   ) {
     // One row per session file: a resume supersedes the previous row instead of
     // forking a second "running" ghost that only the newest row can update.
@@ -1334,7 +1328,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       if (command === undefined) {
         return {
           block: true,
-          reason: `${readingRole === "review" ? "QA" : "Research"} child: bash is read-only. `
+          reason: "Research child: bash is read-only. "
             + `Report what you need with agent_ping; you never fix or write.`,
         };
       }
@@ -1453,15 +1447,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       planId: Type.Optional(Type.String({ description: "Worker steps: plan artifact id from a planner child. Its step supplies the lane and criteria." })),
       stepId: Type.Optional(Type.String({ description: "Worker steps: which plan step to execute. Required when the plan has more than one step." })),
       handoffId: Type.Optional(Type.String({ description: "Handoff id returned by agent_handoff (its scope is accepted too). Omit it for an ad-hoc spawn." })),
-      qaFor: Type.Optional(
-        Type.Union(
-          [Type.String(), Type.Array(Type.String())],
-          { description: "QA spawns only: the completed work-unit scope(s) whose results this child judges. Used with purpose \"review\"; an array makes one reviewer judge a batch. Prefer agent_qa for a whole wave." },
-        ),
-      ),
-      qaScope: Type.Optional(
-        Type.String({ description: "QA batch label/scope, e.g. 'qa-1'. Defaults to qa-<unit> for one unit and qa-batch-<first> for a group." }),
-      ),
       purpose: Type.Optional(
         Type.Union(
           [
@@ -1525,10 +1510,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
           { error: "handoff-removed" },
         );
       }
-      if (params.qaFor || params.purpose === "review" || params.purpose === "spec" || params.purpose === "implementation") {
+      if (params.purpose === "review" || params.purpose === "spec" || params.purpose === "implementation") {
         return text(
-          "The orchestrator pipeline was removed (agent_handoff, agent_spec_review, agent_qa, agent_check, agent_review, "
-            + "and the spec/implementation/review purposes). Use purpose \"adhoc\" for a worker, or \"research\" for a read-only reader.",
+          "The handoff/spec-review/QA pipeline was removed. Use purpose \"adhoc\" for a worker, or \"research\" for a read-only reader.",
           { error: "pipeline-removed" },
         );
       }

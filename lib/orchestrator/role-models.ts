@@ -18,7 +18,7 @@
  * roll is deterministic in tests.
  */
 
-export const ORCH_ROLES = ["devil-advocate", "worker", "qa-review"] as const;
+export const ORCH_ROLES = ["worker"] as const;
 export type OrchRole = (typeof ORCH_ROLES)[number];
 
 /** Upper bound on a pool: more members add variance, not coverage. */

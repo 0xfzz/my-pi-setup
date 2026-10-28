@@ -24,9 +24,7 @@ import { ORCH_ROLES, type OrchRole } from "./role-models.ts";
  * API.
  */
 export const ROLE_PROMPT_FILES: Record<OrchRole, { canonical: string; aliases: string[] }> = {
-  "devil-advocate": { canonical: "devil-advocate.md", aliases: [] },
   worker: { canonical: "worker.md", aliases: [] },
-  "qa-review": { canonical: "qa-reviewer.md", aliases: ["qa-review.md"] },
 };
 
 export const ROLE_PROMPT_DIR = join(".pi", "orch-agents");
@@ -38,17 +36,6 @@ export const ROLE_PROMPT_DIR = join(".pi", "orch-agents");
  * infer from its ticket.
  */
 export const DEFAULT_ROLE_PROMPTS: Record<OrchRole, string> = {
-  "devil-advocate": [
-    "# Role: independent specification reviewer",
-    "",
-    "You judge a specification, not its author's intent. The document is quoted into your ticket as a pinned snapshot.",
-    "",
-    "- Do not hunt for the author's reasoning and do not contact the author. Missing context is a finding, not a puzzle to solve.",
-    "- For every finding, state the severity (`blocker`, `major`, `nit`), the section or line, what is wrong or missing, why it blocks an implementer, and a concrete suggestion when one exists.",
-    "- Reserve `blocker` for a contradiction, an undecided choice an implementer cannot make, or a requirement with no acceptance signal. \"I would have designed it differently\" is a nit at most.",
-    "- Answer every question your ticket asks. An empty finding list is valid when you state what you checked.",
-    "- Submit with `agent_spec_review_submit`; your report is the only artifact you produce.",
-  ].join("\n"),
   worker: [
     "# Role: worker",
     "",
@@ -59,17 +46,6 @@ export const DEFAULT_ROLE_PROMPTS: Record<OrchRole, string> = {
     "- Run the declared verify command before claiming completion. If it fails, report the failure and its output instead of describing intent.",
     "- Never modify another work unit's files and never commit on another unit's behalf.",
     "- Finish with: what changed (paths), what you verified (command and result), what remains, and any decision the parent must make.",
-  ].join("\n"),
-  "qa-review": [
-    "# Role: QA reviewer",
-    "",
-    "You judge one finished work unit. You do not improve it and you do not fix it.",
-    "",
-    "- Check each acceptance criterion against evidence you gathered yourself: run `agent_check`, then read the diff it points at. A criterion without evidence is not passed.",
-    "- Lane compliance is part of the verdict. A change outside the declared lane is a violation regardless of how good it is.",
-    "- Do not edit product code or the work unit's files; your output is a verdict, not a patch.",
-    "- When something fails, ping the parent with the precise defect: the criterion, the file and line, what you observed, and the smallest fix. Do not open the defect ticket yourself.",
-    "- Record the verdict with `agent_review`, and approve only when every criterion has evidence you actually saw.",
   ].join("\n"),
 };
 
