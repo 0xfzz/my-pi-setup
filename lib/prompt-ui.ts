@@ -11,18 +11,18 @@ import {
   truncateToWidth,
   visibleWidth,
   type Component,
-  type EditorTheme,
-  type TUI,
 } from "@earendil-works/pi-tui";
 import {
   CustomEditor,
   type ExtensionAPI,
   type ExtensionContext,
-  type KeybindingsManager,
   type ReadonlyFooterDataProvider,
   type Theme,
 } from "@earendil-works/pi-coding-agent";
 import { isSubagentChildSession } from "./subagent-context.ts";
+
+/** Derive from the UI contract so this does not depend on a re-exported alias. */
+type EditorFactory = NonNullable<ReturnType<ExtensionContext["ui"]["getEditorComponent"]>>;
 
 export interface ContextUsageLike {
   tokens: number | null;
@@ -161,23 +161,25 @@ export function renderModelTopBorder(
   return borderColor(prefix) + fitted + borderColor(gap + "─".repeat(fill)) + borderColor(suffix);
 }
 
-/** Editor whose top rule carries the live model/provider/thinking label. */
-export class ModelBorderEditor extends CustomEditor {
-  private readonly label: () => string | undefined;
-
-  constructor(
-    tui: TUI,
-    theme: EditorTheme,
-    keybindings: KeybindingsManager,
-    label: () => string | undefined,
-  ) {
-    super(tui, theme, keybindings);
-    this.label = label;
-  }
-
-  protected override renderTopBorder(width: number, hiddenLineCount: number): string {
-    return renderModelTopBorder(this.label(), width, this.borderColor, hiddenLineCount);
-  }
+/**
+ * Patch the live editor so its top rule carries the model label.
+ *
+ * The editor slot is single-occupancy and shared with pi-paster, prompt-history
+ * and `modes`. Patch the instance `renderTopBorder` instead of installing a
+ * fresh `CustomEditor` subclass: replacing the slot drops every feature the
+ * previous owner attached, which is how the mode switch key and image paste
+ * silently disappeared when this extension loaded last.
+ */
+export function attachModelBorder<T extends object>(editor: T, label: () => string | undefined): T {
+  const target = editor as T & {
+    borderColor?: (text: string) => string;
+    renderTopBorder?: (width: number, hiddenLineCount: number) => string;
+  };
+  if (typeof target.renderTopBorder !== "function") return editor;
+  target.renderTopBorder = function (this: { borderColor?: (text: string) => string }, width: number, hiddenLineCount: number) {
+    return renderModelTopBorder(label(), width, this.borderColor ?? ((text: string) => text), hiddenLineCount);
+  };
+  return editor;
 }
 
 /**
@@ -284,17 +286,24 @@ export class ContextFooter implements Component {
 export default function promptUi(pi: ExtensionAPI) {
   let context: ExtensionContext | undefined;
   let installed = false;
+  let installedEditor: EditorFactory | undefined;
+  let baseEditor: EditorFactory | undefined;
 
   const apply = (ctx: ExtensionContext) => {
     context = ctx;
     if (ctx.mode !== "tui" || isSubagentChildSession(ctx)) return;
-    // Replacing the editor keeps the model in the prompt's own top rule instead
-    // of spending an extra row above it. CustomEditor preserves app keybindings
-    // and only the top border changes.
+    // Compose over whatever factory already owns the slot (pi-paster, prompt-history,
+    // `modes`) so loading this extension never disables another one's editor.
     if (typeof ctx.ui.setEditorComponent === "function") {
-      ctx.ui.setEditorComponent((tui, editorTheme, keybindings) =>
-        new ModelBorderEditor(tui, editorTheme, keybindings, () => modelLabel(context)),
-      );
+      const previous = typeof ctx.ui.getEditorComponent === "function" ? ctx.ui.getEditorComponent() : undefined;
+      if (previous !== installedEditor) baseEditor = previous;
+      const base = baseEditor;
+      installedEditor = (tui, editorTheme, keybindings) =>
+        attachModelBorder(
+          base?.(tui, editorTheme, keybindings) ?? new CustomEditor(tui, editorTheme, keybindings),
+          () => modelLabel(context),
+        );
+      ctx.ui.setEditorComponent(installedEditor);
     }
     if (typeof ctx.ui.setFooter === "function") {
       ctx.ui.setFooter((_tui, theme, footerData) => new ContextFooter(() => context, theme, footerData));
@@ -314,6 +323,8 @@ export default function promptUi(pi: ExtensionAPI) {
     } finally {
       context = undefined;
       installed = false;
+      installedEditor = undefined;
+      baseEditor = undefined;
     }
   });
 }

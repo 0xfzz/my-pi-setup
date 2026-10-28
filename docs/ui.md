@@ -77,11 +77,15 @@ MCP: 1 server enabled
 ```
 
 - The model label is embedded in the editor's own top rule by
-  `ModelBorderEditor`, a `CustomEditor` subclass that overrides
-  `renderTopBorder`. It reads `ctx.model` and `ctx.thinkingLevel` live, so
-  `/model` updates it without a reload and without spending an extra row above
+  `attachModelBorder`, which patches the live editor's `renderTopBorder` instead
+  of installing a fresh `CustomEditor`. The editor slot is single-occupancy
+  (`pi-paster`, `prompt-history`, `modes` all use it), so the extension composes
+  over whatever factory already owns the slot — replacing it silently disabled
+  image paste and the mode switch key when `prompt-ui` loaded last. The patch
+  reads `ctx.model` and `ctx.thinkingLevel` live, so `/model` and the thinking
+  shortcut update it without a reload and without spending an extra row above
   the prompt. Long labels truncate with `…`; the `↑N` scroll indicator is
-  preserved.
+  preserved, and the rule keeps the thinking-level border color.
 - The footer is a compact `ContextFooter`: one context line with the bar,
   percentage, used/window, remaining tokens, input/output totals and `$` cost,
   followed by extension statuses only when present. It reads

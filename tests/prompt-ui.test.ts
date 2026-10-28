@@ -173,3 +173,33 @@ test("promptUi installs the model border editor and clears it on shutdown", () =
     { kind: "footer", key: "cleared" },
   ]);
 });
+
+test("promptUi composes the model border over the editor already in the slot", async () => {
+  const { CustomEditor } = await import("@earendil-works/pi-coding-agent");
+  const handlers = new Map<string, Function>();
+  promptUi({ on: (name: string, fn: Function) => handlers.set(name, fn) } as any);
+
+  // Stand-in for pi-paster / modes: claims the slot before prompt-ui loads.
+  class PasterEditor extends CustomEditor { pasterFeature = true; }
+  let slot: any = (tui: any, editorTheme: any, keybindings: any) => new PasterEditor(tui, editorTheme, keybindings);
+  const ctx = fakeContext();
+  ctx.ui = {
+    getEditorComponent: () => slot,
+    setEditorComponent(content: any) { slot = content; },
+    setFooter() {},
+  };
+
+  handlers.get("session_start")!({}, ctx);
+  // Reload must not stack a second wrapper on top of the first.
+  handlers.get("session_start")!({}, ctx);
+
+  const color = (text: string) => text;
+  const editorTheme = { borderColor: color, selectList: { selectedPrefix: color, selectedText: color, description: color, scrollInfo: color, noMatch: color } };
+  const editor: any = slot({ requestRender() {}, terminal: { rows: 30, columns: 80 } }, editorTheme, { matches: () => false });
+
+  assert.equal(editor.pasterFeature, true, "the previous owner's editor must survive");
+  const top = stripTerminalSequences(editor.render(80)[0]!);
+  assert.match(top, /deepseek-v4\.1-flash · opencode-go · high/);
+  assert.equal(top.split("deepseek-v4.1-flash").length - 1, 1, "the label is drawn once, not per reload");
+  assert.ok(visibleWidth(top) <= 80);
+});
