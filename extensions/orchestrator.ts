@@ -209,6 +209,7 @@ import { DASHBOARD_SYNC_EVENT, publishDashboardState } from "../lib/dashboard/in
 import { lintSpec } from "../lib/orchestrator/spec-lint.ts";
 import { applyReviewPatches, type ReviewPatchRevision } from "../lib/orchestrator/review-patches.ts";
 import { amendHandoff } from "../lib/orchestrator/handoff-amendment.ts";
+import { qaSchedulingAdvice } from "../lib/orchestrator/qa-schedule.ts";
 import { projectChildProvenance, projectOrchestrator } from "../lib/dashboard/projection.ts";
 import { displayName as namingDisplayName, givenNameFor, givenNamePart, isHumanName } from "../lib/naming.ts";
 
@@ -1659,7 +1660,43 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     persistState();
 
     const message = buildOutcomeMessage(running, outcome);
-    if (message) pi.sendMessage(message, { triggerTurn: true, deliverAs: "steer" });
+    const adviceLine = completed ? qaAdviceLine() : undefined;
+    const withAdvice = message && adviceLine
+      ? { ...message, content: `${message.content}\n\n${adviceLine}` }
+      : message;
+    if (withAdvice) pi.sendMessage(withAdvice, { triggerTurn: true, deliverAs: "steer" });
+  }
+
+  /**
+   * The reviewer budget for this wave, computed from what actually finished.
+   *
+   * The cap is derived (`floor(workers/2)`, 1..3) and the queue is ordered by
+   * completion, so the parent does not have to count panes or guess how many
+   * reviewers it may start. It is advice: spawning still goes through orch_spawn.
+   */
+  function qaAdviceLine(): string | undefined {
+    const children = registry.getAllChildren();
+    const isWorker = (child: ScopedChild) => child.purpose !== "review" && child.purpose !== "research";
+    const workerScopes = [...new Set(children.filter(isWorker).map((child) => child.scope))];
+    if (!workerScopes.length) return undefined;
+    const completedScopes = children
+      .filter((child) => isWorker(child) && child.status === "completed")
+      .sort((a, b) => (a.updatedAt ?? "").localeCompare(b.updatedAt ?? ""))
+      .map((child) => child.scope);
+    const advice = qaSchedulingAdvice({
+      workerCount: workerScopes.length,
+      completedScopes,
+      reviewedScopes: workerScopes.filter((scope) => registry.getReviews(scope).length > 0),
+      runningQaScopes: children
+        .filter((child) => child.purpose === "review" && child.status === "running" && child.qaForScope)
+        .map((child) => child.qaForScope!),
+    });
+    if (!advice.queue.length && !advice.active) return undefined;
+    return [
+      `QA scheduling: ${advice.cap} reviewer(s) for ${workerScopes.length} unit(s) · ${advice.active} busy · ${advice.freeSlots} free.`,
+      advice.spawnNow.length ? `Spawn now: ${advice.spawnNow.join(", ")} (orch_spawn purpose review, qaFor).` : undefined,
+      advice.deferred.length ? `Waiting for a slot: ${advice.deferred.join(", ")}.` : undefined,
+    ].filter(Boolean).join(" ");
   }
 
   /** Write a plan's files and make the per-child directory private. */
