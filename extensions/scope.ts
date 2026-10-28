@@ -178,19 +178,28 @@ export default function scopeExtension(pi: ExtensionAPI) {
       }
       case "deny": {
         const classified = classifyPath(cwd, state.roots, action.path);
-        const rule = { action: "*", resource: classified.external ? classified.absolute : classified.resource, effect: "deny" as const };
+        const resource = classified.external ? classified.absolute : classified.resource;
+        // Two rules, not one: denying a directory must also deny what is inside
+        // it, and `path` alone never matches `path/child` under opencode-style
+        // glob semantics. The exact rule still protects the directory itself.
+        const rules = [
+          { action: "*", resource, effect: "deny" as const },
+          { action: "*", resource: `${resource.replace(/\/+$/, "")}/*`, effect: "deny" as const },
+        ];
         if (action.target === "session") {
-          state = { ...state, rules: [...state.rules, rule] };
+          const known = new Set(state.rules.map(rule => `${rule.action} ${rule.resource} ${rule.effect}`));
+          const added = rules.filter(rule => !known.has(`${rule.action} ${rule.resource} ${rule.effect}`));
+          state = { ...state, rules: [...state.rules, ...added] };
           persist();
           draw?.();
           refresh();
-          ctx.ui.notify(`Scope: denied ${rule.resource} for this session.`, "warning");
+          ctx.ui.notify(`Scope: denied ${resource} and everything under it for this session.`, "warning");
           return;
         }
         const file = configFileFor(action.target);
-        writeScopeRule(file, rule);
+        for (const rule of rules) writeScopeRule(file, rule);
         reload(ctx);
-        ctx.ui.notify(`Scope: wrote deny rule ${rule.resource} to ${file}.`, "warning");
+        ctx.ui.notify(`Scope: wrote deny rules for ${resource} to ${file}.`, "warning");
         return;
       }
       case "remove": {
