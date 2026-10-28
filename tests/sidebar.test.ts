@@ -196,7 +196,7 @@ for (const order of [[todo, artifacts, modes, sidebar], [sidebar, modes, artifac
       assert.match(output, /󰈙 Sidebar design/);
       assert.match(output, /󰚥 Normal/);
       assert.match(output, /AI chat & tools/);
-      assert.match(output, /Shift\+Tab · switch/);
+      assert.match(output, /Alt\+M · switch/);
       await f.commands.get("plan").handler("mode", f.ctx);
       assert.match(f.tui.render(120).join("\n"), /󰏫 Plan/);
       assert.match(f.tui.render(120).join("\n"), /Read; artifacts RW/);
@@ -248,9 +248,9 @@ for (const renderer of ["regular", "fullscreen"] as const) {
         const output = f.tui.render(120);
         assert.ok(output.some(line => line.includes(title!)));
         assert.ok(output.some(line => line.includes(summary!)));
-        assert.ok(output.some(line => line.includes("Shift+Tab · switch")));
+        assert.ok(output.some(line => line.includes("Alt+M · switch")));
         assert.ok(colors.some(entry => entry.token === tone && entry.text === title));
-        assert.ok(colors.some(entry => entry.token === "dim" && entry.text === "Shift+Tab · switch"));
+        assert.ok(colors.some(entry => entry.token === "dim" && entry.text === "Alt+M · switch"));
         assert.ok(bold.includes(title!));
         assert.ok(output.every(line => visibleWidth(line) <= 120));
         assert.ok(output.every(line => !line.includes("...")), "mode card fits without truncation at width 20");

@@ -147,7 +147,7 @@ test("busy transitions and running/unverified children cannot enter Plan; busy P
   assert.deepEqual(f.commands.get("plan").getArgumentCompletions("mo"), [{ value: "mode", label: "mode" }]);
 });
 
-test("Shift+Tab enters/exits Plan through enforced transitions and preserves draft", async () => {
+test("Alt+M enters/exits Plan through enforced transitions and preserves draft", async () => {
   const f = fixture();
   await f.emit("session_start");
   const color = (text: string) => text;
@@ -155,7 +155,7 @@ test("Shift+Tab enters/exits Plan through enforced transitions and preserves dra
     borderColor: color, selectList: { selectedPrefix: color, selectedText: color, description: color, scrollInfo: color, noMatch: color },
   }, { matches: () => false });
   editor.setText("Keep the draft");
-  editor.handleInput("\x1b[Z"); // Normal -> Plan.
+  editor.handleInput("\x1bm"); // Normal -> Plan.
   assert.equal(planModeFromBranch(f.branch)?.enabled, true);
   assert.equal(editor.getText(), "Keep the draft");
   const widget = f.widget()({}, { fg: (_token: string, text: string) => text, bold: color });
@@ -165,10 +165,10 @@ test("Shift+Tab enters/exits Plan through enforced transitions and preserves dra
   editor.onSubmit("Brainstorm");
   assert.deepEqual(submissions, ["Brainstorm"]);
   f.setIdle(false);
-  editor.handleInput("\x1b[Z");
+  editor.handleInput("\x1bm");
   assert.equal(planModeFromBranch(f.branch)?.enabled, true);
   f.setIdle(true);
-  editor.handleInput("\x1b[Z");
+  editor.handleInput("\x1bm");
   assert.equal(planModeFromBranch(f.branch)?.enabled, false);
   editor.setText("");
 });
@@ -331,7 +331,7 @@ test("native shell submit promises prevent Plan entry without replacing other sh
     await f.command("on");
     assert.notEqual(planModeFromBranch(f.branch)?.enabled, true);
     assert.match(f.notices.at(-1)!, /shell command/);
-    editor.handleInput("\x1b[Z"); // Normal -> Plan must still be rejected.
+    editor.handleInput("\x1bm"); // Normal -> Plan must still be rejected.
     assert.notEqual(planModeFromBranch(f.branch)?.enabled, true);
     assert.equal(editor.getText(), "Preserve draft");
     finish();

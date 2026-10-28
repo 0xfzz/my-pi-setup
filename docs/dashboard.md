@@ -28,7 +28,7 @@ npm install
 npm run build:dashboard
 ```
 
-Reload Pi after updating this package, then enter `/mode orchestrator` (or cycle to Orchestrator with Shift+Tab). Pi displays a dashboard URL. Open that URL in a browser on the same machine.
+Reload Pi after updating this package, then enter `/mode orchestrator` (or cycle to Orchestrator with Alt+M). Pi displays a dashboard URL. Open that URL in a browser on the same machine.
 
 The first parent session starts a separate background server. Later parent sessions reuse that server and appear in its left sidebar—even when they are separate Pi processes or projects. Selecting a new session is explicit: a newly registered session does not steal the current selection.
 

@@ -40,8 +40,8 @@ test("modes composes the previously installed editor instead of replacing it", a
 
   const fakeTui: any = { terminal: { columns: 100, rows: 40 }, requestRender() {}, mode: "fullscreen" };
   const theme: any = { fg: (_t: string, s: string) => s, bold: (s: string) => s };
-  let shiftTab = false;
-  const kb: any = { matches: (key: string) => shiftTab && key === "shift+tab", getKeys: () => [], getDisplayText: () => "", keybindings: {} };
+  let modeKey = false;
+  const kb: any = { matches: (key: string) => modeKey && key === "alt+m", getKeys: () => [], getDisplayText: () => "", keybindings: {} };
   const editor: any = slot(fakeTui, theme, kb);
 
   assert.equal(pasterInstances, 1, "paster factory must still be invoked");
@@ -52,10 +52,10 @@ test("modes composes the previously installed editor instead of replacing it", a
   editor.handleInput("x");
   assert.ok(order.includes("paster:x"), "base editor handleInput must still run");
 
-  // Shift+Tab is claimed by `modes` and must not reach the base editor,
-  // preserving the original shortcut behaviour.
-  shiftTab = true;
+  // Alt+M is claimed by `modes` and must not reach the base editor,
+  // preserving the thinking-level shortcut (Shift+Tab) that pi still owns.
+  modeKey = true;
   order.length = 0;
-  editor.handleInput("\x1b[Z");
-  assert.equal(order.includes("paster:\x1b[Z]"), false, "Shift+Tab must be consumed by modes");
+  editor.handleInput("\x1bm");
+  assert.equal(order.includes("paster:\x1bm"), false, "Alt+M must be consumed by modes");
 });

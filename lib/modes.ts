@@ -1,3 +1,16 @@
+/**
+ * The editor keystroke that cycles modes.
+ *
+ * Deliberately NOT Shift+Tab: pi binds that to `app.thinking.cycle`, and a
+ * second claim on it either silently disabled the thinking-level cycle or lost
+ * the race to pi (whichever extension last replaced the editor slot), leaving
+ * the mode hint advertising a key that changed the thinking level. Alt+M is
+ * unbound in pi, survives tmux and remote shells, and reads as "mode".
+ */
+export const MODE_SWITCH_KEY = "alt+m";
+/** Hint spelling of MODE_SWITCH_KEY; keep the two in sync. */
+export const MODE_SWITCH_LABEL = "Alt+M";
+
 /** Add modes here; UI, /mode completions, and cycling follow this registry. */
 export interface ModeDefinition {
   id: string;
@@ -33,7 +46,7 @@ export class ModeRegistry {
     return true;
   }
   /**
-   * The mode Shift+Tab would land on, WITHOUT moving the cursor.
+   * The mode the switch key would land on, WITHOUT moving the cursor.
    *
    * Callers must decide whether the switch is allowed first (a running turn, or
    * children holding permissions, can refuse it) and only then apply the mode.

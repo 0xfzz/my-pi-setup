@@ -1,6 +1,6 @@
 import { createLocalBashOperations, CustomEditor, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-import { ModeRegistry, routeSubmissions } from "../lib/modes.ts";
+import { ModeRegistry, MODE_SWITCH_KEY, MODE_SWITCH_LABEL, routeSubmissions } from "../lib/modes.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar-channel.ts";
 import { recordsFromBranch as childRecords } from "../lib/subagent-state.ts";
 import { childContextState, isSubagentChildSession, ownEntries } from "../lib/subagent-context.ts";
@@ -198,7 +198,7 @@ export default function modesExtension(pi: ExtensionAPI) {
   }
 
   /**
-   * Shift+Tab and bare `/mode`: step from the transcript's mode, not the cursor.
+   * The switch key and bare `/mode`: step from the transcript's mode, not the cursor.
    * A refused switch (busy turn, running children) leaves the mode untouched.
    */
   function switchToNext(ctx: ExtensionContext): void {
@@ -248,7 +248,7 @@ export default function modesExtension(pi: ExtensionAPI) {
     draw = () => {
       const mode = registry.current;
       if (offerSection(pi, { id: "mode", title: `${mode.icon ?? "◇"} ${mode.label}`, tone: mode.tone,
-        rows: [mode.summary ?? mode.hint], hint: "Shift+Tab · switch" })) {
+        rows: [mode.summary ?? mode.hint], hint: `${MODE_SWITCH_LABEL} · switch` })) {
         ctx.ui.setWidget("input-modes", undefined);
         return;
       }
@@ -257,7 +257,7 @@ export default function modesExtension(pi: ExtensionAPI) {
           const tabs = registry.modes.map(mode => mode.id === registry.current.id
             ? theme.fg(mode.tone ?? "accent", theme.bold(`[ ${mode.icon ?? "◇"} ${mode.label} ]`))
             : theme.fg("dim", `  ${mode.icon ?? "◇"} ${mode.label}  `)).join(" ");
-          return [truncateToWidth(`${tabs}  ${theme.fg("muted", "Shift+Tab to switch")}`, width),
+          return [truncateToWidth(`${tabs}  ${theme.fg("muted", `${MODE_SWITCH_LABEL} to switch`)}`, width),
             truncateToWidth(theme.fg("muted", registry.current.hint), width)];
         },
         invalidate() {},
@@ -276,8 +276,9 @@ export default function modesExtension(pi: ExtensionAPI) {
       // rendering, mouse handling, and every other key it already implements.
       const handleBaseInput = editor.handleInput.bind(editor);
       editor.handleInput = (data: string) => {
-        // Consume before the base editor handles the built-in thinking shortcut.
-        if (matchesKey(data, "shift+tab")) {
+        // Consume before the base editor sees it; pi leaves MODE_SWITCH_KEY unbound,
+        // so this cannot shadow a built-in shortcut (Shift+Tab stays the thinking cycle).
+        if (matchesKey(data, MODE_SWITCH_KEY)) {
           switchToNext(ctx);
           tui.requestRender();
           return;
@@ -414,7 +415,7 @@ export default function modesExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("mode", {
-    description: "Switch input mode: /mode [normal|plan] (or Shift+Tab)",
+    description: `Switch input mode: /mode [normal|plan] (or ${MODE_SWITCH_LABEL})`,
     getArgumentCompletions(prefix) {
       const items = registry.modes.filter(mode => mode.id.startsWith(prefix))
         .map(mode => ({ value: mode.id, label: `${mode.label} — ${mode.hint}` }));

@@ -79,7 +79,7 @@ test("real Pi input pipeline sends a versioned mention snapshot to the model and
   }
 });
 
-test("real mode editor Tab-completes artifacts without losing Shift+Tab or narrow rendering", async () => {
+test("real mode editor Tab-completes artifacts without losing Alt+M or narrow rendering", async () => {
   const hooks = new Map<string, Function>();
   let factory: any;
   modesExtension({
@@ -109,7 +109,7 @@ test("real mode editor Tab-completes artifacts without losing Shift+Tab or narro
   }
   const submitted: string[] = [];
   editor.onSubmit = (text: string) => submitted.push(text);
-  editor.handleInput("\x1b[Z");
+  editor.handleInput("\x1bm");
   assert.equal(editor.getText(), "Review @artifact:runtime-spec ");
   editor.onSubmit(editor.getText());
   assert.deepEqual(submitted, ["Review @artifact:runtime-spec "]);

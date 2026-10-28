@@ -8,7 +8,7 @@ import modes from "../extensions/modes.ts";
 import { planModeFromBranch } from "../lib/plan-mode.ts";
 
 for (const cancel of [false, true]) {
-  test(`real native shell blocks Plan through command and Shift+Tab until ${cancel ? "cancellation" : "completion"}`, async () => {
+  test(`real native shell blocks Plan through command and Alt+M until ${cancel ? "cancellation" : "completion"}`, async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-mode-shell-"));
     let session: any;
     let editor: any;
@@ -62,7 +62,7 @@ for (const cancel of [false, true]) {
         assert.notEqual(planModeFromBranch(session.sessionManager.getBranch())?.enabled, true);
         assert.match(notices.at(-1)!, /shell command/);
       }
-      editor.handleInput("\x1b[Z"); // Normal -> Plan must fail.
+      editor.handleInput("\x1bm"); // Normal -> Plan must fail.
       assert.notEqual(planModeFromBranch(session.sessionManager.getBranch())?.enabled, true);
       assert.equal(editor.getText(), "Keep this draft");
       if (cancel) session.abortBash(); else finish();
