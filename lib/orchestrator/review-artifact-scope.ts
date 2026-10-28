@@ -2,7 +2,8 @@
  * review-artifact-scope.ts — a reviewer's evidence is an artifact, and only its own.
  *
  * The artifact tool is the store; this is the authorization layer around it. A
- * spec reviewer may write only `review:<runId>:<lens>`; a research child only
+ * spec reviewer may write only `review:<runId>:<assignment>` (a document lens or a
+ * chunk id); a research child only
  * `orch-research:<scope>`. The scope is derived from the environment the launcher
  * already writes, never chosen by the caller, and an edit/recall must resolve to
  * an artifact with that same recorded scope.

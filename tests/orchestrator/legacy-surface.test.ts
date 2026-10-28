@@ -27,7 +27,18 @@ function registeredTools(): Map<string, any> {
     appendEntry() {},
     sendMessage() {},
   };
-  subagentV2(pi, { client: {}, stream: { watch: () => () => {}, onReconcile: () => () => {} } });
+  // Registration only: no pane is opened, so the client never has to be real.
+  const client: any = {
+    async paneStart() { return { paneId: "pane-1" }; },
+    async paneRename() { return { pane_id: "pane-1" }; },
+    async paneGet(paneId: string) { return { pane_id: paneId }; },
+    async paneRead() { return null; },
+    async paneList() { return []; },
+    async paneClose() {},
+    async paneSendKeys() {},
+    async paneSendText() {},
+  };
+  subagentV2(pi, { client, stream: { watch: () => () => {}, onReconcile: () => () => {} } });
   return tools;
 }
 

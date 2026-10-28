@@ -1,7 +1,7 @@
 /**
  * spec-lint.ts — the machine-checkable part of "is this spec reviewable?".
  *
- * The readiness lens is a judgement, and a judgement cannot be calibrated by
+ * A readiness judgement is a judgement, and a judgement cannot be calibrated by
  * another judgement. These checks are the part of the rubric that a computer can
  * decide: does a path the spec depends on actually exist, and does the spec say
  * anything observable at all. They are fed to reviewers as *pre-computed findings

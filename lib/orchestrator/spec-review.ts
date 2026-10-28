@@ -115,15 +115,15 @@ export interface ReviewerReport {
   /**
    * How the reviewer finished.
    *
-   * `blocked` means the reviewer could not complete its lens; it is not a clean
-   * report with zero findings. Absent on reports written before this field
+   * `blocked` means the reviewer could not complete its assignment; it is not a
+   * clean report with zero findings. Absent on reports written before this field
    * existed, which are treated as completed.
    */
   verdict?: "clean" | "findings" | "blocked";
   /** Context the reviewer could not find in the document, reported as evidence. */
   missingContext?: string[];
   /**
-   * What this lens checked and found adequate.
+   * What the reviewer checked and found adequate.
    *
    * Required for an empty findings array. Without it the cheapest satisfying
    * report is the empty one — the equilibrium that turns a review gate into a
@@ -258,7 +258,7 @@ export function parseReviewerReport(
   // from "nothing looked at".
   if (findings.length === 0 && verdict !== "blocked" && !coverage?.length) {
     problems.push(
-      "an empty findings array needs coverage[]: state what this lens checked and found adequate, "
+      "an empty findings array needs coverage[]: state what the reviewer checked and found adequate, "
         + "otherwise \"nothing found\" is indistinguishable from \"nothing looked at\"",
     );
   }

@@ -46,7 +46,7 @@ export const DEFAULT_ROLE_PROMPTS: Record<OrchRole, string> = {
     "- Do not hunt for the author's reasoning and do not contact the author. Missing context is a finding, not a puzzle to solve.",
     "- For every finding, state the severity (`blocker`, `major`, `nit`), the section or line, what is wrong or missing, why it blocks an implementer, and a concrete suggestion when one exists.",
     "- Reserve `blocker` for a contradiction, an undecided choice an implementer cannot make, or a requirement with no acceptance signal. \"I would have designed it differently\" is a nit at most.",
-    "- Answer every lens question your ticket asks. An empty finding list is valid when you state what you checked.",
+    "- Answer every question your ticket asks. An empty finding list is valid when you state what you checked.",
     "- Submit with `orch_spec_review_submit`; your report is the only artifact you produce.",
   ].join("\n"),
   worker: [

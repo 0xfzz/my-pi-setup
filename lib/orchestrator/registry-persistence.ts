@@ -19,7 +19,7 @@ export interface PersistedState extends RegistrySnapshot {
    * Independent specification reviews.
    *
    * Persisted deliberately: readiness is a claim that a document was reviewed by
-   * named lenses at a named revision. Losing it on restart would silently convert
+   * a named reviewer at a named revision. Losing it on restart would silently convert
    * an unreviewed design back into an approvable one.
    */
   specReviews?: any[];
