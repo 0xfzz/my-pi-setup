@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { visibleWidth, stripTerminalSequences } from "@earendil-works/pi-tui";
 import artifactsExtension, {
   resolveEditorCommand, openArtifactInEditor,
@@ -8,6 +8,7 @@ import artifactsExtension, {
   formatAge, artifactTypeIcon,
 } from "../extensions/artifacts.ts";
 import { MarkdownPopup, PopupPanel, PLAIN_THEME } from "../lib/popup.ts";
+import { PopupList } from "../lib/ui/shell.ts";
 import { ARTIFACT_TYPE, type Artifact } from "../lib/artifact-state.ts";
 
 function stripAnsi(text: string): string {
@@ -180,6 +181,50 @@ test("openArtifactInEditor reports non-zero exit as failure without throwing and
 
   assert.equal(success, false, "Non-zero exit code must return false");
   assert.deepEqual(tuiEvents, ["stop", "start", "render"], "TUI must resume even on failure");
+});
+
+test("openArtifactInEditor writes changed content back through onSave", async () => {
+  let saved = "";
+  const editingSpawn = ((_cmd: string, args: string[]) => {
+    const file = args[args.length - 1]!;
+    writeFileSync(file, "edited by nvim", "utf8");
+    return {
+      on(event: string, cb: Function) {
+        if (event === "close") setTimeout(() => cb(0), 1);
+      },
+    };
+  }) as any;
+
+  const success = await openArtifactInEditor("original content", {
+    id: "edit-me",
+    spawnFn: editingSpawn,
+    env: { PI_EDITOR: "mock-nvim" },
+    onSave: async (content) => { saved = content; },
+  });
+
+  assert.equal(success, true);
+  assert.equal(saved, "edited by nvim");
+});
+
+test("openArtifactInEditor does not call onSave for an unchanged buffer", async () => {
+  let calls = 0;
+  const idleSpawn = ((_cmd: string, _args: string[]) => {
+    return {
+      on(event: string, cb: Function) {
+        if (event === "close") setTimeout(() => cb(0), 1);
+      },
+    };
+  }) as any;
+
+  const success = await openArtifactInEditor("same", {
+    id: "no-change",
+    spawnFn: idleSpawn,
+    env: { PI_EDITOR: "mock-nvim" },
+    onSave: async () => { calls++; },
+  });
+
+  assert.equal(success, true);
+  assert.equal(calls, 0);
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -381,7 +426,7 @@ test("artifacts:open-dialog event opens the framed picker popup", async () => {
       {},
       () => {},
     );
-    assert.ok(component instanceof PopupPanel);
+    assert.ok(component instanceof PopupList);
     const lines = component.render(80);
     renderedTop = stripAnsi(lines[0]!);
     return undefined;
@@ -412,7 +457,7 @@ test("/artifacts command opens picker and navigating + Enter opens detail", asyn
     );
     openedComponents.push(component);
 
-    if (component instanceof PopupPanel) {
+    if (component instanceof PopupList) {
       if (openedComponents.length === 1) {
         // First time in picker: select second item and press Enter
         component.handleInput("j");
@@ -432,7 +477,7 @@ test("/artifacts command opens picker and navigating + Enter opens detail", asyn
   await commandHandler("", h.context);
 
   assert.ok(openedComponents.length >= 2, "Picker followed by detail popup must have opened");
-  assert.ok(openedComponents[0] instanceof PopupPanel, "First opened component is picker PopupPanel");
+  assert.ok(openedComponents[0] instanceof PopupList, "First opened component is picker PopupList");
   assert.ok(openedComponents[1] instanceof MarkdownPopup, "Second opened component is detail MarkdownPopup");
 
   // Verify detail popup rendered content for second-doc

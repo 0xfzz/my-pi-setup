@@ -22,6 +22,8 @@ import { createRequire } from "node:module";
 import {
   Markdown,
   matchesKey,
+  sliceByColumn,
+  stripTerminalSequences,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
@@ -30,6 +32,7 @@ import {
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
+import { repairOsc8Wrapping } from "./selection/osc8.ts";
 
 export const POPUP_MIN_FRAMED_WIDTH = 26;
 export const POPUP_PADDING_X = 1;
@@ -294,6 +297,10 @@ export interface MarkdownPopupOptions {
   hint?: string;
   /** Visible content rows; the popup height derives from it. */
   rows: number;
+  /** Terminal height supplier; the visible rows shrink to fit short terminals. */
+  terminalRows?: () => number;
+  /** Enable `/` search (default true). */
+  search?: boolean;
   /** Called when the user closes the popup; `action` describes how. */
   onClose?: (action?: string) => void;
   /** External-open handler for `o`/`v`; return true when handled. */
@@ -307,6 +314,12 @@ export interface MarkdownPopupOptions {
  * ↑↓/jk, PgUp/PgDn, Home/End/G and mouse wheel scroll; Enter/Esc close;
  * `o`/`v` open externally when a handler is registered.
  */
+interface SearchMatch {
+  row: number;
+  col: number;
+  length: number;
+}
+
 export class MarkdownPopup implements Component {
   private readonly options: MarkdownPopupOptions;
   private cacheWidth = -1;
@@ -315,11 +328,17 @@ export class MarkdownPopup implements Component {
   private scrollTop = 0;
   private viewport: number;
   private isFocused = false;
+  private searchMode = false;
+  private query = "";
+  private matches: SearchMatch[] = [];
+  private activeMatch = 0;
+  private matchesWidth = -1;
+  private lastContentWidth = 1;
 
   constructor(options: MarkdownPopupOptions) {
     this.options = options;
     this.cacheText = options.markdown;
-    this.viewport = Math.max(3, options.rows);
+    this.viewport = this.effectiveViewport();
   }
 
   get focused(): boolean {
@@ -332,23 +351,31 @@ export class MarkdownPopup implements Component {
   setMarkdown(text: string): void {
     this.cacheText = text;
     this.cacheWidth = -1;
+    this.resetMatches();
   }
 
   invalidate(): void {
     this.cacheWidth = -1;
+    this.matchesWidth = -1;
+  }
+
+  private effectiveViewport(): number {
+    const terminal = this.options.terminalRows?.() ?? 24;
+    const available = Math.max(3, terminal - 6);
+    this.viewport = Math.max(3, Math.min(this.options.rows, available));
+    return this.viewport;
   }
 
   private lines(width: number): string[] {
     if (this.cacheWidth !== width) {
       this.cacheLines = renderMarkdown(this.cacheText, width);
       this.cacheWidth = width;
-      this.clamp();
     }
     return this.cacheLines;
   }
 
-  private clamp(): void {
-    const max = Math.max(0, this.cacheLines.length - this.viewport);
+  private clamp(viewport = this.viewport): void {
+    const max = Math.max(0, this.cacheLines.length - viewport);
     this.scrollTop = Math.max(0, Math.min(this.scrollTop, max));
   }
 
@@ -357,8 +384,133 @@ export class MarkdownPopup implements Component {
     this.clamp();
   }
 
+  private resetMatches(): void {
+    this.matches = [];
+    this.matchesWidth = -1;
+    this.activeMatch = 0;
+  }
+
+  private refreshMatches(width: number): void {
+    if (this.matchesWidth === width && this.matchesQuery === this.query) return;
+    this.matches = [];
+    this.matchesWidth = width;
+    this.matchesQuery = this.query;
+    if (!this.query) return;
+    const needle = this.query.toLowerCase();
+    const lines = this.lines(width);
+    for (let row = 0; row < lines.length; row++) {
+      const plain = stripTerminalSequences(lines[row] ?? "");
+      const haystack = plain.toLowerCase();
+      let offset = 0;
+      while (offset < haystack.length) {
+        const hit = haystack.indexOf(needle, offset);
+        if (hit < 0) break;
+        this.matches.push({
+          row,
+          col: visibleWidth(plain.slice(0, hit)),
+          length: Math.max(1, visibleWidth(plain.slice(hit, hit + needle.length))),
+        });
+        offset = hit + Math.max(1, needle.length);
+      }
+    }
+    if (this.activeMatch >= this.matches.length) this.activeMatch = Math.max(0, this.matches.length - 1);
+  }
+
+  private matchesQuery = "";
+
+  private startSearch(): void {
+    this.searchMode = true;
+    this.query = "";
+    this.resetMatches();
+  }
+
+  private handleSearchInput(data: string): void {
+    if (isPopupCloseKey(data)) {
+      this.searchMode = false;
+      this.query = "";
+      this.resetMatches();
+      return;
+    }
+    if (matchesKey(data, "enter")) {
+      this.nextMatch(1);
+      return;
+    }
+    if (matchesKey(data, "up")) {
+      this.nextMatch(-1);
+      return;
+    }
+    if (matchesKey(data, "down")) {
+      this.nextMatch(1);
+      return;
+    }
+    if (data === "\x7f" || data === "\b") {
+      this.query = this.query.slice(0, -1);
+      this.resetMatches();
+      return;
+    }
+    // Accept printable input and pastes; control sequences are ignored.
+    // oxlint-disable-next-line no-control-regex -- stripping terminal controls is deliberate
+    const printable = data.replace(/[\x00-\x1f\x7f]/g, "");
+    if (printable) {
+      this.query += printable;
+      this.resetMatches();
+    }
+  }
+
+  private nextMatch(delta: number): void {
+    this.refreshMatches(this.lastContentWidth);
+    if (!this.matches.length) return;
+    this.activeMatch = (this.activeMatch + delta + this.matches.length) % this.matches.length;
+  }
+
+  private revealActive(viewport: number): void {
+    const match = this.matches[this.activeMatch];
+    if (!match) return;
+    if (match.row < this.scrollTop) this.scrollTop = match.row;
+    else if (match.row >= this.scrollTop + viewport) this.scrollTop = match.row - viewport + 1;
+    this.clamp(viewport);
+  }
+
+  private displayLines(width: number): string[] {
+    const lines = this.lines(width);
+    this.refreshMatches(width);
+    if (!this.query || !this.matches.length) return lines;
+    const active = this.matches[this.activeMatch];
+    const byRow = new Map<number, SearchMatch[]>();
+    for (const match of this.matches) {
+      const bucket = byRow.get(match.row);
+      if (bucket) bucket.push(match);
+      else byRow.set(match.row, [match]);
+    }
+    return lines.map((line, row) => highlightLine(line, byRow.get(row), active));
+  }
+
+  private hintText(): string {
+    if (this.searchMode || this.query) {
+      const count = this.matches.length ? `${this.activeMatch + 1}/${this.matches.length}` : "0/0";
+      return `search: ${this.query || "…"} ${count} · Enter next · Esc close search`;
+    }
+    return this.options.hint ?? POPUP_KEY_HINT;
+  }
+
   handleInput(data: string): void {
+    if (this.searchMode) {
+      this.handleSearchInput(data);
+      return;
+    }
     if (this.options.onKey?.(data)) return;
+    if (this.options.search !== false && data === "/") {
+      this.startSearch();
+      return;
+    }
+    if (this.query && data === "n") {
+      this.nextMatch(1);
+      return;
+    }
+    if (this.query && data === "N") {
+      this.nextMatch(-1);
+      return;
+    }
     if (isPopupCloseKey(data)) return this.options.onClose?.();
     if (matchesKey(data, "enter")) return this.options.onClose?.();
     if (matchesKey(data, "up") || matchesKey(data, "k")) return this.scrollBy(-1);
@@ -398,17 +550,23 @@ export class MarkdownPopup implements Component {
 
   render(width: number): string[] {
     const theme = this.options.theme ?? PLAIN_THEME;
-    const chrome = popupFrame(theme, width, { title: this.options.title, hint: this.options.hint });
+    const probe = popupFrame(theme, width, { title: this.options.title });
+    const contentWidth = probe?.contentWidth ?? Math.max(1, width);
+    this.lastContentWidth = contentWidth;
+    const all = this.displayLines(contentWidth);
+    const viewport = this.effectiveViewport();
+    this.clamp(viewport);
+    this.revealActive(viewport);
+    const chrome = popupFrame(theme, width, { title: this.options.title, hint: this.hintText() });
+
     if (!chrome) {
       const rule = theme.fg("border", "─".repeat(Math.max(1, width)));
-      const all = this.lines(width);
-      const start = Math.max(0, Math.min(this.scrollTop, Math.max(0, all.length - this.viewport)));
-      return [rule, ...all.slice(start, start + this.viewport), rule];
+      const start = Math.max(0, Math.min(this.scrollTop, Math.max(0, all.length - viewport)));
+      return [rule, ...all.slice(start, start + viewport), rule];
     }
-    const all = this.lines(chrome.contentWidth);
-    this.clamp();
-    const window = all.slice(this.scrollTop, this.scrollTop + this.viewport);
-    while (window.length < this.viewport) window.push("");
+
+    const window = all.slice(this.scrollTop, this.scrollTop + viewport);
+    while (window.length < viewport) window.push("");
     return [
       chrome.topHintedRow,
       chrome.blankRow,
@@ -423,10 +581,41 @@ function sidePage(viewport: number): number {
   return Math.max(1, viewport - 2);
 }
 
+/** Reverse-video every match on a rendered line, with a stronger active match. */
+function highlightLine(
+  line: string,
+  matches: SearchMatch[] | undefined,
+  active: SearchMatch | undefined,
+): string {
+  if (!matches?.length) return line;
+  const total = visibleWidth(stripTerminalSequences(line));
+  let out = "";
+  let cursor = 0;
+  for (const match of matches) {
+    if (match.col > cursor) {
+      out += sliceByColumn(line, cursor, Math.max(0, match.col - cursor), true);
+    }
+    const isActive = active !== undefined
+      && active.row === match.row
+      && active.col === match.col
+      && active.length === match.length;
+    const styled = sliceByColumn(line, match.col, Math.max(1, match.length), true);
+    out += (isActive ? "\x1b[7;1m" : "\x1b[7m") + styled + "\x1b[27m";
+    cursor = match.col + Math.max(1, match.length);
+  }
+  if (cursor < total) {
+    out += sliceByColumn(line, cursor, Math.max(0, total - cursor), true);
+  }
+  return out;
+}
+
 /** Render markdown to styled lines at the given width (falls back to raw text). */
 export function renderMarkdown(markdown: string, width: number): string[] {
   try {
-    return new Markdown(markdown, 0, 0, markdownTheme()).render(Math.max(1, width));
+    const lines = new Markdown(markdown, 0, 0, markdownTheme()).render(Math.max(1, width));
+    // A wrapped OSC 8 link loses its opener on continuation lines; reopen it so
+    // every visual fragment remains clickable in the terminal and in Pi.
+    return repairOsc8Wrapping(lines);
   } catch {
     return wrapTextWithAnsi(markdown, Math.max(1, width));
   }

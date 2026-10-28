@@ -6,10 +6,10 @@ import { open, rename, writeFile, rm, mkdtemp } from "node:fs/promises";
 import { dirname, basename, join, delimiter } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { matchesKey } from "@earendil-works/pi-tui";
 import {
-  PopupPanel, MarkdownPopup, popupOverlayOptions, PLAIN_THEME, type PopupTheme,
+  MarkdownPopup, popupOverlayOptions, PLAIN_THEME, type PopupTheme,
 } from "../lib/popup.ts";
+import { PopupList } from "../lib/ui/shell.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar-channel.ts";
 import { createArtifactAutocompleteProvider, expandArtifactMentions } from "../lib/artifact-mentions.ts";
 import {
@@ -156,18 +156,49 @@ function findInPath(cmd: string, env: NodeJS.ProcessEnv = process.env): string |
   return undefined;
 }
 
+function splitEditorArgs(value: string): string[] {
+  const out: string[] = [];
+  let current = "";
+  let quote: string | undefined;
+  let escaped = false;
+  for (const char of value) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\" && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = undefined;
+      else current += char;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (current) {
+        out.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += char;
+  }
+  if (escaped) current += "\\";
+  if (current) out.push(current);
+  return out;
+}
+
 export function resolveEditorCommand(env: NodeJS.ProcessEnv = process.env): { command: string; args: string[] } {
   const envCmd = env.PI_EDITOR || env.VISUAL || env.EDITOR;
   if (envCmd && envCmd.trim().length > 0) {
-    const trimmed = envCmd.trim();
-    const firstSpace = trimmed.indexOf(" ");
-    if (firstSpace === -1) {
-      return { command: trimmed, args: [] };
-    }
-    const command = trimmed.slice(0, firstSpace);
-    const argStr = trimmed.slice(firstSpace + 1).trim();
-    const args = argStr ? argStr.split(/\s+/).filter(Boolean) : [];
-    return { command, args };
+    const parts = splitEditorArgs(envCmd.trim());
+    if (parts.length) return { command: parts[0]!, args: parts.slice(1) };
   }
 
   // Fall back to nvim if available, else platform default (notepad on win32, nano on posix)
@@ -183,6 +214,8 @@ export interface OpenArtifactOptions {
   tui?: { stop?: () => void; start?: () => void; requestRender?: (force?: boolean) => void };
   spawnFn?: SpawnFn;
   env?: NodeJS.ProcessEnv;
+  /** Persist changed editor content; called only after a successful exit and a real change. */
+  onSave?: (content: string) => void | Promise<void>;
 }
 
 export async function openArtifactInEditor(
@@ -226,7 +259,12 @@ export async function openArtifactInEditor(
       }
     });
 
-    return exitCode === 0;
+    if (exitCode !== 0) return false;
+    if (options?.onSave) {
+      const edited = readFileSync(filePath, "utf8");
+      if (edited !== content) await options.onSave(edited);
+    }
+    return true;
   } catch {
     return false;
   } finally {
@@ -296,13 +334,20 @@ export function formatArtifactMarkdown(art: Artifact): string {
 
 // ── Detail & Picker Popups ──
 
+export type ArtifactSaveHandler = (
+  content: string,
+  current: Artifact,
+) => Promise<Artifact | undefined> | Artifact | undefined | void;
+
 export async function showArtifactDetail(
   art: Artifact,
   context: ExtensionContext,
+  onSave?: ArtifactSaveHandler,
 ): Promise<void> {
   if (!context.hasUI || typeof context.ui.custom !== "function") return;
 
-  const markdown = formatArtifactMarkdown(art);
+  let current = art;
+  let markdown = formatArtifactMarkdown(current);
   let shouldReopen = true;
 
   while (shouldReopen) {
@@ -315,9 +360,10 @@ export async function showArtifactDetail(
         const popup = new MarkdownPopup({
           markdown,
           theme: pTheme,
-          title: `[${art.id}] ${art.title}`,
-          hint: "Esc close · o nvim",
+          title: `[${current.id}] ${current.title}`,
+          hint: "Esc close · / search · o nvim",
           rows: 20,
+          terminalRows: () => tuiRef?.terminal?.rows ?? 24,
           onClose: (action) => done(action),
           onOpenExternal: () => true,
         });
@@ -327,10 +373,19 @@ export async function showArtifactDetail(
     );
 
     if (result === "external") {
-      await openArtifactInEditor(art.content, {
-        id: art.id,
-        title: art.title,
+      await openArtifactInEditor(current.content, {
+        id: current.id,
+        title: current.title,
         tui: tuiRef,
+        onSave: onSave
+          ? async (content) => {
+              const updated = await onSave(content, current);
+              if (updated) {
+                current = updated;
+                markdown = formatArtifactMarkdown(current);
+              }
+            }
+          : undefined,
       });
       shouldReopen = true;
     }
@@ -340,6 +395,7 @@ export async function showArtifactDetail(
 export async function showArtifactPicker(
   items: Artifact[],
   context: ExtensionContext,
+  onSave?: ArtifactSaveHandler,
 ): Promise<void> {
   if (!items.length) {
     context.ui.notify?.("No artifacts recorded on this branch. Use `artifact_save` to create one.", "info");
@@ -347,68 +403,40 @@ export async function showArtifactPicker(
   }
   if (!context.hasUI || typeof context.ui.custom !== "function") return;
 
-  let selectedIndex = 0;
   while (true) {
     let chosenArtifact: Artifact | undefined;
     await context.ui.custom<void>(
       (tui, theme, _keybindings, done) => {
         const pTheme = adaptPopupTheme(theme);
-        const panel = new PopupPanel({
+        const list = new PopupList<Artifact>({
           theme: pTheme,
           title: `Workspace Artifacts (${items.length})`,
           hint: "Enter open · 1-9 jump · Esc close",
-          onRender: (_width) => {
-            const rows = items.map((art, idx) => {
-              const isSelected = idx === selectedIndex;
-              const marker = isSelected ? pTheme.fg("accent", "→") : " ";
-              const num = idx < 9 ? `${idx + 1}. ` : "   ";
-              const icon = artifactTypeIcon(art.type);
-              const size = formatBytes(Buffer.byteLength(art.content, "utf8"));
-              const age = formatAge(art.updatedAt);
-              const idPart = `[${art.id}]`;
-              const meta = `v${art.version} · ${size} · ${age}`;
-              const line = `${marker} ${pTheme.fg("dim", num)}${icon} ${pTheme.bold(idPart)} ${art.title}  ${pTheme.fg("dim", meta)}`;
-              return line;
-            });
-            panel.setContent(rows);
+          items,
+          numbered: true,
+          terminalRows: () => tui.terminal?.rows ?? 24,
+          renderItem: (art, { selected }) => {
+            const marker = selected ? pTheme.fg("accent", "→") : " ";
+            const icon = artifactTypeIcon(art.type);
+            const size = formatBytes(Buffer.byteLength(art.content, "utf8"));
+            const age = formatAge(art.updatedAt);
+            const idPart = `[${art.id}]`;
+            const meta = `v${art.version} · ${size} · ${age}`;
+            return `${marker} ${icon} ${pTheme.bold(idPart)} ${art.title}  ${pTheme.fg("dim", meta)}`;
           },
-          onKey: (data) => {
-            if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
-              done();
-              return;
-            }
-            if (matchesKey(data, "up") || matchesKey(data, "k")) {
-              selectedIndex = (selectedIndex - 1 + items.length) % items.length;
-              tui.requestRender?.();
-              return;
-            }
-            if (matchesKey(data, "down") || matchesKey(data, "j")) {
-              selectedIndex = (selectedIndex + 1) % items.length;
-              tui.requestRender?.();
-              return;
-            }
-            if (matchesKey(data, "enter")) {
-              chosenArtifact = items[selectedIndex];
-              done();
-              return;
-            }
-            if (/^[1-9]$/.test(data)) {
-              const jumpIdx = parseInt(data, 10) - 1;
-              if (jumpIdx < items.length) {
-                selectedIndex = jumpIdx;
-                chosenArtifact = items[jumpIdx];
-                done();
-              }
-            }
+          onSelect: (art) => {
+            chosenArtifact = art;
+            done();
           },
+          onCancel: () => done(),
         });
-        return panel;
+        return list;
       },
       { overlay: true, overlayOptions: popupOverlayOptions("84%", 50, "80%") as any },
     );
 
     if (chosenArtifact) {
-      await showArtifactDetail(chosenArtifact, context);
+      await showArtifactDetail(chosenArtifact, context, onSave);
     } else {
       break;
     }
@@ -466,6 +494,26 @@ export default function artifactsExtension(pi: ExtensionAPI) {
     artifacts.set(art.id, art);
     pi.appendEntry(ARTIFACT_TYPE, art);
     widget();
+  }
+
+  /** Save an editor round-trip through the same placement rules as artifact_edit. */
+  async function saveArtifactContent(
+    art: Artifact,
+    content: string,
+    context: ExtensionContext,
+  ): Promise<Artifact | undefined> {
+    if (content === art.content) return art;
+    const updated: Artifact = {
+      ...art,
+      content,
+      version: art.version + 1,
+      updatedAt: new Date().toISOString(),
+    };
+    await commitArtifact(updated, context);
+    artifacts.set(updated.id, updated);
+    widget();
+    publishCatalog(context, true);
+    return updated;
   }
 
   /**
@@ -1314,7 +1362,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
     artifacts = availableArtifacts(ctx);
     const art = lookupArtifact(payload.id, artifacts);
     if (art) {
-      await showArtifactDetail(art, ctx);
+      await showArtifactDetail(art, ctx, (content) => saveArtifactContent(art, content, ctx!));
     } else {
       ctx.ui?.notify?.(`Artifact [${payload.id}] not found on active branch.`, "warning");
     }
@@ -1324,7 +1372,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
     if (!ctx) return;
     artifacts = availableArtifacts(ctx);
     const items = ordered(artifacts);
-    await showArtifactPicker(items, ctx);
+    await showArtifactPicker(items, ctx, (content, art) => saveArtifactContent(art, content, ctx!));
   });
 
   pi.registerCommand("artifacts", {
@@ -1342,7 +1390,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
       }
 
       if (typeof context.ui.custom === "function") {
-        await showArtifactPicker(items, context);
+        await showArtifactPicker(items, context, (content, art) => saveArtifactContent(art, content, context));
         return;
       }
 
