@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildPlan, replay, refusal, applyTransition, checkEvidence, frontier, isReady, isBlocked,
   isExpiredClaim, isLiveClaim, injectionLine, fromLegacyState, taskIdFor, hashId,
-  type Plan, type Task, type Evidence,
+  type Task, type Evidence,
 } from "../lib/intent-graph.ts";
 
 const now = 1_000_000;

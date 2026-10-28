@@ -270,7 +270,7 @@ export const DEFAULT_CLAIM_TTL_MS = 30 * 60 * 1000;
  * Returns the reason it is refused, or undefined when allowed. Kept here so the
  * tool surface and the tests share one definition of correctness.
  */
-export function refusal(plan: Plan, request: TransitionRequest, resolver: EvidenceResolver = {}): string | undefined {
+export function refusal(plan: Plan, request: TransitionRequest, _resolver: EvidenceResolver = {}): string | undefined {
   const now = request.at ?? Date.now();
   if (!isLive(plan)) return "This plan was superseded. Declare a new plan with todo_plan.";
   const task = taskById(plan, request.taskId);

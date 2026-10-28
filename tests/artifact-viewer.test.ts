@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { visibleWidth, stripTerminalSequences } from "@earendil-works/pi-tui";
 import artifactsExtension, {
-  resolveEditorCommand, openArtifactInEditor, setSpawnFn,
-  showArtifactDetail, showArtifactPicker, formatArtifactMarkdown,
-  formatAge, artifactTypeIcon, adaptPopupTheme,
+  resolveEditorCommand, openArtifactInEditor,
+  formatArtifactMarkdown,
+  formatAge, artifactTypeIcon,
 } from "../extensions/artifacts.ts";
 import { MarkdownPopup, PopupPanel, PLAIN_THEME } from "../lib/popup.ts";
 import { ARTIFACT_TYPE, type Artifact } from "../lib/artifact-state.ts";
@@ -288,7 +288,6 @@ test("picker popup renders framed list with icons, sizes, and ages within width 
     sampleArtifact({ id: "spec-b", title: "Spec B", type: "spec" }),
   ];
 
-  let panelComponent: PopupPanel | undefined;
   let doneCalled = false;
 
   const theme = PLAIN_THEME;
@@ -296,7 +295,7 @@ test("picker popup renders framed list with icons, sizes, and ages within width 
     theme,
     title: `Workspace Artifacts (${items.length})`,
     hint: "Enter open · 1-9 jump · Esc close",
-    onRender: (width) => {
+    onRender: (_width) => {
       const rows = items.map((art, idx) => {
         const marker = idx === 0 ? "→" : " ";
         const num = `${idx + 1}. `;

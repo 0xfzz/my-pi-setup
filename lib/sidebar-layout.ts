@@ -206,9 +206,15 @@ export class SidebarMount {
 
 /** Data labels are plain text, never executable terminal control sequences. */
 export function plain(text: string): string {
-  return text.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+  return text
+    // oxlint-disable-next-line no-control-regex
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+    // oxlint-disable-next-line no-control-regex
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
-    .replace(/[\x00-\x1f\x7f-\x9f]/g, " ").replace(/\s+/g, " ").trim();
+    // oxlint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f\x7f-\x9f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export function fit(text: string, width: number): string {

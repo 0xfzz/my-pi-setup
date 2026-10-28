@@ -198,6 +198,7 @@ export function meaningfulSessionTitle(
   { project }: { project?: string } = {},
 ): string {
   if (typeof value !== "string") return "";
+  // oxlint-disable-next-line no-control-regex
   const clean = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
   const label = clean.replace(/(?:\s+manager)+$/i, "").trim();
   if (label.length < 2 || UUID_RE.test(label) || NON_NAMES.has(label.toLowerCase())) return "";
@@ -342,7 +343,6 @@ export function displayName(node: NamingNode = {}, options: DisplayOptions = {})
   const max = Number.isFinite(options.max) ? Number(options.max) : 32;
   const subject = humanizeSlug(node.scope);
   const roleScope = roleSubject(node.scope);
-  const humanName = isHumanName(node.name) ? String(node.name).trim() : "";
 
   if (kind === "handoff") return handoffDisplayName(node);
   if (kind === "session") return managerName({ project: node.project, sessionName: node.name });

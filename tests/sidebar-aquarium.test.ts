@@ -7,7 +7,6 @@ import {
   aquariumHeight,
   createAquarium,
   AquariumSimulation,
-  feedAquarium,
   clearAquariumFood,
   getAquariumSimulation,
 } from "../lib/sidebar-aquarium.ts";
@@ -23,6 +22,7 @@ test("aquarium frames keep complete borders and exact terminal dimensions at eve
         assert.equal(frame[0], `┌${"─".repeat(width - 2)}┐`);
         assert.equal(frame.at(-1), `└${"─".repeat(width - 2)}┘`);
         assert.ok(frame.slice(1, -1).every(line => line.startsWith("│") && line.endsWith("│")));
+        // oxlint-disable-next-line no-control-regex
         assert.ok(frame.every(line => !/[\x00-\x1f\x7f-\x9f]/.test(line)));
       }
     }

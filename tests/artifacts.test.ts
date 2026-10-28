@@ -1,14 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import artifactsExtension, {
-  readSidecarArtifact, writeSidecarArtifact, searchArtifacts
+  readSidecarArtifact,
 } from "../extensions/artifacts.ts";
 import {
-  ARTIFACT_TYPE, ARTIFACT_CONTEXT_TYPE, artifactCatalogContext, recordsFromBranch,
-  sanitizeArtifactId, type Artifact,
+  ARTIFACT_TYPE, ARTIFACT_CONTEXT_TYPE, recordsFromBranch,
 } from "../lib/artifact-state.ts";
 
 function harness(opts: { isChild?: boolean; childSession?: string; childRun?: string; childName?: string; mode?: string } = {}) {

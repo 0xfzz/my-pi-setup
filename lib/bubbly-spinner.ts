@@ -398,7 +398,7 @@ export function applyTrailingPurpleGradient(word: string, tick: number): string 
   }
 
   // Bubble case: Bubbling -> bUbbling -> BuBbling -> bUbBling ...
-  const isBubble = new Array(numLetters).fill(false);
+  const isBubble: boolean[] = Array.from({ length: numLetters }, () => false);
   for (let pos = 0; pos < numLetters; pos++) {
     const diff = t - pos;
     if (diff >= 0 && diff % 2 === 0 && diff <= 4) {

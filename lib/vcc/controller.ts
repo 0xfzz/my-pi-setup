@@ -20,7 +20,6 @@ import type {
   TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import {
   describeBudget,
   resolveBudget,
@@ -38,7 +37,6 @@ import { estimateMessageTokens } from "./estimate.ts";
 import { extractEvidence, insertEvidence } from "./evidence.ts";
 import {
   estimateFixedOverhead,
-  hasCompleteToolPairs,
   planBudgetedCompaction,
   planLegacyCompaction,
   type MessageEstimator,

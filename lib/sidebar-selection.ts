@@ -1,5 +1,5 @@
 import type { TUI } from "@earendil-works/pi-tui";
-import { visibleWidth, sliceByColumn, stripTerminalSequences } from "@earendil-works/pi-tui";
+import { sliceByColumn } from "@earendil-works/pi-tui";
 
 export type SelectionRegionType = "sidebar" | "conversation" | "prompt";
 

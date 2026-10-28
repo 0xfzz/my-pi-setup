@@ -1,5 +1,5 @@
 import type { AutocompleteProvider } from "@earendil-works/pi-tui";
-import { clip, describeArtifact, formatArtifactPlaceholder, lookupArtifact, ordered, type Artifact } from "./artifact-state.ts";
+import { clip, formatArtifactPlaceholder, lookupArtifact, ordered, type Artifact } from "./artifact-state.ts";
 
 const MENTION_PREFIX = "@artifact:";
 const MAX_SUGGESTIONS = 20;

@@ -58,7 +58,7 @@ export class OnDemandContainer {
 
       // 1. Gather heights from cache or estimate
       let totalEstimatedHeight = 0;
-      const childHeights: number[] = new Array(children.length);
+      const childHeights: number[] = Array.from({ length: children.length });
       for (let i = 0; i < children.length; i++) {
         const child = children[i];
         const cached = this.lineCache.get(child);

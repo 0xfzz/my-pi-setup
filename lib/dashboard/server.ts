@@ -660,7 +660,6 @@ class DashboardRuntime {
       throw error;
     }
 
-    const self = this;
     return {
       instanceId: this.#instanceId,
       port: this.#port,
@@ -670,8 +669,8 @@ class DashboardRuntime {
       runtimeDir: this.#options.runtimeDir,
       pid: process.pid,
       closed: this.#closed,
-      close: (reason?: string) => self.close(reason ?? "manual"),
-      stats: () => self.stats(),
+      close: (reason?: string) => this.close(reason ?? "manual"),
+      stats: () => this.stats(),
       metadata: () => metadata,
     };
   }
@@ -1004,7 +1003,7 @@ class DashboardRuntime {
 
   #broadcast(): void {
     const payload = `data: ${JSON.stringify({ type: "changed" })}\n\n`;
-    for (const res of [...this.#sseClients]) {
+    for (const res of this.#sseClients) {
       this.#writeEvent(res, payload);
     }
   }
@@ -1030,7 +1029,7 @@ class DashboardRuntime {
   }
 
   #ping(): void {
-    for (const res of [...this.#sseClients]) this.#writeEvent(res, ": ping\n\n");
+    for (const res of this.#sseClients) this.#writeEvent(res, ": ping\n\n");
   }
 
   // ── Producer transport ───────────────────────────────────────────────────
@@ -1350,7 +1349,7 @@ class DashboardRuntime {
 
   #sweep(now: number): void {
     let changed = false;
-    for (const [sessionId, record] of [...this.#sessions]) {
+    for (const [sessionId, record] of this.#sessions) {
       const connected = this.#connected(record, now);
       if (record.connected && !connected) {
         // Connection health changes; domain state (worker statuses) is untouched.
@@ -1362,7 +1361,7 @@ class DashboardRuntime {
         changed = true;
       }
     }
-    for (const [token, expiresAt] of [...this.#browserSessions]) {
+    for (const [token, expiresAt] of this.#browserSessions) {
       if (expiresAt <= now) this.#browserSessions.delete(token);
     }
     if (changed) this.#notify();
@@ -1390,7 +1389,7 @@ class DashboardRuntime {
       this.#notifyTimer = null;
       this.#sweepTimer = null;
       this.#pingTimer = null;
-      for (const res of [...this.#sseClients]) {
+      for (const res of this.#sseClients) {
         this.#sseClients.delete(res);
         try {
           res.end();

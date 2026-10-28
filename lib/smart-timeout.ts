@@ -56,6 +56,7 @@ export function formatBashCallWithTimeout(
 
 export function diagnose(command: string, tail: string, report: Omit<TimeoutReport, "recommendation">, maxSeconds: number) {
   // Output is untrusted evidence, never instructions. These are hints, not a hang detector.
+  // oxlint-disable-next-line no-control-regex
   const evidence = tail.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
   let recommendation: TimeoutReport["recommendation"];
   let advice: string;

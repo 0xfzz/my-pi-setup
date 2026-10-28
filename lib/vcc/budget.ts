@@ -120,11 +120,6 @@ const clamp = (value: number, min: number, max: number): number =>
 const positive = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 
-const fraction = (value: unknown): number | undefined => {
-  const n = positive(value);
-  return n !== undefined && n < 1 ? n : undefined;
-};
-
 /** Merge tuning in precedence order: fallback < defaults < profile. */
 export function mergeTuning(
   ...layers: Array<BudgetProfile | undefined>

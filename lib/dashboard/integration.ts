@@ -19,10 +19,8 @@
 import {
   DASHBOARD_ARTIFACTS_EVENT,
   DASHBOARD_MODE_EVENT,
-  DASHBOARD_REQUEST_EVENT,
   DASHBOARD_STATE_EVENT,
   emptyOrchestrator,
-  type DashboardArtifact,
   type DashboardOrchestrator,
   type DashboardSessionInfo,
   type DashboardSnapshot,

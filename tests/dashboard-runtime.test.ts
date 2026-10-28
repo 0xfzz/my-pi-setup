@@ -12,7 +12,7 @@ import { request as httpRequest } from "node:http";
 import type { ClientRequest, IncomingHttpHeaders } from "node:http";
 import { mkdtemp, mkdir, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
-import type { AddressInfo, Server as NetServer } from "node:net";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,7 +31,6 @@ import { DashboardProducer } from "../lib/dashboard/producer.ts";
 import {
   startDashboardServer,
   readRuntimeMetadata,
-  readProducerToken,
   SingletonUnavailableError,
   METADATA_FILE,
 } from "../lib/dashboard/server.ts";
@@ -670,7 +669,7 @@ test("SSE sends changed events, pings, caps clients, and survives a destroyed co
 
     const ping = await waitFor(async () => {
       const block = await stream.next(500).catch(() => null);
-      return block && /^: ping/.test(block) ? block : null;
+      return block && block.startsWith(': ping') ? block : null;
     }, "SSE ping");
     assert.match(ping, /^: ping/);
 

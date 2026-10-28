@@ -6,14 +6,9 @@ import {
   ALL_SPINNER_VERBS,
   BUBBLY_FRAMES,
   BUBBLY_INDICATOR_OPTIONS,
-  BUBBLY_TEXT_INTERVAL_MS,
   BubblyWordAnimator,
   applyBubbleCase,
   applyTrailingPurpleGradient,
-  DRACULA_PURPLE,
-  DRACULA_SLIGHT_PURPLE,
-  DRACULA_BASE_MUTED,
-  DRACULA_WHITE,
   VerbRotator,
   bigEnglishSpinnerVerbs,
   javaneseSpinnerVerbs,
@@ -21,6 +16,7 @@ import {
 } from "../lib/bubbly-spinner.ts";
 
 function stripAnsi(text: string): string {
+  // oxlint-disable-next-line no-control-regex
   return text.replace(/\x1b\[[0-9;]*m/g, "");
 }
 

@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import artifactsExtension, {
   publishChildSnapshot,
-  writeSidecarArtifact,
   readSidecarArtifact,
 } from "../extensions/artifacts.ts";
 import {

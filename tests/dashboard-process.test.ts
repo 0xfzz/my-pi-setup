@@ -29,7 +29,7 @@ import {
   LOCK_FILE,
 } from "../lib/dashboard/lifecycle.ts";
 import type { DashboardAddress } from "../lib/dashboard/lifecycle.ts";
-import { readRuntimeMetadata, readProducerToken } from "../lib/dashboard/server.ts";
+import { readRuntimeMetadata } from "../lib/dashboard/server.ts";
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));

@@ -19,7 +19,7 @@ function fakeRunner(responses: Array<Partial<CommandResult>> = []) {
     calls,
     async run(bin: string, argv: string[]): Promise<CommandResult> {
       calls.push({ bin, argv });
-      return { exitCode: 0, stdout: "", stderr: "", timedOut: false, ...(responses.shift() ?? {}) };
+      return { exitCode: 0, stdout: "", stderr: "", timedOut: false, ...responses.shift() };
     },
   };
 }

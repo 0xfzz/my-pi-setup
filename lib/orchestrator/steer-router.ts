@@ -43,7 +43,7 @@ export function extractPotentialPaths(text: string): string[] {
   const paths: string[] = [];
   for (const raw of words) {
     // Strip wrapping punctuation like quotes, backticks, parens
-    const w = raw.replace(/^[`'"(\[]+|[`'")\],:;.]+$/g, "");
+    const w = raw.replace(/^[`'"([]+|[`'")\],:;.]+$/g, "");
     if (!w) continue;
     if (w.includes("/") || /\.[a-zA-Z0-9_-]{1,10}$/.test(w)) {
       paths.push(w);

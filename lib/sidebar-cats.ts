@@ -654,7 +654,6 @@ export function createCatsArena(cols: number, rows: number): (seconds: number, t
       }
     } else if (scene === "ball") {
       // Yarn Ball Play
-      const cycle = localSec % 16;
       const ballX = Math.max(3, Math.min(cols - 4, Math.round(mid + Math.sin(localSec * 1.5) * (innerW * 0.35))));
       const ballY = floor - (Math.abs(Math.cos(localSec * 3.0)) > 0.6 ? 2 : 1);
       const catX = Math.max(2, Math.min(cols - 12, ballX - 7));

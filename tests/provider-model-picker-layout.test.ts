@@ -26,6 +26,7 @@ const showCustom = Reflect.get(InteractiveMode.prototype, "showExtensionCustom")
 const catalog = Array.from({ length: 121 }, (_, i) => ({ id: `model-${String(i).padStart(3, "0")}` }));
 const keys = { up: "\x1b[A", down: "\x1b[B", pageUp: "\x1b[5~", pageDown: "\x1b[6~", enter: "\r", escape: "\x1b" };
 const plain = (line: string) => stripVTControlCharacters(line
+  // oxlint-disable-next-line no-control-regex
   .replaceAll(CURSOR_MARKER, "").replace(/\x1b_pi:\/?fc\x07/g, ""));
 const highlight = (lines: string[]) => lines.map(plain).join("\n").match(/→ \[[ x]\] (model-\d+)/)?.[1];
 

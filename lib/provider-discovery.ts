@@ -88,6 +88,7 @@ export function modelsEndpoint(config: ProviderConfig): URL {
 
 function validId(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 512 &&
+    // oxlint-disable-next-line no-control-regex
     value === value.trim() && !/[\x00-\x1f\x7f-\x9f\u2028\u2029]/.test(value);
 }
 

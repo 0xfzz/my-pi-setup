@@ -45,7 +45,6 @@ const manifest = JSON.parse(
 ) as Manifest;
 
 const PINNED_VERSION = "2.1.1";
-const PHOSPHOR_VIEWBOX = "0 0 256 256";
 
 /** The expected semantic mapping: dashboard key -> Phosphor regular asset. */
 const EXPECTED: Record<string, string> = {

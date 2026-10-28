@@ -515,7 +515,7 @@ test("sidebar command feed drops food and clicking top position of tank feeds th
   // Clicking top position: row tankTopLine (top border) or tankTopLine + 1 (surface)
   clearAquariumFood();
   // Sidebar container is at x=0..24, tank inner column 10 (x = 12)
-  const clickResult = (f.tui as any).handleMouse?.({
+  (f.tui as any).handleMouse?.({
     type: "click",
     button: "left",
     x: 12,

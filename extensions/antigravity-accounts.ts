@@ -231,7 +231,7 @@ export default function antigravityAccountsExtension(pi: ExtensionAPI): void {
       try {
         const apiKey = override ?? await credentialFor(slot);
         const inner = streamAntigravity(model as never, context, {
-          ...(options ?? {}),
+          ...options,
           apiKey,
         } as AntigravityStreamOptions);
         let final: AssistantMessage | undefined;
@@ -307,7 +307,7 @@ export default function antigravityAccountsExtension(pi: ExtensionAPI): void {
               generateImages: (async (
                 model: never, context: never, options?: Record<string, unknown>,
               ) => generateAntigravityImages(model, context, {
-                ...(options ?? {}),
+                ...options,
                 apiKey: await credentialFor(slot),
               } as never)) as never,
             },

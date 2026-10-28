@@ -421,7 +421,7 @@ test("a route with no usable target fails with a clear reason", { timeout: 20000
     });
     assert.equal(message.stopReason, "error");
     assert.match(message.errorMessage ?? "", /not registered|no credentials/);
-  }, (seen) => ({
+  }, (_seen) => ({
     providers: [],
     config: { routes: [{ name: "auto", targets: ["nowhere/ghost"] }] },
   }));

@@ -26,7 +26,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { chmodSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative } from "node:path";
 
 import { buildAdhocTicket, sanitizeScope } from "../lib/orchestrator/handoff.ts";
 import {
@@ -254,19 +254,6 @@ export function headDriftWarning(
   );
 }
 
-function tail(value: string, lines: number): string {
-  const all = value.split("\n");
-  return (all.length <= lines ? all : all.slice(-lines)).join("\n");
-}
-
-
-/**
- * Files already sent for a scope, so a second review does not re-read them.
- *
- * Nothing is persisted: this is a request-level convenience. A restart simply
- * re-sends the hunks, which is the safe direction to fail.
- */
-const briefCursor = new Map<string, Set<string>>();
 
 function text(value: string, details?: unknown) {
   return {
@@ -360,7 +347,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
   const MAX_INTERRUPT_ATTEMPTS = 2;
   /** A sidecar nobody consumed after this long is stale, not pending. */
   const SIDECAR_GRACE_MS = 60_000;
-  const MAX_REVISE_ROUNDS = 2;
 
   // ── Parent-only guard ──────────────────────────────────────────────────────
   // A delegated child loads this extension too: `--tools` narrows the child's tool
@@ -701,6 +687,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       });
   }
 
+  // oxlint-disable-next-line no-control-regex
   const ANSI_ESCAPE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
 
   /** Spinner frames and colour codes are not progress; a static screen is not a stall. */
@@ -1115,11 +1102,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
   // user-touched child can still have it active. Refuse rather than let a child spawn
   // work the parent cannot see or review.
 
-  /** Tools whose input names a filesystem path a reviewer might read. */
-  const READ_PATH_TOOLS = new Set(["read", "grep", "find", "ls", "ffgrep", "fffind"]);
-
-  /** Search tools whose default target is the whole working tree. */
-  const BROAD_SEARCH_TOOLS = new Set(["grep", "find", "ffgrep", "fffind"]);
 
   /** Files a write/edit call names. Kept next to the audit that consumes it. */
   const AUTHOR_WRITE_TOOLS = new Set(["write", "edit", "multi_edit", "multiedit", "apply_patch", "applypatch", "patch"]);
@@ -1317,7 +1299,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
   // A child's `--tools` allowlist excludes the delegation surface, but a resumed
   // or user-touched child can still have it active. Refuse rather than let a
   // child spawn work the parent cannot see.
-  pi.on("tool_call", (event, ctx) => {
+  pi.on("tool_call", (event, _ctx) => {
     // ── read-only reading roles ────────────────────────────────────────────
     // research children are declared read-only. A resumed or user-touched child
     // can still hold bash, and bash can write; narrow it to the same closed
@@ -1401,17 +1383,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
     }
   }
 
-  /** A batch label like `qa-1` may already exist from an earlier wave. */
-  function uniqueScope(base: string, taken: Set<string>): string {
-    let candidate = base.slice(0, 64);
-    let suffix = 2;
-    while (taken.has(candidate)) {
-      const tag = `-${suffix}`;
-      suffix += 1;
-      candidate = `${base.slice(0, 64 - tag.length)}${tag}`;
-    }
-    return candidate;
-  }
 
   /** The branch, when the context has one. A minimal test context may not. */
   function branchOf(ctx: ExtensionContext): readonly any[] {
@@ -2839,7 +2810,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
    * back. Resume therefore replays what was actually paused instead of guessing
    * a fresh plan; each child comes back on the conversation it already had.
    */
-  function orchestratorMode(ctx: ExtensionContext): { ok: true; mode: string } | { ok: false; reason: string } {
+  function orchestratorMode(_ctx: ExtensionContext): { ok: true; mode: string } | { ok: false; reason: string } {
     if (isChildSession) return { ok: false, reason: "a delegated child owns no orchestrator to pause" };
     return { ok: true, mode: "normal" };
   }
@@ -3098,7 +3069,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
   function rolePromptDefs(agentDefs: AgentDefaults | null, promptText: string | undefined): AgentDefaults | null {
     if (!promptText) return agentDefs;
     const body = [promptText, agentDefs?.body].filter(Boolean).join("\n\n");
-    return { ...(agentDefs ?? {}), body, systemPromptMode: agentDefs?.systemPromptMode ?? "append" };
+    return { ...agentDefs, body, systemPromptMode: agentDefs?.systemPromptMode ?? "append" };
   }
 
   /**

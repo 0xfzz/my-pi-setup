@@ -18,7 +18,7 @@
  * Inspired by classic asciiquarium (Kirk Baucom / Joan Stark) & ascii.rest/aquarium.
  * Copyright (c) 2026 bas3line. MIT; see licenses/ascii-rest-MIT.txt.
  */
-import { getAsciiAnimEngine, renderWasmScene } from "./ascii-anim-engine.ts";
+import { renderWasmScene } from "./ascii-anim-engine.ts";
 
 export const AQUARIUM_FPS = 15;
 export const AQUARIUM_MIN_HEIGHT = 6;
@@ -140,7 +140,6 @@ export class AquariumSimulation {
   }
 
   dropFood(col?: number): FoodParticle {
-    const floor = this.rows - 2;
     const targetCol = col !== undefined
       ? Math.max(2, Math.min(this.cols - 3, Math.round(col)))
       : Math.floor(this.cols * 0.3 + Math.random() * (this.cols * 0.4));

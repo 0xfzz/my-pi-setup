@@ -279,7 +279,7 @@ export default function todoExtension(pi: ExtensionAPI) {
   const guidance = (ctx?: ExtensionContext) => getTodoGuidance(getMode(ctx));
 
   // ── Rendering ──────────────────────────────────────────────────────────
-  const rows = (now: number): string[] => {
+  const rows = (_now: number): string[] => {
     if (!plan) return ["No active plan"];
     if (plan.supersededAt) return [`${plan.id} superseded`];
     // No state suffix: the sidebar is a glance view, and a suffix pushed rows past

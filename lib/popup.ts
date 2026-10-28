@@ -81,6 +81,7 @@ export function wrapRowWithHangingIndent(line: string, width: number): string[] 
   }
 
   // Detect leading marker/number prefix: e.g. "→ ☑ 1. [done] " or "  ☑ 1. [done] " or "  1. "
+  // oxlint-disable-next-line no-control-regex
   const plain = line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
   const match = plain.match(/^(\s*(?:→\s*|\s{2})?(?:[☑☐●◔↻■]\s+|\d+\.\s+|\[\w+\]\s*)*)/);
   const prefixText = match ? match[1] : "";

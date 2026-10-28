@@ -25,7 +25,7 @@ async function fixture() {
     deps: (responses: Array<Partial<CommandResult>> = []): CodeToolsDeps => {
       const runner = {
         async run(): Promise<CommandResult> {
-          return { exitCode: 0, stdout: "src/a.ts\nsrc/b.py\nREADME.md\n", stderr: "", timedOut: false, ...(responses.shift() ?? {}) };
+          return { exitCode: 0, stdout: "src/a.ts\nsrc/b.py\nREADME.md\n", stderr: "", timedOut: false, ...responses.shift() };
         },
       };
       return { cwd: root, runner, guard: () => undefined };

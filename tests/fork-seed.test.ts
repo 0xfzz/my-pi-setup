@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -352,7 +352,7 @@ test("provenance: full metadata contract verified on fork seed", { skip }, async
       assistant("a1", "u1", "Working on it"),
     ], "sess-parent-prov-123");
     const child = join(dir, "child.jsonl");
-    const written = seedSubagentSessionFile({
+    seedSubagentSessionFile({
       mode: "fork",
       parentSessionFile: parent,
       childSessionFile: child,

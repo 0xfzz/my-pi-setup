@@ -68,6 +68,7 @@ export class ValidationError extends Error {
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@-]*$/;
 // C0 controls except tab/newline/carriage-return, plus DEL. These are the bytes
 // that let a hostile name clear a line or inject an escape sequence into logs.
+// oxlint-disable-next-line no-control-regex
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 const CHILD_STATUSES = new Set(["running", "completed", "blocked", "failed", "closed"]);
 const CHILD_PURPOSES = new Set(["implementation", "review"]);
@@ -83,14 +84,6 @@ function optionalText(value: unknown, max: number): string | undefined {
   if (typeof value !== "string") return undefined;
   const cleaned = value.replace(CONTROL_CHARS, "");
   return cleaned.length > max ? cleaned.slice(0, max) : cleaned;
-}
-
-function requiredText(value: unknown, max: number, what: string, status = 400): string {
-  const text = optionalText(value, max);
-  if (text === undefined || text.trim() === "") {
-    throw new ValidationError(`missing ${what}`, status);
-  }
-  return text;
 }
 
 function optionalId(value: unknown): string | undefined {
@@ -271,6 +264,7 @@ function sanitizeArtifact(value: unknown): DashboardArtifact | null {
   const id = optionalId(value.id);
   if (id === undefined) return null;
   if (typeof value.content !== "string") return null;
+  // oxlint-disable-next-line no-control-regex
   const content = value.content.replace(/\u0000/g, "");
   if (Buffer.byteLength(content, "utf8") > MAX_ARTIFACT_BYTES) {
     // Oversized bodies are fatal: silently truncating a document would present

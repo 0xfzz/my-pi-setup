@@ -185,7 +185,7 @@ export function capabilityFacts(tools: readonly PromptTool[]): string[] {
     facts.push("Work can be delegated to sub-agents running in parallel.");
   }
   if ([...present].some((name) => /^ask_user$/.test(name))) facts.push("The user can be asked a blocking question.");
-  if ([...present].some((name) => /^browser/.test(name))) facts.push("A persistent browser can be driven.");
+  if ([...present].some((name) => name.startsWith('browser'))) facts.push("A persistent browser can be driven.");
   if ([...present].some((name) => /^generate_image$/.test(name))) facts.push("Images can be generated.");
   return facts;
 }

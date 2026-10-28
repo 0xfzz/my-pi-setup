@@ -34,18 +34,18 @@ import {
   getAgentDir, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
-  createAssistantMessageEventStream, getApiProvider, normalizeContext,
+  createAssistantMessageEventStream, normalizeContext,
   type Api, type AssistantMessage, type AssistantMessageEvent, type Model, type SimpleStreamOptions,
   type TranscriptContext,
 } from "@earendil-works/pi-ai/compat";
 import {
   accountLabel, agentStatePath, describeHealth, emptyState, healthFor, mergeConfigs, normalizeState,
-  parseRouterConfig, readRouterConfig, readRouterState, recordFailure, recordSuccess, selectAccount,
+  readRouterConfig, readRouterState, recordFailure, recordSuccess, selectAccount,
   writeRouterState,
   type AccountConfig, type PoolConfig, type RouterConfig, type RouterState,
 } from "../lib/account-pools.ts";
 import {
-  ANTIGRAVITY_SOURCE, poolAccounts, resolveAccountCredential, sourceDefaultAgentDir,
+  poolAccounts, resolveAccountCredential, sourceDefaultAgentDir,
   type SourceContext, type StoredAntigravityAccount,
 } from "../lib/account-sources.ts";
 import {
@@ -62,9 +62,6 @@ const DEFAULT_ROUTER_PROVIDER = "router";
 /** Prefix for the shadow provider that fronts a pool's accounts. */
 const POOL_PROVIDER_PREFIX = "pool:";
 const COMMAND = "router";
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Provider id of the shadow provider that fronts `poolName`. */
 export function poolProviderId(poolName: string): string {

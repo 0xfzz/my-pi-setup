@@ -2,7 +2,7 @@
  * Supports multiple built-in and user-registered ASCII animations
  * (Aquarium, Matrix Rain, Campfire, or custom extensions).
  */
-import { visibleWidth, sliceByColumn } from "@earendil-works/pi-tui";
+import { sliceByColumn } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";

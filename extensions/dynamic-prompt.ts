@@ -91,7 +91,7 @@ export function applyDynamicPrompt(
 
   // Close Pi's "no snippet, so not listed" gap. Harmless in replace mode (where
   // `sections.tools` wins) and load-bearing in append mode, which keeps Pi's list.
-  const snippets: Record<string, string> = { ...(options.toolSnippets ?? {}) };
+  const snippets: Record<string, string> = { ...options.toolSnippets };
   for (const tool of visibleTools(callable)) {
     if (!snippets[tool.name]) snippets[tool.name] = snippetFor(tool, config.maxSnippetChars);
   }
@@ -105,7 +105,7 @@ export function applyDynamicPrompt(
     // `docs` is Pi's own static pointer: extract rather than duplicate it.
     const preserved = preserveDefaultSections(renderedPrompt);
     options.sections = {
-      ...(options.sections ?? {}),
+      ...options.sections,
       tools: sections.tools,
       rules: sections.rules,
       capabilities: sections.capabilities,
@@ -115,7 +115,7 @@ export function applyDynamicPrompt(
   }
 
   // Append: leave Pi's preamble and tool list alone, add only what is missing.
-  options.sections = { ...(options.sections ?? {}), capabilities: sections.capabilities };
+  options.sections = { ...options.sections, capabilities: sections.capabilities };
 }
 
 export default function dynamicPromptExtension(pi: ExtensionAPI) {

@@ -1043,6 +1043,6 @@ test("the projection names the root as the manager and never prints a uuid", () 
   assert.equal(session.label, "Pi Workflow Extensions Manager");
   assert.ok(!graph.nodes.some((node: Any) => String(node.label).includes(uuid)), "no uuid is rendered as a name");
   const labels = graph.nodes.map((node: Any) => node.label);
-  assert.ok(labels.some((label: string) => /^Spec · /.test(label)));
+  assert.ok(labels.some((label: string) => label.startsWith('Spec · ')));
   assert.ok(labels.some((label: string) => label.endsWith("Manager")));
 });

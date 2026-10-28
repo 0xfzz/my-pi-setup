@@ -19,8 +19,6 @@ import { MAX_DELEGATION_DEPTH, type SpawnPurpose } from "./delegation-tools.ts";
 
 export type SpawnMode = "normal" | "plan" | "supervise" | "orchestrator";
 
-const ALL_PURPOSES: readonly SpawnPurpose[] = ["spec", "adhoc", "research", "review", "implementation"];
-
 /** Collapse an unknown/absent mode id onto the four shapes this table knows. */
 export function normalizeSpawnMode(modeId: string | undefined): SpawnMode {
   if (modeId === "plan") return "plan";

@@ -1,13 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { parseSessionEntries } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { watch, readFileSync, readdirSync, statSync, type FSWatcher } from "node:fs";
 import { open, rename, writeFile, rm, mkdtemp } from "node:fs/promises";
 import { dirname, basename, join, delimiter } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { matchesKey, visibleWidth } from "@earendil-works/pi-tui";
+import { matchesKey } from "@earendil-works/pi-tui";
 import {
   PopupPanel, MarkdownPopup, popupOverlayOptions, PLAIN_THEME, type PopupTheme,
 } from "../lib/popup.ts";
@@ -15,7 +14,7 @@ import { offerSection, REFRESH_EVENT } from "../lib/sidebar-channel.ts";
 import { createArtifactAutocompleteProvider, expandArtifactMentions } from "../lib/artifact-mentions.ts";
 import {
   ARTIFACT_TYPE, ARTIFACT_CONTEXT_TYPE, ARTIFACT_SIDECAR_PREFIX, ARTIFACT_SIDECAR_SUFFIX,
-  PARENT_SNAPSHOT_SUFFIX, sanitizeArtifactId, sanitizeScope, visibleToScope, hasScopedSpecs,
+  sanitizeArtifactId, sanitizeScope,
   artifactFromRecord, recordsFromBranch, ordered,
   artifactCatalogContext, describeArtifact, artifactSidecarPath, parentArtifactsSnapshotPath,
   formatBytes, clip, lookupArtifact, type Artifact, type ArtifactType,
@@ -358,7 +357,7 @@ export async function showArtifactPicker(
           theme: pTheme,
           title: `Workspace Artifacts (${items.length})`,
           hint: "Enter open · 1-9 jump · Esc close",
-          onRender: (width) => {
+          onRender: (_width) => {
             const rows = items.map((art, idx) => {
               const isSelected = idx === selectedIndex;
               const marker = isSelected ? pTheme.fg("accent", "→") : " ";
@@ -716,10 +715,6 @@ export default function artifactsExtension(pi: ExtensionAPI) {
       context.ui.notify(`Removed ${removed} test artifact${removed === 1 ? "" : "s"} from the catalog.`, "info");
     }
     return removed;
-  }
-
-  async function publishParentSnapshot(targetDir: string, sessionFile: string, scope?: string) {
-    return publishChildSnapshot(targetDir, sessionFile, scope, artifacts);
   }
 
   // ── Child-side Artifact Loader ──
