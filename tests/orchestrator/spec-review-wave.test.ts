@@ -477,3 +477,27 @@ test("a single handoff is a one-member wave, not a document review", async () =>
     await h.detach();
   }
 });
+
+test("a reviewer that finishes without filing fails its chunk instead of waiting forever", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    await authorHandoffs(h, [FIVE[0], FIVE[1]]);
+    const started = await h.call("orch_spec_review", { action: "start", handoffIds: ["alpha", "beta"] });
+    const run = chunkRuns.get(started.details.runId)!;
+    const slot = run.chunks[0]!;
+    assert.equal(slot.status, "running");
+    // The child ends (crash, budget, orch_done without a report). Nothing will
+    // ever write the report file, so the slot must not stay "running".
+    registry.updateStatus(slot.sessionFile!, "closed");
+
+    const collected = await h.call("orch_spec_review", { action: "collect", runId: run.id });
+    const body = collected.content[0].text;
+    assert.match(body, /reviewer finished without submitting a report/);
+    assert.doesNotMatch(body, /No report yet/, "collect must not claim it is still waiting on a dead reviewer");
+    assert.notEqual(collected.details.status, "collecting-with-dead-reviewer", "run state is reported, not a placeholder");
+  } finally {
+    await h.detach();
+  }
+});

@@ -137,6 +137,21 @@ const RETIRED_TARGETS = new Map<string, string>([
   ["spec_review_submit", "orch_spec_review_submit"],
 ]);
 
+/**
+ * Human-facing list of retired names, each paired with its live successor.
+ *
+ * A bare "spec_review_submit is unavailable" reads exactly like "the reviewer's
+ * submit tool is gone": a reviewer whose submit call failed for an unrelated reason
+ * (malformed JSON) concluded that and filed its report as an artifact instead. The
+ * successor is what makes the sentence true and useful.
+ */
+export function describeRetiredTools(): string {
+  return RETIRED.map((name) => {
+    const target = RETIRED_TARGETS.get(name);
+    return target ? `${name} (use ${target})` : name;
+  }).join(", ");
+}
+
 function namesWhere(predicate: (tool: DelegationTool) => boolean): ReadonlySet<string> {
   return new Set(DELEGATION_TOOLS.filter(predicate).map(tool => tool.name));
 }

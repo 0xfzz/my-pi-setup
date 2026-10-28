@@ -10,6 +10,7 @@ import {
   PLAN_SAFE_DELEGATION_TOOLS,
   RETIRED_V1_TOOLS,
   canonicalDelegationName,
+  describeRetiredTools,
   childControlToolNames,
   delegationTool,
   isDelegationTool,
@@ -120,4 +121,15 @@ test("the derived name lists match the table", () => {
     "orch_spec_review_submit",
   ]);
   assert.equal(childControlToolNames().includes("orch_spawn"), false, "a child control list never contains a spawn tool");
+});
+
+test("the retired list names each live successor, so 'unavailable' is not read as 'gone'", () => {
+  const described = describeRetiredTools();
+  // The bug: a reviewer whose submit call failed on malformed JSON read
+  // "spec_review_submit is unavailable" and concluded its tool was removed.
+  assert.match(described, /spec_review_submit \(use orch_spec_review_submit\)/);
+  assert.match(described, /subagent \(use orch_spawn\)/);
+  for (const name of RETIRED_V1_TOOLS) {
+    assert.ok(described.includes(name), `${name} is still named`);
+  }
 });

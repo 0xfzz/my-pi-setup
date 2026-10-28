@@ -317,6 +317,20 @@ session.
 works, and never collapse that into "no new events". Silent polling was misread as
 a stall in a real session, which cancelled a healthy reviewer four checks in.
 
+**A reviewer that ends without filing is a failure, not a wait.** `collect` and
+`status` reconcile every slot against the child's actual state: a reviewer child that
+is `completed`/`failed`/`closed` with no report file becomes
+`failed: reviewer finished without submitting a report`. Previously the slot stayed
+`running` until the session ended — which is exactly how a reviewer whose submit call
+had failed looked from the parent (it kept collecting a dead pane for the rest of the
+run). The same reconciliation applies to a document review's single reviewer.
+
+**The retired-tool list names the successor.** The mode block says
+`spec_review_submit (use orch_spec_review_submit)`, not a bare "spec_review_submit is
+unavailable". A reviewer whose submit failed on malformed JSON read the old sentence
+as "my submit tool was removed", saved its report as an artifact, and the run never
+collected it.
+
 **A prose fix keeps the approval.** `action: "fix"` edits the worker-facing handoff
 document through the same authoring path (`revision++`, republished artifact) and
 records the amendment. `lane`, `acceptance criteria`, `interfaces`, `report shape`

@@ -2124,7 +2124,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           },
         ),
       ),
-      findings: Type.Array(
+      findings: Type.Optional(Type.Array(
         Type.Object({
           id: Type.Optional(Type.String({ maxLength: 80, description: "Optional stable id; derived from your assignment if omitted (F-<member-or-lens>-<n>)." })),
           severity: Type.Union([Type.Literal("blocker"), Type.Literal("major"), Type.Literal("nit")]),
@@ -2138,8 +2138,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             description: "Exact, unique, non-overlapping replacement in the pinned document. The parent can apply it without another reviewer. No structural lane/criteria changes.",
           })), 
         }),
-        { description: "Findings for this document, or for this chunk when members[] is used. An empty array is a valid clean answer." },
-      ),
+        { description: "Findings for this document, or for this chunk when members[] is used. Omit it for a chunk review: the member blocks carry the findings. An empty array is a valid clean answer." },
+      )),
       missingContext: Type.Optional(
         Type.Array(Type.String({ description: "Anything you needed and could not find in the document or permitted paths." })),
       ),
@@ -2622,17 +2622,65 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     );
   }
 
+  /**
+   * Statuses a reviewer child can end in without submitting.
+   *
+   * A reviewer that ended will never file a report, so a slot left "running" is a
+   * hang, not patience: `collect` waited on a closed reviewer until the session
+   * ended. Liveness is a fact about the child, not a timer.
+   */
+  const TERMINAL_CHILD_STATUSES = new Set(["completed", "failed", "closed"]);
+
+  function reviewerEndedWithoutReport(sessionFile: string | undefined, reportFile: string): boolean {
+    if (!sessionFile || existsSync(reportFile)) return false;
+    const child = registry.getChildBySession(sessionFile);
+    return Boolean(child && TERMINAL_CHILD_STATUSES.has(child.status));
+  }
+
+  function reconcileChunkRun(run: ChunkRun, dir: string): ChunkRun {
+    let changed = false;
+    const chunks = run.chunks.map((slot) => {
+      if (slot.status !== "running") return slot;
+      if (!reviewerEndedWithoutReport(slot.sessionFile, join(dir, `${slot.chunkId}.json`))) return slot;
+      changed = true;
+      return {
+        ...slot,
+        status: "failed" as const,
+        reason: "reviewer finished without submitting a report",
+        updatedAt: new Date(now()).toISOString(),
+      };
+    });
+    return changed ? { ...run, chunks, updatedAt: new Date(now()).toISOString() } : run;
+  }
+
+  function reconcileReviewRun(run: ReviewRun, dir: string): ReviewRun {
+    let changed = false;
+    const reviewers = run.reviewers.map((slot) => {
+      if (slot.status !== "running") return slot;
+      if (!reviewerEndedWithoutReport(slot.sessionFile, join(dir, `${slot.lens}.json`))) return slot;
+      changed = true;
+      return {
+        ...slot,
+        status: "failed" as const,
+        reason: "reviewer finished without submitting a report",
+        updatedAt: new Date(now()).toISOString(),
+      };
+    });
+    return changed ? { ...run, reviewers, updatedAt: new Date(now()).toISOString() } : run;
+  }
+
   /** Read the reports that have landed; readiness settles per member. */
   function collectChunkRun(ctx: ExtensionContext, run: ChunkRun) {
     const dir = reviewReportDir(ctx, run.id);
-    let next = run;
+    let next = reconcileChunkRun(run, dir);
     const waiting: string[] = [];
     const problems: string[] = [];
-    for (const slot of run.chunks) {
+    for (const slot of next.chunks) {
       if (slot.status === "submitted") continue;
       const file = join(dir, `${slot.chunkId}.json`);
       if (!existsSync(file)) {
         if (slot.status === "running") waiting.push(slot.chunkId);
+        else if (slot.status === "failed" && slot.reason) problems.push(`${slot.chunkId}: ${slot.reason}`);
         continue;
       }
       let raw: unknown;
@@ -3202,29 +3250,30 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       const chunkRun = chunkRuns.get(runId);
       if (chunkRun) {
         if (params.action === "status") {
+          const view = reconcileChunkRun(chunkRun, reviewReportDir(ctx, chunkRun.id));
           const fingerprint = JSON.stringify([
-            chunkRun.status,
-            chunkRun.chunks.map((slot) => [slot.chunkId, slot.status]),
-            Object.keys(chunkRun.dispositions),
+            view.status,
+            view.chunks.map((slot) => [slot.chunkId, slot.status]),
+            Object.keys(view.dispositions),
           ]);
-          const running = chunkRun.chunks.filter((slot) => slot.status === "running");
+          const running = view.chunks.filter((slot) => slot.status === "running");
           if (running.length) {
             return text(
               [
-                renderChunkRunSummary(chunkRun),
+                renderChunkRunSummary(view),
                 ...running.map((slot) => reviewerProgressLine(slot.chunkId, slot.startedAt, slot.paneId)),
                 `No report yet. ${RETRIGGER_CONTRACT}`,
               ].join("\n"),
-              { runId: chunkRun.id, status: chunkRun.status, running: running.map((slot) => slot.chunkId) },
+              { runId: view.id, status: view.status, running: running.map((slot) => slot.chunkId) },
             );
           }
-          if (notePoll(ctx.sessionManager.getSessionId(), `status:${chunkRun.id}`, fingerprint)) {
-            return text(`No new events since your last check. ${RETRIGGER_CONTRACT}`, { error: "no-new-events", runId: chunkRun.id });
+          if (notePoll(ctx.sessionManager.getSessionId(), `status:${view.id}`, fingerprint)) {
+            return text(`No new events since your last check. ${RETRIGGER_CONTRACT}`, { error: "no-new-events", runId: view.id });
           }
-          return text(renderChunkRunSummary(chunkRun), {
-            runId: chunkRun.id,
-            status: chunkRun.status,
-            ready: evaluateChunkRun(chunkRun).ready,
+          return text(renderChunkRunSummary(view), {
+            runId: view.id,
+            status: view.status,
+            ready: evaluateChunkRun(view).ready,
           });
         }
 
@@ -3350,33 +3399,34 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         // Status re-checks the document: a readiness badge that outlives the text
         // it approved is the failure this whole mechanism exists to prevent.
         const stale = stalenessProblem(run, currentReviewContent(ctx, run));
-        const roundsForTarget = nonReadyRoundsFor(run.target.kind, run.target.ref).length;
+        const view = reconcileReviewRun(run, reviewReportDir(ctx, run.id));
+        const roundsForTarget = nonReadyRoundsFor(view.target.kind, view.target.ref).length;
         const budget = `Spec rounds: ${Math.min(roundsForTarget, MAX_REVIEW_ROUNDS)} of ${MAX_REVIEW_ROUNDS} for this target · `
           + `${Math.min(sessionReviewRounds(), MAX_SESSION_REVIEW_ROUNDS)} of ${MAX_SESSION_REVIEW_ROUNDS} this session.`;
-        const running = run.reviewers.filter((slot) => slot.status === "running");
+        const running = view.reviewers.filter((slot) => slot.status === "running");
         if (running.length) {
           return text(
             [
-              renderRunSummary(run),
+              renderRunSummary(view),
               budget,
               ...running.map((slot) => reviewerProgressLine(slot.lens, slot.startedAt, slot.paneId)),
               `No report yet. ${RETRIGGER_CONTRACT}`,
             ].join("\n"),
-            { runId: run.id, status: run.status, running: running.map((slot) => slot.lens) },
+            { runId: view.id, status: view.status, running: running.map((slot) => slot.lens) },
           );
         }
         const fingerprint = JSON.stringify([
-          run.status,
-          run.readiness.ready,
-          run.reviewers.map((slot) => [slot.lens, slot.status]),
-          Object.keys(run.reports),
+          view.status,
+          view.readiness.ready,
+          view.reviewers.map((slot) => [slot.lens, slot.status]),
+          Object.keys(view.reports),
         ]);
-        if (notePoll(ctx.sessionManager.getSessionId(), `status:${run.id}`, fingerprint)) {
-          return text(`No new events since your last check. ${RETRIGGER_CONTRACT}`, { error: "no-new-events", runId: run.id });
+        if (notePoll(ctx.sessionManager.getSessionId(), `status:${view.id}`, fingerprint)) {
+          return text(`No new events since your last check. ${RETRIGGER_CONTRACT}`, { error: "no-new-events", runId: view.id });
         }
         return text(
-          renderRunSummary(run) + `\n${budget}` + (stale ? `\nStale: ${stale}. Start a new review of the revised document.` : ""),
-          { runId: run.id, status: run.status, ready: run.readiness.ready, stale: stale ?? null },
+          renderRunSummary(view) + `\n${budget}` + (stale ? `\nStale: ${stale}. Start a new review of the revised document.` : ""),
+          { runId: view.id, status: view.status, ready: view.readiness.ready, stale: stale ?? null },
         );
       }
 
@@ -3430,12 +3480,14 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
 
       // collect
       const dir = reviewReportDir(ctx, run.id);
+      const reconciled = reconcileReviewRun(run, dir);
       const problems: string[] = [];
-      for (const slot of run.reviewers) {
+      for (const slot of reconciled.reviewers) {
         if (slot.status === "submitted") continue;
         const file = join(dir, `${slot.lens}.json`);
         if (!existsSync(file)) {
           if (slot.status === "running") problems.push(`${slot.lens}: no report yet`);
+          else if (slot.status === "failed" && slot.reason) problems.push(`${slot.lens}: ${slot.reason}`);
           continue;
         }
         let raw: unknown;
@@ -3456,19 +3508,19 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           problems.push(`${slot.lens}: ${slot.reason}`);
           continue;
         }
-        run.reports[slot.lens] = parsed.report;
+        reconciled.reports[slot.lens] = parsed.report;
         slot.status = "submitted";
         slot.reportPath = file;
         slot.reason = undefined;
         slot.updatedAt = new Date(now()).toISOString();
       }
 
-      const allIn = run.reviewers.every((slot) => slot.status === "submitted");
+      const allIn = reconciled.reviewers.every((slot) => slot.status === "submitted");
       const next = allIn
-        ? settleReadiness({ ...run, status: "collected" }, { now: new Date(now()) })
+        ? settleReadiness({ ...reconciled, status: "collected" }, { now: new Date(now()) })
         : {
-            ...run,
-            readiness: { ...evaluateReadiness(run, { now: new Date(now()) }), decidedAt: new Date(now()).toISOString() },
+            ...reconciled,
+            readiness: { ...evaluateReadiness(reconciled, { now: new Date(now()) }), decidedAt: new Date(now()).toISOString() },
             updatedAt: new Date(now()).toISOString(),
           };
       specReviews.set(next.id, next);

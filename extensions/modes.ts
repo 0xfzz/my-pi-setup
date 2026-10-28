@@ -9,7 +9,7 @@ import { INPUT_MODE_CONTEXT_TYPE, inputModeGuidance, isPlanTool, missingPlanTool
 import { declaredSuperviseTools, isSupervisorTool, superviseShellCommand, SUPERVISOR_MODE_GUIDANCE, SUPERVISOR_MODE_TYPE, superviseModeFromBranch } from "../lib/supervise-mode.ts";
 import { isControlPlanePath } from "../lib/orchestrator/control-plane.ts";
 import { reconcileLoadout, switchStateFromBranch } from "../lib/delegation-switch.ts";
-import { RETIRED_V1_TOOLS, isRetiredDelegationTool, stripRetiredTools } from "../lib/delegation-tools.ts";
+import { describeRetiredTools, isRetiredDelegationTool, stripRetiredTools } from "../lib/delegation-tools.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardMode } from "../lib/dashboard/integration.ts";
 
 /** Derive from the UI contract so this does not depend on a re-exported alias. */
@@ -468,7 +468,7 @@ export default function modesExtension(pi: ExtensionAPI) {
       !(message.role === "custom" && message.customType === INPUT_MODE_CONTEXT_TYPE));
     messages.push({
       role: "custom", customType: INPUT_MODE_CONTEXT_TYPE, display: false, timestamp: Date.now(),
-      content: `<current-input-mode>\nLive mode for this request, derived from the selected branch. This supersedes historical mode instructions, assistant statements and compaction summaries; it does not grant permissions beyond the current tools and normal safety rules.\n${inputModeGuidance(registry.current)}\nDelegation tools use the orch_* namespace only. Removed and unavailable: ${[...RETIRED_V1_TOOLS].join(", ")}.\n</current-input-mode>`,
+      content: `<current-input-mode>\nLive mode for this request, derived from the selected branch. This supersedes historical mode instructions, assistant statements and compaction summaries; it does not grant permissions beyond the current tools and normal safety rules.\n${inputModeGuidance(registry.current)}\nDelegation tools use the orch_* namespace only. Removed and unavailable: ${describeRetiredTools()}.\n</current-input-mode>`,
     });
     return { messages };
   });

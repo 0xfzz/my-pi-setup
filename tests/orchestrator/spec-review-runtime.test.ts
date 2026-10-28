@@ -9,6 +9,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import { Value } from "typebox/value";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1156,6 +1157,51 @@ test("a missing-context report is unblocked by a disposition, not by a fresh ses
     });
     assert.equal(resolved.details.ready, true, resolved.content[0].text);
     assert.match(resolved.content[0].text, /READY/);
+  } finally {
+    await h.detach();
+  }
+});
+
+test("a chunk report may omit the top-level findings array (the member blocks carry them)", async () => {
+  const h = await harness();
+  try {
+    const submit = h.tools.get("orch_spec_review_submit");
+    assert.ok(submit, "the submit tool is registered");
+    const memberOnly = {
+      summary: "One member, one blocker-shaped gap.",
+      members: [{
+        memberId: "core",
+        coverage: ["goal"],
+        findings: [{ severity: "major", location: "Goal", discrepancy: "thin", rationale: "cannot implement" }],
+      }],
+    };
+    assert.equal(
+      Value.Check(submit.parameters, memberOnly),
+      true,
+      "a member/chunk report without a top-level findings[] must validate: the reviewer's first submit used to be rejected for it",
+    );
+    assert.equal(Value.Check(submit.parameters, { summary: "clean", findings: [] }), true, "the document shape still validates");
+    assert.equal(Value.Check(submit.parameters, { summary: "no findings at all" }), true, "findings is optional");
+  } finally {
+    await h.detach();
+  }
+});
+
+test("a document reviewer that ends without filing is reported, not awaited forever", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    saveDesign(h, "retry-design", "# Retry\n\nRetry with exponential backoff.");
+    const started = await h.call("orch_spec_review", { action: "start", targetArtifactId: "retry-design" });
+    const runId = started.details.runId;
+    const run = specReviews.get(runId)!;
+    registry.updateStatus(run.reviewers[0]!.sessionFile!, "closed");
+
+    const collected = await h.call("orch_spec_review", { action: "collect", runId });
+    const body = collected.content[0].text;
+    assert.match(body, /reviewer finished without submitting a report/);
+    assert.doesNotMatch(body, /no report yet/, "a dead reviewer is a failure, not a pending one");
   } finally {
     await h.detach();
   }
