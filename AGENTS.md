@@ -14,6 +14,8 @@ covered by that safety net.
   explicitly discard every change. A dirty tree at hand-off is unfinished work.
 - **Verify before committing.** `npm test` and `npm run typecheck` must pass (the
   two documented TUI clipping failures are the only accepted baseline failures).
+  The pre-commit hook also runs `oxlint` on the staged TypeScript files — see
+  [Smell gate](#smell-gate).
 - **Use a scoped conventional message** so history stays greppable:
   `feat(area): …`, `fix(area): …`, `refactor(area): …`, `test: …`, `docs: …`.
   Explain the failure mode in the body when the change is a bug fix.
@@ -35,3 +37,25 @@ npm test
 The only accepted baseline failures are the two `native regular/fullscreen inline
 custom UI reproduces clipping…` tests. Anything else is a new failure and must be
 fixed before the commit.
+
+## Smell gate
+
+A pre-commit hook runs `oxlint` on the staged TypeScript files (`lint-staged`,
+installed by `simple-git-hooks`). The hook is a ratchet: it only sees files you
+are already touching, so fix their warnings instead of bypassing it. Do not add
+new unused imports, variables, functions or exports.
+
+```sh
+npm run lint:smell   # oxlint, whole repo (reports the existing warnings)
+npm run lint:dead    # knip: unused files, exports and dependencies
+npm run lint:dup     # jscpd: duplicated blocks above 12%
+npm run smell        # dead + dup
+```
+
+`knip` and `jscpd` are deliberately not in the hook yet: the tree still carries a
+dead-export backlog, and a pre-push gate would block every push until it is
+cleared. Run `npm run lint:dead` when a change adds, moves or removes exports or
+files, and clear whatever you introduce.
+
+`git commit --no-verify` is for a clearly named WIP commit only. Explain why in
+the commit body, and remove the bypass before the work is finished.
