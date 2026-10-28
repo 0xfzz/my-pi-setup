@@ -9,12 +9,40 @@ the transcript says nothing unusual happened. This extension adds the missing
 question:
 
 ```text
-inside the workspace   → allowed, no dialog
-outside the workspace  → asks; the answer is remembered per branch
-explicitly denied      → blocked, even under yolo
+inside the workspace      → allowed, no dialog
+a sensitive read          → asks (keys, cloud credentials, dotenv files)
+outside, ordinary         → reads are open; writes ask
+explicitly denied         → blocked, even under yolo
+a delegated child         → never asks the user; escalates to its parent
 ```
 
 It is a **policy, not a sandbox**. Read [Limits](#limits) before relying on it.
+
+## Quiet by construction
+
+A question must be a boundary escape, never a parsing accident. The matcher is
+therefore narrow on purpose:
+
+- **A shell path comes from an argv slot, not from a slash.** `git -C <dir>`,
+  `npm --prefix <dir>`, `tar -f <file>`, `cp` operands and redirection targets are
+  path slots because the binary says so. `origin/main`, `HEAD:src/x`,
+  `ghcr.io/a/b:1`, `2024/01/02` and a `grep -E 'a/b'` pattern are data.
+- **An operand counts when it is path-shaped or actually exists.** A token that
+  resolves nowhere is not a claim.
+- **Posture is per claim**, taken from the segment's binary and sub-command:
+  `sed -i` writes, `sed` reads, `git add` writes, `git status` reads. Only a
+  command we cannot classify is judged as a write would be.
+- **Device, `/proc` and scratch paths never ask.** `cmd 2>/dev/null` is not a
+  boundary escape. (Exception: a workspace that itself lives in the temp root
+  keeps its boundary, because there a sibling *is* an escape.)
+- **A sensitive read always asks**: `~/.ssh`, `~/.aws`, `~/.config/gh`,
+  `~/.config/gcloud`, `~/.kube/config`, `~/.netrc`, `~/.pgpass`,
+  `~/.git-credentials`, `.env*`, `*.pem`, `*.key`, `*.p12`, `*.kdbx`, `id_rsa`.
+  This is the shape Codex and Claude Code's sandbox take — reads free, dangerous
+  reads named — and it is why `readExternal: "allow"` does not mean "no read gate".
+
+`/scope log --stats` counts what actually asked, grouped by tool and by the paths
+that were asked about most; that is the input a grant or a rule needs.
 
 ## The question
 
@@ -44,19 +72,56 @@ It is a **policy, not a sandbox**. Read [Limits](#limits) before relying on it.
   answer re-evaluates the calls waiting behind it, so five reads in one outside
   directory cost one question.
 
+## Wildcard folders
+
+A root may be a glob, which is how "these folders are mine" is said once:
+
+```json
+{
+  "roots": [{ "path": "~/projects/*", "access": "rw" }, { "path": "../reference/*", "access": "ro" }]
+}
+```
+
+Safety is decided by the **literal prefix**, which a `*` can never escape: a
+pattern whose prefix is `/`, `$HOME`, a system tree, or a directory containing the
+workspace is refused with a problem line rather than stored, and a pattern whose
+prefix does not exist says so instead of granting silence. Specificity is that
+same literal prefix, so `~/projects/*` beats `~/projects`, and a nested read-only
+root still wins over a broad read-write one.
+
 ## `/scope`
 
 | Command | Effect |
 |---|---|
 | `/scope` or `/scope status` | Roots with access and provenance, the three defaults, rule count, config files, yolo state |
-| `/scope allow <path> [--ro\|--rw] [--project\|--global]` | Add a root for this session, the project, or every project |
+| `/scope allow <path> [--ro\|--rw] [--project\|--global]` | Add a root (a glob is allowed) for this session, the project, or every project |
 | `/scope deny <path> [--project\|--global]` | Deny the path and everything under it (writes `dir` and `dir/*`) |
 | `/scope remove <path>` | Drop a session root |
 | `/scope reset` | Drop session roots and rules; config and the workspace root stay |
 | `/scope rules` | The effective rule table, last match wins, with provenance |
 | `/scope test <path>` | Dry run: prints the decision and the rule or root that produced it |
-| `/scope log [n]` | Recent decisions: auto-approved, asked, blocked |
+| `/scope log [n] [--stats]` | Recent decisions, or a summary by tool and asked-about path |
 | `/scope yolo [on\|off\|all\|status] [--persist]` | Auto-approve the remaining questions |
+
+## Delegated children
+
+A child **inherits configuration, not approvals**. A fork-seeded child carries
+its parent's branch verbatim, so its `agent-scope:v1` snapshot is ignored: it
+starts from the workspace root plus the project and global config, with no
+parent session roots, no parent rules and no inherited yolo arm.
+
+When a child hits the boundary it does not open a dialog in a pane nobody is
+watching, and it does not silently inherit the parent's answer. It is blocked
+with the ladder spelled out, asks its parent with `agent_ping`, and applies the
+reply with `scope_answer`:
+
+```text
+scope_answer({ decision: "allow-once" | "allow-folder" | "deny", path: "/srv/data", access: "ro" })
+```
+
+The decision lands on the child's own branch and in `/scope log` (`source:
+parent`), so a retry is judged by the same policy as everything else, a denial
+cannot be re-asked in a loop, and a fork cannot inherit either.
 
 ## `/scope yolo`
 
@@ -76,10 +141,6 @@ a persisted arm is announced again on reload. Everything it approved lands in
 `/scope log`, and a `deny` hit while armed is reported to the user, because that
 is exactly where the assumption "yolo means anything goes" is wrong.
 
-`yolo` also does not propagate to delegated children: a spawn gives the child
-the parent's roots and no permission to ask, so a worker cannot inherit an
-approval the user gave for the parent's own reading.
-
 ## Configuration
 
 `.pi/scope.json` in the workspace, or `~/.pi/agent/scope.json` globally. Project
@@ -89,33 +150,41 @@ values override global ones; branch grants are layered on top.
 {
   "roots": [
     "../shared-docs",
-    { "path": "~/scratch", "access": "ro" }
+    { "path": "~/scratch", "access": "ro" },
+    { "path": "~/projects/*", "access": "rw" }
   ],
   "defaults": { "external": "ask", "readExternal": "allow", "unknown": "ask" },
   "rules": [
     { "action": "read", "resource": "**/.env*", "effect": "deny" },
-    { "action": "bash", "resource": "git push *", "effect": "deny" }
+    { "action": "bash", "resource": "git push *", "effect": "deny" },
+    { "action": "mcp__fs", "resource": "*", "effect": "allow" }
   ],
   "mcp": { "mcp__fs": { "pathField": "path" } }
 }
 ```
 
 - `roots` accept strings (`rw`) or `{ path, access }`; relative paths resolve
-  against the workspace, `~` against your home directory.
+  against the workspace, `~` against your home directory. A `*` makes it a
+  wildcard root (see above).
 - `defaults.external` is the answer for a **write** outside every root (`ask` by
-  default). `defaults.readExternal` is the answer for a **read** outside every
-  root (`allow` by default — Claude Code, Codex CLI and Cline all gate writes and
-  leave reads open; a gate that asks about `cat /etc/os-release` is one people
-  switch off). `defaults.unknown` is the answer for a tool whose inputs this
-  extension cannot map — a new MCP server, a dispatcher (`ask` by default;
-  choose `deny` for a strict setup).
+  default). `defaults.readExternal` is the answer for an ordinary **read**
+  outside every root (`allow` by default; a sensitive read still asks, and
+  `"ask"` here makes every outside read prompt). `defaults.unknown` is the answer
+  for a tool whose inputs this extension cannot map — a new MCP server, a
+  dispatcher (`ask` by default; choose `deny` for a strict setup).
 - `rules` are `{ action, resource, effect }`, matched with opencode's wildcards
   (`*` any run of characters, `?` exactly one) and **last match wins**. Put the
-  catch-all first and exceptions after it.
+  catch-all first and exceptions after it. A leading `~`/`$HOME` in `resource`
+  expands. A rule keyed on a tool name (`{"action":"mcp__fs","resource":"*",
+  "effect":"allow"}`) is how a tool that declares no paths is silenced for good.
 - `mcp` maps a server's path field so its calls can be judged instead of asking
   once per call.
 - `yolo` is deliberately **not** configurable: a file that sets it is reported
   and ignored, so arming always takes a keystroke.
+
+Migrating an older file: nothing has to change. A root ending in `*` used to be
+accepted and silently inert; it now works, and a pattern that could re-expose
+`$HOME` is refused with a message rather than ignored.
 
 ## What is remembered where
 
@@ -123,6 +192,7 @@ values override global ones; branch grants are layered on top.
 |---|---|---|---|---|
 | Allow once | memory | no | no | no |
 | Allow this folder | branch snapshot | yes | only in the branch that has it | no |
+| `scope_answer` (child) | branch snapshot | yes | no | no |
 | `/scope allow --project` | `.pi/scope.json` | yes | yes | yes |
 | `/scope allow --global` | `~/.pi/agent/scope.json` | yes | yes | yes |
 | `/scope yolo --persist` | branch snapshot | yes | only in that branch | no |
@@ -130,20 +200,20 @@ values override global ones; branch grants are layered on top.
 Branch records are full snapshots, so replaying them is idempotent and a grant
 cannot leak into a fork that never saw the question (opencode #30779). A stored
 grant that would re-expose `$HOME`, `/`, or a directory containing the workspace
-is refused with a warning when the session loads.
+is refused with a warning when the session loads, and a seeded child ignores the
+whole inherited snapshot.
 
 ## Where the gate sits
 
 - `read`, `write`, `edit` claim their `path`; `grep`, `find`, `ls` and the
   fff equivalents claim their search directory (cwd by default).
-- `bash` is tokenized: absolute paths, `~`, `./`, `../`, anything with a
-  separator, and redirection targets are claims. A bare relative filename is
-  not, because it resolves inside the workspace. Read-only-ness reuses the
-  existing `readOnlyShellCommand` judgement, so `git -C ../repo status` asks
-  for nothing while `rm -rf ../build` is a write.
+- `bash` is split into `|`/`&&`/`;` segments and each one is judged by its binary:
+  operands and path-valued flags are claims, `>` writes, `<` reads. A bare
+  relative filename is not a claim, because it resolves inside the workspace.
 - A command a tokenizer cannot model (`$(…)`, backticks, `<(…)`, `bash -c`,
-  `xargs`, `find -exec`) is *unknown*: it asks once per call and cannot be
-  covered by a folder grant.
+  `xargs`, `find -exec`, a heredoc fed to an interpreter) is **opaque**: it asks
+  once per call, the message names the construct, and a rule for the tool is the
+  way to stop asking.
 - A **heredoc is data, not code**: `git commit -F - <<EOF` keeps working. It is
   opaque only when an interpreter reads the body (`python3 <<EOF`), because then
   the body is a program.
@@ -153,6 +223,18 @@ is refused with a warning when the session loads.
 - Read-only roots allow reads and ask before a write; `--ro` is how you grant
   "look, don't touch".
 
+## Differences from opencode
+
+Deliberate, and each one is a failure we did not want to import:
+
+| | opencode | here |
+|---|---|---|
+| Read-only trees | none; per-action rules | typed `ro` roots |
+| Saved pattern | tool-chosen, can widen to the VCS root (#52715) | printed literally before it is saved |
+| Grants | project-scoped rows, leak into forks (#30779) | branch snapshots; forks only keep their own |
+| Unanalyzable command | scanner error | opaque, named, coverable by a rule |
+| Sibling git worktree | inside the project | outside: it asks, and `/scope status` says why |
+
 ## Limits
 
 This raises the cost of an accident. It does not contain a determined escape:
@@ -161,7 +243,7 @@ This raises the cost of an accident. It does not contain a determined escape:
   the process's permissions. Containers/VMs remain the only real boundary — see
   [Run Pi safely](../node_modules/@earendil-works/pi-coding-agent/docs/security.md).
 - `bash` can leave the workspace in ways a tokenizer cannot see: `bash -c`,
-  `find -exec`, `git -C`, interpreters, subshells. Those become *unknown* when
+  `find -exec`, `git -C`, interpreters, subshells. Those become *opaque* when
   they are recognizable; the rest is a heuristic. This is why the real fix for a
   strict setup is an OS sandbox, not a better parser — see [Limits](#limits).
 - A symlinked ancestor is resolved with `realpath`, so `link -> /etc` is judged
@@ -172,14 +254,16 @@ This raises the cost of an accident. It does not contain a determined escape:
 
 ## Verification
 
-`tests/scope-glob|paths|policy.test.ts` cover wildcard and last-match semantics,
-`~`/`..`/symlink classification and the narrowest-grant rules.
-`tests/scope-tool-paths.test.ts` covers the tool table, bash extraction and the
-unknown cases. `tests/scope-ask.test.ts` covers the dialog's keys, the literal
-glob row and narrow widths. `tests/scope-gate.test.ts` covers the queue, allow
-once, folder grants covering queued calls, deny, rule answers and fail-closed
-dialogs. `tests/scope-state.test.ts` covers config merge, broken files, refused
-stored grants and snapshot replay. `tests/scope-command.test.ts` and
-`tests/scope-audit.test.ts` cover parsing, reporting and the bounded log.
-`tests/scope-runtime.test.ts` boots the extension against a fake Pi and checks
-the wired behaviour end to end.
+`tests/scope-glob.test.ts` and `tests/scope-paths.test.ts` cover wildcard and
+last-match semantics, `~`/`..`/symlink classification, wildcard roots and the
+narrowest-grant rules. `tests/scope-tool-paths.test.ts` covers the argv-slot
+table, posture and the opaque cases. `tests/scope-policy.test.ts` covers the
+decision order, special paths, sensitive reads and rule-silenced tools.
+`tests/scope-ask.test.ts` covers the dialog's keys, the literal glob row and
+narrow widths. `tests/scope-gate.test.ts` covers the queue, allow once, folder
+grants covering queued calls, deny, rule answers and fail-closed dialogs.
+`tests/scope-state.test.ts` covers config merge, wildcard validation, `~`
+expansion in rules, broken files, refused stored grants and snapshot replay.
+`tests/scope-command.test.ts` and `tests/scope-audit.test.ts` cover parsing,
+reporting, stats and the bounded log. `tests/scope-runtime.test.ts` boots the
+extension against a fake Pi and checks the wired behaviour end to end.
