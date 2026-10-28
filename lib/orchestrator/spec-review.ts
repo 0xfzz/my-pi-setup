@@ -153,7 +153,12 @@ export interface ParseResult {
 }
 
 /** Coerce one untrusted finding. Ids are synthesised only when absent. */
-function parseFinding(raw: any, lens: ReviewLens, index: number): { finding?: ReviewFinding; problem?: string } {
+export function parseFindingEntry(
+  raw: any,
+  idPrefix: string,
+  index: number,
+  options: { memberId?: string; lens?: ReviewFinding["lens"] } = {},
+): { finding?: ReviewFinding; problem?: string } {
   if (!raw || typeof raw !== "object") return { problem: `finding ${index + 1} is not an object` };
   const severity = String(raw.severity ?? "").toLowerCase();
   if (!(SEVERITIES as readonly string[]).includes(severity)) {
@@ -165,6 +170,15 @@ function parseFinding(raw: any, lens: ReviewLens, index: number): { finding?: Re
   if (!location) return { problem: `finding ${index + 1} has no location` };
   if (!discrepancy) return { problem: `finding ${index + 1} has no discrepancy` };
   if (!rationale) return { problem: `finding ${index + 1} has no rationale` };
+  // A finding belongs to the block that contains it. A payload cannot move it to
+  // a sibling member by claiming a different memberId.
+  const memberId = options.memberId
+    ?? (typeof raw.memberId === "string" && raw.memberId.trim() ? raw.memberId.trim() : undefined);
+  if (options.memberId && typeof raw.memberId === "string" && raw.memberId.trim() && raw.memberId.trim() !== options.memberId) {
+    return {
+      problem: `finding ${index + 1} names member "${raw.memberId.trim()}" inside the "${options.memberId}" block`,
+    };
+  }
   const references = Array.isArray(raw.references)
     ? raw.references.filter((value: unknown): value is string => typeof value === "string" && value.trim() !== "")
     : undefined;
@@ -174,10 +188,10 @@ function parseFinding(raw: any, lens: ReviewLens, index: number): { finding?: Re
   }
   return {
     finding: {
-      ...(typeof raw.memberId === "string" && raw.memberId.trim() ? { memberId: raw.memberId.trim() } : {}),
+      ...(memberId ? { memberId } : {}),
       ...(raw.patch ? { patch: { oldText: raw.patch.oldText, newText: raw.patch.newText } } : {}),
-      id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim().slice(0, 80) : `F-${lens}-${index + 1}`,
-      lens,
+      id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim().slice(0, 80) : `F-${idPrefix}-${index + 1}`,
+      lens: options.lens ?? (typeof raw.lens === "string" && raw.lens.trim() ? raw.lens.trim() : "gate"),
       severity: severity as Severity,
       location,
       discrepancy,
@@ -227,7 +241,7 @@ export function parseReviewerReport(
   if (!Array.isArray(value.findings)) problems.push("report has no findings array");
   const findings: ReviewFinding[] = [];
   rawFindings.forEach((entry: any, index: number) => {
-    const parsed = parseFinding(entry, expected.lens, index);
+    const parsed = parseFindingEntry(entry, expected.lens, index, { lens: expected.lens });
     if (parsed.problem) problems.push(parsed.problem);
     else if (parsed.finding) findings.push(parsed.finding);
   });
