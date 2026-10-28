@@ -41,7 +41,13 @@ import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { DesignRef } from "./spec-review.ts";
+
+/** What a reviewed design pinned: the run, its target hash, and an optional member. */
+export interface DesignRef {
+  runId: string;
+  targetHash: string;
+  memberId?: string;
+}
 
 export class HandoffError extends Error {}
 
