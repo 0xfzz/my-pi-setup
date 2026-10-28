@@ -302,6 +302,15 @@ export interface Disposition {
   userConfirmed?: boolean;
   /** A replayable reviewer-authored patch closed this finding without another reader. */
   patched?: boolean;
+  /**
+   * The member content before and after the orchestrator's own fix.
+   *
+   * `afterHash` is what makes a `fix` settle: readiness only accepts it when it
+   * equals the member's current content, so "marked fixed" without an applied
+   * edit stays open. Absent for accepted/contested findings.
+   */
+  beforeHash?: string;
+  afterHash?: string;
 }
 
 export type ReviewStatus = "collecting" | "collected" | "ready" | "blocked" | "cancelled";
