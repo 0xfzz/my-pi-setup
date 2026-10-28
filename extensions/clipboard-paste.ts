@@ -25,6 +25,7 @@ import {
   type ClipboardRead,
   type ClipboardRun,
 } from "../lib/clipboard.ts";
+import { paintPasteMarkers } from "../lib/paste-marker.ts";
 import { isSubagentChildSession } from "../lib/subagent-context.ts";
 
 export type PasteOutcome = "pasted" | "empty" | "delegated";
@@ -34,6 +35,12 @@ export interface PasteDeps {
   notify: (message: string, level: "warning" | "info") => void;
   /** Persist an image and return the path that will be inserted. */
   writeImage?: (image: NonNullable<ClipboardRead["image"]>) => string;
+  /**
+   * Deliver text the way the terminal does — as a bracketed paste — so the
+   * editor keeps its `[paste #N …]` collapse, undo snapshot and pi-paster's
+   * `[#image N]` conversion. Falls back to inserting literally.
+   */
+  pasteText?: (text: string) => void;
   platform?: NodeJS.Platform;
 }
 
@@ -64,7 +71,12 @@ export async function insertClipboard(
     read = undefined;
   }
   const insert = (text: string) => {
-    if (editor.insertTextAtCursor) editor.insertTextAtCursor(text);
+    // A literal insert bypasses the editor's paste handling: a 400-line paste
+    // floods the buffer and the `[paste #N]` marker (the "placeholder") never
+    // appears. Forwarding the same bracketed sequence a terminal sends keeps
+    // that behaviour, including the submit-time expansion.
+    if (deps.pasteText) deps.pasteText(text);
+    else if (editor.insertTextAtCursor) editor.insertTextAtCursor(text);
     else editor.insertText?.(text);
   };
 
@@ -136,6 +148,15 @@ export default function clipboardPaste(pi: ExtensionAPI) {
     installedEditor = (tui, theme, keybindings) => {
       const editor = base?.(tui, theme, keybindings) ?? new CustomEditor(tui, theme, keybindings);
       const handleBaseInput = editor.handleInput.bind(editor);
+      const deliver = (text: string) => handleBaseInput(`\x1b[200~${text}\x1b[201~`);
+      // Paint `[paste #N …]` / `[#image N]` so they read as chips. The theme is
+      // the app theme (EditorTheme has no background tokens).
+      const paint = (text: string) => {
+        const theme = context?.ui.theme as { bg?: (token: string, value: string) => string } | undefined;
+        return typeof theme?.bg === "function" ? theme.bg("customMessageBg", text) : text;
+      };
+      const baseRender = editor.render.bind(editor);
+      editor.render = (width: number) => paintPasteMarkers(baseRender(width), paint);
       editor.handleInput = (data: string) => {
         // Respect a user remap of the paste action; fall back to the default key
         // when the keybindings manager is not available (tests, RPC).
@@ -146,6 +167,7 @@ export default function clipboardPaste(pi: ExtensionAPI) {
         void insertClipboard(editor, {
           read: readSystemClipboard,
           notify: (message, level) => context?.ui.notify(message, level),
+          pasteText: deliver,
         }).then(outcome => {
           // macOS/Windows keep pi's own paste, which handles Finder file copies.
           if (outcome === "delegated") (editor as { onPasteImage?: () => void }).onPasteImage?.();
@@ -156,6 +178,24 @@ export default function clipboardPaste(pi: ExtensionAPI) {
     };
     ctx.ui.setEditorComponent(installedEditor);
   };
+
+  pi.registerCommand?.("paste-doctor", {
+    description: "Diagnose clipboard paste: which backends answer and what the clipboard offers",
+    handler: async (_args: string, ctx: ExtensionContext) => {
+      const read = await readSystemClipboard();
+      const env = process.env;
+      const lines = [
+        `platform: ${process.platform}`,
+        `WAYLAND_DISPLAY=${env.WAYLAND_DISPLAY ?? "-"} DISPLAY=${env.DISPLAY ?? "-"} TMUX=${env.TMUX ? "yes" : "no"}`,
+      ];
+      if (read?.files?.length) lines.push(`clipboard: files ${read.files.slice(0, 3).join(", ")}`);
+      else if (read?.image) lines.push(`clipboard: image ${read.image.mimeType} (${read.image.bytes.length} bytes)`);
+      else if (read?.text) lines.push(`clipboard: text ${JSON.stringify(read.text.slice(0, 60))}`);
+      else lines.push(describeClipboardFailure(read, { terminalPasteKey: "Ctrl+Shift+V" }));
+      lines.push(`tried: ${read?.attempts?.length ? read.attempts.join(" | ") : "no backend ran"}`);
+      ctx.ui.notify(lines.join("\n"), read ? "info" : "warning");
+    },
+  });
 
   pi.on("session_start", (_event, ctx) => apply(ctx));
   pi.on("session_tree", (_event, ctx) => apply(ctx));

@@ -90,3 +90,28 @@ test("an editor without insertTextAtCursor falls back to insertText", async () =
   assert.equal(await insertClipboard(target, h.deps), "pasted");
   assert.deepEqual(inserted, ["hello"]);
 });
+
+test("pasted text is delivered through the editor's paste path, not inserted literally", async () => {
+  // Regression: a literal insert bypasses the editor's paste handling, so a
+  // 400-line paste never collapsed into the `[paste #N +lines]` marker.
+  const target = editor();
+  const delivered: string[] = [];
+  const h = deps({ text: "line\n" + "x\n".repeat(40), attempts: [] }, {
+    pasteText: (text: string) => delivered.push(text),
+  });
+  assert.equal(await insertClipboard(target, h.deps), "pasted");
+  assert.deepEqual(target.inserted, [], "nothing is inserted behind the editor's back");
+  assert.equal(delivered.length, 1);
+  assert.match(delivered[0]!, /^line/);
+});
+
+test("image paths are pasted through the editor too, so pi-paster can claim them", async () => {
+  const target = editor();
+  const delivered: string[] = [];
+  const h = deps({ image: { bytes: Buffer.from("png"), mimeType: "image/png" }, attempts: [] }, {
+    pasteText: (text: string) => delivered.push(text),
+  });
+  assert.equal(await insertClipboard(target, h.deps), "pasted");
+  assert.deepEqual(delivered, ["/tmp/clip.png"]);
+  assert.deepEqual(target.inserted, []);
+});

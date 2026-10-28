@@ -56,6 +56,24 @@ through the reader in `lib/clipboard.ts`:
 Ordering inside a backend matters: file paths (`text/uri-list`) win over images,
 and images win over text, because a path is what the model can act on.
 
+Pasted text is delivered as a bracketed paste rather than inserted literally, so
+Pi keeps its own paste behaviour: a paste over 10 lines (or 1000 characters) is
+stored and collapsed into a chip — `[paste #1 +40 lines]` — instead of flooding
+the editor, and pi-paster can still turn image paths into `[#image 1]`.
+`lib/paste-marker.ts` paints both chip shapes with the theme background
+(`customMessageBg`), so they read as objects rather than as text the model was
+asked to look at. Widths are unchanged, so the layout cannot shift.
+
+`/paste-doctor` prints what the reader sees, which is the fastest way to tell a
+missing helper from an empty clipboard:
+
+```text
+platform: linux
+WAYLAND_DISPLAY=wayland-0 DISPLAY=:0 TMUX=no
+clipboard: text "Pertama Check hex dari foto…"
+tried: wl-paste --no-newline --type text/uri-list | wl-paste --no-newline …
+```
+
 When nothing is readable, the extension **says so** instead of doing nothing:
 
 ```text
@@ -86,7 +104,8 @@ Install wl-clipboard or xclip, or paste with Ctrl+Shift+V (your terminal's own p
 
 ## Verification
 
-`tests/clipboard-reader.test.ts` covers backend order, socket discovery,
+`tests/paste-marker.test.ts` covers chip detection, painting around existing
+ANSI, and the width invariant. `tests/clipboard-reader.test.ts` covers backend order, socket discovery,
 explicit X11 targets, URI-list parsing, image-only clipboards, helper failures
 and the platform guard. `tests/clipboard-paste.test.ts` covers insertion of
 text, file paths and images, the warning on an empty clipboard, a reader that
