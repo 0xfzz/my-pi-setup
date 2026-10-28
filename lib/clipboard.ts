@@ -53,6 +53,34 @@ export interface ClipboardRead {
 
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"] as const;
 
+/**
+ * Identify an image by its magic number.
+ *
+ * The clipboard often offers *only* an image, and `wl-paste` without `--type`
+ * returns the first offered type — the raw PNG bytes. Decoding those as UTF-8
+ * put a screenful of binary into the prompt instead of an attachment, so every
+ * read is sniffed before it can be treated as text.
+ */
+export function sniffImage(bytes: Buffer): string | undefined {
+  const at = (offset: number, length: number) => bytes.toString("latin1", offset, offset + length);
+  if (bytes.length >= 4 && bytes[0] === 0x89 && at(1, 3) === "PNG") return "image/png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 4 && at(0, 4) === "GIF8") return "image/gif";
+  if (bytes.length >= 12 && at(0, 4) === "RIFF" && at(8, 4) === "WEBP") return "image/webp";
+  return undefined;
+}
+
+/** Text, not bytes that merely happen to decode. */
+export function looksLikeText(bytes: Buffer): boolean {
+  if (!bytes.length) return false;
+  if (sniffImage(bytes)) return false;
+  // A NUL byte in the first block is the cheapest reliable "this is binary" test
+  // and covers the formats we do not special-case.
+  if (bytes.subarray(0, 4096).includes(0)) return false;
+  // U+FFFD means the bytes were not valid UTF-8.
+  return !bytes.toString("utf8").includes("\uFFFD");
+}
+
 /** `wayland-0` from the env, else the first usable socket in the runtime dir. */
 export function waylandDisplay(env: NodeJS.ProcessEnv, exists: (path: string) => boolean, readdir: (path: string) => string[]): string | undefined {
   if (env.WAYLAND_DISPLAY) return env.WAYLAND_DISPLAY;
@@ -146,7 +174,7 @@ export async function readClipboard(options: ReadClipboardOptions): Promise<Clip
     candidates.push(
       ["wl-paste", ["--no-newline", "--type", "text/uri-list"]],
       ["wl-paste", ["--no-newline", "--type", "text/plain;charset=utf-8"]],
-      ["wl-paste", ["--no-newline"]],
+      ["wl-paste", ["--no-newline", "--type", "text/plain"]],
     );
   } else {
     attempts.push("wayland: no socket found");
@@ -175,6 +203,10 @@ export async function readClipboard(options: ReadClipboardOptions): Promise<Clip
       continue;
     }
     if (!result || !result.length) continue;
+    // A backend that hands back an image (or binary) must never become text.
+    const mime = sniffImage(result);
+    if (mime) return { image: { bytes: result, mimeType: mime }, attempts };
+    if (!looksLikeText(result)) continue;
     const value = result.toString("utf8");
     if (args.includes("text/uri-list")) {
       const files = parseUriList(value);
