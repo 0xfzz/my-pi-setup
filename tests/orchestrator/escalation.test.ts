@@ -183,7 +183,7 @@ describe("escalation ladder", () => {
 });
 
 it("a QA defect question carries the ticket lifecycle, not just an answer prompt", async () => {
-  const { escalationGuidance } = await import("../../extensions/orchestrator.ts");
+  const { escalationGuidance } = await import("../../extensions/agent.ts");
   const text = escalationGuidance("esc-1").join("\n");
   assert.match(text, /agent_escalate/);
   assert.match(text, /todo_plan/);
@@ -194,7 +194,7 @@ it("a QA defect question carries the ticket lifecycle, not just an answer prompt
 });
 
 it("a repeated poll with no new events is detectable, and the contract ends the turn", async () => {
-  const { notePoll, resetPollFingerprints, RETRIGGER_CONTRACT } = await import("../../extensions/orchestrator.ts");
+  const { notePoll, resetPollFingerprints, RETRIGGER_CONTRACT } = await import("../../extensions/agent.ts");
   resetPollFingerprints();
   assert.equal(notePoll("session-a", "running", "same"), false, "the first poll is answered");
   assert.equal(notePoll("session-a", "running", "same"), true, "an identical repeat is refused");

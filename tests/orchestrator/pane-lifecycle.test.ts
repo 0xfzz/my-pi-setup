@@ -4,19 +4,16 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import orchestratorExtension, {
+import agentExtension, {
   budgetNotice,
   registry,
-  reviewSeams,
   stallNotice,
   watchdogSeams,
-} from "../../extensions/orchestrator.ts";
+} from "../../extensions/agent.ts";
 
 // The lane check is computed from git in production. These cases are about
 // lifecycle, so they supply an empty change list instead of depending on the
 // repository the suite happens to run in.
-reviewSeams.changedFiles = () => [];
-reviewSeams.diffText = () => "";
 import type { ScopedChild } from "../../lib/orchestrator/scope-registry.ts";
 
 interface Harness {
@@ -83,7 +80,7 @@ function harness(options: {
 
   // The interval timer is not what these tests drive; session_start is emitted
   // explicitly by the tests that need restore/sweep behaviour.
-  orchestratorExtension(pi, {
+  agentExtension(pi, {
     client,
     stream: { watch: () => () => {}, onReconcile: () => () => {} },
     now: options.now ?? (() => 10_000_000),

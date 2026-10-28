@@ -19,7 +19,7 @@
     "extensions": [
       "./extensions/todo.ts",
       "./extensions/ask-user.ts",
-      "./extensions/orchestrator.ts",
+      "./extensions/agent.ts",
       "./extensions/subagent-checkpoints.ts",
       "./extensions/artifacts.ts",
       "./extensions/smart-timeout.ts",

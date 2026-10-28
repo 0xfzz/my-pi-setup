@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import subagentV2 from "../../extensions/orchestrator.ts";
+import subagentV2 from "../../extensions/agent.ts";
 
 test("real Pi loads subagent-v2 with zero extension errors", async () => {
   const dir = await mkdtemp(join(tmpdir(), "sv2-load-"));

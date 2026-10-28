@@ -9,7 +9,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { nextStallStrikes } from "../../extensions/orchestrator.ts";
+import { nextStallStrikes } from "../../extensions/agent.ts";
 
 const base = { previous: 0, unchanged: true, tailAvailable: true, sessionActive: false, cooling: false };
 

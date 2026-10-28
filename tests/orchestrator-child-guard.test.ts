@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import orchestrator, { budgetNotice, registry, stallNotice } from "../extensions/orchestrator.ts";
+import orchestrator, { budgetNotice, registry, stallNotice } from "../extensions/agent.ts";
 import { SUBAGENT_CONTEXT_TYPE } from "../lib/subagent-context.ts";
 
 /**
@@ -122,48 +122,6 @@ const snapshot = (children: any[]) => ({
   reviews: [],
   handoffs: [],
   escalations: [],
-});
-
-test("an invalid spec-only policy fails closed: only reporting tools remain", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "pi-orch-invalid-policy-"));
-  const saved = {
-    policy: process.env.PI_SUBAGENT_REVIEW_POLICY,
-    run: process.env.PI_SUBAGENT_REVIEW_RUN,
-    lens: process.env.PI_SUBAGENT_REVIEW_LENS,
-    target: process.env.PI_SUBAGENT_REVIEW_TARGET,
-    dir: process.env.PI_SUBAGENT_REVIEW_DIR,
-  };
-  process.env.PI_SUBAGENT_REVIEW_POLICY = "spec-only";
-  // Deliberately incomplete: no run, lens, target or report dir.
-  for (const key of ["PI_SUBAGENT_REVIEW_RUN", "PI_SUBAGENT_REVIEW_LENS", "PI_SUBAGENT_REVIEW_TARGET", "PI_SUBAGENT_REVIEW_DIR"]) {
-    delete process.env[key];
-  }
-  try {
-    const f = fixture();
-    const { ctx } = ctxFor(dir, { sessionId: "reviewer-9", branch: forkSeedBranch() });
-
-    const blocked = await f.emit("tool_call", { toolName: "read" }, ctx);
-    assert.equal(blocked.length, 1);
-    assert.equal(blocked[0].block, true);
-    assert.match(blocked[0].reason, /cannot be read in full/);
-
-    // Reporting is the only remaining path: a reviewer with a broken policy must
-    // be able to say so, not silently continue as an ordinary child.
-    assert.deepEqual(await f.emit("tool_call", { toolName: "agent_done" }, ctx), []);
-    assert.deepEqual(await f.emit("tool_call", { toolName: "agent_ping" }, ctx), []);
-  } finally {
-    for (const [key, value] of Object.entries({
-      PI_SUBAGENT_REVIEW_POLICY: saved.policy,
-      PI_SUBAGENT_REVIEW_RUN: saved.run,
-      PI_SUBAGENT_REVIEW_LENS: saved.lens,
-      PI_SUBAGENT_REVIEW_TARGET: saved.target,
-      PI_SUBAGENT_REVIEW_DIR: saved.dir,
-    })) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-    await rm(dir, { recursive: true, force: true });
-  }
 });
 
 test("a delegated child never restores, watches, or writes the orchestrator registry", async () => {

@@ -1,5 +1,5 @@
 /**
- * orchestrator — the orchestrator parent.
+ * agent — ad-hoc delegation parent.
  *
  * Three rules shape this extension, and they are enforced structurally rather
  * than asked for in a prompt:
@@ -25,23 +25,10 @@
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 
-import {
-  HandoffError,
-  buildAdhocTicket,
-  buildChildTicket,
-  buildQaGroupTicket,
-  buildQaTicket,
-  handoffArtifactPayload,
-  leakedSiblingScopes,
-  renderHandoffForChild,
-  sanitizeScope,
-  writeHandoff,
-  type HandoffRecord,
-  type HandoffSpec,
-} from "../lib/orchestrator/handoff.ts";
+import { buildAdhocTicket, sanitizeScope } from "../lib/orchestrator/handoff.ts";
 import {
   ScopeRegistry,
   type CloseReason,
@@ -53,26 +40,25 @@ import {
   saveRegistrySnapshot,
   type PersistedState,
 } from "../lib/orchestrator/registry-persistence.ts";
-import { handoffReceiptFromFile, handoffReceiptProblem } from "../lib/orchestrator/handoff-receipt.ts";
-import { buildPlanStepTicket, buildPlannerTicket, parsePlan, stripRecallFrame, type Plan, type PlanStep } from "../lib/orchestrator/roles.ts";
+import {
+  buildPlanStepTicket,
+  buildPlannerTicket,
+  parsePlan,
+  stripRecallFrame,
+  type Plan,
+  type PlanStep,
+} from "../lib/orchestrator/roles.ts";
 import {
   ESCALATION_TYPE,
   EscalationError,
   EscalationLedger,
 } from "../lib/orchestrator/escalation.ts";
-import { isControlPlanePath } from "../lib/orchestrator/control-plane.ts";
 import {
   deliverSteer,
   INTERRUPT_KEY,
   routeUpdate,
   type SteerResolution,
 } from "../lib/orchestrator/steer-router.ts";
-// Supervise-mode enforcement (tool allowlist, bash narrowing, guidance section) is
-// owned by pi-workflow-extensions/extensions/modes.ts, which installs the
-// `tool_call` guard and the `before_agent_start` prompt section. Importing the
-// policy here too would create a second, silently divergent authority — one that
-// nothing actually applied. v2 supplies the tools; modes.ts is the gate.
-
 import {
   buildLaunchPlan,
   buildResumeLaunchPlan,
@@ -91,27 +77,6 @@ import { loadSubagentSettings, saveSubagentSettings } from "../vendor/pi-herdr-s
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";
 import { isDelegationTool, isRetiredDelegationTool, mayUseDelegationTool } from "../lib/delegation-tools.ts";
 import { CHECKPOINT_TYPE } from "../lib/subagent-state.ts";
-import {
-  artifactFromRecord,
-  artifactSidecarPath,
-  lookupArtifact,
-  recordsFromBranch,
-  sanitizeArtifactId,
-} from "../lib/artifact-state.ts";
-import {
-  checkEvidenceRefs,
-  pathMatchesAnyLane,
-  renderEvidence,
-  type EvidenceRef,
-} from "../lib/orchestrator/evidence.ts";
-import { execFileSync } from "node:child_process";
-import {
-  buildCheckReport,
-  buildReviewPacket,
-  renderCheckReport,
-  renderReviewPacket,
-  verifyCommandProblem,
-} from "../lib/orchestrator/brief.ts";
 import { planModeFromBranch } from "../lib/plan-mode.ts";
 import { readOnlyShellCommand } from "../lib/plan-shell.ts";
 import { ensureRolePrompts, loadRolePrompt, renderRolePromptReport } from "../lib/orchestrator/role-prompts.ts";
@@ -132,14 +97,7 @@ import {
   type ResolvedRoleModel,
   type RoleBinding,
 } from "../lib/orchestrator/role-models.ts";
-import {
-  MAX_ACTIVE_QA,
-  MAX_ACTIVE_WORKERS,
-  planQaGroups,
-  qaLimitRefusal,
-  workerLimitRefusal,
-} from "../lib/orchestrator/qa-groups.ts";
-import { artifactGuardProblem, artifactScopeFor } from "../lib/orchestrator/review-artifact-scope.ts";
+import { MAX_ACTIVE_WORKERS, workerLimitRefusal } from "../lib/orchestrator/qa-groups.ts";
 import { codeMap, codeRead } from "../lib/orchestrator/code-tools.ts";
 import { createExecRunner, runSearch } from "../lib/orchestrator/search-engine.ts";
 import { shellReadCommand } from "../lib/orchestrator/shell-read.ts";
@@ -151,7 +109,6 @@ import {
   capacityProblem,
   childToolsForPurpose,
   currentSpawnDepth,
-  defaultSpawnPurpose,
   depthProblem,
   maxChildren,
   readerPurpose,
@@ -159,109 +116,14 @@ import {
   spawnRefusal,
 } from "../lib/spawn-policy.ts";
 import type { SpawnPurpose } from "../lib/delegation-tools.ts";
-import {
-  SPEC_ONLY_TOOLS,
-  isReviewLens,
-  isSpecOnlyDeniedTool,
-  pathPolicyProblem,
-  readTargets,
-  renderPolicyForReviewer,
-  reviewPolicyFromEnv,
-  reviewPolicyStatus,
-  type ReviewLens,
-} from "../lib/orchestrator/review-policy.ts";
-import {
-  allRunFindings,
-  allRunMissingContext,
-  chunkRunId,
-  evaluateChunkRun,
-  ingestChunkReport,
-  markStatus,
-  memberFor,
-  openChunkRun,
-  recordMemberFix,
-  renderChunkProgress,
-  type ChunkRun,
-} from "../lib/orchestrator/chunk-run.ts";
-import {
-  chunkContentHash,
-  chunkFindings,
-  parseChunkReport,
-  renderChunkTicket,
-  type ChunkMemberPin,
-} from "../lib/orchestrator/report-v2.ts";
-import {
-  planSpecChunks,
-  spawnGateProblem,
-  structuralChanges,
-  type WaveMember,
-} from "../lib/orchestrator/wave.ts";
-import {
-  contractFieldsOf,
-  mergeHandoffDocument,
-  parseHandoffDocument,
-} from "../lib/orchestrator/handoff-document.ts";
-import {
-  allFindings,
-  applyDispositions,
-  effectiveReviewTarget,
-  hashContent,
-  designRefProblem,
-  evaluateReadiness,
-  openReviewRun,
-  parseReviewerReport,
-  pinTarget,
-  renderReviewerTicket,
-  renderRunSummary,
-  settleReadiness,
-  stalenessProblem,
-  type DesignRef,
-  type ReviewFinding,
-  type ReviewRun,
-} from "../lib/orchestrator/spec-review.ts";
-import {
-  criteriaHashOf,
-  describeReceipt,
-  evaluateReceipt,
-  outputDigestOf,
-  treeDigestOf,
-  type CheckReceipt,
-} from "../lib/orchestrator/receipts.ts";
+import { pathPolicyProblem } from "../lib/orchestrator/review-policy.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardState } from "../lib/dashboard/integration.ts";
-import { lintSpec } from "../lib/orchestrator/spec-lint.ts";
-import { applyReviewPatches, type ReviewPatchRevision } from "../lib/orchestrator/review-patches.ts";
-import { amendHandoff } from "../lib/orchestrator/handoff-amendment.ts";
-import { qaSchedulingAdvice } from "../lib/orchestrator/qa-schedule.ts";
 import { projectChildProvenance, projectOrchestrator } from "../lib/dashboard/projection.ts";
 import { displayName as namingDisplayName, givenNameFor, givenNamePart, isHumanName } from "../lib/naming.ts";
 
 /** Shared handles. Exported so tests can assert on real state, not a mock. */
 export const registry = new ScopeRegistry();
 export const escalations = new EscalationLedger();
-export const handoffs = new Map<string, { record: HandoffRecord; path: string }>();
-/**
- * Independent specification reviews, keyed by run id.
- *
- * Lives beside `handoffs` because they answer the same kind of question — "what
- * was agreed for this work unit" — and is persisted with them so a restart does
- * not silently turn an approved design back into an unreviewed one.
- */
-export const specReviews = new Map<string, ReviewRun>();
-/**
- * Split specification reviews: one run per wave, K chunk reviewers, readiness per
- * member. Kept beside `specReviews` because both answer "what has been reviewed?";
- * they differ in unit (a document vs a chunk of specs), not in purpose.
- */
-export const chunkRuns = new Map<string, ChunkRun>();
-/**
- * Check receipts, keyed by receipt id.
- *
- * In memory only by design: a receipt says "this command ran in this tree during
- * this process". Restoring one after a restart would vouch for work the gate no
- * longer has any way to observe, which is exactly the claim a receipt exists to
- * make honestly.
- */
-export const checkReceipts = new Map<string, CheckReceipt>();
 
 /**
  * The reading role a child declared for itself, from the launcher-written env.
@@ -350,89 +212,8 @@ export interface OrchestratorDeps {
  */
 export const watchdogSeams: { tick: (() => Promise<void>) | null } = { tick: null };
 
-/**
- * Review seam: the changed-file list the lane check is computed from.
- *
- * A test cannot safely depend on the repository it runs in, so it supplies the
- * list. In production this is `git status`, and `null` means "could not compute"
- * — the review then says so instead of pretending it verified the lane.
- */
-export const reviewSeams: {
-  changedFiles: ((cwd: string) => string[] | null) | null;
-  /** Unified diff for the review packet; null means "could not compute". */
-  diffText: ((cwd: string) => string | null) | null;
-  /** Runs a verification command. Injected so a test never shells out. */
-  runCommand: ((command: string, cwd: string) => { exit: number; output: string; timedOut?: boolean }) | null;
-} = { changedFiles: null, diffText: null, runCommand: null };
 
-function gitChangedFiles(cwd: string): string[] | null {
-  try {
-    const output = execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const files: string[] = [];
-    for (const line of String(output).split("\n")) {
-      if (!line.trim()) continue;
-      const rest = line.slice(3).trim();
-      const path = rest.includes(" -> ") ? rest.split(" -> ").pop()! : rest;
-      files.push(path.replace(/^"|"$/g, ""));
-    }
-    return files;
-  } catch {
-    // Not a repo, no git, or an unreadable worktree: "unknown", never "clean".
-    return null;
-  }
-}
 
-/**
- * Unified diff for the packet.
- *
- * Bounded at the source: a 20k-line diff would blow the packet budget before the
- * renderer ever saw it, and `git diff` on a huge worktree can take seconds.
- */
-function gitDiffText(cwd: string, files?: readonly string[]): string | null {
-  try {
-    const output = execFileSync(
-      "git",
-      ["diff", "HEAD", "--unified=2", "--no-color", ...(files?.length ? ["--", ...files] : [])],
-      { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 8 * 1024 * 1024 },
-    );
-    return String(output);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Run a verification command.
- *
- * The caller has already narrowed the grammar (`verifyCommandProblem`); this only
- * has to bound it. `shell: false` is not usable because the allowed forms carry
- * arguments, so the command string is passed to `sh -c` after that grammar check.
- * Output is kept to the last 400 lines: a failing suite prints the summary at the
- * end, and the beginning is what the truncation would otherwise keep.
- */
-function runVerifyCommand(command: string, cwd: string, timeoutMs = 300_000) {
-  try {
-    const output = execFileSync("sh", ["-c", command], {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: timeoutMs,
-      maxBuffer: 8 * 1024 * 1024,
-    });
-    return { exit: 0, output: tail(String(output), 400) };
-  } catch (error: any) {
-    const output = `${error?.stdout ?? ""}${error?.stderr ?? ""}`;
-    return {
-      exit: typeof error?.status === "number" ? error.status : 1,
-      output: tail(String(output), 400),
-      timedOut: error?.signal === "SIGTERM" || error?.code === "ETIMEDOUT",
-    };
-  }
-}
 
 /**
  * Decide the next stall-strike count.
@@ -484,18 +265,6 @@ function tail(value: string, lines: number): string {
   return (all.length <= lines ? all : all.slice(-lines)).join("\n");
 }
 
-/**
- * Did the check's own output contain this test reference?
- *
- * `buildCheckReport` emits `<command> (suite)` for a passing run, which is a
- * statement about the command rather than a printed test name, so it is accepted
- * only when it names the command the receipt actually ran.
- */
-function testRefObserved(ref: { name: string }, receipt: CheckReceipt): boolean {
-  const output = receipt.outputTail ?? "";
-  if (output.includes(ref.name)) return true;
-  return Boolean(receipt.command) && ref.name === `${receipt.command} (suite)`;
-}
 
 /**
  * Files already sent for a scope, so a second review does not re-read them.
@@ -557,7 +326,7 @@ export function stallNotice(params: {
     + `Inspect its pane, then agent_resume with direction, or agent_close to end it.`;
 }
 
-export default function orchestratorExtension(pi: ExtensionAPI, deps?: OrchestratorDeps): void {
+export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps): void {
   const client: HerdrClient = deps?.client || createHerdrClient();
   const moduleController = new AbortController();
   /**
@@ -631,10 +400,10 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     if (!path) return;
     const state: PersistedState = {
       ...registry.toSnapshot(),
-      handoffs: [...handoffs.entries()].map(([id, entry]) => ({ id, record: entry.record, path: entry.path })),
+      handoffs: [],
       escalations: escalations.all(),
-      specReviews: [...specReviews.values()],
-      chunkRuns: [...chunkRuns.values()],
+      specReviews: [],
+      chunkRuns: [],
     };
     saveRegistrySnapshot(path, state);
   }
@@ -654,10 +423,10 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       publishDashboardState(pi, {
         orchestrator: projectOrchestrator({
           children,
-          handoffs: [...handoffs.values()].map((entry) => entry.record),
+          handoffs: [],
           reviews: registry.getReviews(),
           escalations: escalations.all(),
-          specReviews: [...specReviews.values()],
+          specReviews: [],
           paused: registry.isPaused(),
         }),
         childSessions: projectChildProvenance(children),
@@ -676,11 +445,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     for (const entry of activeWatchers.values()) entry.abort();
     activeWatchers.clear();
     registry.reset();
-    handoffs.clear();
     escalations.clear();
-    specReviews.clear();
-    chunkRuns.clear();
-    checkReceipts.clear();
   }
 
   function restorePersistedState(): void {
@@ -689,28 +454,12 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     const snapshot = loadRegistrySnapshot(path);
     if (!snapshot) return;
     registry.loadSnapshot(snapshot);
-    for (const entry of snapshot.handoffs ?? []) {
-      if (entry?.id) handoffs.set(entry.id, { record: entry.record, path: entry.path ?? "" });
-    }
     for (const esc of snapshot.escalations ?? []) {
       try {
         escalations.restore(esc);
       } catch {
         // A malformed escalation record must not block the session restore.
       }
-    }
-    for (const run of snapshot.specReviews ?? []) {
-      // A run without an id, target hash, or reviewer list cannot be trusted to
-      // answer "was this reviewed?", so it is dropped rather than half-restored.
-      if (!run || typeof run !== "object") continue;
-      if (typeof run.id !== "string" || !run.target?.contentHash || !Array.isArray(run.reviewers)) continue;
-      specReviews.set(run.id, run as ReviewRun);
-    }
-    for (const run of snapshot.chunkRuns ?? []) {
-      // Same rule for a split run: no id, no members, or no chunks is not a review.
-      if (!run || typeof run !== "object") continue;
-      if (typeof run.id !== "string" || !Array.isArray(run.chunks) || !Array.isArray(run.members)) continue;
-      chunkRuns.set(run.id, run as ChunkRun);
     }
   }
 
@@ -1371,135 +1120,6 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   // A child's `--tools` allowlist excludes the orchestrator surface, but a resumed or
   // user-touched child can still have it active. Refuse rather than let a child spawn
   // work the parent cannot see or review.
-  pi.on("tool_call", (event, ctx) => {
-    // ── spec-only reviewer guard ────────────────────────────────────────────
-    // The `--tools` allowlist is the first line, not the only one: a resumed or
-    // user-touched reviewer pane could still hold a wider set. The policy is
-    // resolved from the launcher-written environment, so a profile that 'wants'
-    // bash or a writer does not get one — the profile can narrow the policy but
-    // cannot widen it.
-    const policyStatus = reviewPolicyStatus();
-    if (policyStatus.state === "invalid") {
-      // Fail closed. An ordinary child has no policy at all; a half-written
-      // reviewer policy is not ordinary. Let it report the blocker and nothing else.
-      if (event.toolName === "agent_ping" || event.toolName === "agent_done") return;
-      return {
-        block: true,
-        reason: `This session declares a spec-only review policy that cannot be read in full (${policyStatus.problems.join("; ")}). `
-          + `Only agent_ping/agent_done are available so it can report the blocker; it must not continue as an ordinary child.`,
-      };
-    }
-    // ── artifact scope: evidence, not user artifacts ────────────────────────
-    // This is the authorization layer around the existing artifact tool, not a
-    // second store. It applies to reviewers (`review:<run>:<chunkId>`) and research
-    // children (`orch-research:<scope>`) alike, so it sits outside the spec-only
-    // branch. Foreign and unknown ids are refused with the same message.
-    const artifactRule = artifactScopeFor(process.env);
-    if (artifactRule) {
-      const branch = (() => {
-        try {
-          return ctx.sessionManager.getBranch();
-        } catch {
-          return [];
-        }
-      })();
-      const scopeProblem = artifactGuardProblem(event.toolName, event.input, {
-        rule: artifactRule,
-        lookup: (id) => recordsFromBranch(branch).get(id),
-      });
-      if (scopeProblem) return { block: true, reason: scopeProblem };
-    }
-
-    const reviewPolicy = policyStatus.state === "valid" ? policyStatus.policy : undefined;
-    if (reviewPolicy) {
-      if (isSpecOnlyDeniedTool(event.toolName)) {
-        return {
-          block: true,
-          reason: `${event.toolName} is not available to a spec-only reviewer. You have read instruments and \`agent_spec_review_submit\`.`,
-        };
-      }
-      // A default search walks the whole working tree, including control-plane
-      // files that happen to live in it. Reviewers must name what they read.
-      const namedPath = (event.input as any)?.path;
-      if (BROAD_SEARCH_TOOLS.has(event.toolName) && (typeof namedPath !== "string" || !namedPath.trim())) {
-        return {
-          block: true,
-          reason: `${event.toolName} needs an explicit permitted path in a spec-only review; a default broad search can read control-plane state.`,
-        };
-      }
-      if (READ_PATH_TOOLS.has(event.toolName)) {
-        let sessionDir: string | null = null;
-        try {
-          sessionDir = ctx.sessionManager.getSessionDir();
-        } catch {
-          sessionDir = null;
-        }
-        const cwd = (ctx as any).cwd || process.cwd();
-        for (const target of readTargets(event.toolName, event.input)) {
-          const controlPlane = isControlPlanePath(resolve(cwd, target), { sessionDir });
-          if (controlPlane) return { block: true, reason: controlPlane };
-          const problem = pathPolicyProblem(target, {
-            cwd,
-            roots: reviewPolicy.roots.length ? reviewPolicy.roots : [cwd],
-            deny: sessionDir ? [sessionDir] : [],
-          });
-          if (problem) return { block: true, reason: problem };
-        }
-      }
-      return;
-    }
-
-    // ── read-only reading roles ────────────────────────────────────────────
-    // research/review children are declared read-only. A resumed or user-touched
-    // child can still hold bash, and bash can write; narrow it to the same closed
-    // grammar Plan uses. A QA child that could write could also "fix" the defect
-    // it is judging, which ends the independence the review exists to provide.
-    const readingRole = childPurposeFromEnv();
-    if (readingRole && event.toolName === "bash") {
-      const command = readOnlyShellCommand(event.input?.command);
-      if (command === undefined) {
-        return {
-          block: true,
-          reason: `${readingRole === "review" ? "QA" : "Research"} child: bash is read-only. `
-            + `Report what you need with agent_ping; you never fix or write.`,
-        };
-      }
-      event.input.command = command;
-      return;
-    }
-
-    if (!isChildSession) {
-      // Independence is a fact about who touched the lane, so the parent's own
-      // writes are recorded as they happen. Only `write`/`edit` are exact; a shell
-      // command can write anywhere, which is why the review also computes the diff
-      // from git instead of trusting this log as proof.
-      if (AUTHOR_WRITE_TOOLS.has(event.toolName)) {
-        for (const path of authorWrittenPaths(event.input)) {
-          registry.recordAuthorWrite({ path, tool: event.toolName, at: new Date(now()).toISOString() });
-        }
-        persistState();
-      } else if (AUTHOR_SHELL_TOOLS.has(event.toolName)) {
-        // No path is recorded: the point is that a shell does not have to name one.
-        registry.recordAuthorShell(new Date(now()).toISOString());
-        persistState();
-      }
-      return;
-    }
-    const parentOnly = `${event.toolName} is parent-only: this session is a delegated child. Report back with agent_ping or agent_done instead.`;
-    // A retired name may still be registered by a foreign extension. Refuse it
-    // before the capability lookup, which deliberately has no entry for it.
-    if (isRetiredDelegationTool(event.toolName)) {
-      return { block: true, reason: `${event.toolName} was removed from this package; use the agent_* delegation tools instead.` };
-    }
-    // A child owns its reporting/pull tools (agent_done, agent_ping, …) but never a
-    // parent-role delegation tool. This is the call-time half of the capability
-    // table; the `--tools` allowlist is the first half.
-    if (isDelegationTool(event.toolName)) {
-      return mayUseDelegationTool(event.toolName, "child") ? undefined : { block: true, reason: parentOnly };
-    }
-    if (!event.toolName.startsWith("agent_")) return;
-    return { block: true, reason: parentOnly };
-  });
 
   /** Tools whose input names a filesystem path a reviewer might read. */
   const READ_PATH_TOOLS = new Set(["read", "grep", "find", "ls", "ffgrep", "fffind"]);
@@ -1696,44 +1316,60 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     persistState();
 
     const message = buildOutcomeMessage(running, outcome);
-    const adviceLine = completed ? qaAdviceLine() : undefined;
-    const withAdvice = message && adviceLine
-      ? { ...message, content: `${message.content}\n\n${adviceLine}` }
-      : message;
-    if (withAdvice) pi.sendMessage(withAdvice, { triggerTurn: true, deliverAs: "steer" });
+    if (message) pi.sendMessage(message, { triggerTurn: true, deliverAs: "steer" });
   }
 
-  /**
-   * The reviewer budget for this wave, computed from what actually finished.
-   *
-   * The cap is derived (`floor(workers/2)`, 1..3) and the queue is ordered by
-   * completion, so the parent does not have to count panes or guess how many
-   * reviewers it may start. It is advice: spawning still goes through agent_spawn.
-   */
-  function qaAdviceLine(): string | undefined {
-    const children = registry.getAllChildren();
-    const isWorker = (child: ScopedChild) => child.purpose !== "review" && child.purpose !== "research";
-    const workerScopes = [...new Set(children.filter(isWorker).map((child) => child.scope))];
-    if (!workerScopes.length) return undefined;
-    const completedScopes = children
-      .filter((child) => isWorker(child) && child.status === "completed")
-      .sort((a, b) => (a.updatedAt ?? "").localeCompare(b.updatedAt ?? ""))
-      .map((child) => child.scope);
-    const advice = qaSchedulingAdvice({
-      workerCount: workerScopes.length,
-      completedScopes,
-      reviewedScopes: workerScopes.filter((scope) => registry.getReviews(scope).length > 0),
-      runningQaScopes: children
-        .filter((child) => child.purpose === "review" && child.status === "running" && child.qaForScope)
-        .map((child) => child.qaForScope!),
-    });
-    if (!advice.queue.length && !advice.active) return undefined;
-    return [
-      `QA scheduling: ${advice.cap} reviewer(s) for ${workerScopes.length} unit(s) · ${advice.active} busy · ${advice.freeSlots} free.`,
-      advice.spawnNow.length ? `Spawn now: ${advice.spawnNow.join(", ")} (agent_spawn purpose review, qaFor).` : undefined,
-      advice.deferred.length ? `Waiting for a slot: ${advice.deferred.join(", ")}.` : undefined,
-    ].filter(Boolean).join(" ");
-  }
+
+  // A child's `--tools` allowlist excludes the delegation surface, but a resumed
+  // or user-touched child can still have it active. Refuse rather than let a
+  // child spawn work the parent cannot see.
+  pi.on("tool_call", (event, ctx) => {
+    // ── read-only reading roles ────────────────────────────────────────────
+    // research children are declared read-only. A resumed or user-touched child
+    // can still hold bash, and bash can write; narrow it to the same closed
+    // grammar Plan uses.
+    const readingRole = childPurposeFromEnv();
+    if (readingRole && event.toolName === "bash") {
+      const command = readOnlyShellCommand(event.input?.command);
+      if (command === undefined) {
+        return {
+          block: true,
+          reason: `${readingRole === "review" ? "QA" : "Research"} child: bash is read-only. `
+            + `Report what you need with agent_ping; you never fix or write.`,
+        };
+      }
+      event.input.command = command;
+      return;
+    }
+
+    if (!isChildSession) {
+      // Independence is a fact about who touched the lane, so the parent's own
+      // writes are recorded as they happen.
+      if (AUTHOR_WRITE_TOOLS.has(event.toolName)) {
+        for (const path of authorWrittenPaths(event.input)) {
+          registry.recordAuthorWrite({ path, tool: event.toolName, at: new Date(now()).toISOString() });
+        }
+        persistState();
+      } else if (AUTHOR_SHELL_TOOLS.has(event.toolName)) {
+        registry.recordAuthorShell(new Date(now()).toISOString());
+        persistState();
+      }
+      return;
+    }
+    const parentOnly = `${event.toolName} is parent-only: this session is a delegated child. Report back with agent_ping or agent_done instead.`;
+    // A retired name may still be registered by a foreign extension. Refuse it
+    // before the capability lookup, which deliberately has no entry for it.
+    if (isRetiredDelegationTool(event.toolName)) {
+      return { block: true, reason: `${event.toolName} was removed from this package; use the agent_* delegation tools instead.` };
+    }
+    // A child owns its reporting/pull tools (agent_done, agent_ping, …) but never
+    // a parent-role delegation tool.
+    if (isDelegationTool(event.toolName)) {
+      return mayUseDelegationTool(event.toolName, "child") ? undefined : { block: true, reason: parentOnly };
+    }
+    if (!event.toolName.startsWith("agent_")) return;
+    return { block: true, reason: parentOnly };
+  });
 
   /** Write a plan's files and make the per-child directory private. */
   function materializePlan(plan: LaunchPlan) {
@@ -1751,52 +1387,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     return join(ctx.sessionManager.getSessionDir(), "artifacts");
   }
 
-  /**
-   * Publish the handoff as a SCOPED artifact — the child's actual spec.
-   *
-   * `scope` is the isolation mechanism, not a label. The artifact layer shows a
-   * child only global artifacts plus its own scope (`visibleToScope`), and the
-   * child's scope comes from `PI_SUBAGENT_SCOPE`, which the launch planner sets
-   * from the same value. So a sibling's handoff is filtered out of the catalog
-   * before the child can reach it, and the child never needs to be trusted not to
-   * look.
-   *
-   * Returns a result rather than throwing: the caller must not register a handoff
-   * whose artifact does not exist, because a child holding a pointer to nothing
-   * would fall back to inferring its lane from `task`.
-   */
-  async function publishHandoffArtifact(
-    ctx: ExtensionContext,
-    record: HandoffRecord,
-  ): Promise<{ ok: true } | { ok: false; message: string }> {
-    const payload = handoffArtifactPayload(record);
 
-    if (typeof (ctx as any).executeTool !== "function") {
-      return { ok: false, message: "ctx.executeTool is unavailable, so artifact_save cannot be reached" };
-    }
-
-    try {
-      const outcome = await (ctx as any).executeTool("artifact_save", payload);
-      if (outcome?.isError) {
-        return { ok: false, message: String(outcome?.result?.content?.[0]?.text ?? "artifact_save reported an error") };
-      }
-      return { ok: true };
-    } catch (error: any) {
-      return { ok: false, message: `artifact_save threw: ${error?.message ?? error}` };
-    }
-  }
-
-  function resolveHandoff(params: { handoffId?: string; spec?: any }): HandoffRecord | undefined {
-    if (params.handoffId) {
-      const stored = handoffs.get(params.handoffId);
-      if (stored) return stored.record;
-      // Tolerate a caller passing the scope instead of the id.
-      for (const entry of handoffs.values()) {
-        if (entry.record.scope === params.handoffId) return entry.record;
-      }
-    }
-    return undefined;
-  }
 
   /**
    * A scope for a spawn with no handoff to name it.
@@ -1840,835 +1431,12 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     return planModeFromBranch(branch)?.enabled ? "plan" : "normal";
   }
 
-  // ── spec review: independent readers of a pinned document ───────────────────
-  //
-  // The EGM property this implements is narrow and worth restating: a specification
-  // is judged by readers who did not write it and cannot consult the author. The
-  // pinned snapshot travels *inside* the reviewer's ticket, so the reviewer needs
-  // no artifact reader and cannot see a sibling's report, a global note, or the
-  // parent transcript. `agent_spec_review` is the parent's whole surface: start,
-  // collect, resolve, status, cancel.
-
-  /** Reports are control-plane files: written by the child's submit tool, read by the parent. */
-  function reviewReportDir(ctx: ExtensionContext, runId: string): string {
-    return join(artifactsBase(ctx), ctx.sessionManager.getSessionId(), "spec-reviews", runId);
-  }
-
-  /** Largest document we will pin; a 10 MB blob is not a reviewable specification. */
-  const MAX_PINNED_CHARS = 512 * 1024;
-
-  /**
-   * How many non-ready rounds one target may accumulate before the parent decides.
-   *
-   * A document review is one reviewer plus at most one re-review of a fixed
-   * blocker. A third round is not a third opinion; it is a disagreement the
-   * orchestrator owns. `MAX_SESSION_REVIEW_ROUNDS` bounds the whole session so renaming the
-   * document (and therefore the target ref) cannot mint a fresh budget.
-   */
-  const MAX_REVIEW_ROUNDS = 2;
-  const MAX_SESSION_REVIEW_ROUNDS = 3;
-
-  /** Every run for one target, including cancelled ones, oldest first. */
-  function runsForTarget(kind: "artifact" | "file", ref: string): ReviewRun[] {
-    return [...specReviews.values()]
-      .filter((entry) => entry.target.kind === kind && entry.target.ref === ref)
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-  }
-
-  /**
-   * Non-ready rounds in this parent session, cancelled ones included.
-   *
-   * A cancelled round already paid for reviewer children; letting cancellation
-   * reset the budget would make cancel/start an unbounded loop.
-   */
-  function sessionReviewRounds(): number {
-    return [...specReviews.values()].filter((entry) => !entry.readiness.ready).length;
-  }
-
-  /** Findings that still gate readiness: blockers/majors without a settling disposition. */
-  function openGatingFindings(run: ReviewRun): ReviewFinding[] {
-    return allFindings(run).filter((finding) => {
-      if (finding.severity === "nit") return false;
-      const disposition = run.dispositions[finding.id];
-      return !disposition || disposition.action === "unresolved" || disposition.action === "contested";
-    });
-  }
-
-  /**
-   * Rounds opened for the same target since its last ready review.
-   *
-   * `ref` is the artifact id or file path: re-authoring a handoff keeps the id,
-   * so a genuinely revised spec still counts as the same conversation. A ready
-   * run resets the count — the question was answered. Cancelled runs never count,
-   * because cancelling is how a parent abandons a bad round.
-   */
-  function nonReadyRoundsFor(kind: "artifact" | "file", ref: string): ReviewRun[] {
-    const runs = [...specReviews.values()]
-      .filter((entry) => entry.target.kind === kind && entry.target.ref === ref && entry.status !== "cancelled")
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-    const lastReady = runs.map((entry) => entry.readiness.ready).lastIndexOf(true);
-    return runs.slice(lastReady + 1).filter((entry) => !entry.readiness.ready);
-  }
-
-  /**
-   * Read a workspace artifact's exact content.
-   *
-   * Branch first, then the sidecar the artifact extension writes for scoped specs
-   * — those are deliberately kept off the branch, so a branch-only read would
-   * report "no such artifact" for a handoff spec that exists.
-   */
-  function readArtifactForReview(ctx: ExtensionContext, id: string): { title: string; content: string } | null {
-    let art = lookupArtifact(id, recordsFromBranch(ctx.sessionManager.getBranch()));
-    if (!art) {
-      const sessionFile = (ctx.sessionManager as any).getSessionFile?.();
-      if (typeof sessionFile === "string" && sessionFile) {
-        const path = artifactSidecarPath(sessionFile, sanitizeArtifactId(id));
-        if (existsSync(path)) {
-          try {
-            art = artifactFromRecord(JSON.parse(readFileSync(path, "utf8")));
-          } catch {
-            art = undefined;
-          }
-        }
-      }
-    }
-    if (!art) return null;
-    if (art.content.length > MAX_PINNED_CHARS) {
-      throw new Error(`Artifact [${art.id}] is ${art.content.length} chars; the review cap is ${MAX_PINNED_CHARS}. Narrow the document first.`);
-    }
-    return { title: art.title, content: art.content };
-  }
-
-  /** Re-read whatever the run was pinned from, so staleness is a fact and not a guess. */
-  function currentReviewContent(ctx: ExtensionContext, run: ReviewRun): string | null {
-    try {
-      if (run.target.kind === "artifact") {
-        return readArtifactForReview(ctx, run.target.ref)?.content ?? null;
-      }
-      const path = resolve((ctx as any).cwd || process.cwd(), run.target.ref);
-      if (statSync(path).size > MAX_PINNED_CHARS) return null;
-      return readFileSync(path, "utf8");
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Bind a reviewed document to the handoff whose artifact it is.
-   *
-   * Binding never rewrites the reviewed artifact (approval is provenance, not
-   * text). A chunk wave binds its own members and never goes through here.
-   */
-  function bindReviewedHandoffs(ctx: ExtensionContext, run: ReviewRun): void {
-    if (!run.readiness.ready || stalenessProblem(run, currentReviewContent(ctx, run))) return;
-    const target = effectiveReviewTarget(run);
-    const stored = [...handoffs.values()].find((entry) => entry.record.artifactId === run.target.ref);
-    if (stored && renderHandoffForChild(stored.record) === target.snapshot) {
-      stored.record.designRef = { runId: run.id, targetHash: target.contentHash };
-    }
-  }
-
-  /** One narrow write path: apply exactly the independent reviewer's replacements. */
-  async function applyReviewerAmendments(ctx: ExtensionContext, run: ReviewRun, dispositions?: Array<{
-    findingId: string; action: string; rationale?: string; userConfirmed?: boolean;
-  }>) {
-    const findings = allFindings(run).filter((f) => f.patch && !run.dispositions[f.id]?.patched
-      && (!dispositions?.length || dispositions.some((d) => d.findingId === f.id && d.action === "fix")));
-    if (!findings.length) return undefined;
-    if (run.status === "cancelled" || !run.reviewers.every((s) => s.status === "submitted")) {
-      return text("Collect the complete review before applying amendments.", { error: "review-incomplete" });
-    }
-    const stale = stalenessProblem(run, currentReviewContent(ctx, run));
-    if (stale) return text(`Cannot apply reviewer patches: ${stale}`, { error: "stale-target" });
-
-    const target = effectiveReviewTarget(run);
-    const changes = findings.map((f) => ({ findingId: f.id, patch: f.patch! }));
-    let content: string;
-    let stored: { record: HandoffRecord; path: string } | undefined;
-    let amended: HandoffRecord | undefined;
-    let revision: ReviewPatchRevision;
-    try {
-      if (target.kind !== "artifact") throw new Error("Automatic patches require an artifact target; file targets remain read-only");
-      content = applyReviewPatches(target.snapshot, changes);
-      stored = [...handoffs.values()].find((h) => h.record.artifactId === target.ref);
-      if (stored && registry.getRunningChildren().some((c) => c.scope === stored!.record.scope)) {
-        throw new Error(`Cannot amend ${stored.record.scope} while a child holds its lane`);
-      }
-      amended = stored ? amendHandoff(stored.record, changes) : undefined;
-      revision = {
-        targetId: target.ref,
-        previousHash: target.contentHash,
-        nextHash: hashContent(content),
-        changes,
-        at: new Date(now()).toISOString(),
-      };
-    } catch (error) {
-      return text(`Patches refused before any write: ${String(error)}. Resolve the structural decision; do not launch another reviewer automatically.`, { error: "invalid-review-patches" });
-    }
-
-    // Preflight dispositions too: a bad finding id must not cause partial writes.
-    const explicit = (dispositions ?? []).filter((d) => !findings.some((f) => f.id === d.findingId));
-    const checked = explicit.length ? applyDispositions(run, explicit as any, { now: new Date(now()) }) : { ok: true, run, problems: [] as string[] };
-    if (!checked.ok) return text(checked.problems.join("\n"), { error: "invalid-dispositions" });
-    let next: ReviewRun = { ...checked.run, dispositions: { ...checked.run.dispositions }, patchRevisions: [...(run.patchRevisions ?? [])] };
-    try {
-      const published = amended ? await publishHandoffArtifact(ctx, amended)
-        : await (async () => {
-            const result = await (ctx as any).executeTool("artifact_save", { id: target.ref, title: target.title, type: "spec", content });
-            return result?.isError || result?.result?.isError ? { ok: false, message: "artifact_save failed" } : { ok: true };
-          })();
-      if (!published.ok || readArtifactForReview(ctx, target.ref)?.content !== content) {
-        throw new Error("Artifact publication could not be verified");
-      }
-      next.patchRevisions!.push(revision);
-      for (const change of revision.changes) {
-        next.dispositions[change.findingId] = {
-          action: "fix",
-          patched: true,
-          rationale: "Exact reviewer-authored patch applied and read back",
-          at: revision.at,
-          targetHash: revision.previousHash,
-        };
-      }
-      // Record the successful write before settling; a retry never reapplies it.
-      if (stored && amended) {
-        stored.record = amended;
-        writeFileSync(stored.path, content, { mode: 0o600 });
-      }
-      specReviews.set(run.id, next);
-      persistState();
-    } catch (error) {
-      specReviews.set(run.id, next);
-      persistState();
-      return text(`Patch publication stopped: ${String(error)}. Successful amendments are recorded; retry resolve, not start.`, { error: "patch-publish-failed", runId: run.id });
-    }
-    next = settleReadiness(next, { now: new Date(now()) });
-    specReviews.set(next.id, next);
-    bindReviewedHandoffs(ctx, next);
-    persistState();
-    return text(renderRunSummary(next) + "\nReviewer-authored amendments applied. No re-review was launched.", {
-      runId: next.id,
-      ready: next.readiness.ready,
-      status: next.status,
-      resolution: "reviewer-patched",
-      targetHash: effectiveReviewTarget(next).contentHash,
-    });
-  }
-
-  function repoHead(cwd: string): string | null {
-    try {
-      return String(execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })).trim();
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Submit tool for a spec-only reviewer.
-   *
-   * Registered in every process so the child has it, but inert unless the launcher
-   * wrote a complete policy: an ordinary session that finds this tool cannot use it
-   * to file a review into somebody else's run.
-   */
-  // ── split specification review: chunks, per-member fixes, per-member spawn ──
-  //
-  // The flow this implements, in order:
-  //
-  //   handoffs → chunks (3 specs per reviewer, at most 3 reviewers)
-  //            → ONE reviewer per chunk → fix a member → spawn that member
-  //
-  // Two corrections over the document/lens model it replaces:
-  //
-  //   1. The unit of review is a CHUNK. Fanning out by lens made K readers read
-  //      every spec; a wave of five became one reviewer for everything.
-  //   2. Readiness is PER MEMBER. Fixing one spec no longer invalidates its
-  //      siblings, and a prose fix keeps its approval instead of demanding a
-  //      re-review that the round budget then refused.
-  //
-  // A structural fix (lane, criteria, interfaces, report shape, vision) is still
-  // refused here: that is a different spec, and it goes back for a review of that
-  // member only.
-
-  function chunkReviewerScope(runId: string, chunkId: string): string {
-    return `review-${runId}-${chunkId}`.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").slice(0, 64);
-  }
-
-  /**
-   * Bind every READY member's handoff to the reviewed revision.
-   *
-   * Binding is provenance, not text: it never rewrites the artifact. A member is
-   * bound only when its current content still hashes to what the wave recorded, so
-   * an edit after approval cannot inherit the approval.
-   */
-  function bindChunkHandoffs(ctx: ExtensionContext, run: ChunkRun): void {
-    const evaluation = evaluateChunkRun(run);
-    for (const readiness of evaluation.members) {
-      if (!readiness.ready) continue;
-      const member = memberFor(run, readiness.scope);
-      if (!member) continue;
-      const stored = [...handoffs.values()].find((entry) => entry.record.scope === member.scope);
-      if (!stored) continue;
-      const current = readArtifactForReview(ctx, member.artifactId)?.content;
-      if (current === undefined || hashContent(current) !== member.currentHash) continue;
-      stored.record.designRef = { runId: run.id, targetHash: member.currentHash, memberId: member.scope };
-    }
-  }
-
-  /**
-   * The designRef gate for BOTH run kinds.
-   *
-   * A split designRef names a member; a document designRef names a revision. The
-   * caller does not need to know which kind of run it holds, and a spawn cannot
-   * pass one kind's check by claiming the other.
-   */
-  function designRefProblemAny(ctx: ExtensionContext, ref: DesignRef | undefined): string | undefined {
-    const chunkRun = ref ? chunkRuns.get(ref.runId) : undefined;
-    if (chunkRun) {
-      if (!ref!.memberId) return "a split designRef must name its memberId";
-      const member = memberFor(chunkRun, ref!.memberId);
-      if (!member) return `design review ${ref!.runId} has no member ${ref!.memberId}`;
-      if (chunkRun.status === "cancelled") return "the review run was cancelled";
-      if (member.currentHash !== ref!.targetHash) {
-        return `design review ${ref!.runId} covered ${member.currentHash.slice(0, 12)}, not ${ref!.targetHash.slice(0, 12)}`;
-      }
-      const readiness = evaluateChunkRun(chunkRun).members.find((entry) => entry.scope === ref!.memberId);
-      if (!readiness) return `design review ${ref!.runId} has no readiness for ${ref!.memberId}`;
-      const current = readArtifactForReview(ctx, member.artifactId)?.content ?? null;
-      if (current === null) return "the pinned target could not be read back, so its content cannot be confirmed";
-      // One implementation of "may this member be spawned?", shared with the tests.
-      const problem = spawnGateProblem({ member, readiness, currentHash: hashContent(current) });
-      return problem ? `design review ${ref!.runId}: ${problem.message}` : undefined;
-    }
-    const run = ref ? specReviews.get(ref.runId) : undefined;
-    return designRefProblem(ref, (id) => specReviews.get(id), run ? currentReviewContent(ctx, run) : null);
-  }
-
-  /**
-   * One honest progress line for a reviewer that is still working.
-   *
-   * "No new events" was read by a real session as "stalled", so it cancelled a
-   * healthy reviewer four checks in. Elapsed time and the pane are facts the
-   * parent can act on; silence is not.
-   */
-  function reviewerProgressLine(label: string, startedAt: string | undefined, paneId?: string): string {
-    const where = paneId ? ` (pane ${paneId})` : "";
-    if (!startedAt) return `${label} is still running${where}; no report yet.`;
-    const seconds = Math.max(0, Math.floor((now() - Date.parse(startedAt)) / 1000));
-    const elapsed = seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60 ? `${seconds % 60}s` : ""}`;
-    return `${label} is still running for ${elapsed}${where}; no report yet.`;
-  }
-
-  function renderChunkRunSummary(run: ChunkRun): string {
-    const evaluation = evaluateChunkRun(run);
-    const counts = evaluation.counts;
-    const lines = [
-      `Split review ${run.id} — ${run.chunks.length} reviewer(s) over ${run.members.length} spec(s)`,
-      `Status: ${run.status}${evaluation.allReady ? " — EVERY MEMBER READY" : ""}`,
-      `Findings: ${counts.blocker} blocker, ${counts.major} major, ${counts.nit} nit · ${counts.open} open`,
-      `Chunks:`,
-      ...renderChunkProgress(run).map((line) => `- ${line}`),
-      `Members:`,
-      ...evaluation.members.map(
-        (entry) =>
-          `- ${entry.scope}: ${entry.ready ? "READY" : "not ready"}`
-          + (entry.reasons.length ? ` — ${entry.reasons.join("; ")}` : ""),
-      ),
-    ];
-    if (evaluation.ready.length) lines.push(`Spawnable now: ${evaluation.ready.join(", ")}.`);
-    if (evaluation.missingContext.length) {
-      lines.push(`Missing context (answer each note to unblock; no re-review needed):`);
-      for (const note of evaluation.missingContext) {
-        const disposition = run.dispositions[note.id];
-        lines.push(`- ${note.id} [${note.chunkId}]: ${note.text}` + (disposition ? ` → ${disposition.action}` : " → unresolved"));
-      }
-      lines.push(
-        `Answer one with agent_spec_review({ action: "resolve", runId: "${run.id}", dispositions: `
-          + `[{ findingId: "${evaluation.missingContext[0]!.id}", action: "accepted", rationale: "..." }] }).`,
-      );
-    }
-    const open = evaluation.findings.filter(
-      (finding) => finding.severity !== "nit" && (!run.dispositions[finding.id] || run.dispositions[finding.id]!.action === "unresolved"
-        || run.dispositions[finding.id]!.action === "contested"),
-    );
-    if (open.length) {
-      lines.push(`Open findings:`);
-      for (const finding of open.slice(0, 12)) {
-        lines.push(`- ${finding.id} [${finding.severity}] ${finding.memberId ?? "?"} · ${finding.location} — ${finding.discrepancy}`);
-      }
-      lines.push(
-        `Fix one with agent_spec_review({ action: "fix", runId: "${run.id}", findingId, memberId, patch, rationale }), `
-          + `or record accepted/contested with action "resolve".`,
-      );
-    }
-    return lines.join("\n");
-  }
-
-  /**
-   * Start a wave: pin every handoff, split, and launch one reviewer per chunk.
-   *
-   * Nothing is written and no pane opens if any check fails. A wave that is
-   * already under review is reused instead of re-pinned, so calling start twice
-   * cannot mint a second opinion by accident.
-   */
-  async function startChunkWave(ctx: ExtensionContext, params: any, cwd: string) {
-    if (!ctx.sessionManager.getSessionFile()) {
-      return text("Error: no session file, so reviewer children cannot be tracked.", { error: "no-session-file" });
-    }
-    const handoffIds: string[] = (params.handoffIds ?? []).map((id: string) => String(id).trim()).filter(Boolean);
-    const records = handoffIds.map((id) => resolveHandoff({ handoffId: id }));
-    const missing = handoffIds.filter((_, index) => !records[index]);
-    if (missing.length) {
-      return text(`Unknown handoff(s): ${missing.join(", ")}. Author them with agent_handoff first.`, { error: "unknown-handoff", missing });
-    }
-    const unique = new Map(records.map((record) => [record!.id, record!]));
-    if (unique.size !== records.length) {
-      return text("The same handoff is listed twice; a spec is reviewed once per wave.", { error: "duplicate-handoff" });
-    }
-    const ordered = [...unique.values()].sort((a, b) => a.scope.localeCompare(b.scope));
-    const plan = planSpecChunks(ordered.map((record) => record.scope), { reviewers: params.reviewers });
-    if (!plan.ok) return text(plan.problems.join("\n"), { error: "invalid-wave", problems: plan.problems });
-
-    // Exact path duplication is cheap to catch here. Runtime lane matching keeps
-    // enforcing globs and active-writer conflicts at spawn.
-    for (let i = 0; i < ordered.length; i += 1) {
-      for (let j = i + 1; j < ordered.length; j += 1) {
-        const a = ordered[i]!;
-        const b = ordered[j]!;
-        if (a.laneFiles.some((file) => b.laneFiles.includes(file))
-          && !a.dependsOn?.includes(b.scope) && !b.dependsOn?.includes(a.scope)) {
-          return text(
-            `Overlapping wave lanes: ${a.scope}, ${b.scope}. Serialize with dependsOn or split the lanes.`,
-            { error: "wave-lane-conflict" },
-          );
-        }
-      }
-    }
-
-    const pins = new Map<string, ChunkMemberPin>();
-    for (const record of ordered) {
-      const artifact = readArtifactForReview(ctx, record.artifactId);
-      if (!artifact) {
-        return text(
-          `Handoff ${record.scope}: artifact ${record.artifactId} is missing. Re-author it with agent_handoff.`,
-          { error: "missing-artifact", scope: record.scope },
-        );
-      }
-      if (artifact.content !== renderHandoffForChild(record)) {
-        return text(
-          `Handoff ${record.scope} differs from its artifact. Re-author it with agent_handoff before reviewing.`,
-          { error: "handoff-drift", scope: record.scope },
-        );
-      }
-      pins.set(record.scope, {
-        scope: record.scope,
-        artifactId: record.artifactId,
-        contentHash: hashContent(artifact.content),
-        content: artifact.content,
-        title: artifact.title,
-      });
-    }
-
-    let prd: ChunkRun["prd"] | undefined;
-    if (params.prdArtifactId) {
-      const source = readArtifactForReview(ctx, params.prdArtifactId);
-      if (!source) return text(`No PRD artifact [${params.prdArtifactId}]. Save it first.`, { error: "unknown-artifact" });
-      prd = { ref: String(params.prdArtifactId), title: source.title, contentHash: hashContent(source.content), snapshot: source.content };
-    }
-
-    const memberHashes: Record<string, string> = {};
-    for (const [scope, pin] of pins) memberHashes[scope] = pin.contentHash;
-    const runId = chunkRunId({ scopes: ordered.map((record) => record.scope), memberHashes });
-    const existing = chunkRuns.get(runId);
-    if (existing && existing.status !== "cancelled") {
-      const evaluation = evaluateChunkRun(existing);
-      return text(
-        renderChunkRunSummary(existing)
-          + `\nThis exact wave is already under review; nothing was launched. `
-          + (evaluation.ready.length ? `Spawnable now: ${evaluation.ready.join(", ")}.` : `Fix the open findings, then spawn.`),
-        { runId: existing.id, reused: true, launched: [], ready: evaluation.ready },
-      );
-    }
-
-    const members: WaveMember[] = ordered.map((record) => ({
-      scope: record.scope,
-      handoffId: record.id,
-      artifactId: record.artifactId,
-      chunkId: plan.chunks.find((chunk) => chunk.scopes.includes(record.scope))!.id,
-      reviewedHash: memberHashes[record.scope]!,
-      currentHash: memberHashes[record.scope]!,
-      revision: record.revision,
-      amendments: [],
-    }));
-    const run = openChunkRun({ id: runId, chunks: plan.chunks, members, prd, now: new Date(now()) });
-    run.chunks = run.chunks.map((slot) => ({
-      ...slot,
-      targetHash: chunkContentHash(slot.scopes.map((scope) => pins.get(scope)!)),
-    }));
-
-    const dir = reviewReportDir(ctx, run.id);
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    chmodPrivate(dir);
-
-    const parentSessionId = ctx.sessionManager.getSessionId();
-    const parentSessionFile = ctx.sessionManager.getSessionFile()!;
-    const subagentSettings = loadSubagentSettings(cwd);
-    const budgetMinutes = Math.max(1, params.budgetMinutes ?? 20);
-    const tools = [...SPEC_ONLY_TOOLS].join(",");
-    const reviewerPrompt = loadRolePrompt("devil-advocate", cwd);
-    const roleModel = resolveChildModel(ctx, "devil-advocate", subagentSettings, params.model);
-    const lintByMember: Record<string, ReturnType<typeof lintSpec>> = {};
-    for (const slot of run.chunks) {
-      for (const scope of slot.scopes) {
-        lintByMember[scope] = lintSpec({ content: pins.get(scope)!.content, references: params.references ?? [], cwd });
-      }
-    }
-
-    const launched: string[] = [];
-    const failed: string[] = [];
-    for (const slot of run.chunks) {
-      const chunkMembers = slot.scopes.map((scope) => pins.get(scope)!);
-      const ticket = renderChunkTicket({
-        runId: run.id,
-        chunkId: slot.chunkId,
-        members: chunkMembers,
-        focus: params.focus,
-        lint: lintByMember,
-        roots: [cwd],
-      }) + `\n${renderPolicyForReviewer({ chunkId: slot.chunkId, roots: [cwd] })}\n`;
-      const reviewerScope = chunkReviewerScope(run.id, slot.chunkId);
-
-      let launch;
-      try {
-        launch = buildLaunchPlan(
-          {
-            name: `spec-${slot.chunkId}`,
-            task: ticket,
-            tools,
-            policy: "spec-only",
-            model: roleModel.model,
-            review: {
-              runId: run.id,
-              chunkId: slot.chunkId,
-              members: slot.scopes,
-              targetHash: slot.targetHash,
-              dir,
-              roots: [cwd],
-            },
-            scope: reviewerScope,
-          },
-          rolePromptDefs(null, reviewerPrompt.text),
-          {
-            sessionDir: ctx.sessionManager.getSessionDir(),
-            sessionId: `${parentSessionId}-${run.id}-${slot.chunkId}`,
-            parentSessionFile,
-            parentCwd: cwd,
-            defaultModel: subagentSettings.defaultModel,
-            env: process.env,
-          },
-        );
-      } catch (error: any) {
-        slot.status = "failed";
-        slot.reason = `launch failed: ${error?.message ?? error}`;
-        slot.updatedAt = new Date(now()).toISOString();
-        failed.push(`${slot.chunkId}: ${slot.reason}`);
-        continue;
-      }
-
-      try {
-        materializePlan(launch);
-        const started = await client.paneStart(launch.paneStart);
-        registry.recordPane(started.paneId);
-        armWatcher(
-          {
-            id: launch.id,
-            name: launch.name,
-            task: ticket,
-            paneId: started.paneId,
-            startTime: Date.now(),
-            sessionFile: launch.sessionFile,
-            launchScriptFile: launch.launchScriptFile,
-            interactive: launch.interactive,
-            autoExit: launch.autoExit,
-            scope: reviewerScope,
-          },
-          reviewerScope,
-          [],
-          undefined,
-          budgetMinutes * 60_000,
-          undefined,
-          { purpose: "review", reviewRunId: run.id, reviewLens: slot.chunkId, targetHash: slot.targetHash },
-        );
-        Object.assign(slot, {
-          status: "running",
-          childId: launch.id,
-          sessionFile: launch.sessionFile,
-          paneId: started.paneId,
-          startedAt: new Date(now()).toISOString(),
-          updatedAt: new Date(now()).toISOString(),
-        });
-        launched.push(slot.chunkId);
-      } catch (error: any) {
-        slot.status = "failed";
-        slot.reason = `launch failed: ${error?.message ?? error}`;
-        slot.updatedAt = new Date(now()).toISOString();
-        failed.push(`${slot.chunkId}: ${slot.reason}`);
-      }
-    }
-
-    chunkRuns.set(run.id, run);
-    persistState();
-    return text(
-      [
-        renderChunkRunSummary(run),
-        ``,
-        `Split: ${run.chunks.map((slot) => `${slot.chunkId}=[${slot.scopes.join(", ")}]`).join(" · ")}`,
-        launched.length ? `Launched: ${launched.join(", ")} (one reviewer per chunk).` : "No reviewer was launched.",
-        ...(failed.length ? [`Failed: ${failed.join("; ")}`] : []),
-        ...(run.prd ? [`PRD: \`${run.prd.ref}\` pinned for every chunk.`] : []),
-        ``,
-        `Reviewers are isolated: no parent transcript, no artifacts, no write tool, no shell.`,
-        `One review round per wave. When reviewers finish you are re-triggered; run collect then, fix what is real with action "fix", and spawn each READY member. ${RETRIGGER_CONTRACT}`,
-      ].join("\n"),
-      {
-        runId: run.id,
-        launched,
-        failed,
-        chunks: run.chunks.map((slot) => ({ chunkId: slot.chunkId, scopes: slot.scopes, targetHash: slot.targetHash })),
-        members: run.members.map((member) => ({ scope: member.scope, handoffId: member.handoffId, targetHash: member.currentHash })),
-      },
-    );
-  }
-
-  /**
-   * Statuses a reviewer child can end in without submitting.
-   *
-   * A reviewer that ended will never file a report, so a slot left "running" is a
-   * hang, not patience: `collect` waited on a closed reviewer until the session
-   * ended. Liveness is a fact about the child, not a timer.
-   */
-  const TERMINAL_CHILD_STATUSES = new Set(["completed", "failed", "closed"]);
-
-  function reviewerEndedWithoutReport(sessionFile: string | undefined, reportFile: string): boolean {
-    if (!sessionFile || existsSync(reportFile)) return false;
-    const child = registry.getChildBySession(sessionFile);
-    return Boolean(child && TERMINAL_CHILD_STATUSES.has(child.status));
-  }
-
-  function reconcileChunkRun(run: ChunkRun, dir: string): ChunkRun {
-    let changed = false;
-    const chunks = run.chunks.map((slot) => {
-      if (slot.status !== "running") return slot;
-      if (!reviewerEndedWithoutReport(slot.sessionFile, join(dir, `${slot.chunkId}.json`))) return slot;
-      changed = true;
-      return {
-        ...slot,
-        status: "failed" as const,
-        reason: "reviewer finished without submitting a report",
-        updatedAt: new Date(now()).toISOString(),
-      };
-    });
-    return changed ? { ...run, chunks, updatedAt: new Date(now()).toISOString() } : run;
-  }
-
-  function reconcileReviewRun(run: ReviewRun, dir: string): ReviewRun {
-    let changed = false;
-    const reviewers = run.reviewers.map((slot) => {
-      if (slot.status !== "running") return slot;
-      if (!reviewerEndedWithoutReport(slot.sessionFile, join(dir, `${slot.lens}.json`))) return slot;
-      changed = true;
-      return {
-        ...slot,
-        status: "failed" as const,
-        reason: "reviewer finished without submitting a report",
-        updatedAt: new Date(now()).toISOString(),
-      };
-    });
-    return changed ? { ...run, reviewers, updatedAt: new Date(now()).toISOString() } : run;
-  }
-
-  /** Read the reports that have landed; readiness settles per member. */
-  function collectChunkRun(ctx: ExtensionContext, run: ChunkRun) {
-    const dir = reviewReportDir(ctx, run.id);
-    let next = reconcileChunkRun(run, dir);
-    const waiting: string[] = [];
-    const problems: string[] = [];
-    for (const slot of next.chunks) {
-      if (slot.status === "submitted") continue;
-      const file = join(dir, `${slot.chunkId}.json`);
-      if (!existsSync(file)) {
-        if (slot.status === "running") waiting.push(slot.chunkId);
-        else if (slot.status === "failed" && slot.reason) problems.push(`${slot.chunkId}: ${slot.reason}`);
-        continue;
-      }
-      let raw: unknown;
-      try {
-        raw = JSON.parse(readFileSync(file, "utf8"));
-      } catch (error: any) {
-        problems.push(`${slot.chunkId}: report is not valid JSON (${error?.message ?? error})`);
-        next = {
-          ...next,
-          chunks: next.chunks.map((entry) =>
-            entry.chunkId === slot.chunkId
-              ? { ...entry, status: "failed" as const, reason: "report is not valid JSON", updatedAt: new Date(now()).toISOString() }
-              : entry,
-          ),
-        };
-        continue;
-      }
-      const ingested = ingestChunkReport(next, slot.chunkId, raw, { now: new Date(now()) });
-      next = ingested.run;
-      if (!ingested.ok) problems.push(`${slot.chunkId}: ${ingested.problems.join("; ")}`);
-    }
-    const allIn = next.chunks.every((slot) => slot.status === "submitted");
-    if (next.status !== "cancelled") next = markStatus(next, allIn ? "collected" : "collecting", new Date(now()));
-    chunkRuns.set(next.id, next);
-    bindChunkHandoffs(ctx, next);
-    persistState();
-    return { run: next, waiting, problems };
-  }
-
-  /**
-   * Apply the orchestrator's own edit to one member.
-   *
-   * This is the step the flow was missing: the parent fixes the spec, and the fix
-   * is what the worker will read. It is refused unless it leaves the contract
-   * (lane, criteria, interfaces, report shape, vision) untouched — those need
-   * re-authoring and a review of that member.
-   */
-  async function fixChunkMember(ctx: ExtensionContext, params: any, run: ChunkRun) {
-    const findingId = String(params.findingId ?? "").trim();
-    const memberId = String(params.memberId ?? "").trim();
-    const patch = params.patch;
-    const rationale = String(params.rationale ?? "").trim();
-    if (!findingId || !memberId || !patch) {
-      return text("fix needs findingId, memberId and patch { oldText, newText }.", { error: "fix-incomplete" });
-    }
-    if (run.chunks.some((slot) => slot.status === "running")) {
-      return text("The wave is still under review; collect the reports before fixing a member.", { error: "review-incomplete" });
-    }
-    const member = memberFor(run, memberId);
-    if (!member) return text(`No member "${memberId}" in ${run.id}. Members: ${run.members.map((entry) => entry.scope).join(", ")}.`, { error: "unknown-member" });
-    const finding = allRunFindings(run).find((entry) => entry.id === findingId);
-    if (!finding) {
-      return text(`Unknown finding ${findingId}. Run collect first; findings arrive with the reviewer's report.`, { error: "unknown-finding" });
-    }
-    if (finding.memberId !== memberId) {
-      return text(
-        `Finding ${findingId} belongs to ${finding.memberId ?? "no member"}, not ${memberId}. Patch the member the finding names.`,
-        { error: "finding-member-mismatch" },
-      );
-    }
-    const stored = [...handoffs.values()].find((entry) => entry.record.scope === memberId);
-    if (!stored) return text(`No handoff record for "${memberId}". Re-author it with agent_handoff.`, { error: "unknown-handoff" });
-    if (registry.getRunningChildren().some((child) => child.scope === memberId)) {
-      return text(`Cannot amend ${memberId} while a child holds its lane. Close or wait for that child.`, { error: "lane-held" });
-    }
-
-    const artifact = readArtifactForReview(ctx, member.artifactId);
-    if (!artifact) return text(`Artifact ${member.artifactId} is missing; re-author the handoff.`, { error: "missing-artifact" });
-    const beforeContent = artifact.content;
-    const beforeHash = hashContent(beforeContent);
-    if (beforeHash !== member.currentHash) {
-      return text(
-        `Refusing: the spec is ${beforeHash.slice(0, 12)} but the wave bound ${member.currentHash.slice(0, 12)}. `
-          + `Re-author the handoff and review that member again; an approval cannot migrate to text nobody read.`,
-        { error: "stale-member" },
-      );
-    }
-
-    let nextContent: string;
-    try {
-      nextContent = applyReviewPatches(beforeContent, [{ findingId, patch }]);
-    } catch (error: any) {
-      return text(`Patch refused before any write: ${error?.message ?? error}`, { error: "invalid-fix-patch" });
-    }
-    const parsed = parseHandoffDocument(nextContent);
-    if (!parsed.ok) {
-      return text(
-        `Patch refused: the handoff would no longer parse (${parsed.problems.join("; ")}). Nothing was written.`,
-        { error: "invalid-fix-document", problems: parsed.problems },
-      );
-    }
-    const beforeDoc = parseHandoffDocument(beforeContent);
-    if (!beforeDoc.ok) {
-      return text(`The current handoff document cannot be parsed (${beforeDoc.problems.join("; ")}); re-author it.`, {
-        error: "invalid-handoff-document",
-      });
-    }
-    const structural = structuralChanges(contractFieldsOf(beforeDoc.doc), contractFieldsOf(parsed.doc));
-    if (structural.length) {
-      return text(
-        `Refusing this fix: it changes ${structural.join(", ")}, which the review bound. `
-          + `Re-author the handoff with agent_handoff (revision ${stored.record.revision + 1}), then review that member with `
-          + `agent_spec_review({ action: "start", handoffIds: ["${memberId}"] }).`,
-        { error: "structural-change-needs-reauthor", fields: structural },
-      );
-    }
-    const merged = mergeHandoffDocument(stored.record, parsed.doc);
-    if (renderHandoffForChild(merged) !== nextContent) {
-      return text("Refusing this fix: the patch would desynchronise the handoff record and the worker-readable artifact.", {
-        error: "fix-desync",
-      });
-    }
-
-    const nextRecord = { ...merged, revision: stored.record.revision + 1 };
-    const published = await publishHandoffArtifact(ctx, nextRecord);
-    if (!published.ok) {
-      return text(`Fix NOT published: ${published.message}. Nothing was recorded.`, { error: "artifact-publish-failed" });
-    }
-    const afterContent = renderHandoffForChild(nextRecord);
-    if (readArtifactForReview(ctx, member.artifactId)?.content !== afterContent) {
-      return text("Fix NOT recorded: the published artifact could not be read back as the new revision.", {
-        error: "artifact-publish-failed",
-      });
-    }
-    stored.record = nextRecord;
-    writeFileSync(stored.path, afterContent, { mode: 0o600 });
-
-    const result = recordMemberFix(run, {
-      findingId,
-      memberId,
-      beforeHash,
-      afterHash: hashContent(afterContent),
-      rationale: rationale || `Resolved ${findingId} with an orchestrator edit`,
-      revision: nextRecord.revision,
-      now: new Date(now()),
-    });
-    if (!result.ok) return text(result.problems.join("\n"), { error: "fix-record-failed" });
-    chunkRuns.set(result.run.id, result.run);
-    bindChunkHandoffs(ctx, result.run);
-    persistState();
-    const evaluation = evaluateChunkRun(result.run);
-    const readiness = evaluation.members.find((entry) => entry.scope === memberId);
-    return text(
-      [
-        renderChunkRunSummary(result.run),
-        ``,
-        `Applied ${findingId} to ${memberId}: revision ${stored.record.revision}, ${beforeHash.slice(0, 12)} → ${hashContent(afterContent).slice(0, 12)}.`,
-        readiness?.ready
-          ? `${memberId} is READY: spawn it with agent_spawn({ handoffId: "${nextRecord.id}" }). No re-review was launched.`
-          : `${memberId} is not ready yet: ${readiness?.reasons.join("; ") ?? "no reason recorded"}.`,
-      ].join("\n"),
-      {
-        runId: result.run.id,
-        memberId,
-        findingId,
-        revision: nextRecord.revision,
-        beforeHash,
-        afterHash: hashContent(afterContent),
-        ready: readiness?.ready ?? false,
-      },
-    );
-  }
-
-  // ── agent_spec_review — the parent's side of the same contract ───────────────
-  // ── agent_handoff — the orchestrator's first act ─────────────────────────────
   // ── agent_spawn ─────────────────────────────────────────────────────────────
   pi.registerTool({
     name: "agent_spawn",
-    label: "Spawn Orchestrator",
+    label: "Spawn Agent",
     description:
-      "Spawn a worker. With handoffId it gets exactly one handoff spec inlined into its ticket; without one it gets an ad-hoc ticket and no lane. The child cannot see any other work unit's spec, scope name, or paths.",
+      "Spawn one agent: an ad-hoc worker, a read-only research reader, or a read-only planner that writes a plan artifact. With planId/stepId the worker's lane and criteria come from one plan step. A child sees only its own ticket.",
     parameters: Type.Object({
       name: Type.Optional(
         Type.String({
@@ -3141,7 +1909,6 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     });
   }
 
-  // ── agent_qa: fan a finished wave out to QA reviewers ───────────────────────
   // ── read-only research surface ─────────────────────────────────────────────
   // Engine-backed code views and cited web evidence for the orchestrator and the
   // devil's advocate. Every path goes through the same policy the review uses,
@@ -3153,7 +1920,6 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   const researchBudget = createBudget();
 
   function researchScope(ctx: ExtensionContext): { cwd: string; roots: string[]; deny: string[] } {
-    const policy = reviewPolicyFromEnv(process.env);
     const cwd = (ctx as any).cwd || process.cwd();
     let sessionDir: string | null = null;
     try {
@@ -3161,7 +1927,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     } catch {
       sessionDir = null;
     }
-    return { cwd, roots: policy?.roots?.length ? policy.roots : [cwd], deny: sessionDir ? [sessionDir] : [] };
+    return { cwd, roots: [cwd], deny: sessionDir ? [sessionDir] : [] };
   }
 
   function researchGuard(ctx: ExtensionContext): (candidate: string) => string | undefined {
@@ -3792,8 +2558,6 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     },
   });
 
-  // ── agent_brief — the review packet ─────────────────────────────────────────
-  // ── agent_check — the deterministic half of the review ──────────────────────
   // ── agent_escalate — the uncertainty ladder ─────────────────────────────────
   pi.registerTool({
     name: "agent_escalate",
@@ -3988,7 +2752,6 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     return typeof answer === "string" && answer.trim() ? answer : undefined;
   }
 
-  // ── agent_review — the orchestrator's second act ────────────────────────────
   // ── helpers ───────────────────────────────────────────────────────────────
 
   /**
@@ -4233,7 +2996,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
   }
 
   pi.registerCommand("agent", {
-    description: "orchestrator status | list | handoffs | escalations",
+    description: "agent status | list | escalations",
     handler: async (arg, ctx) => {
       const sub = (arg ?? "").trim().split(/\s+/)[0]?.toLowerCase() || "status";
       const running = registry.getRunningChildren();
@@ -4244,14 +3007,6 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           running.length
             ? running.map((c) => `${c.name} [${c.id}] scope=${c.scope} lane=${c.laneFiles.join(",")}`).join("\n")
             : "No running subagents.",
-          "info",
-        );
-        return;
-      }
-      if (sub === "handoffs") {
-        ctx.ui.notify(
-          [...handoffs.values()].map((h) => `${h.record.id} scope=${h.record.scope} rev=${h.record.revision}`).join("\n")
-          || "No handoffs authored in this session.",
           "info",
         );
         return;
@@ -4276,9 +3031,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           registry.isPaused()
             ? `Paused: yes — ${registry.getPausedChildren().length} child(ren) await /agent-resume`
             : `Paused: no`,
-          `Handoffs: ${handoffs.size}`,
           `Escalations: ${escalations.forOrchestrator().length} waiting on you, ${escalations.forUser().length} waiting on the user`,
-          `Usage: /agent status | list | handoffs | escalations`,
+          `Usage: /agent status | list | escalations`,
         ].join("\n"),
         "info",
       );

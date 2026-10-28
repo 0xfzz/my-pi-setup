@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import orchestratorExtension, { registry } from "../../extensions/orchestrator.ts";
+import agentExtension, { registry } from "../../extensions/agent.ts";
 import type { ScopedChild } from "../../lib/orchestrator/scope-registry.ts";
 
 type ModeId = null;
@@ -80,7 +80,7 @@ function harness(options: {
     },
   };
 
-  orchestratorExtension(pi, {
+  agentExtension(pi, {
     client,
     stream: { watch: () => () => {}, onReconcile: () => () => {} },
     now: () => 10_000_000,

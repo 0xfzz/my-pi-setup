@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import orchestrator from "../../extensions/orchestrator.ts";
+import orchestrator from "../../extensions/agent.ts";
 
 interface Call {
   title: string;
