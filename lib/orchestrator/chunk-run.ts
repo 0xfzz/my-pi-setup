@@ -16,11 +16,12 @@
 import { createHash } from "node:crypto";
 
 import type { Disposition, ReviewFinding } from "./spec-review.ts";
-import { chunkMemberFacts, parseChunkReport, type ChunkReport } from "./report-v2.ts";
+import { chunkMemberFacts, chunkMissingContextEntries, parseChunkReport, type ChunkReport } from "./report-v2.ts";
 import {
   evaluateWave,
   planSpecChunks,
   type MemberReportFacts,
+  type ScopedMissingContext,
   type SpecChunk,
   type WaveEvaluation,
   type WaveMember,
@@ -40,6 +41,8 @@ export interface ChunkSlot {
   paneId?: string;
   report?: ChunkReport;
   reason?: string;
+  /** When the reviewer child was launched, for an honest progress line. */
+  startedAt?: string;
   updatedAt: string;
 }
 
@@ -104,6 +107,24 @@ export function memberFor(run: ChunkRun, scope: string): WaveMember | undefined 
   return run.members.find((member) => member.scope === scope);
 }
 
+export interface ChunkMissingContext extends ScopedMissingContext {
+  chunkId: string;
+}
+
+/**
+ * Every missing-context note the chunk reviewers filed, attributed to its chunk.
+ *
+ * One note used to gate every member of the wave. Now it gates the members of the
+ * chunk that filed it, and the parent can answer that note by id.
+ */
+export function allRunMissingContext(run: ChunkRun): ChunkMissingContext[] {
+  return run.chunks.flatMap((slot) =>
+    slot.report
+      ? chunkMissingContextEntries(slot.report).map((entry) => ({ ...entry, chunkId: slot.chunkId }))
+      : [],
+  );
+}
+
 export function allRunFindings(run: ChunkRun): ReviewFinding[] {
   return run.chunks.flatMap((slot) => slot.report?.members.flatMap((block) => block.findings) ?? []);
 }
@@ -157,6 +178,7 @@ export interface ChunkRunEvaluation extends WaveEvaluation {
   /** Slots whose reviewer has not filed a valid report yet. */
   waiting: string[];
   findings: ReviewFinding[];
+  missingContext: ChunkMissingContext[];
 }
 
 /** The run's state, derived from its reports and dispositions. */
@@ -166,11 +188,13 @@ export function evaluateChunkRun(run: ChunkRun): ChunkRunEvaluation {
     if (slot.report) Object.assign(reports, chunkMemberFacts(slot.report));
   }
   const findings = allRunFindings(run);
+  const missingContext = allRunMissingContext(run);
   const evaluation = evaluateWave({
     members: run.members,
     findings,
     dispositions: run.dispositions,
     reports,
+    missingContext,
     started: true,
     closed: run.status === "cancelled",
   });
@@ -182,6 +206,7 @@ export function evaluateChunkRun(run: ChunkRun): ChunkRunEvaluation {
     counts,
     waiting: run.chunks.filter((slot) => slot.status !== "submitted").map((slot) => slot.chunkId),
     findings,
+    missingContext,
   };
 }
 

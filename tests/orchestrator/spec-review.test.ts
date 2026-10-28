@@ -152,11 +152,27 @@ test("a blocked reviewer blocks readiness even with zero findings", () => {
   assert.equal(settleReadiness(run).status, "blocked");
 });
 
-test("unresolved missing context blocks readiness even with zero findings", () => {
+test("missing context is addressable: it gates until a disposition answers it", () => {
   const run = runWithReport({ extra: { missingContext: ["src/net/retry.ts does not exist", "the rollback path is unstated"] } });
-  const verdict = evaluateReadiness(run);
-  assert.equal(verdict.ready, false);
-  assert.match(verdict.reasons.join("; "), /missing context: src\/net\/retry\.ts does not exist/);
+  const blocked = evaluateReadiness(run);
+  assert.equal(blocked.ready, false);
+  assert.match(blocked.reasons.join("; "), /C-gate-1 is unaddressed: src\/net\/retry\.ts does not exist/);
+  assert.match(blocked.reasons.join("; "), /C-gate-2 is unaddressed: the rollback path is unstated/);
+
+  // The escape hatch that the deadlocked session did not have: answer the note.
+  const answered = applyDispositions(run, [
+    { findingId: "C-gate-1", action: "accepted", rationale: "this lane creates the file" },
+    { findingId: "C-gate-2", action: "accepted", rationale: "the rollback path is out of scope for this document" },
+  ], { now: BASE_TIME });
+  assert.equal(answered.ok, true, answered.problems.join("; "));
+  assert.equal(evaluateReadiness(answered.run).ready, true, "answering the notes must not need another review round");
+
+  // A contested note is a disagreement the parent owns, not an answer.
+  const contested = applyDispositions(run, [
+    { findingId: "C-gate-1", action: "contested", rationale: "it exists" },
+  ], { now: BASE_TIME });
+  assert.equal(contested.ok, true);
+  assert.equal(evaluateReadiness(contested.run).ready, false);
 });
 
 test("an invalid verdict is rejected, not silently treated as clean", () => {

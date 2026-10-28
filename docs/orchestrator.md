@@ -242,6 +242,17 @@ The split is the shared wave chunker: at most **3 specs per reviewer**, at most 
 reviewers**, balanced with the remainder on the later chunk (5 → 2 + 3). Scopes are
 sorted first, so the split a `plan` prints is the split `start` launches.
 
+**A single handoff is a one-member wave.** `handoffIds: [a]` opens one chunk
+reviewer, not a document review. This matters: the document path keeps a
+session-wide round budget, and a lane that blocks a priority (a foundation, say)
+must be fixable and spawnable without spending that budget.
+
+**The plan is pinned, not assumed.** `prdArtifactId` quotes the PRD/plan into every
+reviewer's ticket — the chunk form above and the document form
+(`targetArtifactId` + `prdArtifactId`). Reviewers have no artifact discovery, so
+without it the honest report is "the plan was not supplied", which used to be a gate
+nobody could answer.
+
 A reviewer gets only its own chunk's pinned text, `read`, named-path search, the todo
 tools, and `orch_spec_review_submit`, plus the read-only research surface:
 `code_map`/`code_search`/`code_read`, `web_read`/`web_research`/`web_fetch`, and
@@ -264,6 +275,27 @@ cannot satisfy by reading a third of its assignment.
 being fixed. A member is ready when its chunk report covers it, every blocker and
 major finding has a settling disposition, and a `fix` has an applied `afterHash` that
 matches the spec now. Nits never gate.
+
+**Missing context is addressable.** A reviewer's `missingContext[]` entries get
+stable ids (`C-gate-1`, `C-review-2-1`) and gate readiness until the parent answers
+them with a recorded disposition:
+
+```text
+orch_spec_review({ action: "resolve", runId, dispositions: [
+  { findingId: "C-gate-1", action: "accepted", rationale: "the plan is pinned as prdArtifactId" },
+] })
+```
+
+`accepted` with a rationale is the answer ("the context is available now, or it is
+not needed"); `contested`/`unresolved` stay open because they are disagreements the
+parent owns. Answering a note never needs another review round — the old anonymous
+missing-context reason was a dead end that could only be escaped by starting a new
+session.
+
+**A running reviewer is reported as running.** `status` and `collect` answer with
+`gate is still running for 3m12s (pane w4:p70); no report yet` while a reviewer
+works, and never collapse that into "no new events". Silent polling was misread as
+a stall in a real session, which cancelled a healthy reviewer four checks in.
 
 **A prose fix keeps the approval.** `action: "fix"` edits the worker-facing handoff
 document through the same authoring path (`revision++`, republished artifact) and

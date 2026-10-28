@@ -21,7 +21,13 @@
  * Pure: no I/O, no panes, no clock reads a test cannot inject.
  */
 import { balancedChunks, chunkCount } from "./chunking.ts";
-import type { Disposition, ReviewFinding, Severity } from "./spec-review.ts";
+import {
+  missingContextProblem,
+  type Disposition,
+  type MissingContextEntry,
+  type ReviewFinding,
+  type Severity,
+} from "./spec-review.ts";
 
 /** Beyond three specs a review stops being a review and becomes a skim. */
 export const MAX_UNITS_PER_SPEC_REVIEWER = 3;
@@ -132,9 +138,13 @@ export interface MemberReportFacts {
   /** The chunk's report was collected and validated. */
   submitted: boolean;
   verdict?: "clean" | "findings" | "blocked";
-  missingContext?: string[];
   /** A member block with non-empty coverage was present. */
   covered: boolean;
+}
+
+/** A missing-context note attributed to the chunk that reported it. */
+export interface ScopedMissingContext extends MissingContextEntry {
+  chunkId?: string;
 }
 
 export interface OpenFinding {
@@ -167,6 +177,8 @@ export function evaluateMemberReadiness(input: {
   findings: readonly ReviewFinding[];
   dispositions: Record<string, Disposition>;
   report: MemberReportFacts;
+  /** Notes filed by this member's chunk reviewer; each one gates until answered. */
+  missingContext?: readonly MissingContextEntry[];
 }): MemberReadiness {
   const { member, dispositions, report } = input;
   const reasons: string[] = [];
@@ -176,11 +188,16 @@ export function evaluateMemberReadiness(input: {
   if (report.verdict === "blocked") {
     reasons.push("the reviewer could not finish this chunk; a blocked report is not a clean one");
   }
-  if (report.missingContext?.length) {
-    reasons.push(`the reviewer reported missing context: ${report.missingContext.slice(0, 3).join("; ")}`);
-  }
   if (report.submitted && !report.covered) {
     reasons.push("the reviewer filed no coverage for this member; an unread spec is not a clean one");
+  }
+
+  for (const entry of input.missingContext ?? []) {
+    const problem = missingContextProblem(entry, dispositions[entry.id]);
+    if (problem) {
+      open.push({ id: entry.id, severity: "major", location: "missing context", discrepancy: entry.text });
+      reasons.push(problem);
+    }
   }
 
   for (const finding of input.findings) {
@@ -246,6 +263,8 @@ export function evaluateWave(input: {
   dispositions: Record<string, Disposition>;
   /** Member facts keyed by scope; absent means "not reported yet". */
   reports: Record<string, MemberReportFacts>;
+  /** Missing-context notes, attributed to the chunk that filed them. */
+  missingContext?: readonly ScopedMissingContext[];
   started: boolean;
   closed?: boolean;
 }): WaveEvaluation {
@@ -255,6 +274,7 @@ export function evaluateWave(input: {
       findings: input.findings.filter((finding) => finding.memberId === member.scope),
       dispositions: input.dispositions,
       report: input.reports[member.scope] ?? { submitted: false, covered: false },
+      missingContext: (input.missingContext ?? []).filter((entry) => entry.chunkId === member.chunkId),
     }),
   );
   const ready = members.filter((entry) => entry.ready).map((entry) => entry.scope);

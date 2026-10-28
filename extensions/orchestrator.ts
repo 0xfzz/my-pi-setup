@@ -172,6 +172,7 @@ import {
 } from "../lib/orchestrator/review-policy.ts";
 import {
   allRunFindings,
+  allRunMissingContext,
   chunkRunId,
   evaluateChunkRun,
   ingestChunkReport,
@@ -2324,6 +2325,21 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
     return designRefProblem(ref, (id) => specReviews.get(id), run ? currentReviewContent(ctx, run) : null);
   }
 
+  /**
+   * One honest progress line for a reviewer that is still working.
+   *
+   * "No new events" was read by a real session as "stalled", so it cancelled a
+   * healthy reviewer four checks in. Elapsed time and the pane are facts the
+   * parent can act on; silence is not.
+   */
+  function reviewerProgressLine(label: string, startedAt: string | undefined, paneId?: string): string {
+    const where = paneId ? ` (pane ${paneId})` : "";
+    if (!startedAt) return `${label} is still running${where}; no report yet.`;
+    const seconds = Math.max(0, Math.floor((now() - Date.parse(startedAt)) / 1000));
+    const elapsed = seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60 ? `${seconds % 60}s` : ""}`;
+    return `${label} is still running for ${elapsed}${where}; no report yet.`;
+  }
+
   function renderChunkRunSummary(run: ChunkRun): string {
     const evaluation = evaluateChunkRun(run);
     const counts = evaluation.counts;
@@ -2341,6 +2357,17 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
       ),
     ];
     if (evaluation.ready.length) lines.push(`Spawnable now: ${evaluation.ready.join(", ")}.`);
+    if (evaluation.missingContext.length) {
+      lines.push(`Missing context (answer each note to unblock; no re-review needed):`);
+      for (const note of evaluation.missingContext) {
+        const disposition = run.dispositions[note.id];
+        lines.push(`- ${note.id} [${note.chunkId}]: ${note.text}` + (disposition ? ` → ${disposition.action}` : " → unresolved"));
+      }
+      lines.push(
+        `Answer one with orch_spec_review({ action: "resolve", runId: "${run.id}", dispositions: `
+          + `[{ findingId: "${evaluation.missingContext[0]!.id}", action: "accepted", rationale: "..." }] }).`,
+      );
+    }
     const open = evaluation.findings.filter(
       (finding) => finding.severity !== "nit" && (!run.dispositions[finding.id] || run.dispositions[finding.id]!.action === "unresolved"
         || run.dispositions[finding.id]!.action === "contested"),
@@ -2558,6 +2585,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           childId: launch.id,
           sessionFile: launch.sessionFile,
           paneId: started.paneId,
+          startedAt: new Date(now()).toISOString(),
           updatedAt: new Date(now()).toISOString(),
         });
         launched.push(slot.chunkId);
@@ -2784,8 +2812,8 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         Type.Literal("status"),
         Type.Literal("cancel"),
       ], { description: "plan = show the chunk split, launch nothing; lint = machine defects only; start = pin + launch one reviewer per chunk; collect = read submitted reports; fix = apply the orchestrator's own edit to one member; resolve = record accepted/contested dispositions; status = read; cancel = stop the run." }),
-      handoffIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 2, maxItems: 9,
-        description: "2–9 already-authored scoped handoffs to review as a wave. Scope names or handoff ids. They are split into chunks of at most 3 and each chunk gets one reviewer." })),
+      handoffIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 9,
+        description: "1–9 already-authored scoped handoffs to review as a wave. Scope names or handoff ids. They are split into chunks of at most 3 and each chunk gets one reviewer; a single handoff is a one-member wave, not a document review." })),
       reviewers: Type.Optional(Type.Number({ description: "Optional chunk count. It may raise the count above the minimum, never above 3 or below what 3-per-chunk requires." })),
       prdArtifactId: Type.Optional(Type.String({ description: "PRD artifact pinned as the shared reference every chunk is judged against." })),
       targetArtifactId: Type.Optional(Type.String({ description: "Workspace artifact to review (preferred while the design is still an artifact)." })),
@@ -3022,9 +3050,28 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           );
         }
 
+        // The plan the document refines. It is quoted into the ticket, so a
+        // reviewer never has to report "the plan was not supplied" (which used to
+        // be an unresolvable gate) and spec-vs-plan contradictions stay checkable.
+        let context: ReviewRun["context"] | undefined;
+        if (params.prdArtifactId) {
+          const source = readArtifactForReview(ctx, String(params.prdArtifactId));
+          if (!source) {
+            return text(`No PRD artifact [${params.prdArtifactId}]. Save it first, or drop prdArtifactId.`, {
+              error: "unknown-artifact",
+            });
+          }
+          context = {
+            ref: String(params.prdArtifactId),
+            title: source.title,
+            contentHash: hashContent(source.content),
+            snapshot: source.content,
+          };
+        }
+
         // One reviewer, one gate rubric. A second opinion is a chunk split, not a
         // panel over the same document.
-        const run = openReviewRun({ target, now: new Date(now()), salt: String(specReviews.size + 1) });
+        const run = openReviewRun({ target, ...(context ? { context } : {}), now: new Date(now()), salt: String(specReviews.size + 1) });
         // Machine-detectable defects are computed once, at pin time, and quoted
         // into every result. A reviewer that ignores them is still free to be
         // right; the cheap defects stop depending on attention.
@@ -3048,6 +3095,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           const ticket = renderReviewerTicket({
             runId: run.id,
             target,
+            ...(run.context ? { context: run.context } : {}),
             focus: params.focus,
             lint: run.lint,
             policy: { roots: [cwd] },
@@ -3109,6 +3157,7 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
               childId: plan.id,
               sessionFile: plan.sessionFile,
               paneId: started.paneId,
+              startedAt: new Date(now()).toISOString(),
               updatedAt: new Date(now()).toISOString(),
             });
             launched.push(slot.lens);
@@ -3157,6 +3206,17 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             chunkRun.chunks.map((slot) => [slot.chunkId, slot.status]),
             Object.keys(chunkRun.dispositions),
           ]);
+          const running = chunkRun.chunks.filter((slot) => slot.status === "running");
+          if (running.length) {
+            return text(
+              [
+                renderChunkRunSummary(chunkRun),
+                ...running.map((slot) => reviewerProgressLine(slot.chunkId, slot.startedAt, slot.paneId)),
+                `No report yet. ${RETRIGGER_CONTRACT}`,
+              ].join("\n"),
+              { runId: chunkRun.id, status: chunkRun.status, running: running.map((slot) => slot.chunkId) },
+            );
+          }
           if (notePoll(ctx.sessionManager.getSessionId(), `status:${chunkRun.id}`, fingerprint)) {
             return text(`No new events since your last check. ${RETRIGGER_CONTRACT}`, { error: "no-new-events", runId: chunkRun.id });
           }
@@ -3188,6 +3248,19 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
             collected.run.chunks.map((slot) => [slot.chunkId, slot.status]),
             collected.problems,
           ]);
+          const running = collected.run.chunks.filter((slot) => slot.status === "running");
+          if (running.length) {
+            return text(
+              [
+                renderChunkRunSummary(collected.run),
+                ``,
+                `Waiting on:`,
+                ...running.map((slot) => `- ${reviewerProgressLine(slot.chunkId, slot.startedAt, slot.paneId)}`),
+                `No report yet. ${RETRIGGER_CONTRACT}`,
+              ].join("\n"),
+              { runId: collected.run.id, status: collected.run.status, running: running.map((slot) => slot.chunkId) },
+            );
+          }
           if (notePoll(ctx.sessionManager.getSessionId(), `collect:${collected.run.id}`, fingerprint)) {
             return text(`No new events since your last check. ${RETRIGGER_CONTRACT}`, { error: "no-new-events", runId: collected.run.id });
           }
@@ -3217,12 +3290,14 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
           }));
           if (!inputs.length) return text("resolve needs dispositions.", { error: "no-dispositions" });
           const known = new Map(allRunFindings(chunkRun).map((finding) => [finding.id, finding]));
+          const notes = new Map(evaluateChunkRun(chunkRun).missingContext.map((note) => [note.id, note]));
           const problems: string[] = [];
           const dispositions = { ...chunkRun.dispositions };
           for (const input of inputs) {
             const finding = known.get(input.findingId);
-            if (!finding) { problems.push(`unknown finding id: ${input.findingId}`); continue; }
-            if (input.action === "accepted" && finding.severity === "blocker" && input.userConfirmed !== true) {
+            const note = notes.get(input.findingId);
+            if (!finding && !note) { problems.push(`unknown finding id: ${input.findingId}`); continue; }
+            if (finding && input.action === "accepted" && finding.severity === "blocker" && input.userConfirmed !== true) {
               problems.push(`${input.findingId} is a blocker; accepting it needs the user's confirmation`);
               continue;
             }
@@ -3234,7 +3309,11 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
               action: input.action,
               rationale: String(input.rationale ?? "").trim(),
               at: new Date(now()).toISOString(),
-              targetHash: finding.memberId ? memberFor(chunkRun, finding.memberId)?.reviewedHash ?? "" : "",
+              targetHash: finding?.memberId
+                ? memberFor(chunkRun, finding.memberId)?.reviewedHash ?? ""
+                : note
+                  ? chunkRun.members.find((member) => member.chunkId === note.chunkId)?.reviewedHash ?? ""
+                  : "",
               ...(input.userConfirmed === true ? { userConfirmed: true } : {}),
             };
           }
@@ -3273,6 +3352,18 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         const roundsForTarget = nonReadyRoundsFor(run.target.kind, run.target.ref).length;
         const budget = `Spec rounds: ${Math.min(roundsForTarget, MAX_REVIEW_ROUNDS)} of ${MAX_REVIEW_ROUNDS} for this target · `
           + `${Math.min(sessionReviewRounds(), MAX_SESSION_REVIEW_ROUNDS)} of ${MAX_SESSION_REVIEW_ROUNDS} this session.`;
+        const running = run.reviewers.filter((slot) => slot.status === "running");
+        if (running.length) {
+          return text(
+            [
+              renderRunSummary(run),
+              budget,
+              ...running.map((slot) => reviewerProgressLine(slot.lens, slot.startedAt, slot.paneId)),
+              `No report yet. ${RETRIGGER_CONTRACT}`,
+            ].join("\n"),
+            { runId: run.id, status: run.status, running: running.map((slot) => slot.lens) },
+          );
+        }
         const fingerprint = JSON.stringify([
           run.status,
           run.readiness.ready,
@@ -3391,6 +3482,18 @@ export default function orchestratorExtension(pi: ExtensionAPI, deps?: Orchestra
         Object.keys(next.reports),
         problems,
       ]);
+      const stillRunning = next.reviewers.filter((slot) => slot.status === "running");
+      if (stillRunning.length) {
+        return text(
+          [
+            renderRunSummary(next),
+            ...(problems.length ? [``, `Waiting on:`, ...problems.map((p) => `- ${p}`)] : []),
+            ...stillRunning.map((slot) => reviewerProgressLine(slot.lens, slot.startedAt, slot.paneId)),
+            `No report yet. ${RETRIGGER_CONTRACT}`,
+          ].join("\n"),
+          { runId: next.id, status: next.status, running: stillRunning.map((slot) => slot.lens) },
+        );
+      }
       if (notePoll(ctx.sessionManager.getSessionId(), `collect:${next.id}`, collectFingerprint)) {
         return text(`No new events since your last check. ${RETRIGGER_CONTRACT}`, { error: "no-new-events", runId: next.id });
       }

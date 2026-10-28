@@ -16,7 +16,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import subagentV2, { chunkRuns, handoffs, registry } from "../../extensions/orchestrator.ts";
+import subagentV2, { chunkRuns, handoffs, registry, specReviews } from "../../extensions/orchestrator.ts";
 import { ARTIFACT_TYPE } from "../../lib/artifact-state.ts";
 
 interface Harness {
@@ -454,6 +454,25 @@ test("a legacy preset argument cannot bring the lens panel back", async () => {
     const run = chunkRuns.get(started.details.runId)!;
     assert.equal(run.members.length, 5);
     assert.ok(run.chunks.every((slot) => slot.status === "running"));
+  } finally {
+    await h.detach();
+  }
+});
+
+test("a single handoff is a one-member wave, not a document review", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    await authorHandoffs(h, [FIVE[0]]);
+    const started = await h.call("orch_spec_review", { action: "start", handoffIds: ["alpha"] });
+    assert.equal(h.started.length, 1);
+    const run = chunkRuns.get(started.details.runId);
+    assert.ok(run, "a single handoff must open a chunk run, not a document run");
+    assert.equal(run!.members.length, 1);
+    assert.equal(run!.chunks.length, 1);
+    assert.deepEqual(run!.chunks[0]!.scopes, ["alpha"]);
+    assert.equal(specReviews.size, 0, "the document path (and its session round budget) is not used");
   } finally {
     await h.detach();
   }

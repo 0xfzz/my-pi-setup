@@ -21,7 +21,7 @@
  */
 import { createHash } from "node:crypto";
 
-import { parseFindingEntry, type ReviewFinding } from "./spec-review.ts";
+import { parseFindingEntry, type MissingContextEntry, type ReviewFinding } from "./spec-review.ts";
 import type { MemberReportFacts } from "./wave.ts";
 import { renderLintForReviewer, type SpecLintFinding } from "./spec-lint.ts";
 
@@ -207,7 +207,6 @@ export function chunkMemberFacts(report: ChunkReport): Record<string, MemberRepo
       submitted: true,
       covered: block.coverage.length > 0 || block.findings.length > 0,
       ...(block.verdict ? { verdict: block.verdict } : {}),
-      ...(report.missingContext?.length ? { missingContext: report.missingContext } : {}),
     };
   }
   return facts;
@@ -215,6 +214,19 @@ export function chunkMemberFacts(report: ChunkReport): Record<string, MemberRepo
 
 export function chunkFindings(report: ChunkReport): ReviewFinding[] {
   return report.members.flatMap((block) => block.findings);
+}
+
+/**
+ * The chunk reviewer's missing-context notes, each with a stable id.
+ *
+ * Ids are prefixed with the chunk so two reviewers cannot collide, and so the
+ * parent can answer one note without answering the other chunk's.
+ */
+export function chunkMissingContextEntries(report: ChunkReport): MissingContextEntry[] {
+  return (report.missingContext ?? []).map((text, index) => ({
+    id: `C-${report.chunkId}-${index + 1}`,
+    text,
+  }));
 }
 
 /** The rubric for a chunk reviewer: the gate rubric plus the cross-member checks. */

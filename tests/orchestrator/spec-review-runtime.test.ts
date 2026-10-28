@@ -1072,3 +1072,91 @@ test("a research child's evidence artifact is scoped to its unit", async () => {
     await h.detach();
   }
 });
+
+test("a document review can be given the plan, so 'the plan was not supplied' is not a finding", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    saveDesign(h, "retry-design", "# Retry\n\nRetry with exponential backoff. No jitter policy is stated.");
+    saveDesign(h, "jira-plan", "# Plan\n\nThe plan pins the retry policy as out of scope for this lane.");
+    await h.call("orch_spec_review", { action: "start", targetArtifactId: "retry-design", prdArtifactId: "jira-plan" });
+
+    const script = (await h.launchScripts())[0] ?? "";
+    const ticketPath = [...script.matchAll(/'@([^']+)'/g)].map((match) => match[1]!)[0];
+    assert.ok(ticketPath, "the reviewer is launched with a ticket file");
+    const ticket = await readFile(ticketPath, "utf8");
+    assert.match(ticket, /Shared reference \(jira-plan\)/);
+    assert.match(ticket, /the plan pins the retry policy as out of scope/i, "the plan text is quoted into the ticket");
+  } finally {
+    await h.detach();
+  }
+});
+
+test("a running reviewer is reported as running, not as 'no new events'", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    saveDesign(h, "retry-design", "# Retry\n\nRetry with exponential backoff.");
+    const started = await h.call("orch_spec_review", { action: "start", targetArtifactId: "retry-design" });
+    const runId = started.details.runId;
+
+    const first = await h.call("orch_spec_review", { action: "status", runId });
+    const second = await h.call("orch_spec_review", { action: "status", runId });
+    for (const [label, result] of [["first", first], ["second", second]] as const) {
+      assert.match(result.content[0].text, /still running for \d+s/, `${label} status must show elapsed time`);
+      assert.doesNotMatch(result.content[0].text, /No new events/, `${label} status must not claim silence`);
+    }
+
+    const collected = await h.call("orch_spec_review", { action: "collect", runId });
+    assert.match(collected.content[0].text, /still running for \d+s/, "collect must show progress too");
+    assert.doesNotMatch(collected.content[0].text, /No new events/);
+  } finally {
+    await h.detach();
+  }
+});
+
+test("a missing-context report is unblocked by a disposition, not by a fresh session", async () => {
+  process.env.PI_HERDR_PI_BIN = "/bin/true";
+  process.env.PI_HERDR_LAUNCH_PREFIX = "";
+  const h = await harness();
+  try {
+    saveDesign(h, "retry-design", "# Retry\n\nRetry with exponential backoff.");
+    const started = await h.call("orch_spec_review", { action: "start", targetArtifactId: "retry-design" });
+    const runId = started.details.runId;
+    const run = specReviews.get(runId)!;
+
+    const dir = join(h.dir, "artifacts", "parent-session", "spec-reviews", runId);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "gate.json"), JSON.stringify({
+      version: 1,
+      runId,
+      lens: "gate",
+      targetHash: run.target.contentHash,
+      summary: "the document is thin, and the plan was not supplied",
+      findings: [],
+      coverage: ["goal", "acceptance criteria"],
+      missingContext: ["the pinned project plan was not supplied"],
+      submittedAt: new Date(0).toISOString(),
+    }));
+
+    const collected = await h.call("orch_spec_review", { action: "collect", runId });
+    assert.equal(collected.details.ready, false);
+    assert.match(collected.content[0].text, /C-gate-1 is unaddressed: the pinned project plan was not supplied/);
+
+    const resolved = await h.call("orch_spec_review", {
+      action: "resolve",
+      runId,
+      dispositions: [{
+        findingId: "C-gate-1",
+        action: "accepted",
+        rationale: "the plan is pinned as prdArtifactId on the next round; for this document it is not needed",
+      }],
+    });
+    assert.equal(resolved.details.ready, true, resolved.content[0].text);
+    assert.match(resolved.content[0].text, /READY/);
+  } finally {
+    await h.detach();
+  }
+});

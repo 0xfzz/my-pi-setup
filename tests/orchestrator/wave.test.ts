@@ -126,13 +126,39 @@ test("a member is not ready until its chunk reviewer has covered it", () => {
   });
   assert.equal(blocked.ready, false);
 
+  const note = { id: "C-review-1-1", text: "no PRD artifact" };
   const missing = evaluateMemberReadiness({
     member: member(),
     findings: [],
     dispositions: {},
-    report: { submitted: true, covered: true, verdict: "clean", missingContext: ["no PRD artifact"] },
+    report: { submitted: true, covered: true, verdict: "clean" },
+    missingContext: [note],
   });
-  assert.equal(missing.ready, false);
+  assert.equal(missing.ready, false, "an unaddressed missing-context note is a gate, not a note");
+  assert.match(missing.reasons.join("; "), /C-review-1-1 is unaddressed/);
+
+  // The parent answers it with a recorded disposition: no second review round.
+  const answered = evaluateMemberReadiness({
+    member: member(),
+    findings: [],
+    dispositions: {
+      "C-review-1-1": { action: "accepted", rationale: "the PRD is quoted in the ticket", at: "", targetHash: "x" },
+    },
+    report: { submitted: true, covered: true, verdict: "clean" },
+    missingContext: [note],
+  });
+  assert.equal(answered.ready, true);
+
+  const contested = evaluateMemberReadiness({
+    member: member(),
+    findings: [],
+    dispositions: {
+      "C-review-1-1": { action: "contested", rationale: "it is in the repo", at: "", targetHash: "x" },
+    },
+    report: { submitted: true, covered: true, verdict: "clean" },
+    missingContext: [note],
+  });
+  assert.equal(contested.ready, false, "a contested note is still a disagreement the user owns");
 
   assert.equal(evaluateMemberReadiness({ member: member(), findings: [], dispositions: {}, report: cleanReport }).ready, true);
 });

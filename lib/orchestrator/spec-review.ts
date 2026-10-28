@@ -294,6 +294,8 @@ export interface ReviewerSlot {
   /** Set once a valid report is accepted; the file it was read from. */
   reportPath?: string;
   reason?: string;
+  /** When the reviewer child was launched, for an honest progress line. */
+  startedAt?: string;
   updatedAt: string;
 }
 
@@ -318,6 +320,14 @@ export type ReviewStatus = "collecting" | "collected" | "ready" | "blocked" | "c
 export interface ReviewRun {
   id: string;
   target: PinnedTarget;
+  /**
+   * The shared reference (PRD/plan) quoted into the reviewer's ticket.
+   *
+   * A reviewer has no artifact discovery, so without this it can only report
+   * "the plan was not supplied" — which used to be an unresolvable gate. Pinned
+   * separately from the target so approving the document never approves the plan.
+   */
+  context?: { ref: string; title: string; contentHash: string; snapshot: string };
   patchRevisions?: ReviewPatchRevision[];
   /** Exactly one document reviewer; a chunk wave is a different record entirely. */
   reviewers: ReviewerSlot[];
@@ -355,12 +365,19 @@ export function reviewerScope(runId: string): string {
   return `review-${runId}-${DOCUMENT_LENS}`.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").slice(0, 64);
 }
 
-export function openReviewRun(input: { target: PinnedTarget; now?: Date; salt?: string }): ReviewRun {
+export function openReviewRun(input: {
+  target: PinnedTarget;
+  /** The PRD/plan the reviewer must be able to read; pinned, quoted, never approved. */
+  context?: ReviewRun["context"];
+  now?: Date;
+  salt?: string;
+}): ReviewRun {
   const now = (input.now ?? new Date()).toISOString();
   const id = reviewRunId(input.target, input.salt);
   return {
     id,
     target: input.target,
+    ...(input.context ? { context: input.context } : {}),
     reviewers: [
       {
         lens: DOCUMENT_LENS,
@@ -390,6 +407,46 @@ export function allFindings(run: ReviewRun): ReviewFinding[] {
       const rank = (severity: Severity) => (severity === "blocker" ? 0 : severity === "major" ? 1 : 2);
       return rank(a.severity) - rank(b.severity) || a.id.localeCompare(b.id);
     });
+}
+
+/**
+ * The reviewer's missing-context notes, each with a stable id.
+ *
+ * These used to be one anonymous reason string. The parent could not answer them
+ * — `resolve` keys on finding ids — so a reviewer that said "the plan was not
+ * supplied" blocked the run forever, and the only escape was another review round.
+ * An id makes the note addressable and a recorded disposition closes it.
+ */
+export interface MissingContextEntry {
+  id: string;
+  text: string;
+}
+
+export function missingContextEntries(run: ReviewRun): MissingContextEntry[] {
+  const report = run.reports[DOCUMENT_LENS];
+  return (report?.missingContext ?? []).map((text, index) => ({
+    id: `C-${DOCUMENT_LENS}-${index + 1}`,
+    text,
+  }));
+}
+
+/** Why one missing-context note is still open, or `undefined` when it is answered. */
+export function missingContextProblem(
+  entry: MissingContextEntry,
+  disposition: Disposition | undefined,
+): string | undefined {
+  if (!disposition) {
+    return `missing context ${entry.id} is unaddressed: ${entry.text}`;
+  }
+  // "accepted" is the only action that means "the context is now available, or it
+  // is not needed". There is nothing to patch in the reviewer's own context, and a
+  // contested/unresolved note is still a disagreement the parent owns.
+  if (disposition.action !== "accepted" || !disposition.rationale.trim()) {
+    return `missing context ${entry.id} is ${disposition.action}`
+      + (disposition.rationale ? "" : " without a rationale")
+      + `: ${entry.text}`;
+  }
+  return undefined;
 }
 
 /** Counts are what the parent reads: the full findings stay in the run record. */
@@ -431,16 +488,21 @@ export function evaluateReadiness(run: ReviewRun, options: { now?: Date } = {}):
     // A reviewer that could not finish has not reviewed the document. Zero
     // findings from a blocked or context-starved pass is not a clean result.
     if (report.verdict === "blocked") reasons.push(`the reviewer is blocked: ${report.summary}`);
-    if (report.missingContext?.length) {
-      reasons.push(
-        `the reviewer reported missing context: ${report.missingContext.slice(0, 3).join("; ")}`
-          + (report.missingContext.length > 3 ? ` (+${report.missingContext.length - 3} more)` : ""),
-      );
-    }
   }
   if (slot?.status !== "submitted") reasons.push("the reviewer report is not in yet");
 
   let open = 0;
+
+  // Missing context is addressable, not a dead end: the parent answers each note
+  // with a recorded disposition, so "the plan was not supplied" cannot outlive
+  // the run that reported it.
+  for (const entry of missingContextEntries(run)) {
+    const problem = missingContextProblem(entry, run.dispositions[entry.id]);
+    if (problem) {
+      open += 1;
+      reasons.push(problem);
+    }
+  }
   let requiresReReview = false;
   for (const finding of findings) {
     const disposition = run.dispositions[finding.id];
@@ -542,6 +604,7 @@ export function applyDispositions(
   const now = (options.now ?? new Date()).toISOString();
   const problems: string[] = [];
   const known = new Map(allFindings(run).map((finding) => [finding.id, finding]));
+  const context = new Map(missingContextEntries(run).map((entry) => [entry.id, entry]));
   const dispositions = { ...run.dispositions };
   let changed = false;
 
@@ -549,7 +612,8 @@ export function applyDispositions(
 
   for (const input of inputs) {
     const finding = known.get(input.findingId);
-    if (!finding) {
+    const note = context.get(input.findingId);
+    if (!finding && !note) {
       problems.push(`unknown finding id: ${input.findingId}`);
       continue;
     }
@@ -562,7 +626,7 @@ export function applyDispositions(
       problems.push(`${input.findingId} is ${input.action} and needs a rationale`);
       continue;
     }
-    if (input.action === "accepted" && finding.severity === "blocker" && input.userConfirmed !== true) {
+    if (finding && input.action === "accepted" && finding.severity === "blocker" && input.userConfirmed !== true) {
       problems.push(`${input.findingId} is a blocker; accepting it needs the user's confirmation`);
       continue;
     }
@@ -657,6 +721,8 @@ Report contradictions between sections as findings, not as questions.`;
 export function renderReviewerTicket(input: {
   runId: string;
   target: PinnedTarget;
+  /** The PRD/plan, quoted so "the plan was not supplied" cannot be a finding. */
+  context?: { ref: string; title: string; contentHash: string; snapshot: string };
   /** Extra instruction from the parent (still no author reasoning). */
   focus?: string;
   /** Machine-detected defects to confirm or refute. Never a verdict. */
@@ -692,6 +758,15 @@ the live document is out of scope; if you find one, report it as a finding.
 <<<PINNED_TARGET_START ${target.contentHash}>>>
 ${target.snapshot}
 <<<PINNED_TARGET_END>>>
+${input.context ? `
+## Shared reference (${input.context.ref})
+The plan this document refines. Judge the document against it; a contradiction is
+a finding. It is context, not the target: do not review the plan itself.
+
+<<<PINNED_CONTEXT_START ${input.context.contentHash}>>>
+${input.context.snapshot}
+<<<PINNED_CONTEXT_END>>>
+` : ""}
 ${renderLintForReviewer(input.lint ?? [])}
 ## How to report
 Call \`orch_spec_review_submit\` exactly once, with:
@@ -703,7 +778,9 @@ Call \`orch_spec_review_submit\` exactly once, with:
 - \`coverage[]\` — what you checked and found adequate. REQUIRED when your
   findings array is empty: a clean report has to say what it looked at, or
   "nothing found" cannot be told apart from "nothing looked at";
-- \`missingContext[]\` for anything you needed and could not find.
+- \`missingContext[]\` for anything you needed and could not find. Each note must
+  name the exact document, path or fact; the orchestrator answers it explicitly,
+  so "the plan was not supplied" is only a defect if the plan is genuinely absent.
 
 Blockers are reserved for defects that make implementation unsafe or impossible.
 Do not file style opinions as blockers. Do not report a finding you cannot tie to
@@ -720,6 +797,7 @@ export function renderRunSummary(run: ReviewRun): string {
     `Status: ${run.status}${run.readiness.ready ? " — READY" : ""}`,
     `Findings: ${counts.blocker} blocker, ${counts.major} major, ${counts.nit} nit · ${counts.open} open`,
     `Reviewer: ${slot ? `${slot.lens}=${slot.status}` : "none"}`,
+    ...(run.context ? [`Shared reference: \`${run.context.ref}\` at ${run.context.contentHash.slice(0, 12)}`] : []),
   ];
   if (run.readiness.reasons.length) {
     lines.push(`Not ready:`, ...run.readiness.reasons.map((reason) => `- ${reason}`));
@@ -734,6 +812,21 @@ export function renderRunSummary(run: ReviewRun): string {
           + (disposition ? ` → ${disposition.action}${disposition.rationale ? ` (${disposition.rationale})` : ""}` : ""),
       );
     }
+  }
+  const notes = missingContextEntries(run);
+  if (notes.length) {
+    lines.push(`Missing context (answer each note to unblock):`);
+    for (const entry of notes) {
+      const disposition = run.dispositions[entry.id];
+      lines.push(
+        `- ${entry.id}: ${entry.text}`
+          + (disposition ? ` → ${disposition.action}` : " → unresolved"),
+      );
+    }
+    lines.push(
+      `Answer one with orch_spec_review({ action: "resolve", dispositions: [{ findingId: "C-gate-1", action: "accepted", rationale: "..." }] }) — `
+        + `that is how "the plan was not supplied" gets closed without another review round.`,
+    );
   }
   if (run.target.references.length) lines.push(`References: ${run.target.references.join(", ")}`);
   return lines.join("\n");
