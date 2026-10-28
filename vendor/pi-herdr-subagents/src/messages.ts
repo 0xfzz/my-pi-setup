@@ -114,27 +114,53 @@ export function buildOutcomeMessage(
     case "cancelled":
       return null;
 
-    case "ping":
+    case "ping": {
+      const validationNote = outcome.validationError
+        ? `\n\n[Payload Validation Error: ${outcome.validationError}]`
+        : "";
       return {
         customType: "subagent_ping",
         content:
           `Sub-agent "${outcome.name}" needs help (${formatElapsed(elapsed)}):\n\n` +
-          `${outcome.message}${sessionRef(running.sessionFile)}${usageSuffix}`,
+          `${outcome.message}${validationNote}${sessionRef(running.sessionFile)}${usageSuffix}`,
         display: true,
-        details: { ...baseDetails, name: outcome.name, message: outcome.message },
+        details: {
+          ...baseDetails,
+          name: outcome.name,
+          message: outcome.message,
+          ...(outcome.defect ? { defect: outcome.defect } : {}),
+          ...(outcome.correlation ? { correlation: outcome.correlation } : {}),
+          ...(outcome.sourceIdentity ? { sourceIdentity: outcome.sourceIdentity } : {}),
+          ...(outcome.validationError ? { validationError: outcome.validationError } : {}),
+        },
       };
+    }
 
-    case "completed":
+    case "completed": {
+      const validationNote = outcome.validationError
+        ? `\n\n[Payload Validation Error: ${outcome.validationError}]`
+        : "";
       return {
         customType: "subagent_result",
         content:
           resolveResultPresentation(
             { exitCode: 0, elapsed, summary: outcome.summary, sessionFile: running.sessionFile },
             running.name,
-          ) + usageSuffix,
+          ) +
+          validationNote +
+          usageSuffix,
         display: true,
-        details: { ...baseDetails, exitCode: 0, summary: outcome.summary },
+        details: {
+          ...baseDetails,
+          exitCode: 0,
+          summary: outcome.summary,
+          ...(outcome.report ? { report: outcome.report } : {}),
+          ...(outcome.correlation ? { correlation: outcome.correlation } : {}),
+          ...(outcome.sourceIdentity ? { sourceIdentity: outcome.sourceIdentity } : {}),
+          ...(outcome.validationError ? { validationError: outcome.validationError } : {}),
+        },
       };
+    }
 
     case "completed-user-exit":
       return {
@@ -144,7 +170,12 @@ export function buildOutcomeMessage(
           `after ${formatElapsed(elapsed)} — last message:\n\n` +
           `${outcome.summary}${sessionRef(running.sessionFile)}${usageSuffix}`,
         display: true,
-        details: { ...baseDetails, exitCode: 0, summary: outcome.summary },
+        details: {
+          ...baseDetails,
+          exitCode: 0,
+          summary: outcome.summary,
+          ...(outcome.sourceIdentity ? { sourceIdentity: outcome.sourceIdentity } : {}),
+        },
       };
 
     case "launch-failed": {
@@ -391,6 +422,15 @@ export function renderSubagentPing(
       if (options.expanded) {
         contentLines.push("");
         contentLines.push(details.message ?? "");
+        if (details.defect) {
+          contentLines.push("");
+          const d = details.defect;
+          const target = d.scope ? ` [${d.scope}]` : "";
+          const loc = d.file ? ` (${d.file}${d.line ? `:${d.line}` : ""})` : "";
+          contentLines.push(theme.fg("error", `Defect${target}${loc}:`));
+          contentLines.push(`  Expected: ${d.expected}`);
+          contentLines.push(`  Observed: ${d.observed}`);
+        }
       } else {
         const preview = (details.message ?? "").split("\n")[0].slice(0, width - 10);
         contentLines.push(theme.fg("dim", preview));
