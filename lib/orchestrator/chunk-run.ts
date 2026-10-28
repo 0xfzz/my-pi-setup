@@ -15,7 +15,7 @@
  */
 import { createHash } from "node:crypto";
 
-import { hashContent, type Disposition, type ReviewFinding } from "./spec-review.ts";
+import type { Disposition, ReviewFinding } from "./spec-review.ts";
 import { chunkMemberFacts, parseChunkReport, type ChunkReport } from "./report-v2.ts";
 import {
   evaluateWave,
