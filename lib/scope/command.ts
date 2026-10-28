@@ -7,7 +7,7 @@
  * rather than a guess.
  */
 import { displayPath } from "./tool-paths.ts";
-import type { ScopeAccess, ScopeDecision, ScopeEffect, ScopeRoot, ScopeState } from "./types.ts";
+import type { ScopeAccess, ScopeDecision, ScopeRoot, ScopeState } from "./types.ts";
 
 export type ScopeTarget = "session" | "project" | "global";
 
@@ -121,8 +121,4 @@ export function ruleLines(state: ScopeState): string[] {
 export function decisionLine(decision: ScopeDecision): string {
   const source = decision.rule ? `rule ${decision.rule.action}:${decision.rule.resource}` : decision.root ? `root ${decision.root.path}` : "default";
   return `${decision.effect.toUpperCase()} — ${decision.reason} [${source}]`;
-}
-
-export function effectSummary(effect: ScopeEffect): string {
-  return effect === "allow" ? "allowed" : effect === "ask" ? "would ask" : "denied";
 }
