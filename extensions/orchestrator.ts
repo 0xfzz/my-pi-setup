@@ -212,7 +212,6 @@ import {
   parseHandoffDocument,
 } from "../lib/orchestrator/handoff-document.ts";
 import {
-  REVIEW_PRESET_QUICK,
   REVIEW_PRESET_SINGLE,
   allFindings,
   applyDispositions,
@@ -221,7 +220,6 @@ import {
   hashContent,
   designRefProblem,
   evaluateReadiness,
-  isReviewPreset,
   openReviewRun,
   parseReviewerReport,
   pinTarget,
@@ -232,7 +230,6 @@ import {
   stalenessProblem,
   type DesignRef,
   type ReviewFinding,
-  type ReviewMember,
   type ReviewRun,
 } from "../lib/orchestrator/spec-review.ts";
 import {
