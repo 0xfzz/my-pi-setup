@@ -25,8 +25,6 @@ export type DelegationRole = "parent" | "child";
 export type SpawnPurpose = "spec" | "adhoc" | "research" | "review" | "implementation";
 
 export type DelegationVerb =
-  | "handoff"
-  | "spec-review"
   | "spawn"
   | "resume"
   | "interrupt"
@@ -34,9 +32,6 @@ export type DelegationVerb =
   | "steer"
   | "route"
   | "list"
-  | "brief"
-  | "check"
-  | "review"
   | "escalate"
   | "history"
   | "progress"
@@ -63,8 +58,6 @@ export const MAX_DELEGATION_DEPTH = 1;
 
 const TOOLS: readonly DelegationTool[] = [
   // ── Parent: authoring, delegation, review ────────────────────────────────
-  { name: "orch_handoff", role: "parent", planSafe: true, verb: "handoff" },
-  { name: "orch_spec_review", role: "parent", planSafe: true, verb: "spec-review" },
   { name: "orch_spawn", role: "parent", planSafe: true, verb: "spawn" },
   { name: "orch_resume", role: "parent", planSafe: true, verb: "resume" },
   { name: "orch_interrupt", role: "parent", planSafe: true, verb: "interrupt" },
@@ -72,9 +65,6 @@ const TOOLS: readonly DelegationTool[] = [
   { name: "orch_steer", role: "parent", planSafe: true, verb: "steer" },
   { name: "orch_route", role: "parent", planSafe: true, verb: "route", exposure: "deferred" },
   { name: "orch_running", role: "parent", planSafe: true, verb: "list" },
-  { name: "orch_brief", role: "parent", planSafe: true, verb: "brief" },
-  { name: "orch_check", role: "parent", planSafe: true, verb: "check" },
-  { name: "orch_review", role: "parent", planSafe: true, verb: "review" },
   { name: "orch_escalate", role: "parent", planSafe: true, verb: "escalate" },
   { name: "orch_history", role: "parent", planSafe: true, verb: "history" },
 
@@ -84,7 +74,6 @@ const TOOLS: readonly DelegationTool[] = [
   { name: "orch_ping", role: "child", planSafe: false, verb: "ping" },
   { name: "orch_parent_recall", role: "child", planSafe: false, verb: "parent-recall" },
   { name: "orch_parent_digest", role: "child", planSafe: false, verb: "parent-digest" },
-  { name: "orch_spec_review_submit", role: "child", planSafe: false, verb: "spec-review-submit" },
 ];
 
 export const DELEGATION_TOOLS: readonly DelegationTool[] = Object.freeze(
@@ -134,7 +123,6 @@ const RETIRED_TARGETS = new Map<string, string>([
   ["caller_ping", "orch_ping"],
   ["parent_recall", "orch_parent_recall"],
   ["parent_digest", "orch_parent_digest"],
-  ["spec_review_submit", "orch_spec_review_submit"],
 ]);
 
 /**

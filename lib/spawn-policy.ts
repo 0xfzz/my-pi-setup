@@ -51,56 +51,22 @@ export function defaultSpawnPurpose(modeId: string | undefined): SpawnPurpose {
  *   explicit spelling only taught callers to omit a correct argument.
  */
 export function allowedSpawnPurposes(
-  modeId: string | undefined,
-  executionApproved = false,
-  hasHandoff = false,
+  _modeId: string | undefined,
+  _executionApproved = false,
+  _hasHandoff = false,
 ): SpawnPurpose[] {
-  const mode = normalizeSpawnMode(modeId);
-  if (mode === "plan") return executionApproved ? [...ALL_PURPOSES] : ["spec", "research", "review"];
-  if (mode === "supervise" || mode === "orchestrator") {
-    return hasHandoff
-      ? ["spec", "implementation", "research", "review"]
-      : ["spec", "research", "review"];
-  }
-  return [...ALL_PURPOSES];
+  return ["adhoc", "research"];
 }
 
 /** The refusal text, or undefined when the spawn is admitted. */
 export function spawnRefusal(
-  modeId: string | undefined,
+  _modeId: string | undefined,
   purpose: SpawnPurpose,
-  executionApproved = false,
-  hasHandoff = false,
+  _executionApproved = false,
+  _hasHandoff = false,
 ): string | undefined {
-  if (allowedSpawnPurposes(modeId, executionApproved, hasHandoff).includes(purpose)) return undefined;
-  const mode = normalizeSpawnMode(modeId);
-
-  if (mode === "plan") {
-    if (purpose === "implementation") {
-      return "Plan mode: implementation delegation requires leaving Plan mode (/plan off) or an explicit execution approval.";
-    }
-    if (purpose === "adhoc") {
-      return "Plan mode: ad-hoc delegation has no handoff lane, so review cannot judge it. "
-        + "Leave Plan mode (/plan off), or spawn a research/review/spec child.";
-    }
-    return `Plan mode: ${purpose} delegation is not admitted. Use research, review or spec.`;
-  }
-
-  if (mode === "supervise" || mode === "orchestrator") {
-    const label = mode === "orchestrator" ? "Orchestrator" : "Supervise";
-    if (purpose === "implementation" && !hasHandoff) {
-      return `${label} mode: an implementation spawn needs a handoff lane. `
-        + `Author one with orch_handoff, then call orch_spawn with { handoffId, purpose: "implementation" }.`;
-    }
-    if (purpose === "adhoc") {
-      return `${label} mode: an ad-hoc child has no handoff lane, so review cannot judge it. `
-        + `To investigate, spawn one research child (purpose: "research"); to implement, author a handoff and get it reviewed.`;
-    }
-    return `${label} mode: ${purpose} delegation is not admitted. `
-      + `Use purpose "research" to investigate or a reviewed handoff to implement.`;
-  }
-
-  return `Spawn purpose "${purpose}" is not admitted in ${mode} mode.`;
+  if (purpose === "adhoc" || purpose === "research") return undefined;
+  return `Spawn purpose "${purpose}" was removed: delegation is ad-hoc only (adhoc or research).`;
 }
 
 /**

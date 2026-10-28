@@ -6,8 +6,6 @@ import { recordsFromBranch as childRecords } from "../lib/subagent-state.ts";
 import { childContextState, isSubagentChildSession, ownEntries } from "../lib/subagent-context.ts";
 import { readOnlyShellCommand } from "../lib/plan-shell.ts";
 import { INPUT_MODE_CONTEXT_TYPE, inputModeGuidance, isPlanTool, missingPlanTools, pendingPlanDeferredTools, pendingPlanExitTools, PLAN_MODE_GUIDANCE, PLAN_MODE_TYPE, planModeFromBranch } from "../lib/plan-mode.ts";
-import { declaredSuperviseTools, isSupervisorTool, superviseShellCommand, SUPERVISOR_MODE_GUIDANCE, SUPERVISOR_MODE_TYPE, superviseModeFromBranch } from "../lib/supervise-mode.ts";
-import { isControlPlanePath } from "../lib/orchestrator/control-plane.ts";
 import { reconcileLoadout, switchStateFromBranch } from "../lib/delegation-switch.ts";
 import { describeRetiredTools, isRetiredDelegationTool, stripRetiredTools } from "../lib/delegation-tools.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardMode } from "../lib/dashboard/integration.ts";
@@ -26,31 +24,8 @@ export default function modesExtension(pi: ExtensionAPI) {
   let installedEditor: EditorFactory | undefined;
   let baseEditor: EditorFactory | undefined;
   const isPlan = (ctx: ExtensionContext) => planModeFromBranch(policyEntries(ctx))?.enabled === true;
-  const isSupervise = (ctx: ExtensionContext) => superviseModeFromBranch(policyEntries(ctx))?.enabled === true;
   const allowedPlanTool = (name: string) => isPlanTool(name, pi.getAllTools().find(tool => tool.name === name));
 
-  /**
-   * Branch-derived policy inputs for supervise mode.
-   *
-   * Both come from the session's own switch decision, not from the live active
-   * set — that set is what this mode is in the middle of rewriting. Without the
-   * `v2` flag, supervise mode leaves the v1 `subagent` tool enabled, and v1 is a
-   * complete bypass of the handoff/isolation/escalation contract: no spec, no
-   * lane, one shared artifact catalog, and no ladder back to the orchestrator.
-   */
-  /**
-   * Branch-derived options for supervise mode.
-   *
-   * Derived from the session's own switch decision, not from the live active
-   * set — that set is what this mode is in the middle of rewriting. The v1
-   * `subagent` bypass this comment used to guard against has been removed from
-   * the package, so the decision alone is sufficient.
-   */
-  const superviseOptions = (ctx: ExtensionContext) => ({
-    disabledDelegates: switchStateFromBranch(policyEntries(ctx)).disabled,
-  });
-  const allowedSuperviseTool = (ctx: ExtensionContext, name: string) =>
-    isSupervisorTool(name, pi.getAllTools().find(tool => tool.name === name), superviseOptions(ctx));
   const restrictPlanTools = () => pi.setActiveTools(pi.getAllTools()
     .filter(tool => isPlanTool(tool.name, tool) && tool.exposure !== "hidden").map(tool => tool.name));
   /**
@@ -69,35 +44,6 @@ export default function modesExtension(pi: ExtensionAPI) {
    * `orch_brief` packet instead of an ad-hoc read expedition — not in hiding the
    * instruments the loop may need.
    */
-  const restrictSuperviseTools = (ctx: ExtensionContext) =>
-    pi.setActiveTools(declaredSuperviseTools(pi.getAllTools(), superviseOptions(ctx)));
-  /**
-   * Tools that write files. Their inputs are inspected for control-plane paths —
-   * the reviewer never writes, but a late-registered or MCP-provided writer still
-   * reaches this hook, and the instruments of the review are not negotiable.
-   */
-  const MUTATING_TOOLS = new Set(["write", "edit", "multi_edit", "multiedit", "apply_patch", "applypatch", "patch"]);
-  function writtenPaths(input: any): string[] {
-    const out: string[] = [];
-    for (const key of ["path", "file_path", "filePath"]) {
-      if (typeof input?.[key] === "string") out.push(input[key]);
-    }
-    if (Array.isArray(input?.paths)) out.push(...input.paths.filter((value: unknown) => typeof value === "string"));
-    if (Array.isArray(input?.edits)) {
-      for (const edit of input.edits) if (typeof edit?.path === "string") out.push(edit.path);
-    }
-    return out;
-  }
-  function controlPlaneViolation(ctx: ExtensionContext, input: any): string | undefined {
-    let sessionDir: string | null = null;
-    try { sessionDir = ctx.sessionManager.getSessionDir(); } catch { sessionDir = null; }
-    for (const path of writtenPaths(input)) {
-      const reason = isControlPlanePath(path, { sessionDir });
-      if (reason) return reason;
-    }
-    return undefined;
-  }
-
   pi.events?.on(REFRESH_EVENT, () => draw?.());
   // Dashboard handshake: re-emit the branch-derived mode so an extension loaded
   // after the original transition still receives the initial state.
@@ -128,7 +74,7 @@ export default function modesExtension(pi: ExtensionAPI) {
     const branch = policyEntries(ctx);
     for (let index = branch.length - 1; index >= 0; index--) {
       const entry = branch[index];
-      if (entry.type === "custom" && (entry.customType === PLAN_MODE_TYPE || entry.customType === SUPERVISOR_MODE_TYPE) && typeof (entry.data as any)?.enabled === "boolean") {
+      if (entry.type === "custom" && entry.customType === PLAN_MODE_TYPE && typeof (entry.data as any)?.enabled === "boolean") {
         return entry.id ?? JSON.stringify([index, entry.customType, entry.data]);
       }
     }
@@ -192,13 +138,8 @@ export default function modesExtension(pi: ExtensionAPI) {
    */
   function policyModeId(ctx: ExtensionContext): string {
     const branch = policyEntries(ctx);
-    const superviseState = superviseModeFromBranch(branch);
-    if (superviseState?.enabled) return superviseState.modeId === "orchestrator" ? "orchestrator" : "supervise";
     return planModeFromBranch(branch)?.enabled ? "plan" : "normal";
   }
-
-  /** Orchestrator and Supervise are one policy behind two user-facing entries. */
-  const isSupervisorMode = (id: string) => id === "supervise" || id === "orchestrator";
 
   function synchronize(ctx: ExtensionContext): boolean {
     const currentId = policyModeId(ctx);
@@ -225,11 +166,9 @@ export default function modesExtension(pi: ExtensionAPI) {
     // show the right tab while the tools stayed in Plan's loadout).
     if (currentId === id) return true;
     const enteringPlan = id === "plan";
-    const enteringSupervisor = isSupervisorMode(id);
     const leavingPlan = currentId === "plan";
-    const leavingSupervisor = isSupervisorMode(currentId);
-    const enteringRestricted = enteringPlan || enteringSupervisor;
-    const leavingRestricted = leavingPlan || leavingSupervisor;
+    const enteringRestricted = enteringPlan;
+    const leavingRestricted = leavingPlan;
     if ((enteringRestricted || leavingRestricted) && (!ctx.isIdle() || nativeShellSubmissions > 0)) {
       ctx.ui.notify("Stop the current turn or shell command before entering or leaving restricted modes.", "warning");
       return false;
@@ -239,36 +178,13 @@ export default function modesExtension(pi: ExtensionAPI) {
         ctx.ui.notify("Finish or stop running/unverified children before entering Plan mode. Their permissions cannot be restricted by this session.", "warning");
         return false;
       }
-      if (leavingSupervisor) {
-        pi.appendEntry(SUPERVISOR_MODE_TYPE, { enabled: false, modeId: currentId });
-      } else {
-        previousTools = [...new Set([...pi.getActiveTools(), ...pendingTools])];
-        pendingTools.clear();
-      }
+      previousTools = [...new Set([...pi.getActiveTools(), ...pendingTools])];
+      pendingTools.clear();
       pi.appendEntry(PLAN_MODE_TYPE, { enabled: true, previousTools });
       restrictPlanTools();
-    } else if (enteringSupervisor) {
-      if (leavingPlan) {
-        pi.appendEntry(PLAN_MODE_TYPE, { enabled: false });
-      } else {
-        previousTools = [...new Set([...pi.getActiveTools(), ...pendingTools])];
-        pendingTools.clear();
-      }
-      // Both ids write the same entry; `modeId` remembers which tab to redraw
-      // after a reload so `/mode orchestrator` does not come back as Supervise.
-      pi.appendEntry(SUPERVISOR_MODE_TYPE, {
-        enabled: true,
-        previousTools,
-        modeId: id,
-      });
-      restrictSuperviseTools(ctx);
     } else if (leavingRestricted) {
       restoreTools(previousTools ?? [], ctx);
-      if (leavingPlan) {
-        pi.appendEntry(PLAN_MODE_TYPE, { enabled: false, previousTools: previousTools ?? [], pendingTools: [...pendingTools] });
-      } else {
-        pi.appendEntry(SUPERVISOR_MODE_TYPE, { enabled: false, previousTools: previousTools ?? [], pendingTools: [...pendingTools], modeId: currentId });
-      }
+      pi.appendEntry(PLAN_MODE_TYPE, { enabled: false, previousTools: previousTools ?? [], pendingTools: [...pendingTools] });
       previousTools = undefined;
     }
     registry.select(id);
@@ -294,13 +210,8 @@ export default function modesExtension(pi: ExtensionAPI) {
   function restore(ctx: ExtensionContext) {
     const branch = policyEntries(ctx);
     const planState = planModeFromBranch(branch);
-    const superviseState = superviseModeFromBranch(branch);
     pendingTools.clear();
-    if (superviseState?.enabled) {
-      previousTools = superviseState.previousTools;
-      registry.select(superviseState.modeId === "orchestrator" ? "orchestrator" : "supervise");
-      restrictSuperviseTools(ctx);
-    } else if (planState?.enabled) {
+    if (planState?.enabled) {
       previousTools = planState.previousTools;
       registry.select("plan");
       restrictPlanTools();
@@ -418,8 +329,7 @@ export default function modesExtension(pi: ExtensionAPI) {
    */
   function reconcileTools(ctx: ExtensionContext) {
     stripRetiredDelegationTools(ctx);
-    if (isSupervise(ctx)) restrictSuperviseTools(ctx);
-    else if (isPlan(ctx)) restrictPlanTools();
+    if (isPlan(ctx)) restrictPlanTools();
     else restoreConnectedTools(ctx);
   }
 
@@ -430,30 +340,20 @@ export default function modesExtension(pi: ExtensionAPI) {
 
   pi.on("before_agent_start", (event, ctx) => {
     const planActive = isPlan(ctx);
-    const superviseActive = isSupervise(ctx);
     // Keep UI and AI policy on the same branch-derived state, even if a lifecycle
     // refresh was missed. Never infer mode from earlier assistant messages.
     synchronize(ctx);
-    if (!planActive && !superviseActive) restoreConnectedTools(ctx);
+    if (!planActive) restoreConnectedTools(ctx);
     // Pi already falls back to the live active tools after these hooks. Do not
     // override another extension's explicit per-request selection in Normal.
     event.systemPromptOptions.sections["input_mode"] = inputModeGuidance(registry.current);
-    if (superviseActive) {
-      restrictSuperviseTools(ctx);
-      event.systemPromptOptions.selectedTools = pi.getActiveTools().filter(name => allowedSuperviseTool(ctx, name));
-      event.systemPromptOptions.sections["supervise_mode"] = SUPERVISOR_MODE_GUIDANCE;
-      delete event.systemPromptOptions.sections["plan_mode"];
-      return;
-    }
     if (planActive) {
       restrictPlanTools();
       event.systemPromptOptions.selectedTools = pi.getActiveTools().filter(allowedPlanTool);
       event.systemPromptOptions.sections["plan_mode"] = PLAN_MODE_GUIDANCE;
-      delete event.systemPromptOptions.sections["supervise_mode"];
       return;
     }
     delete event.systemPromptOptions.sections["plan_mode"];
-    delete event.systemPromptOptions.sections["supervise_mode"];
   });
 
   // System sections are replayed as deltas and older assistant replies (or a
@@ -481,27 +381,8 @@ export default function modesExtension(pi: ExtensionAPI) {
     if (isRetiredDelegationTool(event.toolName)) {
       return { block: true, reason: `${event.toolName} was removed from this package; it is not part of the current delegation surface.` };
     }
-    const superviseActive = isSupervise(ctx);
     const planActive = isPlan(ctx);
-    if (!planActive && !superviseActive) return;
-
-    if (superviseActive) {
-      if (!allowedSuperviseTool(ctx, event.toolName)) {
-        return { block: true, reason: `Supervise mode: ${event.toolName} is not available to a reviewer. You do not implement: delegate the work with orch_spawn, inspect the result with orch_brief and orch_check, and record the verdict with orch_review. /mode normal to implement.` };
-      }
-      if (MUTATING_TOOLS.has(event.toolName)) {
-        const violation = controlPlaneViolation(ctx, event.input);
-        if (violation) {
-          return { block: true, reason: `Supervise mode: ${violation}. Control-plane files cannot be edited: they are the review's own instruments. Use /mode normal to exit.` };
-        }
-      }
-      if (event.toolName === "bash") {
-        const command = superviseShellCommand(event.input?.command);
-        if (command === undefined) return { block: true, reason: "Supervise mode: bash is read-only. Delegate writes with orch_handoff then orch_spawn, or /mode normal to implement." };
-        event.input.command = command;
-      }
-      return;
-    }
+    if (!planActive) return;
 
     if (planActive) {
       if (!allowedPlanTool(event.toolName)) {
@@ -521,20 +402,8 @@ export default function modesExtension(pi: ExtensionAPI) {
   });
 
   pi.on("user_bash", (event, ctx) => {
-    const superviseActive = isSupervise(ctx);
     const planActive = isPlan(ctx);
-    if (!planActive && !superviseActive) return;
-    if (superviseActive) {
-      // Read-only review shell: the same closed grammar Plan mode uses. The
-      // orchestrator declares that it does not implement; a general shell made
-      // that declaration false.
-      const command = superviseShellCommand(event.command);
-      if (command === undefined) {
-        return { result: { output: "Supervise mode blocks shell commands that are not supported read-only inspection. Delegate writes with orch_handoff then orch_spawn, or /mode normal to implement.",
-          exitCode: 1, cancelled: false, truncated: false } };
-      }
-      return { operations: { exec: (_command, cwd, options) => createLocalBashOperations().exec(command, cwd, options) } };
-    }
+    if (!planActive) return;
     // Plan keeps the conservative read-only grammar.
     const command = readOnlyShellCommand(event.command);
     if (command === undefined) {
@@ -545,7 +414,7 @@ export default function modesExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("mode", {
-    description: "Switch input mode: /mode [normal|plan|supervise|orchestrator] (or Shift+Tab)",
+    description: "Switch input mode: /mode [normal|plan] (or Shift+Tab)",
     getArgumentCompletions(prefix) {
       const items = registry.modes.filter(mode => mode.id.startsWith(prefix))
         .map(mode => ({ value: mode.id, label: `${mode.label} — ${mode.hint}` }));
@@ -562,7 +431,7 @@ export default function modesExtension(pi: ExtensionAPI) {
       // a widened allowlist bought implementation quality the parent should have
       // delegated, and cost independence, tokens and lane ownership in exchange.
       if (flags.length) {
-        ctx.ui.notify(`Unknown option "${flags[0]}". Use /mode normal|plan|supervise|orchestrator.`, "warning");
+        ctx.ui.notify(`Unknown option "${flags[0]}". Use /mode normal|plan.`, "warning");
         return;
       }
       if (id) {
@@ -591,28 +460,6 @@ export default function modesExtension(pi: ExtensionAPI) {
         if (select("normal", ctx)) ctx.ui.notify("Plan mode is off.", "info");
       } else {
         ctx.ui.notify("Usage: /plan mode | on | off | status", "warning");
-      }
-    },
-  });
-
-  pi.registerCommand("supervise", {
-    description: "Orchestrator supervisor mode (no code implementation): /supervise mode (or on), /supervise off, /supervise status",
-    getArgumentCompletions(prefix) {
-      const items = ["mode", "on", "off", "status"].filter(value => value.startsWith(prefix))
-        .map(value => ({ value, label: value }));
-      return items.length ? items : null;
-    },
-    async handler(args, ctx) {
-      synchronize(ctx);
-      const action = args.trim().toLowerCase();
-      if (action === "status") {
-        ctx.ui.notify(isSupervise(ctx) ? "Supervise mode: orchestrator supervisor active; no direct implementation." : "Supervise mode is off.", "info");
-      } else if (["", "mode", "on"].includes(action)) {
-        if (select("supervise", ctx)) ctx.ui.notify("Supervise mode: orchestrate and steer subagents; direct edits and browser tools disabled. /mode normal to exit.", "info");
-      } else if (action === "off") {
-        if (select("normal", ctx)) ctx.ui.notify("Supervise mode is off.", "info");
-      } else {
-        ctx.ui.notify("Usage: /supervise mode | on | off | status", "warning");
       }
     },
   });

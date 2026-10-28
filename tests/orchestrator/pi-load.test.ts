@@ -31,7 +31,7 @@ test("real Pi loads subagent-v2 with zero extension errors", async () => {
 
     const names = [...session.getActiveToolNames()].sort();
     console.log("ACTIVE:", JSON.stringify(names.filter((n: string) => n.startsWith("orch_"))));
-    for (const t of ["orch_handoff", "orch_spawn", "orch_review", "orch_escalate", "orch_running", "orch_steer"]) {
+    for (const t of ["orch_spawn", "orch_escalate", "orch_running", "orch_steer"]) {
       assert.ok(names.includes(t), `${t} must be registered and active`);
     }
     // `orch_route` is deferred on purpose: undeclared, but findable by `tool_search`

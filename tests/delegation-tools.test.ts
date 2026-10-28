@@ -60,11 +60,13 @@ test("retired names are disjoint from the canonical surface", () => {
   }
 });
 
-test("every retired name translates to an existing canonical tool", () => {
+test("every retired name with a successor translates to a canonical tool", () => {
   for (const name of RETIRED_V1_TOOLS) {
     const target = canonicalDelegationName(name);
-    assert.ok(target, `${name} has a canonical target`);
-    assert.equal(isDelegationTool(target!), true, `${target} exists`);
+    // `spec_review_submit`'s successor was removed with the orchestrator
+    // pipeline; the others still have a live canonical name.
+    if (!target) continue;
+    assert.equal(isDelegationTool(target), true, `${target} exists`);
   }
   assert.equal(RETIRED_V1_TOOLS.size, 11);
 });
@@ -118,7 +120,6 @@ test("the derived name lists match the table", () => {
     "orch_parent_recall",
     "orch_ping",
     "orch_progress",
-    "orch_spec_review_submit",
   ]);
   assert.equal(childControlToolNames().includes("orch_spawn"), false, "a child control list never contains a spawn tool");
 });
@@ -127,8 +128,8 @@ test("the retired list names each live successor, so 'unavailable' is not read a
   const described = describeRetiredTools();
   // The bug: a reviewer whose submit call failed on malformed JSON read
   // "spec_review_submit is unavailable" and concluded its tool was removed.
-  assert.match(described, /spec_review_submit \(use orch_spec_review_submit\)/);
   assert.match(described, /subagent \(use orch_spawn\)/);
+  assert.match(described, /spec_review_submit/, "the retired name is still named");
   for (const name of RETIRED_V1_TOOLS) {
     assert.ok(described.includes(name), `${name} is still named`);
   }

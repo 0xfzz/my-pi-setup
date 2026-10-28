@@ -138,8 +138,6 @@ export function inputModeGuidance(mode: { id: string; label: string }): string {
   const current = `Current input mode: ${mode.label} (${mode.id}).`;
   if (mode.id === "plan") return `${current}
 Plan mode is ON. Read-only exploration is allowed; writes are limited to artifacts. The workflow in plan_mode applies.`;
-  if (mode.id === "supervise") return `${current}
-Supervise mode is ON. Orchestrator supervisor parent mode active: delegate tasks to subagents, steer workers, review diffs and outcomes. Direct file edits and browser tools are disabled.`;
   return `${current}
 Plan mode is OFF. Earlier Plan-mode restrictions and assistant statements claiming Plan is active are historical, not the current policy.
 Use the currently available tools and normal permission rules. Artifact-only write limits no longer apply; implementation is allowed when requested. Do not ask the user to run /plan off again or refuse work just because an earlier turn was in Plan mode.

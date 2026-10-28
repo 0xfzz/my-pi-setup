@@ -258,59 +258,6 @@ describe("pane lifecycle: close is a terminal transition", () => {
     assert.equal(registry.getChildById(c.id)?.status, "closed");
   });
 
-  it("orch_review approved settles the child so it cannot idle into its budget", async () => {
-    const h = harness();
-    const c = child({ id: "review-close", scope: "review-scope" });
-    registry.registerChild(c);
-
-    const result = await h.tools.get("orch_review").execute(
-      "t",
-      {
-        scope: "review-scope",
-        verdict: "approved",
-        criteriaNotes: [
-          {
-            criterion: "works",
-            evidence: "read the diff",
-            evidenceRefs: [{ kind: "cmd", cmd: "git diff --stat", exit: 0 }],
-            passed: true,
-          },
-        ],
-        laneCompliance: { inLane: true },
-        summary: "verified",
-      },
-      undefined,
-      undefined,
-      {},
-    );
-
-    assert.deepEqual(h.calls.close, [c.paneId]);
-    assert.equal(registry.getChildById(c.id)?.closeReason, "review-approved");
-    assert.equal((result.details as any).childClosed, true);
-  });
-
-  it("orch_review revise keeps the child for the next round", async () => {
-    const h = harness();
-    const c = child({ id: "review-keep", scope: "revise-scope" });
-    registry.registerChild(c);
-
-    await h.tools.get("orch_review").execute(
-      "t",
-      {
-        scope: "revise-scope",
-        verdict: "revise",
-        criteriaNotes: [{ criterion: "works", evidence: "missing test", passed: false }],
-        laneCompliance: { inLane: true },
-        summary: "one more round",
-      },
-      undefined,
-      undefined,
-      {},
-    );
-
-    assert.equal(h.calls.close.length, 0);
-    assert.equal(registry.getChildById(c.id)?.status, "running");
-  });
 });
 
 describe("watchdog notices describe what actually happened", () => {
@@ -426,32 +373,6 @@ describe("ownership survives a failed probe", () => {
 });
 
 describe("targets and scopes stay honest after a close", () => {
-  it("review settles every active child in the scope, not just the first", async () => {
-    const h = harness();
-    registry.registerChild(child({ id: "multi-a", scope: "multi", status: "blocked", sessionFile: "/tmp/orchestrator-tests/multi-a.jsonl" }));
-    registry.registerChild(child({ id: "multi-b", scope: "multi", status: "blocked", sessionFile: "/tmp/orchestrator-tests/multi-b.jsonl" }));
-
-    const result = await h.tools.get("orch_review").execute("t", {
-      scope: "multi",
-      verdict: "approved",
-      criteriaNotes: [
-        {
-          criterion: "works",
-          evidence: "read the diff",
-          evidenceRefs: [{ kind: "cmd", cmd: "git diff --stat", exit: 0 }],
-          passed: true,
-        },
-      ],
-      laneCompliance: { inLane: true },
-      summary: "verified",
-    });
-
-    assert.equal((result.details as any).settled.length, 2);
-    assert.equal(registry.getChildById("multi-a")?.status, "closed");
-    assert.equal(registry.getChildById("multi-b")?.status, "closed");
-    assert.equal(h.calls.close.length, 2);
-  });
-
   it("orch_steer refuses a finished child instead of reviving it", async () => {
     const h = harness();
     const c = child({ id: "steer-closed", status: "closed", closeReason: "review-approved" });

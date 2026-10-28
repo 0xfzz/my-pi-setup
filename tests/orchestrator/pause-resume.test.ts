@@ -6,9 +6,8 @@ import { join } from "node:path";
 
 import orchestratorExtension, { registry } from "../../extensions/orchestrator.ts";
 import type { ScopedChild } from "../../lib/orchestrator/scope-registry.ts";
-import { SUPERVISOR_MODE_TYPE } from "../../lib/supervise-mode.ts";
 
-type ModeId = "orchestrator" | "supervise" | null;
+type ModeId = null;
 
 interface Harness {
   tools: Map<string, any>;
@@ -19,16 +18,8 @@ interface Harness {
   emit: (name: string, event: any) => Promise<any[]>;
 }
 
-function branch(modeId: ModeId) {
-  if (!modeId) return [];
-  return [
-    {
-      id: "mode-1",
-      type: "custom",
-      customType: SUPERVISOR_MODE_TYPE,
-      data: { enabled: true, previousTools: [], modeId },
-    },
-  ];
+function branch(_modeId: ModeId) {
+  return [];
 }
 
 function harness(options: {
@@ -65,7 +56,7 @@ function harness(options: {
     cwd: options.dir,
     ui: { notify: (text: string, level: "info" | "warning" | "error") => notices.push({ text, level }) },
     sessionManager: {
-      getBranch: () => branch(options.modeId === undefined ? "orchestrator" : options.modeId),
+      getBranch: () => branch(options.modeId ?? null),
       getSessionDir: () => options.dir,
       getSessionId: () => "parent-pause",
       getSessionFile: () => join(options.dir, "parent.jsonl"),
@@ -267,26 +258,6 @@ describe("/orch-resume redeploys the paused run on its own sessions", () => {
     }
   });
 
-  it("refuses to resume an unreviewed worker in Orchestrator mode", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "orch-resume-"));
-    const h = harness({ dir });
-    const worker = child({ id: "r-unreviewed", sessionFile: join(dir, "unreviewed.jsonl") });
-    await writeFile(worker.sessionFile, "{}\n", "utf8");
-    registry.registerChild({ ...worker, status: "closed", closeReason: "paused", closedAt: new Date().toISOString() });
-    registry.setPaused(true);
-
-    try {
-      await resume(h);
-
-      assert.equal(h.calls.start.length, 0, "no pane for an unreviewed implementation resume");
-      assert.match(h.notices.at(-1)!.text, /design-review-required/);
-      assert.equal(registry.getChildById(worker.id)!.closeReason, "paused", "the row stays paused for a Normal retry");
-    } finally {
-      await h.emit("session_shutdown", {});
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
   it("says there is nothing to resume instead of inventing work", async () => {
     const dir = await mkdtemp(join(tmpdir(), "orch-resume-"));
     const h = harness({ dir });
@@ -361,8 +332,7 @@ describe("/orch-resume redeploys the paused run on its own sessions", () => {
     try {
       await resume(clean);
       assert.equal(clean.calls.start.length, 0);
-      assert.equal(clean.notices.at(-1)!.level, "error", "no pause to resolve, so the mode guard applies");
-      assert.match(clean.notices.at(-1)!.text, /orchestrator mode/);
+      assert.match(clean.notices.at(-1)!.text, /Nothing to resume/);
     } finally {
       await clean.emit("session_shutdown", {});
       await rm(dir, { recursive: true, force: true });
