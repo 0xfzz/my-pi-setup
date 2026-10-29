@@ -124,6 +124,19 @@ test("yolo narrows nothing inside the workspace", () => {
   assert.equal(narrowYoloSensitiveRead(yoloed, inside, true), undefined);
 });
 
+test("an .env template is not a secret, but the real file still asks", () => {
+  const read = (name: string) => evaluateClaim(
+    claim({ absolute: `/home/u/${name}`, resource: `/home/u/${name}`, external: true }),
+    state(),
+  );
+  assert.equal(read(".env").effect, "ask");
+  assert.equal(read(".env.local").effect, "ask");
+  assert.equal(read("id_rsa").effect, "ask");
+  assert.equal(read(".env.example").effect, "allow", "a template shows the shape without holding a secret");
+  assert.equal(read(".env.sample").effect, "allow");
+  assert.equal(read("staging.env.example").effect, "allow");
+});
+
 test("yolo upgrades a question, respects its strength, and never touches a deny", () => {
   const read = claim({ absolute: "/other/a.ts", resource: "/other/a.ts", external: true });
   const write = claim({ tool: "write", action: "write", write: true, absolute: "/other/a.ts", resource: "/other/a.ts", external: true });

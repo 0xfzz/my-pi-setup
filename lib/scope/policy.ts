@@ -105,11 +105,20 @@ const SENSITIVE_SEGMENTS = [
 ];
 const SENSITIVE_NAMES = [".env", ".envrc", ".netrc", ".pgpass", ".git-credentials", "id_rsa", "id_ed25519", "id_ecdsa"];
 const SENSITIVE_SUFFIXES = [".pem", ".key", ".p12", ".pfx", ".kdbx", ".keystore"];
+/**
+ * Templates document the shape of the secrets without holding any.
+ *
+ * `.env.example` sat behind the `.env.` prefix rule and asked like the real
+ * file, which teaches people to click through the one dialog that matters. This
+ * is opencode's default too: `*.env.example: allow`.
+ */
+const TEMPLATE_SUFFIXES = [".env.example", ".env.sample", ".env.template"];
 
 /** Is this one of the reads whose disclosure is the reason a gate exists? */
 export function isSensitiveRead(absolute: string): boolean {
   const path = `/${toResourceSlash(absolute).replace(/^\/+/, "")}`;
   const name = path.split("/").pop() ?? "";
+  if (TEMPLATE_SUFFIXES.some(suffix => name.endsWith(suffix))) return false;
   if (SENSITIVE_NAMES.includes(name) || name.startsWith(".env.")) return true;
   if (SENSITIVE_SUFFIXES.some(suffix => name.endsWith(suffix))) return true;
   return SENSITIVE_SEGMENTS.some(segment => path.includes(segment));
