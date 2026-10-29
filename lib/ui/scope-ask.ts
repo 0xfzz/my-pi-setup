@@ -6,6 +6,10 @@
  * literal glob it will save, because opencode's `save` patterns turned a single
  * "always" into a standing `$HOME` grant (issue #52715) — the widening must be
  * visible at the moment of consent, not discovered later in a config file.
+ *
+ * The fifth answer is opencode's reject-with-a-message: a denial that carries
+ * what to do instead. It is a separate stage, not a second dialog, so backing
+ * out returns to the options rather than discarding the question.
  */
 import {
   Input,
@@ -35,7 +39,8 @@ export interface ScopeAskRequest {
 export type ScopeAnswer =
   | { kind: "once" }
   | { kind: "allow"; grant: ScopeSuggestion }
-  | { kind: "deny" }
+  /** `feedback` turns a denial into an instruction the model can act on. */
+  | { kind: "deny"; feedback?: string }
   | { kind: "rule"; text: string };
 
 export interface ScopeAskPopupOptions extends ScopeAskRequest {
@@ -44,23 +49,33 @@ export interface ScopeAskPopupOptions extends ScopeAskRequest {
   onDone: (answer: ScopeAnswer) => void;
 }
 
-const OPTION_COUNT = 4;
+/** Where the popup is: choosing, typing a rule, or typing a denial note. */
+type Stage = "permission" | "rule" | "reject";
+
+const OPTION_COUNT = 5;
+/** Body row for each option: the saved-glob line sits under "Allow …". */
+const ROW_FOR_OPTION: readonly number[] = [0, 1, 3, 4, 5];
+/** Which option a body row answers; the saved-glob line belongs to option 1. */
+const OPTION_FOR_ROW: readonly number[] = [0, 1, 1, 2, 3, 4];
 
 export class ScopeAskPopup implements Component, Focusable {
   private readonly options: ScopeAskPopupOptions;
   private readonly theme: PopupTheme;
   private readonly shell: PopupShell;
-  private readonly input = new Input({ prompt: "Rule: ", placeholder: "action resource allow|ask|deny" });
+  private readonly ruleInput = new Input({ prompt: "Rule: ", placeholder: "action resource allow|ask|deny" });
+  private readonly rejectInput = new Input({ prompt: "Deny: ", placeholder: "what to do instead" });
   private selected = 0;
-  private editing = false;
+  private stage: Stage = "permission";
   private finished = false;
   private isFocused = false;
 
   constructor(options: ScopeAskPopupOptions) {
     this.options = options;
     this.theme = options.theme ?? PLAIN_THEME;
-    this.input.onSubmit = (value) => this.submitRule(value);
-    this.input.onEscape = () => this.stopEditing();
+    this.ruleInput.onSubmit = (value) => this.submitRule(value);
+    this.ruleInput.onEscape = () => this.stopInput();
+    this.rejectInput.onSubmit = (value) => this.submitReject(value);
+    this.rejectInput.onEscape = () => this.stopInput();
     this.shell = new PopupShell({
       theme: this.theme,
       title: "Access outside the workspace",
@@ -76,12 +91,13 @@ export class ScopeAskPopup implements Component, Focusable {
   }
 
   get focused(): boolean {
-    return this.editing ? this.input.focused : this.isFocused;
+    return this.stage === "permission" ? this.isFocused : this.activeInput().focused;
   }
 
   set focused(value: boolean) {
     this.isFocused = value;
-    this.input.focused = value && this.editing;
+    this.ruleInput.focused = value && this.stage === "rule";
+    this.rejectInput.focused = value && this.stage === "reject";
   }
 
   /** Esc / abort: deny this call. Never "allow by timeout". */
@@ -98,13 +114,15 @@ export class ScopeAskPopup implements Component, Focusable {
   }
 
   invalidate(): void {
-    this.input.invalidate();
+    this.ruleInput.invalidate();
+    this.rejectInput.invalidate();
     this.shell.invalidate();
   }
 
   dispose(): void {
     this.finished = true;
-    this.input.focused = false;
+    this.ruleInput.focused = false;
+    this.rejectInput.focused = false;
   }
 
   render(width: number): string[] {
@@ -112,8 +130,9 @@ export class ScopeAskPopup implements Component, Focusable {
   }
 
   private hint(): string {
-    if (this.editing) return "Enter save rule · Esc back";
-    return "↑↓ select · Enter choose · 1-4 · e rule · Esc deny";
+    if (this.stage === "rule") return "Enter save rule · Esc back";
+    if (this.stage === "reject") return "Enter deny with note · empty = plain deny · Esc back";
+    return "↑↓ select · Enter choose · 1-5 · e rule · Esc deny";
   }
 
   private rows(width: number): PopupRow[] {
@@ -132,7 +151,8 @@ export class ScopeAskPopup implements Component, Focusable {
       option(1, grantLabel),
       theme.fg("dim", `      saves ${suggestion.glob}`),
       option(2, "Deny"),
-      option(3, "Edit a rule…"),
+      option(3, "Deny with instructions…"),
+      option(4, "Edit a rule…"),
     ];
     void width;
     return rows;
@@ -146,14 +166,24 @@ export class ScopeAskPopup implements Component, Focusable {
       theme.fg("dim", request.reason),
       "",
     ];
-    if (this.editing) {
+    if (this.stage === "reject") {
       return {
         header,
         body: [
-          ...this.rows(width).filter((row, index) => index !== 3),
+          ...wrapTextWithAnsi(theme.fg("dim", "Tell the model what to do instead:"), Math.max(8, width - 2)),
+          ...this.rejectInput.render(width),
+        ],
+        footer: request.queued ? [theme.fg("warning", `${request.queued} more waiting`)] : undefined,
+      };
+    }
+    if (this.stage === "rule") {
+      return {
+        header,
+        body: [
+          ...this.rows(width).filter((_row, index) => index !== ROW_FOR_OPTION[4]),
           "",
           ...wrapTextWithAnsi(theme.fg("dim", "Format: <tool|*> <glob> <allow|ask|deny>"), Math.max(8, width - 2)),
-          ...this.input.render(width),
+          ...this.ruleInput.render(width),
         ],
         footer: request.queued ? [theme.fg("warning", `${request.queued} more waiting`)] : undefined,
       };
@@ -166,13 +196,13 @@ export class ScopeAskPopup implements Component, Focusable {
   }
 
   private handleKey(data: string): boolean | void {
-    if (this.editing) {
-      // The Input owns keys while a rule is being typed; only Escape returns.
+    if (this.stage !== "permission") {
+      // The active Input owns keys while it is open; only Escape returns.
       if (isPopupCloseKey(data)) {
-        this.stopEditing();
+        this.stopInput();
         return true;
       }
-      this.input.handleInput(data);
+      this.activeInput().handleInput(data);
       return true;
     }
     if (matchesKey(data, "up") || data === "k") {
@@ -201,16 +231,14 @@ export class ScopeAskPopup implements Component, Focusable {
   }
 
   private handleBodyClick(index: number): boolean {
-    // Body rows are: 0..4 option/save lines, so map the visible index back.
-    const map = [0, 1, 1, 2, 3];
-    const option = map[index];
+    const option = OPTION_FOR_ROW[index];
     if (option === undefined) return false;
     this.choose(option);
     return true;
   }
 
   private revealRow(): number | undefined {
-    return this.selected === 3 ? 4 : this.selected === 2 ? 3 : this.selected;
+    return ROW_FOR_OPTION[this.selected];
   }
 
   private choose(index: number): void {
@@ -218,33 +246,54 @@ export class ScopeAskPopup implements Component, Focusable {
     if (index === 0) return this.finish({ kind: "once" });
     if (index === 1) return this.finish({ kind: "allow", grant: suggestion });
     if (index === 2) return this.finish({ kind: "deny" });
+    if (index === 3) return this.startReject();
     this.startEditing();
   }
 
   private startEditing(): void {
-    this.editing = true;
-    this.input.focused = this.isFocused;
-    setValueAtEnd(this.input, `${this.options.tool} ${this.options.suggestion.glob} allow`);
+    this.stage = "rule";
+    this.ruleInput.focused = this.isFocused;
+    this.rejectInput.focused = false;
+    setValueAtEnd(this.ruleInput, `${this.options.tool} ${this.options.suggestion.glob} allow`);
   }
 
-  private stopEditing(): void {
-    this.editing = false;
-    this.input.focused = false;
+  /** opencode's reject stage: empty means a plain deny, a note becomes guidance. */
+  private startReject(): void {
+    this.stage = "reject";
+    this.ruleInput.focused = false;
+    this.rejectInput.focused = this.isFocused;
+    this.rejectInput.setValue("");
+  }
+
+  private stopInput(): void {
+    this.stage = "permission";
+    this.ruleInput.focused = false;
+    this.rejectInput.focused = false;
+  }
+
+  private activeInput(): Input {
+    return this.stage === "reject" ? this.rejectInput : this.ruleInput;
   }
 
   private submitRule(text: string): void {
     const trimmed = text.trim();
     if (!trimmed) {
-      this.stopEditing();
+      this.stopInput();
       return;
     }
     this.finish({ kind: "rule", text: trimmed });
   }
 
+  private submitReject(text: string): void {
+    const feedback = text.trim();
+    this.finish(feedback ? { kind: "deny", feedback } : { kind: "deny" });
+  }
+
   private finish(answer: ScopeAnswer): void {
     if (this.finished) return;
     this.finished = true;
-    this.input.focused = false;
+    this.ruleInput.focused = false;
+    this.rejectInput.focused = false;
     this.options.onDone(answer);
   }
 }

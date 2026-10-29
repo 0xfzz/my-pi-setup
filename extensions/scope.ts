@@ -134,6 +134,7 @@ export default function scopeExtension(pi: ExtensionAPI) {
           ? `Allow only ${request.display} for this session`
           : `Allow ${request.suggestion.path} (${request.suggestion.access === "ro" ? "read-only" : "read-write"}) for this session`,
         "Deny",
+        "Deny with instructions…",
       ];
       const chosen = await ui.select(
         `${request.write ? "write" : "read"} ${request.display}\n${request.reason}\n\nsaves ${request.suggestion.glob}`,
@@ -141,6 +142,12 @@ export default function scopeExtension(pi: ExtensionAPI) {
       );
       if (chosen === labels[0]) return { kind: "once" };
       if (chosen === labels[1]) return { kind: "allow", grant: request.suggestion };
+      if (chosen === labels[3] && typeof ui.input === "function") {
+        // opencode's reject-with-a-message: the note becomes the model's instruction.
+        const note = await ui.input("Deny — tell the model what to do instead", "e.g. read /work/config.yaml instead");
+        const feedback = note?.trim();
+        return feedback ? { kind: "deny", feedback } : { kind: "deny" };
+      }
       return { kind: "deny" };
     }
     return {
@@ -179,6 +186,7 @@ export default function scopeExtension(pi: ExtensionAPI) {
     decision: "allow-once" | "allow-folder" | "deny",
     path: string,
     access: "ro" | "rw",
+    feedback?: string,
   ): string {
     const classified = classifyPath(cwd, state.roots, path);
     if (decision === "deny") {
@@ -192,7 +200,10 @@ export default function scopeExtension(pi: ExtensionAPI) {
       draw?.();
       refresh();
       log.add({ tool: "scope_answer", path: classified.absolute, write: true, outcome: "deny", detail: "parent denied" });
-      return `Recorded the parent's denial for ${classified.absolute}. Report the blocker instead of retrying.`;
+      const instruction = feedback?.trim();
+      return instruction
+        ? `Recorded the parent's denial for ${classified.absolute}, so retrying it will be blocked. Do this instead: ${instruction}`
+        : `Recorded the parent's denial for ${classified.absolute}. Report the blocker instead of retrying.`;
     }
     const target = decision === "allow-once" ? classified.absolute : dirname(classified.absolute);
     const root: ScopeRoot = { path: target, access, source: "session" };
@@ -365,6 +376,12 @@ export default function scopeExtension(pi: ExtensionAPI) {
           description: "Read-only or read-write. Defaults to read-write, matching the blocked call.",
         }),
       ),
+      feedback: Type.Optional(
+        Type.String({
+          description:
+            "Only for decision \"deny\": what the child should do instead. The child reads it as the instruction that replaces the refused action.",
+        }),
+      ),
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     async execute(_id, params) {
@@ -374,7 +391,7 @@ export default function scopeExtension(pi: ExtensionAPI) {
           details: { applied: false, decision: params.decision },
         };
       }
-      const text = applyParentDecision(params.decision, params.path, params.access ?? "rw");
+      const text = applyParentDecision(params.decision, params.path, params.access ?? "rw", params.feedback);
       return { content: [{ type: "text", text }], details: { applied: true, decision: params.decision } };
     },
   });

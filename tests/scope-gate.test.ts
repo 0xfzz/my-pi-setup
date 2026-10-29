@@ -100,6 +100,23 @@ test("a deny blocks the call with a model-facing reason and stores nothing", asy
   assert.equal(h.state.roots.length, 1);
 });
 
+test("a deny with a note reaches the model as an instruction", async () => {
+  const h = harness([{ kind: "deny", feedback: "read config.yaml inside /work instead" }]);
+  const result = await h.gate.gate("read", { path: "/etc/passwd" });
+  assert.equal(result?.block, true);
+  assert.match(result!.reason, /Do this instead: read config\.yaml inside \/work instead/);
+  assert.doesNotMatch(result!.reason, /\/scope allow/, "the note replaces the generic hint rather than competing with it");
+  assert.equal(result!.feedback, "read config.yaml inside /work instead");
+});
+
+test("a plain deny carries no instruction", async () => {
+  const h = harness([{ kind: "deny" }]);
+  const result = await h.gate.gate("read", { path: "/etc/passwd" });
+  assert.equal(result?.block, true);
+  assert.equal(result!.feedback, undefined);
+  assert.doesNotMatch(result!.reason, /Do this instead/);
+});
+
 test("a rule answer is parsed, applied and re-evaluated before the call runs", async () => {
   const h = harness([{ kind: "rule", text: "read /secrets/* deny" }]);
   const denied = await h.gate.gate("read", { path: "/secrets/key" });
@@ -132,6 +149,14 @@ test("an unknown tool asks; only allow-once can approve it", async () => {
   const allowed = harness([{ kind: "allow", grant: { path: cwd, access: "ro", glob: cwd, exact: true } }]);
   const result = await allowed.gate.gate("mcp__private", {});
   assert.equal(result?.block, true, "a folder grant cannot cover unknown paths");
+});
+
+test("an unknown tool's denial can carry a note too", async () => {
+  const h = harness([{ kind: "deny", feedback: "use the local search tool instead" }]);
+  const result = await h.gate.gate("mcp__private", {});
+  assert.equal(result?.block, true);
+  assert.match(result!.reason, /Do this instead: use the local search tool instead/);
+  assert.equal(result!.feedback, "use the local search tool instead");
 });
 
 test("bash claims are judged per path and a denial stops the whole call", async () => {

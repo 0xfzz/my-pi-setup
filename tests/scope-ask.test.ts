@@ -87,6 +87,31 @@ test("digits choose directly; Escape denies; arrows and Enter select", () => {
   assert.equal(arrows.answers[0]?.kind, "allow", "down once selects option 2");
 });
 
+test("a denial can carry instructions for the model", () => {
+  const { component, answers } = popup();
+  component.handleInput("4");
+  assert.match(plain(component.render(72)), /Tell the model what to do instead/);
+
+  for (const char of "read ok.yaml instead") component.handleInput(char);
+  component.handleInput("\r");
+  assert.deepEqual(answers, [{ kind: "deny", feedback: "read ok.yaml instead" }]);
+});
+
+test("an empty note is a plain denial, and Escape returns to the options", () => {
+  const empty = popup();
+  empty.component.handleInput("4");
+  empty.component.handleInput("\r");
+  assert.deepEqual(empty.answers, [{ kind: "deny" }], "Enter on an empty note must not invent guidance");
+
+  const back = popup();
+  back.component.handleInput("4");
+  back.component.handleInput("\x1b");
+  assert.deepEqual(back.answers, [], "Escape inside the note backs out of the stage, it does not answer");
+  assert.match(plain(back.component.render(72)), /Allow once/, "the question is still open");
+  back.component.handleInput("3");
+  assert.deepEqual(back.answers, [{ kind: "deny" }]);
+});
+
 test("e opens a prefilled rule editor and Enter returns the typed rule", () => {
   const { component, answers } = popup();
   component.handleInput("e");

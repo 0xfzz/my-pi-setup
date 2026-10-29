@@ -32,7 +32,12 @@ export interface AskRequest {
 export type AskAnswer =
   | { kind: "once" }
   | { kind: "allow"; grant: ScopeSuggestion }
-  | { kind: "deny" }
+  /**
+   * `feedback` is opencode's `CorrectedError`: a denial that carries what to do
+   * instead. A plain deny ends the attempt; a deny with a note lets the model
+   * correct itself rather than retry the same thing blind.
+   */
+  | { kind: "deny"; feedback?: string }
   | { kind: "rule"; text: string }
   /** No UI could ask. Distinct from "deny" so the model gets a usable reason. */
   | { kind: "unavailable"; message: string };
@@ -40,6 +45,8 @@ export type AskAnswer =
 export interface GateResult {
   block: true;
   reason: string;
+  /** The user's correction, when the denial came with instructions. */
+  feedback?: string;
 }
 
 export interface GateDeps {
@@ -98,6 +105,27 @@ export interface Gate {
 }
 
 const DENY_HINT = "Ask for a path inside the workspace, or run /scope allow <path> to grant it.";
+
+/**
+ * A deny is either "stop" or "no, do this instead".
+ *
+ * opencode splits the two: a reject without a message is a typed failure that
+ * ends the step, a reject with a message is feedback the model reads and acts
+ * on. The difference is only whether the user left a note, so the note replaces
+ * the generic hint instead of sitting next to it — two competing instructions
+ * are worse than one.
+ */
+function denyResult(tool: string, target: string, feedback?: string): GateResult {
+  const instruction = feedback?.trim();
+  if (!instruction) {
+    return { block: true, reason: `Scope: ${tool} was denied access to ${target}. ${DENY_HINT}` };
+  }
+  return {
+    block: true,
+    reason: `Scope: ${tool} was denied access to ${target}. Do this instead: ${instruction}`,
+    feedback: instruction,
+  };
+}
 
 export function createGate(deps: GateDeps): Gate {
   const queue = new SerialQueue();
@@ -171,7 +199,8 @@ export function createGate(deps: GateDeps): Gate {
         `Scope: ${tool} needs ${need} access to ${claim.absolute}, which is outside the workspace. ` +
         `Do not ask the user: ask your parent with agent_ping and then apply the answer.\n` +
         `  agent_ping({ message: "scope: ${tool} wants ${need} ${claim.absolute} — allow-once, allow-folder (${suggestion.glob}), or deny?" })\n` +
-        `  scope_answer({ decision: "allow-once" | "allow-folder" | "deny", path: "${claim.absolute}", access: "${claim.write ? "rw" : "ro"}" })\n` +
+        `  scope_answer({ decision: "allow-once" | "allow-folder" | "deny", path: "${claim.absolute}", access: "${claim.write ? "rw" : "ro"}", feedback?: "…" })\n` +
+        `When the answer is deny, pass \`feedback\` with what to do instead; the retry then gets your instruction instead of a bare refusal.\n` +
         `Nothing was run.`,
     };
   }
@@ -246,6 +275,9 @@ export function createGate(deps: GateDeps): Gate {
         }
         if (answer?.kind === "unavailable") return { block: true, reason: answer.message };
         if (answer?.kind === "once") return undefined;
+        if (answer?.kind === "deny" && answer.feedback?.trim()) {
+          return denyResult(tool, "its undeclared paths", answer.feedback);
+        }
         return {
           block: true,
           reason:
@@ -270,9 +302,7 @@ export function createGate(deps: GateDeps): Gate {
         if (again.effect === "deny") return denied(tool, again);
         const answer = await askFor(tool, claimed, again);
         if (answer.kind === "unavailable") return { block: true, reason: answer.message };
-        if (answer.kind === "deny") {
-          return { block: true, reason: `Scope: ${tool} was denied access to ${claimed.absolute}. ${DENY_HINT}` };
-        }
+        if (answer.kind === "deny") return denyResult(tool, claimed.absolute, answer.feedback);
         if (answer.kind === "once") return undefined;
         applyAnswer(answer, claimed);
         const after = evaluateClaim(claimed, deps.state());
