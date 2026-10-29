@@ -212,6 +212,16 @@ test("a throwing policy hook keeps the decision instead of approving", async () 
   assert.equal(h.asked.length, 1);
 });
 
+test("the same rule answer twice is stored once", async () => {
+  const h = harness(
+    [{ kind: "rule", text: "read /other/* deny" }, { kind: "rule", text: "read /other/* deny" }],
+    { external: "ask", readExternal: "ask", unknown: "ask" },
+  );
+  await h.gate.gate("read", { path: "/other/a.ts" });
+  await h.gate.gate("read", { path: "/second/a.ts" });
+  assert.equal(h.state.rules.length, 1, "a repeated answer must not stack a duplicate that later shadows it");
+});
+
 test("parseRule accepts tool/resource/effect and falls back to the claim's resource", () => {
   assert.deepEqual(parseRule("bash rm * deny", "/x"), { action: "bash", resource: "rm *", effect: "deny" });
   assert.deepEqual(parseRule("/other/* allow", "/x"), { action: "*", resource: "/other/*", effect: "allow" });

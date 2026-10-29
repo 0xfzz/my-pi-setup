@@ -30,6 +30,7 @@ import {
   initialScopeState,
   loadScopeConfig,
   projectScopeFile,
+  removeScopeRule,
   scopeRecordFromBranch,
   scopeSnapshot,
   writeScopeRoot,
@@ -277,6 +278,16 @@ export default function scopeExtension(pi: ExtensionAPI) {
       }
       case "remove": {
         const classified = classifyPath(cwd, state.roots, action.path);
+        if (action.target !== "session") {
+          // A config root is not shadowed here: removing it from the session would
+          // look like it worked and come back on the next reload.
+          const file = configFileFor(action.target);
+          ctx.ui.notify(
+            `Scope: ${classified.absolute} is granted in ${file}. Remove that entry from the file; session removal only applies to session grants.`,
+            "warning",
+          );
+          return;
+        }
         const before = state.roots.length;
         state = { ...state, roots: state.roots.filter(root => root.path !== classified.absolute) };
         if (state.roots.length === before) {
@@ -287,6 +298,40 @@ export default function scopeExtension(pi: ExtensionAPI) {
         draw?.();
         refresh();
         ctx.ui.notify(`Scope: removed ${classified.absolute}.`, "info");
+        return;
+      }
+      case "remove-rule": {
+        const label = `${action.action} ${action.resource}`;
+        if (action.target !== "session") {
+          const file = configFileFor(action.target);
+          if (!removeScopeRule(file, action.action, action.resource)) {
+            ctx.ui.notify(`Scope: ${file} has no rule ${label}.`, "warning");
+            return;
+          }
+          reload(ctx);
+          ctx.ui.notify(`Scope: removed ${label} from ${file}.`, "info");
+          return;
+        }
+        const matches = state.rules.filter(rule => rule.action === action.action && rule.resource === action.resource);
+        if (!matches.length) {
+          ctx.ui.notify(`Scope: no rule matches ${label}. Try /scope rules.`, "warning");
+          return;
+        }
+        // A rule that came from a config file cannot be revoked by editing the
+        // session snapshot: say which flag does the real thing.
+        const sessionOwned = matches.filter(rule => !rule.source || rule.source === "session" || rule.source === "branch");
+        if (!sessionOwned.length) {
+          ctx.ui.notify(
+            `Scope: ${label} comes from config (${matches[0]?.source}). Revoke it with /scope remove --rule ${label} --project or --global.`,
+            "warning",
+          );
+          return;
+        }
+        state = { ...state, rules: state.rules.filter(rule => !sessionOwned.includes(rule)) };
+        persist();
+        draw?.();
+        refresh();
+        ctx.ui.notify(`Scope: removed ${label} for this session.`, "info");
         return;
       }
       case "reset": {

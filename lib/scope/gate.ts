@@ -292,6 +292,12 @@ export function createGate(deps: GateDeps): Gate {
     }
     if (answer.kind === "rule") {
       const rule = parseRule(answer.text, claim.resource);
+      // Repeating an answer that is already stored must not stack a second copy:
+      // `resolveRule` is last-match-wins, so a duplicate can later shadow the rule
+      // it duplicates and make a narrowing edit appear to do nothing.
+      const duplicate = state.rules.some(existing =>
+        existing.action === rule.action && existing.resource === rule.resource && existing.effect === rule.effect);
+      if (duplicate) return;
       const rules = [...state.rules, rule];
       deps.setState({ ...state, rules });
       deps.onGrant?.({ root: { path: "", access: "ro", source: "session" }, rule });

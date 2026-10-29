@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -7,6 +7,7 @@ import { canonicalize, expandHome, toResourceSlash } from "../lib/scope/paths.ts
 import {
   initialScopeState,
   loadScopeConfig,
+  removeScopeRule,
   scopeRecordFromBranch,
   scopeSnapshot,
 } from "../lib/scope/state.ts";
@@ -20,6 +21,40 @@ async function fixture(config?: unknown) {
   }
   return { dir, cleanup: () => rm(dir, { recursive: true, force: true }) };
 }
+
+test("a rules list carries provenance so a rule can be revoked by name", async () => {
+  const f = await fixture({
+    rules: [
+      { action: "bash", resource: "rm *", effect: "deny" },
+      { action: "read", resource: "/secrets/*", effect: "deny" },
+    ],
+  });
+  try {
+    const file = join(f.dir, ".pi", "scope.json");
+    assert.equal(removeScopeRule(file, "bash", "rm *"), true);
+    assert.deepEqual(
+      JSON.parse(await readFile(file, "utf8")).rules,
+      [{ action: "read", resource: "/secrets/*", effect: "deny" }],
+      "only the named rule is removed, and the rest of the file survives",
+    );
+    assert.equal(removeScopeRule(file, "bash", "rm *"), false, "a second removal is a no-op, not an error");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("a stored ~ rule is revocable by the path the session shows", async () => {
+  const f = await fixture({ rules: [{ action: "*", resource: "~/projects/*", effect: "allow" }] });
+  try {
+    const file = join(f.dir, ".pi", "scope.json");
+    // The session reports the expanded path; the file stores `~`. Both must match,
+    // or the removal reports success and deletes nothing.
+    assert.equal(removeScopeRule(file, "*", `${homedir()}/projects/*`), true);
+    assert.deepEqual(JSON.parse(await readFile(file, "utf8")).rules, []);
+  } finally {
+    await f.cleanup();
+  }
+});
 
 test("a session with no config starts at the workspace, read-write", async () => {
   const f = await fixture();

@@ -36,12 +36,31 @@ test("allow parses access and target, and refuses contradictory flags", () => {
 
 test("deny, remove, test, reset, rules and log parse", () => {
   assert.deepEqual(parseScopeCommand("deny secrets --project"), { kind: "deny", path: "secrets", target: "project" });
-  assert.deepEqual(parseScopeCommand("remove ../shared"), { kind: "remove", path: "../shared" });
+  assert.deepEqual(parseScopeCommand("remove ../shared"), { kind: "remove", path: "../shared", target: "session" });
+  assert.deepEqual(parseScopeCommand("remove ../shared --project"), { kind: "remove", path: "../shared", target: "project" });
+  assert.equal(parseScopeCommand("remove").kind, "usage");
   assert.deepEqual(parseScopeCommand("test ../shared/a.ts"), { kind: "test", path: "../shared/a.ts" });
   assert.deepEqual(parseScopeCommand("reset"), { kind: "reset" });
   assert.deepEqual(parseScopeCommand("rules"), { kind: "rules" });
   assert.deepEqual(parseScopeCommand("log 5"), { kind: "log", limit: 5 });
   assert.deepEqual(parseScopeCommand("log"), { kind: "log", limit: 20 });
+});
+
+test("a rule is revocable by the name it is listed under", () => {
+  assert.deepEqual(
+    parseScopeCommand("remove --rule bash rm *"),
+    { kind: "remove-rule", action: "bash", resource: "rm *", target: "session" },
+  );
+  assert.deepEqual(
+    parseScopeCommand("remove --rule * /secrets/* --global"),
+    { kind: "remove-rule", action: "*", resource: "/secrets/*", target: "global" },
+  );
+  // A row pasted straight from /scope rules keeps its trailing effect.
+  assert.deepEqual(
+    parseScopeCommand("remove --rule * /secrets/* deny"),
+    { kind: "remove-rule", action: "*", resource: "/secrets/*", target: "session" },
+  );
+  assert.equal(parseScopeCommand("remove --rule bash").kind, "usage", "an action without a glob is not a rule");
 });
 
 test("yolo parses its modes and persistence flag", () => {

@@ -275,15 +275,41 @@ export function writeScopeRule(file: string, rule: ScopeRule): void {
   });
 }
 
-function updateConfig(file: string, mutate: (config: ScopeConfigFile) => ScopeConfigFile): void {
-  mkdirSync(scopeFileDirectory(file), { recursive: true });
-  let config: ScopeConfigFile = {};
+/**
+ * Delete one rule from a config file.
+ *
+ * A stored resource may be written as `~/projects/*` where the session reports
+ * `/home/u/projects/*`, so both the raw and the expanded form are compared — a
+ * removal that only matched the session form would report success and delete
+ * nothing. Returns false when nothing matched, so the caller can say so instead
+ * of rewriting the file for a no-op.
+ */
+export function removeScopeRule(file: string, action: string, resource: string): boolean {
+  const config = readConfigFile(file);
+  const rules = Array.isArray(config.rules) ? config.rules.filter(isRule) : [];
+  const kept = rules.filter(existing => !(existing.action === action
+    && (existing.resource === resource || expandRuleResource(existing.resource) === resource)));
+  if (kept.length === rules.length) return false;
+  writeConfigFile(file, { ...config, rules: kept });
+  return true;
+}
+
+function readConfigFile(file: string): ScopeConfigFile {
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8")) as ScopeConfigFile;
-    if (parsed && typeof parsed === "object") config = parsed;
+    if (parsed && typeof parsed === "object") return parsed;
   } catch {
-    // A missing or broken file is replaced by the merge result; the caller has
-    // already reported parse problems through `loadScopeConfig`.
+    // A missing or broken file starts empty; `loadScopeConfig` is what reports the
+    // problem, and it must not be duplicated here.
   }
-  writeFileSync(file, `${JSON.stringify(mutate(config), null, 2)}\n`, "utf8");
+  return {};
+}
+
+function writeConfigFile(file: string, config: ScopeConfigFile): void {
+  mkdirSync(scopeFileDirectory(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+function updateConfig(file: string, mutate: (config: ScopeConfigFile) => ScopeConfigFile): void {
+  writeConfigFile(file, mutate(readConfigFile(file)));
 }
