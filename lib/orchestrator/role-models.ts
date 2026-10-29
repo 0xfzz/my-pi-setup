@@ -1,11 +1,10 @@
 /**
  * role-models.ts — which model a delegated child runs on.
  *
- * The orchestrator has three kinds of children and they want different models:
- * a devil's advocate should be a strong critic, workers are the bulk of spend,
- * and a QA reviewer decides pass/fail. This module maps a role to one model, or
- * to a pool that is rolled once per spawned child, so a pooled panel is diverse
- * by construction.
+ * The orchestrator delegates work to two child roles: planner (read-only research
+ * and planning) and worker (read-write plan execution and verification). This
+ * module maps a role to one model, or to a pool that is rolled once per spawned
+ * child, so a pooled panel is diverse by construction.
  *
  * Provider awareness is the point: a binding is `{ provider, model }`, not a
  * bare id. Model ids can contain slashes (`openrouter/meta-llama/llama-3`), so a
@@ -18,7 +17,7 @@
  * roll is deterministic in tests.
  */
 
-export const ORCH_ROLES = ["worker"] as const;
+export const ORCH_ROLES = ["planner", "worker"] as const;
 export type OrchRole = (typeof ORCH_ROLES)[number];
 
 /** Upper bound on a pool: more members add variance, not coverage. */
