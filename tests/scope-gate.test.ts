@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createGate, parseRule, type AskAnswer, type AskRequest } from "../lib/scope/gate.ts";
+import { createGate, parseRule, type AskAnswer, type AskRequest, type GateDeps } from "../lib/scope/gate.ts";
 import { DEFAULT_SCOPE_DEFAULTS, type ScopeRoot, type ScopeState } from "../lib/scope/types.ts";
 
 const cwd = "/work";
 
-function harness(script: Array<AskAnswer | undefined | Error>, defaults = { external: "ask", readExternal: "ask", unknown: "ask" } as ScopeState["defaults"]) {
+function harness(
+  script: Array<AskAnswer | undefined | Error>,
+  defaults = { external: "ask", readExternal: "ask", unknown: "ask" } as ScopeState["defaults"],
+  extra: Partial<GateDeps> = {},
+) {
   const state: ScopeState = {
     roots: [{ path: cwd, access: "rw", source: "session" }],
     rules: [],
@@ -25,6 +29,7 @@ function harness(script: Array<AskAnswer | undefined | Error>, defaults = { exte
       return next;
     },
     onGrant: grant => grants.push(grant.root),
+    ...extra,
   });
   return { gate, asked, grants, get state() { return current; } };
 }
@@ -168,6 +173,43 @@ test("bash claims are judged per path and a denial stops the whole call", async 
   const result = await outside.gate.gate("bash", { command: "cp /etc/a.ts /var/b.ts" });
   assert.equal(result?.block, true);
   assert.equal(outside.asked.length, 2, "each outside path is asked about, and the deny wins");
+});
+
+test("a policy hook can tighten an allow and relax an ask", async () => {
+  const tightened = harness([{ kind: "deny" }], DEFAULT_SCOPE_DEFAULTS, { onEvaluate: () => "ask" });
+  assert.equal((await tightened.gate.gate("read", { path: "src/a.ts" }))?.block, true);
+  assert.equal(tightened.asked.length, 1, "an inside read became a question because policy said so");
+
+  const relaxed = harness([], { external: "ask", readExternal: "ask", unknown: "ask" }, { onEvaluate: () => "allow" });
+  assert.equal(await relaxed.gate.gate("read", { path: "/etc/passwd" }), undefined);
+  assert.deepEqual(relaxed.asked, [], "policy allowed what the table would have asked");
+});
+
+test("a policy hook can never re-open a deny", async () => {
+  // The hook fires on the in-lane recheck too, so it must stay quiet until the
+  // rule exists — otherwise it relaxes the very question that installs the rule.
+  let installed = false;
+  const h = harness(
+    [{ kind: "rule", text: "read /secrets/* deny" }],
+    { external: "ask", readExternal: "ask", unknown: "ask" },
+    { onEvaluate: () => (installed ? "allow" : undefined) },
+  );
+  await h.gate.gate("read", { path: "/secrets/key" });
+  assert.equal(h.state.rules.length, 1, "the rule answer was recorded");
+  installed = true;
+
+  const blocked = await h.gate.gate("read", { path: "/secrets/key" });
+  assert.equal(blocked?.block, true, "deny is absolute: no hook re-opens it");
+  assert.equal(h.asked.length, 1, "and it does not even ask again");
+});
+
+test("a throwing policy hook keeps the decision instead of approving", async () => {
+  const h = harness([], { external: "ask", readExternal: "ask", unknown: "ask" }, {
+    onEvaluate: () => { throw new Error("policy exploded"); },
+  });
+  const result = await h.gate.gate("read", { path: "/etc/passwd" });
+  assert.equal(result?.block, true, "a crashing hook must not become a silent allow");
+  assert.equal(h.asked.length, 1);
 });
 
 test("parseRule accepts tool/resource/effect and falls back to the claim's resource", () => {

@@ -17,7 +17,17 @@
 import { describeDecision, evaluateClaim } from "./policy.ts";
 import { classifyPath, suggestGrant } from "./paths.ts";
 import { claimSetFor, displayPath, type ClaimOptions, type PathRequest } from "./tool-paths.ts";
-import type { PathClaim, ScopeDecision, ScopeRoot, ScopeRule, ScopeState, ScopeSuggestion } from "./types.ts";
+import type {
+  Claim,
+  PathClaim,
+  ScopeDecision,
+  ScopeEffect,
+  ScopeRoot,
+  ScopeRule,
+  ScopeState,
+  ScopeSuggestion,
+  UnknownClaim,
+} from "./types.ts";
 
 export interface AskRequest {
   tool: string;
@@ -49,6 +59,28 @@ export interface GateResult {
   feedback?: string;
 }
 
+/** What a policy hook knows about the decision it is looking at. */
+export interface EvaluateContext {
+  tool: string;
+  /** The claim that produced this decision. */
+  claim: Claim;
+  /**
+   * `recheck` is a re-evaluation after an answer landed, not a fresh verdict.
+   * Both must agree, or a "yes" would approve a call that policy still narrows
+   * on its own.
+   */
+  phase: "initial" | "recheck";
+}
+
+/**
+ * opencode's `permission.evaluate` hook: the last word on a computed effect.
+ *
+ * `evaluateClaim` knows paths, postures and roots. It cannot know policy that is
+ * not about a path — a yolo arm, a read-only phase, a team's extra rules. Return
+ * an effect to replace the computed one, or `undefined` to keep it.
+ */
+export type EvaluateHook = (decision: ScopeDecision, context: EvaluateContext) => ScopeEffect | undefined;
+
 export interface GateDeps {
   state: () => ScopeState;
   setState: (state: ScopeState) => void;
@@ -72,6 +104,16 @@ export interface GateDeps {
   onAsk?: (request: AskRequest) => void;
   /** Called for every automatic approval while yolo is armed. */
   onAutoApprove?: (decision: ScopeDecision, claim: PathClaim | undefined) => void;
+  /**
+   * Policy that is not about a path, consulted for every decision the gate makes
+   * including the re-checks inside the question lane.
+   *
+   * It may tighten or relax `allow`/`ask`. It is never consulted about `deny`:
+   * deny is the promise that no grant, yolo arm or hook re-opens what the user
+   * closed. opencode's plugin hook *can* flip a deny into an allow; this one
+   * deliberately cannot.
+   */
+  onEvaluate?: EvaluateHook;
 }
 
 /** One question at a time, FIFO. `size` is what the sidebar shows. */
@@ -152,6 +194,25 @@ export function createGate(deps: GateDeps): Gate {
       ...(request.command ? { command: request.command } : {}),
       ...(request.base ? { base: request.base } : {}),
     };
+  }
+
+  /**
+   * Apply the policy hook to a computed decision.
+   *
+   * A hook that throws keeps the decision it could not improve: a policy plugin
+   * that crashes must not become a silent allow.
+   */
+  function withHook(decision: ScopeDecision, context: EvaluateContext): ScopeDecision {
+    const hook = deps.onEvaluate;
+    if (!hook || decision.effect === "deny") return decision;
+    let effect: ScopeEffect | undefined;
+    try {
+      effect = hook(decision, context);
+    } catch {
+      return decision;
+    }
+    if (!effect || effect === decision.effect) return decision;
+    return { ...decision, effect, reason: `${decision.reason} (policy hook: ${effect})` };
   }
 
   function denied(tool: string, decision: ScopeDecision): GateResult {
@@ -243,7 +304,10 @@ export function createGate(deps: GateDeps): Gate {
       // A command the scanner cannot analyse is a parser limit, not a verdict:
       // name it, and let a rule cover it, instead of letting it read as suspicion.
       const opaque = claimSet.opaque;
-      const decision = evaluateClaim({ tool, unknown: true }, deps.state());
+      const unknownClaim: UnknownClaim = { tool, unknown: true };
+      const decide = (phase: EvaluateContext["phase"]) =>
+        withHook(evaluateClaim(unknownClaim, deps.state()), { tool, claim: unknownClaim, phase });
+      const decision = decide("initial");
       if (decision.effect === "deny") {
         return { block: true, reason: `Scope: ${claimSet.reason ?? decision.reason}. ${tool} was not run. ${DENY_HINT}` };
       }
@@ -253,7 +317,7 @@ export function createGate(deps: GateDeps): Gate {
       }
       return queue.run(async () => {
         // Re-evaluate inside the lane: an earlier answer may have covered this.
-        const again = evaluateClaim({ tool, unknown: true }, deps.state());
+        const again = decide("recheck");
         if (again.effect === "allow") return undefined;
         if (again.effect === "deny") return { block: true, reason: `Scope: ${again.reason}. ${tool} was not run. ${DENY_HINT}` };
         const request: AskRequest = {
@@ -269,7 +333,7 @@ export function createGate(deps: GateDeps): Gate {
         if (answer?.kind === "rule") {
           applyAnswer(answer, { tool, action: tool, absolute: deps.cwd(), resource: "*", write: false, posture: "unknown", external: true, kind: "unknown" });
           // A rule that names the tool is the standing grant for "unknown paths".
-          const after = evaluateClaim({ tool, unknown: true }, deps.state());
+          const after = decide("recheck");
           if (after.effect === "allow") return undefined;
           if (after.effect === "deny") return { block: true, reason: `Scope: ${after.reason}. ${tool} was not run. ${DENY_HINT}` };
         }
@@ -289,7 +353,7 @@ export function createGate(deps: GateDeps): Gate {
 
     for (const request of claimSet.paths) {
       const claim = toPathClaim(tool, request);
-      const decision = evaluateClaim(claim, deps.state());
+      const decision = withHook(evaluateClaim(claim, deps.state()), { tool, claim, phase: "initial" });
       if (decision.effect === "deny") return denied(tool, decision);
       if (decision.effect === "allow") {
         if (deps.state().yolo && decision.reason.includes("yolo")) deps.onAutoApprove?.(decision, claim);
@@ -297,7 +361,7 @@ export function createGate(deps: GateDeps): Gate {
       }
       const result = await queue.run(async (): Promise<GateResult | undefined> => {
         const claimed = toPathClaim(tool, request);
-        const again = evaluateClaim(claimed, deps.state());
+        const again = withHook(evaluateClaim(claimed, deps.state()), { tool, claim: claimed, phase: "recheck" });
         if (again.effect === "allow") return undefined;
         if (again.effect === "deny") return denied(tool, again);
         const answer = await askFor(tool, claimed, again);
@@ -305,7 +369,7 @@ export function createGate(deps: GateDeps): Gate {
         if (answer.kind === "deny") return denyResult(tool, claimed.absolute, answer.feedback);
         if (answer.kind === "once") return undefined;
         applyAnswer(answer, claimed);
-        const after = evaluateClaim(claimed, deps.state());
+        const after = withHook(evaluateClaim(claimed, deps.state()), { tool, claim: claimed, phase: "recheck" });
         return after.effect === "allow" ? undefined : denied(tool, after);
       });
       if (result) return result;

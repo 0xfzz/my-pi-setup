@@ -24,7 +24,7 @@ import {
 } from "../lib/scope/command.ts";
 import { createGate, type AskAnswer, type AskRequest } from "../lib/scope/gate.ts";
 import { classifyPath } from "../lib/scope/paths.ts";
-import { evaluateClaim } from "../lib/scope/policy.ts";
+import { evaluateClaim, narrowYoloSensitiveRead } from "../lib/scope/policy.ts";
 import {
   globalScopeFile,
   initialScopeState,
@@ -67,6 +67,10 @@ export default function scopeExtension(pi: ExtensionAPI) {
     annotationsFor: tool => pi.getAllTools?.().find(candidate => candidate.name === tool)?.annotations,
     mcpPathFields: () => config.mcpPathFields,
     onGrant: persist,
+    // Policy the decision table cannot see. `yolo` approves ordinary outside
+    // paths, never a private key or a dotenv: the arm says "stop asking about
+    // paths", not "publish my credentials".
+    onEvaluate: (decision, { claim }) => narrowYoloSensitiveRead(decision, claim, Boolean(state.yolo)),
     onAsk: request => {
       log.add({ tool: request.tool, path: request.display, write: request.write, outcome: "ask" });
       draw?.();

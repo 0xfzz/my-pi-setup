@@ -20,6 +20,7 @@ import { rootCovering, toResourceSlash } from "./paths.ts";
 import type {
   Claim,
   ScopeDecision,
+  ScopeEffect,
   ScopeState,
   UnknownClaim,
   PathClaim,
@@ -105,7 +106,8 @@ const SENSITIVE_SEGMENTS = [
 const SENSITIVE_NAMES = [".env", ".envrc", ".netrc", ".pgpass", ".git-credentials", "id_rsa", "id_ed25519", "id_ecdsa"];
 const SENSITIVE_SUFFIXES = [".pem", ".key", ".p12", ".pfx", ".kdbx", ".keystore"];
 
-function isSensitive(absolute: string): boolean {
+/** Is this one of the reads whose disclosure is the reason a gate exists? */
+export function isSensitiveRead(absolute: string): boolean {
   const path = `/${toResourceSlash(absolute).replace(/^\/+/, "")}`;
   const name = path.split("/").pop() ?? "";
   if (SENSITIVE_NAMES.includes(name) || name.startsWith(".env.")) return true;
@@ -201,10 +203,34 @@ export function evaluateClaim(claim: Claim, state: ScopeState, options: Evaluate
   };
   // 5. A sensitive read is never quiet, whatever `readExternal` says: keys,
   //    cloud credentials and dotenv files are the reads that actually matter.
-  if (!base.write && isSensitive(pathClaim.absolute)) {
+  if (!base.write && isSensitiveRead(pathClaim.absolute)) {
     return withYolo({ ...decision, effect: state.defaults.external, reason: `${decision.reason} (sensitive)` }, state);
   }
   return withYolo(decision, state);
+}
+
+/**
+ * The one policy the decision table cannot see: yolo approves *ordinary* outside
+ * paths, never a sensitive read.
+ *
+ * `withYolo` upgrades whatever question it is handed, and the sensitive-read
+ * branch has already turned its answer into `ask` — so `yolo ro` used to
+ * auto-approve `cat ~/.ssh/id_rsa`. That contradicts the rule the whole list
+ * exists to state ("a sensitive read always asks"), and the arm's strength says
+ * nothing about it: `ro` restricts writes, not disclosure.
+ *
+ * This is a gate `onEvaluate` hook rather than a branch in `evaluateClaim`
+ * because the table is deliberately stateless — it is given a claim and a state,
+ * and statelessness is what makes it testable. The narrowing is a question about
+ * intent, so it sits in the hook stage where opencode puts `permission.evaluate`.
+ */
+export function narrowYoloSensitiveRead(decision: ScopeDecision, claim: Claim, yolo: boolean): ScopeEffect | undefined {
+  if (!yolo || decision.effect !== "allow") return undefined;
+  // Only the outside default: inside the workspace the workspace root is the
+  // grant, and yolo changes nothing about it. Narrowing an inside `.env` read
+  // here would make arming yolo *more* intrusive than leaving it off.
+  if ("unknown" in claim || claim.posture !== "read" || !claim.external) return undefined;
+  return isSensitiveRead(claim.absolute) ? "ask" : undefined;
 }
 
 function coveringRoot(state: ScopeState, absolute: string): ScopeState["roots"][number] | undefined {

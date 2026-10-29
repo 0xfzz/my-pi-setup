@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { evaluateClaim } from "../lib/scope/policy.ts";
+import { evaluateClaim, narrowYoloSensitiveRead } from "../lib/scope/policy.ts";
 import {
   DEFAULT_SCOPE_DEFAULTS,
   type PathClaim,
@@ -96,6 +96,32 @@ test("a root added after the question was queued covers the pending claim", () =
   assert.equal(decision.effect, "allow");
   assert.equal(decision.root?.path, "/other");
   assert.equal(evaluateClaim(outside(), state({ defaults: asking })).effect, "ask");
+});
+
+test("yolo approves an ordinary outside read but never a sensitive one", () => {
+  const armed = state({ yolo: { strength: "ro", persist: false, since: 0 } });
+
+  const ordinary = evaluateClaim(outside(), armed);
+  assert.equal(ordinary.effect, "allow");
+  assert.equal(narrowYoloSensitiveRead(ordinary, outside(), true), undefined, "yolo keeps its promise for ordinary paths");
+
+  const key = claim({ absolute: "/home/u/.ssh/id_rsa", resource: "/home/u/.ssh/id_rsa", external: true });
+  const yoloed = evaluateClaim(key, armed);
+  assert.equal(yoloed.effect, "allow", "the table alone lets yolo through, which is why the hook exists");
+  assert.equal(narrowYoloSensitiveRead(yoloed, key, true), "ask", "a private key still asks");
+
+  const unarmed = evaluateClaim(key, state());
+  assert.equal(unarmed.effect, "ask", "without the arm the table already asks");
+  assert.equal(narrowYoloSensitiveRead(unarmed, key, false), undefined);
+});
+
+test("yolo narrows nothing inside the workspace", () => {
+  // Inside, the workspace root is the grant and the sensitive list does not apply;
+  // narrowing here would make arming yolo more intrusive than leaving it off.
+  const inside = claim({ absolute: "/work/.env", resource: ".env" });
+  const yoloed = evaluateClaim(inside, state({ yolo: { strength: "ro", persist: false, since: 0 } }));
+  assert.equal(yoloed.effect, "allow");
+  assert.equal(narrowYoloSensitiveRead(yoloed, inside, true), undefined);
 });
 
 test("yolo upgrades a question, respects its strength, and never touches a deny", () => {
