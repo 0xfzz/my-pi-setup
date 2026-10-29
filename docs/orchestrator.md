@@ -177,11 +177,12 @@ The split is balanced with the remainder on later groups, and each reviewer gets
 
 ### Which model and system prompt a child runs on
 
-Three child roles can be bound to a model: `devil-advocate`, `worker`, and `qa-review`. A binding is `inherit` (follow the parent), one provider-qualified model, or a pool rolled **once per spawned child** — a pooled panel is diverse by construction, and a resume replays the recorded roll instead of switching mid-task.
+Two child roles can be bound to a model: `planner` and `worker`. A binding is `inherit` (follow the parent), one provider-qualified model, or a pool rolled **once per spawned child** — a pooled panel is diverse by construction, and a resume replays the recorded roll instead of switching mid-task.
 
 ```text
 /agent-model                                  # role menu, then the picker
-/agent-model worker                           # picker, current binding pre-ticked
+/agent-model planner                          # picker for planner
+/agent-model worker                           # picker for worker
 /agent-model worker zai/glm-5.3-flash,deepseek/deepseek-4.1-flash   # text form
 /agent-model --project worker inherit         # write the project file instead of the global one
 ```
@@ -194,17 +195,19 @@ Three child roles can be bound to a model: `devil-advocate`, `worker`, and `qa-r
 /agent max 3 --project  # write the per-repo cap
 ```
 
-Each role also has a **system prompt**, resolved per workspace: `.pi/orch-agents/devil-advocate.md`, `worker.md`, `qa-reviewer.md` (the role-id alias `qa-review.md` is accepted), then a global file under the agent dir, then a built-in default. The prompt is passed as a real `--append-system-prompt` file, so pi's own prompt stays and the role brief refines it.
+Each role also has a **system prompt**, resolved per workspace: `.pi/agents/system-prompts/planner.md` or `worker.md`, then a global file under the agent dir (`~/.pi/agent/agents/system-prompts/`), then a built-in default. The prompt is passed as a real `--append-system-prompt` file, so pi's own prompt stays and the role brief refines it.
 
 ```text
 /agent-prompts                 # role → source (project | global | builtin) and path
-/agent-prompts init            # write the three defaults; never overwrites authored content
+/agent-prompts init            # write the two defaults into .pi/agents/system-prompts/
 /agent-prompts init --force    # regenerate them
 ```
 
-An empty file falls through instead of silencing the role. Worker prompts apply to `spec`, `implementation` and `adhoc` children, `qa-reviewer.md` to QA reviewers, and `devil-advocate.md` to every specification reviewer; research readers are unchanged.
+An empty or whitespace-only file falls through instead of silencing the role. The defaults are self-contained, general-purpose system prompts:
+- **planner**: strictly read-only research and planning agent (produces plans and evidence artifacts, no file modifications or shell mutations).
+- **worker**: read-and-write implementation agent (executes plan steps, modifies files in assigned scope, verifies changes, and reports evidence).
 
-Candidates come from the live model registry, so a provider added in pi appears with no code change. Bindings persist in `subagents.json` as `{ provider, model }` (project wins over global) and are read tolerantly: one malformed role never discards the rest. Precedence is explicit `model` argument → role binding → agent profile → global default; `inherit` passes no `--model` at all. A binding whose model vanished from the registry falls back to the next pool member, then to inherit, and every spawn/review result names the model and why it was chosen. Worker bindings cover `spec`, `implementation` and `adhoc` children; `research` readers keep the default and stay cheap.
+Candidates come from the live model registry, so a provider added in pi appears with no code change. Bindings persist in `subagents.json` as `{ provider, model }` (project wins over global) and are read tolerantly: one malformed role never discards the rest. Precedence is explicit `model` argument → role binding → agent profile → global default; `inherit` passes no `--model` at all. A binding whose model vanished from the registry falls back to the next pool member, then to inherit, and every spawn result names the model and why it was chosen. Role bindings cover `planner` and `worker` children.
 
 ### Research surface (read-only)
 
