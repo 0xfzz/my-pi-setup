@@ -22,6 +22,7 @@ import { resolve } from "node:path";
 import { readOnlyShellCommand } from "../plan-shell.ts";
 import { expandHome, toResourceSlash } from "./paths.ts";
 import type { ScopePosture } from "./types.ts";
+import { scanShell, type ShellWord } from "./shell-syntax.ts";
 
 export interface PathRequest {
   /** Path as typed by the model; the gate resolves it against the cwd. */
@@ -35,6 +36,8 @@ export interface PathRequest {
   action: string;
   /** The raw shell segment this claim came from, for command-prefix rules. */
   command?: string;
+  /** Directory a relative `raw` was written against (`cd` changes it). */
+  base?: string;
 }
 
 export interface ClaimSet {
@@ -84,18 +87,8 @@ const NO_FS_CLAIM: ReadonlySet<string> = new Set([
 
 const NO_FS_PREFIXES = ["vcc_", "todo_", "artifact_", "dashboard_", "subagent_", "workflow_"];
 
-/** Constructs that make a command's real effect unknowable to a tokenizer. */
-/**
- * Constructs that hide code from the token scan: the code runs at runtime, so the
- * paths in the text are not the paths the command touches.
- */
-const CODE_HIDING = ["$(", "`", "<(", ">(", "xargs ", "-exec", "-execdir", "eval ", "exec "];
-
-/** Inline code passed as a flag value: the flag *is* the program. */
-const INLINE_CODE = [
-  "bash -c", "sh -c", "zsh -c", "fish -c", "python -c", "python3 -c",
-  "node -e", "node -p", "perl -e", "ruby -e", "php -r", "deno eval", "bun -e",
-];
+/** Inline programs remain opaque; their data may name arbitrary runtime paths. */
+const INLINE_CODE_FLAGS = new Set(["-c", "-e", "-p", "-r", "--eval", "--print", "--command"]);
 
 /**
  * Binaries whose heredoc body is *code*, not data. `git commit -F - <<EOF` feeds
@@ -107,29 +100,10 @@ const INTERPRETERS = new Set([
   "bash", "sh", "zsh", "fish", "osascript",
 ]);
 
-const WRAPPERS = new Set(["sudo", "env", "time", "nice", "nohup", "command", "exec"]);
+const WRAPPERS = new Set(["sudo", "env", "time", "nice", "nohup", "command", "exec", "timeout"]);
 
-/** Shell operators that end one command segment and start the next. */
-const OPERATORS: ReadonlySet<string> = new Set(["|", "&", ";"]);
-
-/** The program each `|`/`&&`/`;` segment runs, with wrappers and `VAR=1` skipped. */
-function segmentBinaries(tokens: readonly string[]): string[] {
-  const binaries: string[] = [];
-  let expectBinary = true;
-  for (const token of tokens) {
-    if (OPERATORS.has(token) || /^[|&;()]+$/.test(token)) {
-      expectBinary = true;
-      continue;
-    }
-    if (!expectBinary) continue;
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;
-    const bare = token.replace(/^["']|["']$/g, "");
-    if (WRAPPERS.has(bare)) continue;
-    expectBinary = false;
-    binaries.push(bare.split("/").pop() ?? bare);
-  }
-  return binaries;
-}
+/** Binaries whose arguments are a program the gate cannot read. */
+const OPAQUE_BINARIES = new Set(["eval", "exec", "source", ".", "xargs"]);
 
 /**
  * Which argv slots hold a path, per binary.
@@ -141,11 +115,6 @@ function segmentBinaries(tokens: readonly string[]): string[] {
  * path-shaped or actually exists. A claim that resolves nowhere is not a claim.
  */
 interface PathSpec {
-  /**
-   * Positional operands. `true` claims every one; `"lazy"` claims only the
-   * path-shaped or existing ones, so `grep foo` and `git checkout origin/main`
-   * claim nothing at all.
-   */
   /**
    * Operands may be paths. Each is claimed only when it is path-shaped or
    * actually exists, so `grep foo` and `git checkout origin/main` claim nothing.
@@ -160,6 +129,12 @@ interface PathSpec {
   subcommands?: Readonly<Record<string, ScopePosture>>;
   /** Flags that turn a reader into a writer (`sed -i`, `sort -o`). */
   writeFlags?: readonly string[];
+  /** Flags whose values are data, never path operands (patterns, formats, URLs). */
+  dataFlags?: readonly string[];
+  /** Positional data arguments before file operands (grep/sed/awk patterns). */
+  dataOperands?: number;
+  /** Commands such as git/npm can read or mutate their effective cwd implicitly. */
+  usesCwd?: boolean;
 }
 
 const READ: ScopePosture = "read";
@@ -208,14 +183,18 @@ const SPECS: Readonly<Record<string, PathSpec>> = {
   ...specFor(READERS, { operands: true, posture: READ }),
   ...specFor(MUTATORS, { operands: true, posture: WRITE }),
   ...specFor(ARCHIVE_TOOLS, { operands: true, posture: WRITE }),
+  ...specFor(["echo", "printf", "true", "false", "date", "pwd"], { posture: READ }),
+  ...specFor(["grep", "egrep", "fgrep", "rg", "ag", "ack"], { operands: true, posture: READ, dataOperands: 1, dataFlags: ["-e", "--regexp", "-g", "--glob", "-t", "--type", "--include", "--exclude"], valueFlags: ["-f", "--file"] }),
+  cd: { operands: true, posture: READ },
+  awk: { operands: true, posture: READ, dataOperands: 1, dataFlags: ["-F", "-v"], valueFlags: ["-f"] },
   // A reader that writes when told to.
-  sed: { operands: true, posture: READ, writeFlags: ["-i", "--in-place"] },
+  sed: { operands: true, posture: READ, writeFlags: ["-i", "--in-place"], dataOperands: 1, dataFlags: ["-e", "--expression"], valueFlags: ["-f", "--file"] },
   sort: { operands: true, posture: READ, writeFlags: ["-o", "--output"] },
   patch: { operands: true, posture: WRITE, valueFlags: ["-i", "-o", "-d", "--directory"] },
   tar: { operands: true, posture: WRITE, valueFlags: ["-f", "-C", "-T", "--file", "--directory", "--files-from"] },
   rsync: { operands: true, posture: WRITE, valueFlags: ["--exclude-from", "--include-from", "--files-from", "--log-file", "-e"] },
   // Fetching writes a file when asked to.
-  curl: { posture: READ, valueFlags: ["-o", "--output", "-T", "--upload-file", "-K", "--config", "--cacert", "--cert", "--key"], inlineFlags: ["--output", "--upload-file", "--config"] },
+  curl: { posture: READ, valueFlags: ["-o", "--output", "-T", "--upload-file", "-K", "--config", "--cacert", "--cert", "--key"], inlineFlags: ["--output", "--upload-file", "--config"], dataFlags: ["-w", "--write-out", "-H", "--header", "-X", "--request", "-d", "--data", "--url", "-m", "--max-time"] },
   wget: { posture: WRITE, valueFlags: ["-O", "--output-document", "-P", "--directory-prefix", "-i", "--input-file"] },
   // Dispatchers: a sub-command decides the posture, a flag names the directory.
   git: {
@@ -224,6 +203,7 @@ const SPECS: Readonly<Record<string, PathSpec>> = {
     valueFlags: ["-C", "--git-dir", "--work-tree", "--exec-path"],
     inlineFlags: ["--git-dir", "--work-tree"],
     subcommands: GIT_POSTURE,
+    usesCwd: true,
   },
   npm: { operands: true, posture: EITHER, valueFlags: ["--prefix", "--cwd", "-C"], inlineFlags: ["--prefix", "--cwd"] },
   pnpm: { operands: true, posture: EITHER, valueFlags: ["--prefix", "--cwd", "-C", "--dir"], inlineFlags: ["--prefix", "--cwd", "--dir"] },
@@ -240,45 +220,6 @@ const SPECS: Readonly<Record<string, PathSpec>> = {
   python3: { operands: true, posture: EITHER },
   node: { operands: true, posture: EITHER },
 };
-
-/**
- * Split a command into its raw segments on unquoted `|`, `&` and `;`.
- *
- * The raw text is kept because it is what a command rule is written against:
- * `git -C ../other status *` is one grant per habit, and it has to match the
- * command the user will type again, not a re-joined token list.
- */
-function rawSegments(command: string): string[] {
-  const out: string[] = [];
-  let current = "";
-  let quoted: string | undefined;
-  for (let index = 0; index < command.length; index++) {
-    const char = command[index]!;
-    if (quoted) {
-      current += char;
-      if (char === quoted && command[index - 1] !== "\\") quoted = undefined;
-      continue;
-    }
-    if (char === "'" || char === '"') {
-      quoted = char;
-      current += char;
-      continue;
-    }
-    if (char === "\\") {
-      current += char + (command[index + 1] ?? "");
-      index++;
-      continue;
-    }
-    if (char === "|" || char === "&" || char === ";") {
-      out.push(current);
-      current = "";
-      continue;
-    }
-    current += char;
-  }
-  out.push(current);
-  return out.map(segment => segment.trim()).filter(Boolean);
-}
 
 const stripQuotes = (word: string): string => word.replace(/^["']|["']$/g, "");
 
@@ -348,50 +289,6 @@ function isMcpTool(tool: string): boolean {
   return tool === "mcp" || tool.startsWith("mcp__") || tool.startsWith("mcp_");
 }
 
-/** Split a shell command into words, keeping quoted segments intact. */
-function words(command: string): string[] {
-  const out: string[] = [];
-  let word = "";
-  let quoted: string | undefined;
-  let started = false;
-  for (let index = 0; index < command.length; index++) {
-    const char = command[index]!;
-    if (quoted) {
-      if (char === quoted) quoted = undefined;
-      else word += char;
-      continue;
-    }
-    if (char === "'" || char === '"') {
-      quoted = char;
-      started = true;
-      continue;
-    }
-    if (char === "\\") {
-      if (++index < command.length) word += command[index];
-      started = true;
-      continue;
-    }
-    if (/\s/.test(char)) {
-      if (started) out.push(word);
-      word = "";
-      started = false;
-      continue;
-    }
-    if (char === ">" || char === "<" || char === "|" || char === "&" || char === ";" || char === "(" || char === ")") {
-      if (started) out.push(word);
-      word = "";
-      started = false;
-      // Keep redirection and list operators as their own tokens: the first marks
-      // the next word as a path, the rest mark a segment boundary.
-      if (char === ">" || char === "<" || char === "|" || char === "&" || char === ";") out.push(char);
-      continue;
-    }
-    word += char;
-    started = true;
-  }
-  if (started) out.push(word);
-  return out;
-}
 
 /** Does this word look like a filesystem path rather than a flag or a bare name? */
 
@@ -410,115 +307,173 @@ export function shellClaim(command: unknown, cwd: string): ClaimSet {
       unknown: false,
     };
   }
-  const lowered = command.toLowerCase();
-  const marker = [...CODE_HIDING, ...INLINE_CODE].find(candidate => lowered.includes(candidate));
-  // A heredoc is only opaque when its body is code. `git commit -F - <<EOF` is a
-  // data pipe and used to be denied as "paths cannot be determined".
-  const codeHeredoc = lowered.includes("<<") && segmentBinaries(words(command)).some(binary => INTERPRETERS.has(binary));
-  if (marker || codeHeredoc) {
-    return {
-      paths: [],
-      unknown: true,
-      reason: marker
-        ? `bash command contains "${marker}", so its paths cannot be determined`
-        : "bash feeds a heredoc to an interpreter, so its paths cannot be determined",
-    };
-  }
 
-  // `readOnlyShellCommand` is the project's existing conservative judgement: it
-  // returns a normalized command only when every segment is a known read-only
-  // inspection. It now sets the *posture* of a binary with no table entry instead
-  // of turning the whole command into a write, which is what made `npm test`
-  // reading `../shared/x` look like a mutation.
+  // Parse, never execute. A quoted string, a loop value and the output of a `$()`
+  // are different things, and only the parse tells them apart — which is why
+  // `grep '$(x)|/etc/hosts'` and a `for … ; do code=$(curl …) ; done` loop stop
+  // asking, while `cat $(pwd)/x` still does.
+  const scan = scanShell(command);
+  const opaque = (reason: string): ClaimSet => ({ paths: [], unknown: true, opaque: reason, reason });
+  if (scan.reason) return opaque(scan.reason);
+
   const commandReads = readOnlyShellCommand(command) !== undefined;
   const paths: PathRequest[] = [];
   const seen = new Set<string>();
+  // A `cd` inside this scope changes what a later relative path means; a
+  // subshell or `$()` starts from the cwd it inherited.
+  const bases: string[] = [resolve(cwd)];
 
-  const claim = (word: string, posture: ScopePosture, kind?: PathRequest["kind"], source?: string): void => {
-    const raw = stripQuotes(word);
-    if (!raw || raw === "-" || /^[<>|&;()]+$/.test(raw) || seen.has(raw)) return;
+  const claim = (word: ShellWord, posture: ScopePosture, base: string, source: string, kind?: PathRequest["kind"]): void => {
+    const raw = word.value ?? stripQuotes(word.text);
+    if (!raw || raw === "-" || /^[<>|&;()]+$/.test(raw)) return;
     if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(raw)) return;
-    seen.add(raw);
+    if (seen.has(`${base}\u0000${raw}`)) return;
+    seen.add(`${base}\u0000${raw}`);
     paths.push({
       raw,
+      base,
       write: posture === "write",
       posture,
-      kind: kind ?? kindOf(cwd, raw),
+      kind: kind ?? kindOf(base, raw),
       action: "bash",
-      ...(source ? { command: source } : {}),
+      command: source,
     });
   };
 
-  for (const text of rawSegments(command)) {
-    const segment = words(text);
-    const push = (word: string, posture: ScopePosture, kind?: PathRequest["kind"]) => claim(word, posture, kind, text);
-    // Redirection targets first: `>` writes, `<` reads. `2>/dev/null` leaves the `2`
-    // as an ordinary word, which is not path-shaped and is dropped.
-    for (let index = 0; index < segment.length; index++) {
-      const token = segment[index]!;
-      if (token !== ">" && token !== "<") continue;
-      let next = index + 1;
-      while (next < segment.length && (segment[next] === ">" || segment[next] === "<")) next++;
-      const target = segment[next];
-      if (target) push(target, token === ">" ? "write" : "read");
+  for (const item of scan.commands) {
+    if (item.scope === "enter") {
+      bases.push(bases[bases.length - 1]!);
+      continue;
     }
+    if (item.scope === "leave") {
+      if (bases.length > 1) bases.pop();
+      continue;
+    }
+    const base = bases[bases.length - 1]!;
+    const source = item.source || command;
 
-    const argv = segment.filter(token => token !== ">" && token !== "<");
-    let start = 0;
-    while (start < argv.length) {
-      const token = argv[start]!;
-      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) {
-        start++;
-        continue;
+    for (const redirect of item.redirects) {
+      if (redirect.target.value === undefined) {
+        return opaque(`a redirect target is computed at runtime (${redirect.target.text})`);
       }
-      if (!WRAPPERS.has(stripQuotes(token))) break;
-      start++;
-      while (start < argv.length && (argv[start]!.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[start]!))) start++;
+      claim(redirect.target, redirect.write ? "write" : "read", base, source);
     }
-    const binaryToken = argv[start];
-    if (!binaryToken) continue;
-    const binary = stripQuotes(binaryToken).split("/").pop() ?? "";
-    const spec = SPECS[binary];
-    const args = argv.slice(start + 1);
 
-    const writes = spec?.writeFlags?.some(flag => args.some(arg => arg === flag || arg.startsWith(`${flag}=`))) ?? false;
-    const subIndex = spec?.subcommands ? subcommandIndex(args, spec) : -1;
-    const sub = subIndex >= 0 ? stripQuotes(args[subIndex]!) : undefined;
+    const first = item.words[0];
+    if (!first) continue;
+    if (first.value === undefined) return opaque(`the command name "${first.text}" is computed at runtime`);
+    let binary = (first.value.split("/").pop() ?? "").trim();
+    let args = item.words.slice(1);
+
+    // Unwrap `sudo`, `env`, `timeout 120`, `nice -n 5`, … so the real binary decides.
+    for (let depth = 0; depth < 3 && WRAPPERS.has(binary); depth++) {
+      let index = 0;
+      while (index < args.length && (args[index]!.text.startsWith("-") || (binary === "timeout" && /^\d/.test(args[index]!.text)))) index++;
+      const next = args[index];
+      if (!next?.value) return opaque(`"${binary}" wraps a command the gate cannot read`);
+      binary = (next.value.split("/").pop() ?? "").trim();
+      args = args.slice(index + 1);
+    }
+
+    if (OPAQUE_BINARIES.has(binary)) return opaque(`"${binary}" runs code the gate cannot read`);
+    if (INTERPRETERS.has(binary)) {
+      if (args.some(arg => INLINE_CODE_FLAGS.has(arg.text))) return opaque(`"${binary}" was given inline code (-c/-e)`);
+      if (item.heredoc) return opaque(`"${binary}" reads a heredoc as a program`);
+    }
+    if (binary === "find" && args.some(arg => arg.text === "-exec" || arg.text === "-execdir")) {
+      return opaque("find -exec runs code the gate cannot read");
+    }
+
+    if (binary === "cd" || binary === "pushd") {
+      const target = args.find(arg => !arg.text.startsWith("-"));
+      const next = target ? (target.value ?? (pathShaped(target.text) ? stripQuotes(target.text) : undefined)) : process.env.HOME;
+      if (next === undefined) return opaque("the working directory is computed at runtime");
+      // A directory change reads the directory; it does not write to it. Treating
+      // it as a write is what made `cd <read-only root> && git fetch` ask.
+      claim({ text: next, value: next }, "read", base, source, "directory");
+      bases[bases.length - 1] = resolve(base, expandHome(next));
+      continue;
+    }
+
+    const spec = SPECS[binary];
+    const writes = spec?.writeFlags?.some(flag => args.some(arg => arg.text === flag || arg.text.startsWith(`${flag}=`))) ?? false;
+    const subIndex = spec?.subcommands ? subcommandIndex(args.map(arg => arg.text), spec) : -1;
+    const sub = subIndex >= 0 ? args[subIndex]!.value : undefined;
     const posture: ScopePosture = writes
       ? "write"
       : (sub ? spec?.subcommands?.[sub] : undefined) ?? spec?.posture ?? (commandReads ? "read" : "unknown");
 
+    if (spec?.usesCwd && !spec.valueFlags?.some(flag => args.some(arg => arg.text === flag || arg.text.startsWith(`${flag}=`)))) {
+      // `git status` acts on the cwd; `git -C ../x status` names it explicitly.
+      claim({ text: ".", value: "." }, posture, base, source, "directory");
+    }
+
     if (!spec) {
       // No table entry: only a word we can trust is a claim.
-      for (const arg of args) if (pathShaped(arg) || existing(cwd, arg)) push(arg, posture);
+      for (const arg of args) {
+        if (arg.text.startsWith("-")) continue;
+        if (arg.value === undefined) {
+          if (pathShaped(arg.text) || /[/\\]/.test(arg.text)) {
+            return opaque(`a path argument is computed at runtime (${arg.text})`);
+          }
+          continue;
+        }
+        if (!pathShaped(arg.text) && !existing(base, arg.value)) continue;
+        claim(arg, posture, base, source);
+      }
       continue;
     }
 
+    let data = spec.dataOperands ?? 0;
     for (let index = 0; index < args.length; index++) {
       const arg = args[index]!;
-      const inline = spec.inlineFlags?.find(flag => arg.startsWith(`${flag}=`));
-      if (inline) {
-        push(arg.slice(inline.length + 1), posture);
-        continue;
-      }
-      if (spec.valueFlags?.includes(arg)) {
-        const value = args[index + 1];
-        if (value) push(value, posture);
+      if (spec.dataFlags?.some(flag => arg.text === flag || arg.text.startsWith(`${flag}=`))) {
+        // The value is data (a pattern, a write-out format, a URL), not a path.
         index++;
         continue;
       }
-      if (arg.startsWith("-")) {
-        const attached = attachedFlagValue(spec, arg);
-        if (attached) push(attached, posture);
+      const inline = spec.inlineFlags?.find(flag => arg.text.startsWith(`${flag}=`));
+      if (inline) {
+        const value = arg.text.slice(inline.length + 1);
+        claim({ text: value, value }, posture, base, source);
+        continue;
+      }
+      if (spec.valueFlags?.includes(arg.text)) {
+        const value = args[index + 1];
+        if (value) {
+          if (value.value === undefined) return opaque(`a path argument is computed at runtime (${value.text})`);
+          claim(value, posture, base, source);
+        }
+        index++;
+        continue;
+      }
+      if (arg.text.startsWith("-")) {
+        const attached = attachedFlagValue(spec, arg.text);
+        if (attached) claim({ text: attached, value: attached }, posture, base, source);
         continue;
       }
       if (index === subIndex) continue;
-      if (spec.operands && (pathShaped(arg) || existing(cwd, arg))) push(arg, posture);
+      if (data > 0) {
+        data--;
+        continue;
+      }
+      if (!spec.operands) continue;
+      if (arg.value === undefined) {
+        // A word that computes a path (`$(pwd)/x`, `$DIR/x`) cannot be judged, and
+        // dropping it silently is how a real escape would slip through.
+        if (pathShaped(arg.text) || /[/\\]/.test(arg.text)) {
+          return opaque(`a path argument is computed at runtime (${arg.text})`);
+        }
+        continue;
+      }
+      if (!pathShaped(arg.text) && !existing(base, arg.value)) continue;
+      claim(arg, posture, base, source);
     }
   }
 
   return { paths, unknown: false };
 }
+
 
 export interface ClaimOptions {
   /** Path field overrides for MCP servers, keyed by tool name. */

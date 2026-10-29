@@ -92,6 +92,8 @@ export interface PathClaim {
   posture: ScopePosture;
   /** The raw shell segment the claim came from, so a command rule can match it. */
   command?: string;
+  /** Directory a relative absolute-style `raw` was written against (`cd` changes it). */
+  base?: string;
   external: boolean;
   /** Set when the claim is a directory (grants widen to the directory). */
   kind: "file" | "directory" | "unknown";

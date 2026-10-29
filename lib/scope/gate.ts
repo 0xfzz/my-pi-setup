@@ -110,7 +110,8 @@ export function createGate(deps: GateDeps): Gate {
     });
 
   function toPathClaim(tool: string, request: PathRequest): PathClaim {
-    const classified = classifyPath(deps.cwd(), deps.state().roots, request.raw);
+    // A `cd` earlier in the command moves what a later relative path means.
+    const classified = classifyPath(request.base ?? deps.cwd(), deps.state().roots, request.raw);
     return {
       tool,
       action: request.action,
@@ -121,6 +122,7 @@ export function createGate(deps: GateDeps): Gate {
       external: classified.external,
       kind: request.kind,
       ...(request.command ? { command: request.command } : {}),
+      ...(request.base ? { base: request.base } : {}),
     };
   }
 
