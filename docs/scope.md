@@ -18,6 +18,33 @@ a delegated child         → never asks the user; escalates to its parent
 
 It is a **policy, not a sandbox**. Read [Limits](#limits) before relying on it.
 
+## Model
+
+Five pieces, in the order they decide anything. The vocabulary is opencode's
+`permission` system on purpose; the fourth and fifth are where we are more
+conservative than it is.
+
+1. **One triple, three effects.** A rule is `{action, resource, effect}`:
+   `action` is a tool name, or `external_directory` for a boundary escape, and
+   `resource` is what the tool touches — a path for `read`, a parsed segment for
+   `bash`. `effect` is `allow`, `ask` or `deny`.
+2. **Last match wins, and no match is not an allow.** `*` matches any run of
+   characters, `?` exactly one, everything else literally. Order is policy, so a
+   config's rule order is preserved verbatim. A rule set with no match falls
+   through to the defaults, never to a silent yes.
+3. **Deny is computed before grants.** A `deny` is checked before roots, before
+   yolo, before a hook and before anything a "yes" saved earlier, so nothing
+   accumulated in a session can re-open what a config closed.
+4. **A policy hook has the last word — except about `deny`.** opencode triggers
+   `permission.evaluate` so a plugin can rewrite the computed effect; this gate
+   does the same through `GateDeps.onEvaluate`, and its first client is the
+   sensitive-read rule below. A hook may tighten or relax `allow`/`ask`; it is
+   never consulted about a `deny`. That difference is what keeps a policy seam
+   from becoming a hole.
+5. **"Ask" is a request, not a modal.** The answers are `once`, `always` (a
+   literal, printed grant) and `reject` — and a reject may carry a note, which
+   reaches the model as `Do this instead: …` rather than a bare refusal.
+
 ## Quiet by construction
 
 A question must be a boundary escape, never a parsing accident. The matcher is
@@ -40,6 +67,10 @@ therefore narrow on purpose:
   `~/.git-credentials`, `.env*`, `*.pem`, `*.key`, `*.p12`, `*.kdbx`, `id_rsa`.
   This is the shape Codex and Claude Code's sandbox take — reads free, dangerous
   reads named — and it is why `readExternal: "allow"` does not mean "no read gate".
+  Templates (`.env.example`, `.env.sample`, `.env.template`) are documentation,
+  not secrets, and never ask: a dialog in front of the file that merely lists the
+  key names is how people learn to click through the one that matters.
+- **A sensitive read survives yolo.** The arm approves *ordinary* outside paths.
 
 `/scope log --stats` counts what actually asked, grouped by tool and by the paths
 that were asked about most; that is the input a grant or a rule needs.
@@ -55,12 +86,18 @@ that were asked about most; that is the input a grant or a rule needs.
 │ › 2  Allow /home/u/shared (read-only · session)           │
 │      saves /home/u/shared/*                               │
 │   3  Deny                                                 │
-│   4  Edit a rule…                                         │
-╰─ ↑↓ select · Enter choose · 1-4 · e rule · Esc deny ───────╯
+│   4  Deny with instructions…                              │
+│   5  Edit a rule…                                         │
+╰─ ↑↓ select · Enter choose · 1-5 · e rule · Esc deny ───────╯
 ```
 
 - **Escape denies.** The hint says so; a dialog that closes on Escape is never
   approval, and an aborted turn is a denial.
+- **A denial can say what to do instead.** Option 4 is opencode's reject stage:
+  a note becomes `Do this instead: …` in the block the model reads, and Enter on
+  an empty note is a plain deny. Escape inside the stage returns to the question,
+  so opening it cannot accidentally answer it — the same reason a closing dialog
+  is never consent.
 - **The grant is literal and visible.** Option 2 prints the exact glob it will
   save. Widening is never implicit — the failure that made one opencode approval
   a standing `$HOME` grant was an invisible `save` pattern (opencode #52715).
@@ -97,8 +134,9 @@ root still wins over a broad read-write one.
 | `/scope allow <path> [--ro\|--rw] [--project\|--global]` | Add a root (a glob is allowed) for this session, the project, or every project |
 | `/scope deny <path> [--project\|--global]` | Deny the path and everything under it (writes `dir` and `dir/*`) |
 | `/scope remove <path>` | Drop a session root |
+| `/scope remove --rule <tool\|*> <glob> [--project\|--global]` | Revoke one rule by the name `/scope rules` lists it under |
 | `/scope reset` | Drop session roots and rules; config and the workspace root stay |
-| `/scope rules` | The effective rule table, last match wins, with provenance |
+| `/scope rules` | The numbered effective rule table, last match wins, with provenance |
 | `/scope test <path>` | Dry run: prints the decision and the rule or root that produced it |
 | `/scope log [n] [--stats]` | Recent decisions, or a summary by tool and asked-about path |
 | `/scope yolo [on\|off\|all\|status] [--persist]` | Auto-approve the remaining questions |
@@ -126,7 +164,9 @@ cannot be re-asked in a loop, and a fork cannot inherit either.
 ## `/scope yolo`
 
 `yolo` is opencode's `--auto` restricted to this gate: it converts `ask` into
-`allow` and **never** touches a `deny`.
+`allow` and **never** touches a `deny`. It also never approves a sensitive read —
+a private key, a cloud credential, a real `.env` — because arming an arm to stop
+nagging about folders says nothing about publishing secrets.
 
 | Form | Approves |
 |---|---|
@@ -234,6 +274,8 @@ Deliberate, and each one is a failure we did not want to import:
 | Grants | project-scoped rows, leak into forks (#30779) | branch snapshots; forks only keep their own |
 | Unanalyzable command | scanner error | opaque, named, coverable by a rule |
 | Sibling git worktree | inside the project | outside: it asks, and `/scope status` says why |
+| Denial | reject is bare, or carries a message the model reads | same, as the dialog's fourth answer |
+| Policy hook | a plugin may flip a `deny` into an `allow` | a hook is never asked about a `deny` |
 
 ## Limits
 
@@ -258,10 +300,12 @@ This raises the cost of an accident. It does not contain a determined escape:
 last-match semantics, `~`/`..`/symlink classification, wildcard roots and the
 narrowest-grant rules. `tests/scope-tool-paths.test.ts` covers the argv-slot
 table, posture and the opaque cases. `tests/scope-policy.test.ts` covers the
-decision order, special paths, sensitive reads and rule-silenced tools.
-`tests/scope-ask.test.ts` covers the dialog's keys, the literal glob row and
-narrow widths. `tests/scope-gate.test.ts` covers the queue, allow once, folder
-grants covering queued calls, deny, rule answers and fail-closed dialogs.
+decision order, special paths, sensitive reads, the `.env` template exception,
+the yolo narrowing and rule-silenced tools.
+`tests/scope-ask.test.ts` covers the dialog's keys, the literal glob row, the
+reject stage and narrow widths. `tests/scope-gate.test.ts` covers the queue, allow
+once, folder grants covering queued calls, deny, deny-with-a-note, rule answers,
+duplicate rule answers, the policy hook and fail-closed dialogs.
 `tests/scope-state.test.ts` covers config merge, wildcard validation, `~`
 expansion in rules, broken files, refused stored grants and snapshot replay.
 `tests/scope-command.test.ts` and `tests/scope-audit.test.ts` cover parsing,
