@@ -1402,7 +1402,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
     name: "agent_spawn",
     label: "Spawn Agent",
     description:
-      "Spawn one agent: an ad-hoc worker, a read-only research reader, or a read-only planner that writes a plan artifact. With planId/stepId the worker's lane and criteria come from one plan step. A child sees only its own ticket. Spawns are capped per process; /agent max <n> changes the ceiling.",
+      "Spawn one agent: a read-only planner (research and plan creation) or a read-and-write worker (plan execution and verification). With planId/stepId the worker's lane and criteria come from one plan step. A child sees only its own ticket. Spawns are capped per process; /agent max <n> changes the ceiling.",
     parameters: Type.Object({
       name: Type.Optional(
         Type.String({
@@ -1412,8 +1412,8 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       ),
       task: Type.String({ description: "The specific assignment. For an ad-hoc spawn this is the whole brief; for a spec spawn it must stay inside the handoff's lane." }),
       role: Type.Optional(
-        Type.Union([Type.Literal("worker"), Type.Literal("research"), Type.Literal("planner")], {
-          description: "worker = writes its lane; research = read-only reader; planner = read-only, writes a plan artifact (plan-<scope>).",
+        Type.Union([Type.Literal("planner"), Type.Literal("worker"), Type.Literal("research")], {
+          description: "planner = read-only research and planning agent; worker = read-and-write implementation agent (research is accepted as a legacy alias for planner).",
         }),
       ),
       planId: Type.Optional(Type.String({ description: "Worker steps: plan artifact id from a planner child. Its step supplies the lane and criteria." })),
@@ -1490,7 +1490,8 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       }
 
       const modeId = currentModeId(ctx);
-      const role = params.role ?? (params.purpose === "research" ? "research" : "worker");
+      const rawRole = params.role ?? (params.purpose === "research" ? "planner" : "worker");
+      const role: "planner" | "worker" = rawRole === "research" ? "planner" : rawRole;
       if (params.planId && role === "planner") {
         return text("A planner produces a plan; it does not execute a plan step. Drop planId or use role \"worker\".", { error: "planner-vs-step" });
       }
@@ -1580,11 +1581,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       const parentSessionId = ctx.sessionManager.getSessionId();
       const agentDefs = params.agent ? loadAgentDefaults(params.agent) : null;
       const subagentSettings = loadSubagentSettings(ctx.cwd);
-      const spawnRole: OrchRole | undefined = role === "worker" || role === "planner" ? "worker" : undefined;
-      const roleModel = spawnRole
-        ? resolveChildModel(ctx, spawnRole, subagentSettings, params.model, agentDefs?.model)
-        : undefined;
-      const rolePrompt = spawnRole ? loadRolePrompt(spawnRole, ctx.cwd) : undefined;
+      const spawnRole: OrchRole = role;
+      const roleModel = resolveChildModel(ctx, spawnRole, subagentSettings, params.model, agentDefs?.model);
+      const rolePrompt = loadRolePrompt(spawnRole, ctx.cwd);
       const childArtifactSessionId = `${parentSessionId}-adhoc-${scope}`;
 
       const ticket = role === "planner" && plannerPlanId
@@ -1671,6 +1670,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
           ...(rolePrompt
             ? [`Role prompt: ${rolePrompt.source}${rolePrompt.path ? ` (${relative(ctx.cwd, rolePrompt.path)})` : ""}.`]
             : []),
+          ...(rawRole === "research" ? [`Note: role "research" is deprecated; use "planner" instead.`] : []),
           ``,
           `The scope (${scope}) is the identity: use it in agent_steer, agent_interrupt, agent_close, agent_running.`,
           `The outcome (or an agent_ping escalation) arrives automatically.`,
@@ -3123,7 +3123,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
   }
 
   pi.registerCommand("agent-model", {
-    description: "Bind a model per child role: /agent-model [devil-advocate|worker|qa-review] [inherit|provider/model,...] [--project]",
+    description: "Bind a model per child role: /agent-model [planner|worker] [inherit|provider/model,...] [--project]",
     handler: async (arg, ctx) => {
       const tokens = String(arg ?? "").trim().split(/\s+/).filter(Boolean);
       const project = tokens.includes("--project");
@@ -3146,7 +3146,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       // opens the same picker the role path uses.
       if (!role) {
         if (rest.length) {
-          ctx.ui.notify("Usage: /agent-model [devil-advocate|worker|qa-review] [inherit|provider/model,...] [--project]", "error");
+          ctx.ui.notify("Usage: /agent-model [planner|worker] [inherit|provider/model,...] [--project]", "error");
           return;
         }
         const rows = renderRoleMenu(roleModels);
@@ -3207,7 +3207,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
   });
 
   pi.registerCommand("agent-prompts", {
-    description: "Role system prompts: /agent-prompts inspects, /agent-prompts init [--force] writes the defaults into .pi/orch-agents/",
+    description: "Role system prompts: /agent-prompts inspects, /agent-prompts init [--force] writes the defaults into .pi/agents/system-prompts/",
     handler: async (arg, ctx) => {
       const tokens = String(arg ?? "").trim().split(/\s+/).filter(Boolean);
       const cwd = (ctx as any).cwd || process.cwd();
