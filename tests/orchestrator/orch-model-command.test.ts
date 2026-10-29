@@ -98,6 +98,18 @@ test("the text form saves a provider-qualified pool", async () => {
   }
 });
 
+test("the text form saves planner role binding", async () => {
+  const h = await harness();
+  try {
+    await h.smoke("planner zai/glm-5.3-flash --project");
+    const saved = (await h.readSettings()).roleModels.planner;
+    assert.deepEqual(saved, { provider: "zai", model: "glm-5.3-flash" });
+    assert.match(h.notices.at(-1)!.text, /planner → zai\/glm-5\.3-flash \(project\)/);
+  } finally {
+    await h.detach();
+  }
+});
+
 test("an ambiguous bare id is refused and nothing is written", async () => {
   const h = await harness();
   try {
