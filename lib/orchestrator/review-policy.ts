@@ -158,7 +158,7 @@ export function reviewPolicyFromEnv(env: NodeJS.ProcessEnv | Record<string, stri
 export const SPEC_ONLY_TOOLS: ReadonlySet<string> = new Set([
   "read", "grep", "find", "ls", "ffgrep", "fffind",
   // Read-only research: cited web evidence and a closed grammar for repository history.
-  "web_read", "web_research", "web_fetch",
+  "web_read", "web_research",
   "shell_read",
   // Evidence is an artifact, scoped to this review (see review-artifact-scope).
   "artifact_save", "artifact_edit", "artifact_recall",

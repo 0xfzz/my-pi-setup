@@ -79,7 +79,7 @@ const PATH_TOOLS: Readonly<Record<string, PathTool>> = {
 const NO_FS_CLAIM: ReadonlySet<string> = new Set([
   "ask_user", "session_goal", "workflow_todo", "todo_plan", "todo_act", "todo_next",
   "artifact_list", "artifact_recall", "artifact_save", "artifact_edit", "artifact_search",
-  "web_read", "web_fetch", "google_search", "generate_image",
+  "web_read", "google_search", "generate_image",
   "agent_spawn", "agent_running", "agent_steer", "agent_interrupt", "agent_close", "agent_escalate",
   "agent_history", "agent_progress", "agent_done", "agent_ping", "agent_handoff", "agent_resume",
   "agent_plan", "agent_review", "agent_parent_recall", "agent_parent_digest",

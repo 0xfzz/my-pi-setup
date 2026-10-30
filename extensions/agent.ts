@@ -108,7 +108,7 @@ import {
 } from "../lib/orchestrator/admission.ts";
 import { createExecRunner } from "../lib/orchestrator/exec-runner.ts";
 import { shellReadCommand } from "../lib/orchestrator/shell-read.ts";
-import { webFetch, webResearch, type WebFetchPort, type WebSearchPort } from "../lib/orchestrator/web-research.ts";
+import { webResearch, type WebFetchPort, type WebSearchPort } from "../lib/orchestrator/web-research.ts";
 import { ensureScratch, resolveScratchRoot } from "../lib/orchestrator/scratch.ts";
 import { readPageCache, writePageCache } from "../lib/orchestrator/page-cache.ts";
 import { consumeBudget, createBudget } from "../lib/orchestrator/research-budget.ts";
@@ -2087,27 +2087,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
         ...(result.warnings.length ? [`\nWarnings: ${result.warnings.join("; ")}`] : []),
       ].join("\n");
       return text(body || "(no sources)", result);
-    },
-  });
-
-  pi.registerTool({
-    name: "web_fetch",
-    label: "Web Fetch",
-    description: "Fetch one URL and return its extracted text with a sha256 digest and citation. Read-only; no page cache on disk.",
-    parameters: Type.Object({
-      url: Type.String(),
-      maxBytes: Type.Optional(Type.Number({ description: "Byte cap (default 40k, cap 120k)." })),
-    }),
-    async execute(_id, params, _signal, _onUpdate, ctx) {
-      void ctx;
-      const result = await webFetch(params, { fetch: webFetchPort() });
-      if (!result.source) {
-        return text(`Could not read ${params.url}: ${result.warnings.join("; ") || "no content"}`, {
-          error: "fetch-failed",
-          warnings: result.warnings,
-        });
-      }
-      return text(`${result.source.url} — ${result.source.title}\nsha256:${result.source.sha256}\nfetched ${result.source.fetchedAt}\n\n${result.source.text ?? result.source.excerpt}`, result);
     },
   });
 

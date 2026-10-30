@@ -207,21 +207,3 @@ export async function webResearch(
 
   return { sources, citations: sources.map(citationOf), warnings };
 }
-
-/** One URL, same contract as a single `web_research` source. */
-export async function webFetch(
-  input: { url: string; maxBytes?: number },
-  deps: { fetch?: WebFetchPort; now?: () => number; timeoutMs?: number },
-): Promise<{ source?: WebSource; warnings: string[] }> {
-  const warnings: string[] = [];
-  const url = String(input.url ?? "").trim();
-  if (!url) return { warnings: ["web_fetch needs a URL"] };
-  const maxBytes = clamp(input.maxBytes, 40_000, 1_000, WEB_MAX_BYTES_PER_PAGE);
-  const source = await fetchSource(url, url, {
-    maxBytes,
-    timeoutMs: deps.timeoutMs ?? WEB_TIMEOUT_MS,
-    deps,
-    warnings,
-  });
-  return { ...(source ? { source } : {}), warnings };
-}

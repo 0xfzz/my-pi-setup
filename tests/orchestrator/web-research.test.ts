@@ -6,7 +6,6 @@ import { join } from "node:path";
 import {
   digestOf,
   extractReadableText,
-  webFetch,
   webResearch,
   type WebFetchPort,
   type WebSearchPort,
@@ -99,13 +98,6 @@ test("the page cap is reported, never silently applied", async () => {
   );
   assert.equal(result.sources.length, 1);
   assert.match(result.warnings.join(" "), /only the first 1 of 2 URLs/);
-});
-
-test("web_fetch returns one source with the same contract", async () => {
-  const result = await webFetch({ url: "https://example.test/a" }, { fetch: fetchPort({ "https://example.test/a": html }) });
-  assert.ok(result.source);
-  assert.match(result.source!.text!, /Retry policy/);
-  assert.equal(digestOf(result.source!.text!), result.source!.sha256);
 });
 
 test("readable text keeps content and drops markup", () => {

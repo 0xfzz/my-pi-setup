@@ -76,7 +76,7 @@ export function spawnRefusal(
  */
 const RESEARCH_TOOLS: readonly string[] = [
   "read", "grep", "find", "ls", "ffgrep", "fffind", "shell_read",
-  "web_read", "web_search", "google_search", "web_research", "web_fetch", "vcc_recall",
+  "web_read", "web_search", "google_search", "web_research", "vcc_recall",
   // Evidence artifacts only, scoped to the research unit; discovery stays denied.
   "artifact_save", "artifact_edit", "artifact_recall",
 ];
