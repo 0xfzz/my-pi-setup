@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { claimSetFor, displayPath, shellClaim } from "../lib/scope/tool-paths.ts";
+import { claimSetFor, displayPath, GATED_TOOLS, shellClaim } from "../lib/scope/tool-paths.ts";
 
 const cwd = "/work";
 const options = { cwd };
@@ -117,23 +117,21 @@ test("a heredoc that carries data is not an opaque command", () => {
   assert.equal(redirect.unknown, false);
 });
 
-test("an unmapped MCP tool is unknown until config names its path field", () => {
-  const unmapped = claimSetFor("mcp__private", { file: "x" }, options);
-  assert.equal(unmapped.unknown, true);
-  const mapped = claimSetFor("mcp__fs", { file: "../x" }, { ...options, mcpPathFields: { mcp__fs: "file" } });
-  assert.equal(mapped.unknown, false);
-  assert.equal(mapped.paths[0]?.raw, "../x");
-  assert.equal(mapped.paths[0]?.write, true, "an unmapped semantics defaults to the write side");
+test("jurisdiction is exactly the builtin tools whose inputs are paths", () => {
+  assert.deepEqual(
+    [...GATED_TOOLS].sort(),
+    ["bash", "edit", "fffind", "ffgrep", "find", "grep", "ls", "read", "write"],
+  );
 });
 
-test("an unknown tool asks unless it declares readOnlyHint", () => {
-  assert.equal(claimSetFor("brand_new", {}, options).unknown, true);
-  assert.equal(claimSetFor("brand_new", {}, { ...options, annotations: { readOnlyHint: true } }).unknown, false);
-  assert.equal(
-    claimSetFor("brand_new", {}, { ...options, annotations: { readOnlyHint: true, destructiveHint: true } }).unknown,
-    true,
-    "destructiveHint outranks readOnlyHint",
-  );
+test("a tool outside the jurisdiction bypasses the gate instead of asking", () => {
+  // MCP is why this is a closed set: its inputs belong to the server, so the gate
+  // declines to judge rather than inventing a path or a consent state.
+  for (const tool of ["mcp__fs", "mcp__private", "code_read", "shell_read", "brand_new", "agent_spawn"]) {
+    const claim = claimSetFor(tool, { file: "../x", path: "/etc/passwd" }, options);
+    assert.deepEqual(claim.paths, [], tool);
+    assert.equal(claim.unknown, false, `${tool} must bypass, not ask`);
+  }
 });
 
 test("displayPath prefers the workspace-relative spelling", () => {

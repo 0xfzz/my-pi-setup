@@ -7,7 +7,7 @@ const cwd = "/work";
 
 function harness(
   script: Array<AskAnswer | undefined | Error>,
-  defaults = { external: "ask", readExternal: "ask", unknown: "ask" } as ScopeState["defaults"],
+  defaults = { external: "ask", readExternal: "ask" } as ScopeState["defaults"],
   extra: Partial<GateDeps> = {},
 ) {
   const state: ScopeState = {
@@ -146,22 +146,27 @@ test("a failed or unavailable dialog denies; it never approves", async () => {
   assert.equal((await empty.gate.gate("read", { path: "/etc/passwd" }))?.block, true);
 });
 
-test("an unknown tool asks; only allow-once can approve it", async () => {
-  const once = harness([{ kind: "once" }]);
-  assert.equal(await once.gate.gate("mcp__private", {}), undefined);
-  assert.match(once.asked[0]?.reason ?? "", /does not declare which paths/);
-
-  const allowed = harness([{ kind: "allow", grant: { path: cwd, access: "ro", glob: cwd, exact: true } }]);
-  const result = await allowed.gate.gate("mcp__private", {});
-  assert.equal(result?.block, true, "a folder grant cannot cover unknown paths");
+test("a tool outside the gate's jurisdiction bypasses it without asking", async () => {
+  const h = harness([]);
+  // MCP is the case that matters: its inputs belong to the server, so the gate
+  // declines jurisdiction instead of inventing a path or a consent state.
+  for (const tool of ["mcp__private", "mcp__fs", "code_read", "shell_read", "brand_new"]) {
+    assert.equal(await h.gate.gate(tool, { file: "../x" }), undefined, tool);
+  }
+  assert.deepEqual(h.asked, [], "a bypass is not a question and not a grant");
+  assert.deepEqual(h.grants, []);
 });
 
-test("an unknown tool's denial can carry a note too", async () => {
-  const h = harness([{ kind: "deny", feedback: "use the local search tool instead" }]);
-  const result = await h.gate.gate("mcp__private", {});
-  assert.equal(result?.block, true);
-  assert.match(result!.reason, /Do this instead: use the local search tool instead/);
-  assert.equal(result!.feedback, "use the local search tool instead");
+test("an opaque shell construct still asks once, and a rule for bash silences it", async () => {
+  const denied = harness([{ kind: "deny" }]);
+  const blocked = await denied.gate.gate("bash", { command: "bash -c 'rm -rf /'" });
+  assert.equal(blocked?.block, true);
+  assert.equal(denied.asked.length, 1, "the construct is named and asked once");
+
+  const ruled = harness([{ kind: "rule", text: "bash * allow" }]);
+  assert.equal(await ruled.gate.gate("bash", { command: "bash -c 'echo hi'" }), undefined, "the rule answer lets this call run");
+  assert.equal(await ruled.gate.gate("bash", { command: "bash -c 'echo bye'" }), undefined, "and it covers later opaque calls");
+  assert.equal(ruled.asked.length, 1, "so the same class of command asks once");
 });
 
 test("bash claims are judged per path and a denial stops the whole call", async () => {
@@ -180,7 +185,7 @@ test("a policy hook can tighten an allow and relax an ask", async () => {
   assert.equal((await tightened.gate.gate("read", { path: "src/a.ts" }))?.block, true);
   assert.equal(tightened.asked.length, 1, "an inside read became a question because policy said so");
 
-  const relaxed = harness([], { external: "ask", readExternal: "ask", unknown: "ask" }, { onEvaluate: () => "allow" });
+  const relaxed = harness([], { external: "ask", readExternal: "ask" }, { onEvaluate: () => "allow" });
   assert.equal(await relaxed.gate.gate("read", { path: "/etc/passwd" }), undefined);
   assert.deepEqual(relaxed.asked, [], "policy allowed what the table would have asked");
 });
@@ -191,7 +196,7 @@ test("a policy hook can never re-open a deny", async () => {
   let installed = false;
   const h = harness(
     [{ kind: "rule", text: "read /secrets/* deny" }],
-    { external: "ask", readExternal: "ask", unknown: "ask" },
+    { external: "ask", readExternal: "ask" },
     { onEvaluate: () => (installed ? "allow" : undefined) },
   );
   await h.gate.gate("read", { path: "/secrets/key" });
@@ -204,7 +209,7 @@ test("a policy hook can never re-open a deny", async () => {
 });
 
 test("a throwing policy hook keeps the decision instead of approving", async () => {
-  const h = harness([], { external: "ask", readExternal: "ask", unknown: "ask" }, {
+  const h = harness([], { external: "ask", readExternal: "ask" }, {
     onEvaluate: () => { throw new Error("policy exploded"); },
   });
   const result = await h.gate.gate("read", { path: "/etc/passwd" });
@@ -215,7 +220,7 @@ test("a throwing policy hook keeps the decision instead of approving", async () 
 test("the same rule answer twice is stored once", async () => {
   const h = harness(
     [{ kind: "rule", text: "read /other/* deny" }, { kind: "rule", text: "read /other/* deny" }],
-    { external: "ask", readExternal: "ask", unknown: "ask" },
+    { external: "ask", readExternal: "ask" },
   );
   await h.gate.gate("read", { path: "/other/a.ts" });
   await h.gate.gate("read", { path: "/second/a.ts" });

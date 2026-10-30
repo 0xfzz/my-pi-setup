@@ -61,7 +61,7 @@ test("a session with no config starts at the workspace, read-write", async () =>
   try {
     const loaded = loadScopeConfig(f.dir);
     assert.deepEqual(loaded.state.roots.map(root => [root.path, root.access]), [[canonicalize(f.dir), "rw"]]);
-    assert.deepEqual(loaded.state.defaults, { external: "ask", readExternal: "allow", unknown: "ask" });
+    assert.deepEqual(loaded.state.defaults, { external: "ask", readExternal: "allow" });
     assert.deepEqual(loaded.problems, []);
     assert.deepEqual(loaded.sources, []);
   } finally {
@@ -74,7 +74,6 @@ test("project config adds roots relative to the workspace and narrows defaults",
     roots: ["../shared", { path: "vendor", access: "ro" }],
     defaults: { external: "deny" },
     rules: [{ action: "read", resource: "vendor/*", effect: "allow" }],
-    mcp: { mcp__fs: { pathField: "file" } },
   });
   try {
     const loaded = loadScopeConfig(f.dir);
@@ -83,10 +82,30 @@ test("project config adds roots relative to the workspace and narrows defaults",
     assert.equal(byPath.get(canonicalize(join(f.dir, "vendor")))?.access, "ro");
     assert.equal(byPath.get(canonicalize(join(f.dir, "vendor")))?.source, "project");
     assert.equal(loaded.state.defaults.external, "deny");
-    assert.equal(loaded.state.defaults.unknown, "ask", "unspecified defaults stay at ask");
     assert.equal(loaded.state.rules.length, 1);
-    assert.deepEqual(loaded.mcpPathFields, { mcp__fs: "file" });
     assert.deepEqual(loaded.problems, []);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("removed config keys are reported instead of silently ignored", async () => {
+  const f = await fixture({
+    defaults: { external: "ask", unknown: "deny" },
+    mcp: { mcp__fs: { pathField: "file" } },
+  });
+  try {
+    const loaded = loadScopeConfig(f.dir);
+    assert.equal(
+      loaded.problems.some(line => /defaults\.unknown/.test(line)),
+      true,
+      "a stale unknown default must be named, not dropped",
+    );
+    assert.equal(
+      loaded.problems.some(line => /"mcp" section was removed/.test(line)),
+      true,
+      "an MCP path map has no meaning now that MCP bypasses the gate",
+    );
   } finally {
     await f.cleanup();
   }
@@ -156,7 +175,7 @@ test("a snapshot persists session and branch roots, not config or global ones", 
       { path: "/granted", access: "ro", source: "branch" },
     ],
     rules: [{ action: "bash", resource: "rm *", effect: "deny", source: "project" }],
-    defaults: { external: "ask", readExternal: "allow", unknown: "ask" },
+    defaults: { external: "ask", readExternal: "allow" },
     yolo: { strength: "ro", persist: false, since: 1 },
   };
   const snapshot = scopeSnapshot(state);

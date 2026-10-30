@@ -35,16 +35,17 @@ export interface ScopeConfigFile {
   roots?: Array<string | { path: string; access?: ScopeAccess }>;
   rules?: ScopeRule[];
   defaults?: { external?: ScopeEffect; readExternal?: ScopeEffect; unknown?: ScopeEffect };
-  /** Tool name → input field that carries a path, for MCP servers. */
-  mcp?: Record<string, string | { pathField?: string }>;
+  /**
+   * Accepted so a hand-written file with the key is reported instead of
+   * ignored: MCP tools bypass this gate and there is no path field to declare.
+   */
+  mcp?: unknown;
   /** Accepted so a hand-written file with the key is rejected loudly, not ignored. */
   yolo?: unknown;
 }
 
 export interface LoadedScope {
   state: ScopeState;
-  /** Path fields to read for MCP tools. */
-  mcpPathFields: Record<string, string>;
   /** Files that contributed, in precedence order (for `/scope status`). */
   sources: string[];
   /** Problems worth showing the user instead of silently ignoring. */
@@ -118,7 +119,6 @@ export function loadScopeConfig(cwd: string, records?: ScopeRecord | undefined):
   const roots: ScopeRoot[] = [{ path: canonicalize(cwd), access: "rw", source: "session" }];
   const rules: ScopeRule[] = [];
   const defaults = { ...DEFAULT_SCOPE_DEFAULTS };
-  const mcpPathFields: Record<string, string> = {};
 
   for (const file of files) {
     const parsed = readConfig(file.path, problems);
@@ -134,10 +134,17 @@ export function loadScopeConfig(cwd: string, records?: ScopeRecord | undefined):
     }
     if (parsed.defaults?.external && isEffect(parsed.defaults.external)) defaults.external = parsed.defaults.external;
     if (parsed.defaults?.readExternal && isEffect(parsed.defaults.readExternal)) defaults.readExternal = parsed.defaults.readExternal;
-    if (parsed.defaults?.unknown && isEffect(parsed.defaults.unknown)) defaults.unknown = parsed.defaults.unknown;
-    for (const [tool, value] of Object.entries(parsed.mcp ?? {})) {
-      const field = typeof value === "string" ? value : value.pathField;
-      if (typeof field === "string" && field) mcpPathFields[tool] = field;
+    // A removed key must be reported, not silently dropped: a config that still
+    // carries it is asking for a decision this gate no longer makes.
+    if (parsed.defaults && "unknown" in parsed.defaults) {
+      problems.push(
+        `${file.path}: "defaults.unknown" was removed; Scope gates only builtin path tools, so a tool it cannot map bypasses it.`,
+      );
+    }
+    if ("mcp" in parsed) {
+      problems.push(
+        `${file.path}: the "mcp" section was removed; MCP tools bypass Scope and are neither allowed nor denied here.`,
+      );
     }
     if ("yolo" in parsed) {
       problems.push(`${file.path}: "yolo" is not configurable; arm it interactively with /scope yolo`);
@@ -158,7 +165,6 @@ export function loadScopeConfig(cwd: string, records?: ScopeRecord | undefined):
 
   return {
     state: { roots, rules, defaults, ...(records?.yolo ? { yolo: yoloFrom(records.yolo) } : {}) },
-    mcpPathFields,
     sources,
     problems,
   };

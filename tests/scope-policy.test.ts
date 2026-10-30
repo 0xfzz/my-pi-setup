@@ -17,7 +17,7 @@ function state(overrides: Partial<ScopeState> = {}): ScopeState {
 }
 
 /** The same state with both outside defaults questioning, for dialog-flow tests. */
-const asking = { external: "ask", readExternal: "ask", unknown: "ask" } as const;
+const asking = { external: "ask", readExternal: "ask" } as const;
 
 function claim(overrides: Partial<PathClaim> = {}): PathClaim {
   return {
@@ -154,26 +154,27 @@ test("yolo upgrades a question, respects its strength, and never touches a deny"
   assert.equal(evaluateClaim(write, denied).effect, "deny");
 });
 
-test("a tool with unmapped inputs follows defaults.unknown, and yolo ro leaves it asking", () => {
-  const unknown = { tool: "mcp__private", unknown: true as const };
-  assert.equal(evaluateClaim(unknown, state()).effect, "ask");
-  assert.equal(evaluateClaim(unknown, state({ defaults: { external: "ask", readExternal: "allow", unknown: "deny" } })).effect, "deny");
+test("an opaque call asks, and read-only yolo does not approve it", () => {
+  // The only remaining producer of an unknown claim is a shell construct the
+  // tokenizer could not lower; a tool outside the jurisdiction never gets here.
+  const opaque = { tool: "bash", unknown: true as const };
+  assert.equal(evaluateClaim(opaque, state()).effect, "ask");
   assert.equal(
-    evaluateClaim(unknown, state({ yolo: { strength: "ro", persist: false, since: 0 } })).effect,
+    evaluateClaim(opaque, state({ yolo: { strength: "ro", persist: false, since: 0 } })).effect,
     "ask",
-    "an unmapped tool may write, so read-only yolo must not approve it",
+    "an opaque call may write, so read-only yolo must not approve it",
   );
   assert.equal(
-    evaluateClaim(unknown, state({ yolo: { strength: "rw", persist: false, since: 0 } })).effect,
+    evaluateClaim(opaque, state({ yolo: { strength: "rw", persist: false, since: 0 } })).effect,
     "allow",
   );
 });
 
-test("a rule keyed on the tool silences an unknown tool, permanently", () => {
-  const rules = [{ action: "mcp__fs", resource: "*", effect: "allow" as const, source: "config" as const }];
-  assert.equal(evaluateClaim({ tool: "mcp__fs", unknown: true }, state({ rules })).effect, "allow");
-  assert.equal(evaluateClaim({ tool: "mcp__other", unknown: true }, state({ rules })).effect, "ask", "the rule is per tool");
-  assert.equal(evaluateClaim({ tool: "mcp__fs", unknown: true }, state()).effect, "ask");
+test("a rule keyed on the tool covers an opaque command, and only that tool", () => {
+  const rules = [{ action: "bash", resource: "*", effect: "allow" as const, source: "config" as const }];
+  assert.equal(evaluateClaim({ tool: "bash", unknown: true }, state({ rules })).effect, "allow");
+  assert.equal(evaluateClaim({ tool: "read", unknown: true }, state({ rules })).effect, "ask", "the rule is per tool");
+  assert.equal(evaluateClaim({ tool: "bash", unknown: true }, state()).effect, "ask");
 });
 
 test("a command rule is one grant per habit, and it beats the write default", () => {

@@ -31,6 +31,17 @@ export interface EvaluateOptions {
   approvedOnce?: boolean;
 }
 
+/**
+ * An opaque call: the tokenizer could not lower the construct, so its
+ * filesystem effect is unknown rather than absent. This is a parser limit, not
+ * a verdict about a tool, and it is now the only producer of an unknown claim —
+ * a tool Scope cannot map does not reach policy at all, because it bypasses the
+ * gate under `GATED_TOOLS`.
+ *
+ * A rule keyed on the tool is still the way out: `<tool> * allow` silences it and
+ * `<tool> * deny` blocks it. Without that exit the question would be a per-call
+ * tax with no remedy, which is what made an unconfigured tool feel broken.
+ */
 function unknownDecision(claim: UnknownClaim, state: ScopeState): ScopeDecision {
   // A rule keyed on the tool name is the way out for a tool that declares
   // nothing: `<tool> * allow` silences it for good, `<tool> * deny` blocks it for
@@ -48,8 +59,8 @@ function unknownDecision(claim: UnknownClaim, state: ScopeState): ScopeDecision 
     };
   }
   return {
-    effect: state.defaults.unknown,
-    reason: `${claim.tool} does not declare the paths it touches`,
+    effect: "ask",
+    reason: `${claim.tool} could not be analysed, so its filesystem effect is unknown`,
     resource: "*",
     external: true,
     write: true,

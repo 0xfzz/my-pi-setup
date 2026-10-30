@@ -17,7 +17,7 @@ const state: ScopeState = {
     { path: "/shared", access: "ro", source: "session" },
   ],
   rules: [{ action: "bash", resource: "rm *", effect: "deny", source: "project" }],
-  defaults: { external: "ask", readExternal: "allow", unknown: "ask" },
+  defaults: { external: "ask", readExternal: "allow" },
 };
 
 test("bare /scope and /scope status are the same thing", () => {
@@ -92,7 +92,8 @@ test("status lists every root with its access and provenance, plus both defaults
   assert.match(text, /workspace {2}rw {2}\(session\)/);
   assert.match(text, /vendor {2}ro {2}\(project\)/);
   assert.match(text, /\/shared {2}ro {2}\(session\)/);
-  assert.match(text, /write-outside=ask read-outside=allow unknown=ask/);
+  assert.match(text, /write-outside=ask read-outside=allow/);
+  assert.doesNotMatch(text, /unknown=/, "there is no unknown default left to report");
   assert.match(text, /rules: 1/);
   assert.match(text, /\/work\/\.pi\/scope\.json/);
 });

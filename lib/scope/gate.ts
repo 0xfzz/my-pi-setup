@@ -16,7 +16,7 @@
  */
 import { describeDecision, evaluateClaim } from "./policy.ts";
 import { classifyPath, suggestGrant } from "./paths.ts";
-import { claimSetFor, displayPath, type ClaimOptions, type PathRequest } from "./tool-paths.ts";
+import { claimSetFor, displayPath, type PathRequest } from "./tool-paths.ts";
 import type {
   Claim,
   PathClaim,
@@ -89,8 +89,6 @@ export interface GateDeps {
   ask: (request: AskRequest) => Promise<AskAnswer | undefined>;
   /** Record a grant that must outlive this call (branch / config / audit). */
   onGrant?: (grant: { root: ScopeRoot; rule?: ScopeRule }) => void;
-  /** Tool metadata, so unmapped tools can honour `readOnlyHint`. */
-  annotationsFor?: (tool: string) => ClaimOptions["annotations"];
   /**
    * Is this a delegated child session?
    *
@@ -99,7 +97,6 @@ export interface GateDeps {
    * dialog nobody will answer. The caller answers with `scope_answer`.
    */
   isChild?: () => boolean;
-  mcpPathFields?: () => Readonly<Record<string, string>> | undefined;
   /** Called for every question the gate had to ask (audit / sidebar). */
   onAsk?: (request: AskRequest) => void;
   /** Called for every automatic approval while yolo is armed. */
@@ -173,11 +170,7 @@ export function createGate(deps: GateDeps): Gate {
   const queue = new SerialQueue();
 
   const claimsFor = (tool: string, input: Record<string, unknown> | undefined) =>
-    claimSetFor(tool, input, {
-      cwd: deps.cwd(),
-      annotations: deps.annotationsFor?.(tool),
-      mcpPathFields: deps.mcpPathFields?.(),
-    });
+    claimSetFor(tool, input, { cwd: deps.cwd() });
 
   function toPathClaim(tool: string, request: PathRequest): PathClaim {
     // A `cd` earlier in the command moves what a later relative path means.
@@ -270,9 +263,9 @@ export function createGate(deps: GateDeps): Gate {
     return {
       kind: "unavailable",
       message:
-        `Scope: ${tool} does not declare the paths it touches, so it cannot be judged. ` +
+        `Scope: ${tool} contains a construct this gate cannot analyse, so its filesystem effect is unknown. ` +
         `Do not ask the user: agent_ping your parent for a decision, then apply it with ` +
-        `scope_answer or ask them to allow the tool by rule.`,
+        `scope_answer, or ask them for a rule that covers the command.`,
     };
   }
 
@@ -351,7 +344,7 @@ export function createGate(deps: GateDeps): Gate {
         return {
           block: true,
           reason:
-            `Scope: ${tool} was not run; ${opaque ?? "it does not declare the paths it touches"}. ` +
+            `Scope: ${tool} was not run; ${opaque ?? "the command could not be analysed"}. ` +
             `To stop asking, add the rule {"action":"${tool}","resource":"*","effect":"allow"} to .pi/scope.json. ${DENY_HINT}`,
         };
       });

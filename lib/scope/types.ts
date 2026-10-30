@@ -42,8 +42,12 @@ export interface ScopeRule {
 }
 
 /**
- * `external` covers paths outside every root; `unknown` covers a tool whose
- * inputs this extension cannot map to a path. Both default to `ask`.
+ * `external` covers writes outside every root; `readExternal` covers ordinary
+ * reads outside every root. Both default to `ask`.
+ *
+ * There is deliberately no `unknown` default: Scope gates only the builtin
+ * tools whose inputs are paths (`GATED_TOOLS`), so a tool it cannot map does
+ * not get a consent state — it bypasses the gate entirely.
  */
 export interface ScopeDefaults {
   /** Writes outside every root. */
@@ -57,8 +61,6 @@ export interface ScopeDefaults {
    * enough that people turn it off. Writes outside the workspace still ask.
    */
   readExternal: ScopeEffect;
-  /** Tools whose paths cannot be mapped at all (an unmapped MCP server). */
-  unknown: ScopeEffect;
 }
 
 export interface ScopeState {
@@ -99,7 +101,13 @@ export interface PathClaim {
   kind: "file" | "directory" | "unknown";
 }
 
-/** A tool call with no mapable path (a new MCP server, a dispatcher). */
+/**
+ * A call whose filesystem effect cannot be analysed — an opaque shell construct
+ * such as `bash -c`, `find -exec`, `xargs` or an interpreter heredoc.
+ *
+ * This is a parser limit, not a statement about a tool: policy answers it with
+ * `ask` unless a rule keyed on the tool says otherwise.
+ */
 export interface UnknownClaim {
   tool: string;
   unknown: true;
@@ -143,7 +151,7 @@ export interface ScopeRecord {
 
 export const SCOPE_RECORD_TYPE = "agent-scope:v1";
 
-export const DEFAULT_SCOPE_DEFAULTS: ScopeDefaults = { external: "ask", readExternal: "allow", unknown: "ask" };
+export const DEFAULT_SCOPE_DEFAULTS: ScopeDefaults = { external: "ask", readExternal: "allow" };
 
 /** Directories that must never become a standing grant from a dialog answer. */
 export function isUnsafeRoot(path: string, home: string | undefined): boolean {

@@ -1,21 +1,25 @@
 /**
  * Which paths a tool call claims to touch.
  *
- * The gate can only judge what it can see, so this file is explicit about the
- * three answers it can give:
+ * Jurisdiction is explicit and closed. Scope gates only the builtin tools whose
+ * inputs are paths (`GATED_TOOLS`). A gated call yields either the paths it
+ * claims or an `unknown` verdict when the input cannot be analysed.
  *
  *   - `paths`   — the tool declares path inputs we understand (`read`, `write`,
- *                 `edit`, `grep`, `find`, `ls`) or it is a shell command whose
- *                 path-like arguments we can extract.
- *   - *nothing* — the tool is session state (`todo_*`, `artifact_*`, `ask_user`,
- *                 delegation) or declares `readOnlyHint` without path inputs.
- *   - `unknown` — the tool might touch anything (an unmapped MCP server, a
- *                 dispatcher, `bash -c`, `find -exec`). Policy answers this with
- *                 `defaults.unknown`, which is `ask` unless a team says otherwise.
+ *                 `edit`, `grep`, `find`, `ls`, `ffgrep`, `fffind`) or it is a
+ *                 shell command whose path-shaped channels we can extract.
+ *   - `unknown` — the shell construct could not be lowered (`bash -c`,
+ *                 `find -exec`, an interpreter heredoc). This is a parser limit,
+ *                 not a verdict, and policy answers it with `ask` unless a rule
+ *                 for the tool says otherwise.
+ *   - *nothing* — every other tool: MCP, custom, delegation and session state.
+ *                 Those bypass the gate entirely. A bypass is not an `allow`
+ *                 rule: nothing is asked, recorded or persisted, so nothing can
+ *                 be widened later, and the gate makes no claim about what an
+ *                 MCP server does internally.
  *
- * The important failure mode is a silent fourth answer: assuming "no path inputs"
- * means "no filesystem access". Anything that is neither tabled nor annotated is
- * `unknown`, never a pass.
+ * The failure mode to avoid is treating "outside my jurisdiction" as "checked
+ * and safe". It is neither, and the docs say so plainly.
  */
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
@@ -72,20 +76,17 @@ const PATH_TOOLS: Readonly<Record<string, PathTool>> = {
 };
 
 /**
- * Tools that provably do not touch the filesystem, or whose filesystem work is
- * gated elsewhere. Delegation verbs are listed because the CHILD session runs its
- * own gate; the parent spawn call only starts a process.
+ * The tools this gate judges: the builtins whose inputs name a path.
+ *
+ * Everything else is outside its jurisdiction on purpose, and MCP is why this
+ * list is a closed set rather than a table of guesses: an MCP server's inputs are
+ * the server's business, so gating them would mean inventing path semantics the
+ * host cannot verify. A tool that is not listed here bypasses the gate; it is not
+ * allowed by it.
  */
-const NO_FS_CLAIM: ReadonlySet<string> = new Set([
-  "ask_user", "session_goal", "workflow_todo", "todo_plan", "todo_act", "todo_next",
-  "artifact_list", "artifact_recall", "artifact_save", "artifact_edit", "artifact_search",
-  "web_read", "google_search", "generate_image",
-  "agent_spawn", "agent_running", "agent_steer", "agent_interrupt", "agent_close", "agent_escalate",
-  "agent_history", "agent_progress", "agent_done", "agent_ping", "agent_handoff", "agent_resume",
-  "agent_plan", "agent_review", "agent_parent_recall", "agent_parent_digest",
+export const GATED_TOOLS: ReadonlySet<string> = new Set([
+  "bash", "read", "write", "edit", "grep", "find", "ls", "ffgrep", "fffind",
 ]);
-
-const NO_FS_PREFIXES = ["vcc_", "todo_", "artifact_", "dashboard_", "subagent_", "workflow_"];
 
 /** Inline programs remain opaque; their data may name arbitrary runtime paths. */
 const INLINE_CODE_FLAGS = new Set(["-c", "-e", "-p", "-r", "--eval", "--print", "--command"]);
@@ -281,13 +282,6 @@ function attachedFlagValue(spec: PathSpec, arg: string): string | undefined {
   return undefined;
 }
 
-function isNoClaim(tool: string): boolean {
-  return NO_FS_CLAIM.has(tool) || NO_FS_PREFIXES.some(prefix => tool.startsWith(prefix));
-}
-
-function isMcpTool(tool: string): boolean {
-  return tool === "mcp" || tool.startsWith("mcp__") || tool.startsWith("mcp_");
-}
 
 
 /** Does this word look like a filesystem path rather than a flag or a bare name? */
@@ -476,48 +470,29 @@ export function shellClaim(command: unknown, cwd: string): ClaimSet {
 
 
 export interface ClaimOptions {
-  /** Path field overrides for MCP servers, keyed by tool name. */
-  mcpPathFields?: Readonly<Record<string, string>>;
-  /** Annotations from the registered tool, when pi knows them. */
-  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
   cwd: string;
 }
 
-/** Map one tool call to the paths it claims (or to "unknown"). */
+/** Map one gated tool call to the paths it claims (or to "unknown"). */
 export function claimSetFor(tool: string, input: Record<string, unknown> | undefined, options: ClaimOptions): ClaimSet {
+  // Jurisdiction first, before any table lookup, so no future entry can quietly
+  // widen it: a tool outside the gated set bypasses the gate entirely.
+  if (!GATED_TOOLS.has(tool)) return { paths: [], unknown: false };
+
   if (tool === "bash") return shellClaim(input?.command, options.cwd);
-  if (isNoClaim(tool)) return { paths: [], unknown: false };
 
-  const table = PATH_TOOLS[tool];
-  if (table) {
-    const paths: PathRequest[] = [];
-    for (const field of table.fields) {
-      const value = input?.[field];
-      if (typeof value !== "string" || !value.trim()) continue;
-      paths.push({ raw: value, write: table.write, posture: table.write ? "write" : "read", kind: table.kind, action: tool });
-    }
-    if (!paths.length && table.fallback === "cwd") {
-      paths.push({ raw: options.cwd, write: table.write, posture: table.write ? "write" : "read", kind: table.kind, action: tool });
-    }
-    if (!paths.length) return { paths, unknown: false };
-    return { paths, unknown: false };
+  // `GATED_TOOLS` is exactly `bash` plus the table's names, so the entry exists.
+  const table = PATH_TOOLS[tool]!;
+  const paths: PathRequest[] = [];
+  for (const field of table.fields) {
+    const value = input?.[field];
+    if (typeof value !== "string" || !value.trim()) continue;
+    paths.push({ raw: value, write: table.write, posture: table.write ? "write" : "read", kind: table.kind, action: tool });
   }
-
-  if (isMcpTool(tool)) {
-    const field = options.mcpPathFields?.[tool];
-    const value = field ? input?.[field] : undefined;
-    if (typeof value === "string" && value.trim()) {
-      return { paths: [{ raw: value, write: true, posture: "unknown", kind: "unknown", action: tool }], unknown: false };
-    }
-    return { paths: [], unknown: true, reason: `${tool} does not declare which paths it touches` };
+  if (!paths.length && table.fallback === "cwd") {
+    paths.push({ raw: options.cwd, write: table.write, posture: table.write ? "write" : "read", kind: table.kind, action: tool });
   }
-
-  // A read-only annotation with no path inputs is the only silent pass: the tool
-  // promises it cannot modify anything, and it declared no path for us to check.
-  if (options.annotations?.readOnlyHint === true && options.annotations.destructiveHint !== true) {
-    return { paths: [], unknown: false };
-  }
-  return { paths: [], unknown: true, reason: `${tool} does not declare the paths it touches` };
+  return { paths, unknown: false };
 }
 
 /** Display helper for the dialog: workspace-relative where possible. */

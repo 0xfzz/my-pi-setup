@@ -65,8 +65,6 @@ export default function scopeExtension(pi: ExtensionAPI) {
     // (agent_ping -> orchestrator -> agent_escalate) and come back as an answer
     // this session applies with scope_answer.
     isChild: () => isSubagentChildSession(context),
-    annotationsFor: tool => pi.getAllTools?.().find(candidate => candidate.name === tool)?.annotations,
-    mcpPathFields: () => config.mcpPathFields,
     onGrant: persist,
     // Policy the decision table cannot see. `yolo` approves ordinary outside
     // paths, never a private key or a dotenv: the arm says "stop asking about
