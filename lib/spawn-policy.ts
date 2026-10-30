@@ -125,9 +125,6 @@ export function laneDeclaration(purpose: SpawnPurpose, laneFiles: readonly strin
   return purpose === "research" || purpose === "adhoc" ? "not-declared" : "declared";
 }
 
-/** Default breadth cap for one parent. */
-export const DEFAULT_MAX_CHILDREN = 8;
-
 type Env = Readonly<Record<string, string | undefined>>;
 
 function positiveInt(value: string | undefined): number | undefined {
@@ -145,11 +142,6 @@ export function maxSpawnDepth(env: Env = process.env): number {
   return positiveInt(env.PI_SUBAGENT_MAX_DEPTH) ?? MAX_DELEGATION_DEPTH;
 }
 
-/** `PI_SUBAGENT_MAX_CHILDREN`, then 8. */
-export function maxChildren(env: Env = process.env): number {
-  return positiveInt(env.PI_SUBAGENT_MAX_CHILDREN) ?? DEFAULT_MAX_CHILDREN;
-}
-
 /** A hard stop before any registry row or pane exists. */
 export function depthProblem(
   depth: number = currentSpawnDepth(),
@@ -160,8 +152,7 @@ export function depthProblem(
     + `A delegated child may not spawn again; do this work yourself.`;
 }
 
-/** Breadth is a stop, not a queue: the parent must finish or close a child first. */
-export function capacityProblem(running: number, max: number = maxChildren()): string | undefined {
-  if (running < max) return undefined;
-  return `Child limit reached (${running}/${max}). Finish or close a child before spawning another.`;
-}
+// The former breadth guard (maxChildren/capacityProblem) was absorbed by the
+// occupancy-aware admission in lib/orchestrator/admission.ts: one occupancy
+// count (running + blocked + results awaiting parent review) against one set
+// of configured ceilings, instead of three overlapping caps.

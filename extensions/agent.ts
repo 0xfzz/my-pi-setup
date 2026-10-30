@@ -31,6 +31,7 @@ import { dirname, join, relative } from "node:path";
 import { buildAdhocTicket, sanitizeScope } from "../lib/orchestrator/handoff.ts";
 import {
   ScopeRegistry,
+  type ChildAccountability,
   type CloseReason,
   type ScopedChild,
   type SteerRecord,
@@ -97,7 +98,14 @@ import {
   type ResolvedRoleModel,
   type RoleBinding,
 } from "../lib/orchestrator/role-models.ts";
-import { delegateCapRefusal, parseMaxDelegates, resolveMaxDelegates } from "../lib/orchestrator/delegate-cap.ts";
+import { parseMaxDelegates, resolveMaxDelegates } from "../lib/orchestrator/delegate-cap.ts";
+import {
+  admissionProblem,
+  outstandingLaunchSlots,
+  releaseLaunchSlot,
+  reserveLaunchSlot,
+  resolveBudgets,
+} from "../lib/orchestrator/admission.ts";
 import { codeMap, codeRead } from "../lib/orchestrator/code-tools.ts";
 import { createExecRunner, runSearch } from "../lib/orchestrator/search-engine.ts";
 import { shellReadCommand } from "../lib/orchestrator/shell-read.ts";
@@ -106,11 +114,9 @@ import { ensureScratch, resolveScratchRoot } from "../lib/orchestrator/scratch.t
 import { readPageCache, writePageCache } from "../lib/orchestrator/page-cache.ts";
 import { consumeBudget, createBudget } from "../lib/orchestrator/research-budget.ts";
 import {
-  capacityProblem,
   childToolsForPurpose,
   currentSpawnDepth,
   depthProblem,
-  maxChildren,
   readerPurpose,
   registryPurpose,
   spawnRefusal,
@@ -1151,7 +1157,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
      * would reintroduce the ghost-row class of bug this registry was rewritten to
      * remove.
      */
-    meta?: Pick<ScopedChild, "purpose">,
+    meta?: Pick<ScopedChild, "purpose"> & { accountability?: ChildAccountability },
   ) {
     // One row per session file: a resume supersedes the previous row instead of
     // forking a second "running" ghost that only the newest row can update.
@@ -1411,6 +1417,10 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
         }),
       ),
       task: Type.String({ description: "The specific assignment. For an ad-hoc spawn this is the whole brief; for a spec spawn it must stay inside the handoff's lane." }),
+      delegationReason: Type.String({ description: "REQUIRED. The concrete benefit of a separate agent: independent work on a distinct lane, bounded substantial research, or specialised context. Small, tightly coupled, quick or coordination-heavy tasks belong in this session. Its result stays YOUR responsibility to verify and integrate; a slot frees only when the result is accepted, sent back for changes or abandoned — not when the pane closes." }),
+      workUnitKey: Type.Optional(Type.String({ description: "Stable work-unit key for this batch (default: the scope). A duplicate occupied key is refused: steer or resume that child, settle its result, or pass `replaces`." })),
+      reviewPlan: Type.Optional(Type.String({ description: "How THIS parent will verify the result before accepting (default: inspect the final report, lane edits and acceptance criteria)." })),
+      replaces: Type.Optional(Type.String({ description: "Child id this spawn replaces, only when its work unit is occupied. The replaced child keeps its review obligation until you disposition it." })),
       role: Type.Optional(
         Type.Union([Type.Literal("planner"), Type.Literal("worker"), Type.Literal("research")], {
           description: "planner = read-only research and planning agent; worker = read-and-write implementation agent (research is accepted as a legacy alias for planner).",
@@ -1466,11 +1476,74 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       if (depthRefusal) {
         return text(depthRefusal, { error: "depth-limit", depth: currentSpawnDepth() });
       }
-      const runningCount = registry.getRunningChildren().length;
-      const capacityRefusal = capacityProblem(runningCount);
-      if (capacityRefusal) {
-        return text(capacityRefusal, { error: "child-limit", running: runningCount, max: maxChildren() });
+      // The parent session is the durable owner of this child: admission, batch
+      // accounting and every result disposition are keyed to it, not the PID.
+      const parentSessionFile = ctx.sessionManager.getSessionFile();
+      if (!parentSessionFile) {
+        return text("Error: no session file. Start pi with a persistent session so children can be tracked and resumed.", {
+          error: "no-session-file",
+        });
       }
+      const ownerSessionId = ctx.sessionManager.getSessionId();
+      const subagentSettings = loadSubagentSettings(ctx.cwd);
+      const budgets = resolveBudgets(subagentSettings);
+
+      // ── need-based admission: metadata before any side effect ───────────
+      const scope = adhocScope(params);
+      const delegationReason = typeof params.delegationReason === "string" ? params.delegationReason.trim() : "";
+      const workUnitKey = (typeof params.workUnitKey === "string" ? params.workUnitKey.trim() : "") || scope;
+      const occupied = registry.getOccupiedChildren(ownerSessionId);
+      const occupiedKeys = occupied.map((child) => child.accountability?.workUnitKey ?? child.scope);
+      const replacesId = typeof params.replaces === "string" && params.replaces.trim() ? params.replaces.trim() : "";
+      if (replacesId && !occupied.some((child) => child.id === replacesId)) {
+        return text(
+          `Refused: replaces "${replacesId}" does not name an occupied child. Steer or resume the existing child instead, `
+            + `or disposition its result first. Occupied: ${occupied.map((c) => `${c.name} [${c.id}]`).join(", ") || "none"}.`,
+          { error: "replaces-unknown", replaces: replacesId },
+        );
+      }
+      {
+        const refusal = admissionProblem({
+          occupied: occupied.length,
+          reserved: 0,
+          launchesInBatch: registry.getBatch(ownerSessionId).launches,
+          workUnitKey,
+          delegationReason,
+          occupiedKeys,
+          budgets,
+        });
+        if (refusal) {
+          return text(refusal, {
+            error: "admission-refused",
+            occupied: occupied.length,
+            budgets,
+          });
+        }
+      }
+      // Reserve BEFORE the first await: tool calls from one assistant message
+      // interleave at await points, so only a synchronous ledger write stops
+      // two calls from passing the same last-slot check.
+      reserveLaunchSlot(ownerSessionId);
+      try {
+        // Authoritative admission AFTER claiming a slot: the occupancy count
+        // includes this call's own reservation, so two parallel spawn calls in
+        // one assistant message cannot both pass the last-slot check.
+        const admissionRefusal = admissionProblem({
+          occupied: occupied.length,
+          reserved: outstandingLaunchSlots(ownerSessionId),
+          launchesInBatch: registry.getBatch(ownerSessionId).launches,
+          workUnitKey,
+          delegationReason,
+          occupiedKeys,
+          budgets,
+        });
+        if (admissionRefusal) {
+          return text(admissionRefusal, {
+            error: "admission-refused",
+            occupied: occupied.length,
+            budgets,
+          });
+        }
 
       // ── ad-hoc only ─────────────────────────────────────────────────────
       // The handoff → spec-review → QA pipeline was removed. A spawn is one task
@@ -1499,20 +1572,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       const refusal = spawnRefusal(modeId, purpose);
       if (refusal) return text(refusal, { error: "purpose-refused", mode: modeId, purpose });
 
-      // Per-process concurrency ceiling: a fan-out of panes still costs tokens.
-      // Counted before any row, pane or ticket exists, so a refused spawn leaves
-      // no trace. Every purpose counts — research and planner children hold panes
-      // too. When a child completes, its slot frees: 5 -> 4 -> one spawn -> 5.
-      const delegateCap = resolveMaxDelegates(loadSubagentSettings(ctx.cwd));
-      const runningDelegates = registry.getAllChildren()
-        .filter((child) => child.status === "running" && child.parentPid === process.pid)
-        .map((child) => child.scope);
-      const capRefusal = delegateCapRefusal(runningDelegates, delegateCap);
-      if (capRefusal) {
-        return text(capRefusal, { error: "delegate-limit", running: runningDelegates, cap: delegateCap });
-      }
-
-      const scope = adhocScope(params);
+      // Admission already gated this call: metadata, occupancy and the batch
+      // budget. The reservation is released by the finally below unless a child
+      // is actually registered, where the registry row owns the slot.
       let laneFiles = [...(params.laneFiles ?? [])];
       let acceptanceCriteria = [...(params.acceptanceCriteria ?? [])];
       let parsedPlan: Plan | undefined;
@@ -1571,20 +1633,11 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
         );
       }
 
-      const parentSessionFile = ctx.sessionManager.getSessionFile();
-      if (!parentSessionFile) {
-        return text("Error: no session file. Start pi with a persistent session so children can be tracked and resumed.", {
-          error: "no-session-file",
-        });
-      }
-
-      const parentSessionId = ctx.sessionManager.getSessionId();
       const agentDefs = params.agent ? loadAgentDefaults(params.agent) : null;
-      const subagentSettings = loadSubagentSettings(ctx.cwd);
       const spawnRole: OrchRole = role;
       const roleModel = resolveChildModel(ctx, spawnRole, subagentSettings, params.model, agentDefs?.model);
       const rolePrompt = loadRolePrompt(spawnRole, ctx.cwd);
-      const childArtifactSessionId = `${parentSessionId}-adhoc-${scope}`;
+      const childArtifactSessionId = `${ownerSessionId}-adhoc-${scope}`;
 
       const ticket = role === "planner" && plannerPlanId
         ? buildPlannerTicket({ scope, planId: plannerPlanId, task: params.task })
@@ -1651,6 +1704,22 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
         scope,
       };
 
+      // This row is the parent's owned obligation: a durable owner, a stable
+      // work unit, the reason admission accepted, and how the result will be
+      // judged. Its result stays pending until one of the three dispositions.
+      const accountability: ChildAccountability = {
+        ownerSessionId,
+        batchId: registry.getBatch(ownerSessionId).id,
+        workUnitKey,
+        delegationReason,
+        reviewPlan: (typeof params.reviewPlan === "string" ? params.reviewPlan.trim() : "")
+          || "Inspect the child's final report against its task and lane; verify referenced files and the stated acceptance criteria before accepting.",
+        resultRevision: 0,
+        disposition: "pending",
+        reviews: [],
+        attempts: [],
+      };
+
       armWatcher(
         running,
         scope,
@@ -1658,14 +1727,22 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
         undefined,
         params.budgetMinutes ? params.budgetMinutes * 60_000 : undefined,
         { criteria: acceptanceCriteria, revision: 1 },
-        { purpose: registryPurpose(purpose) },
+        { purpose: registryPurpose(purpose), accountability },
       );
+      // The registry row now owns the slot; the finally below drops the
+      // reservation on every exit path, so only the registry is charged after
+      // registration and a failed launch never eats capacity.
+      registry.recordLaunch(ownerSessionId);
 
       return text(
         [
           `Subagent "${displayName}" launched (scope: ${scope}, ad-hoc).`,
           `Pane: ${started.paneId}`,
           `Lane: ${laneFiles.join(", ") || "not declared"}`,
+          `Work unit: ${workUnitKey} — ${delegationReason}`,
+          `Review duty: when it finishes, the result waits for YOUR verification (plan: ${accountability.reviewPlan}) — the slot stays occupied until you accept it, send it back for changes, or abandon it.`,
+          `Rework: steer or resume THIS child instead of spawning a replacement; a replacement needs \`replaces\` plus capacity.`,
+          `Batch budget: ${registry.getBatch(ownerSessionId).launches}/${budgets.launchesPerBatch} launch(es), ${occupied.length + 1}/${budgets.concurrent} slot(s) occupied.`,
           ...(roleModel ? [`Model: ${renderAttribution(roleModel)}.`] : []),
           ...(rolePrompt
             ? [`Role prompt: ${rolePrompt.source}${rolePrompt.path ? ` (${relative(ctx.cwd, rolePrompt.path)})` : ""}.`]
@@ -1689,8 +1766,16 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
           paneId: started.paneId,
           sessionFile: running.sessionFile,
           laneFiles,
+          workUnitKey,
+          accountability: { ...accountability },
         },
       );
+      } finally {
+        // Always: the reservation only covers the launch window. Once the row
+        // is registered the registry owns the count, and on any earlier failure
+        // release is exactly what frees the slot for parallel or later calls.
+        releaseLaunchSlot(ownerSessionId);
+      }
     },
   });
 
@@ -2953,7 +3038,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
   }
 
   pi.registerCommand("agent", {
-    description: "agent status | list | escalations | max [n]",
+    description: "agent status | list | escalations | max [n] | batch",
     handler: async (arg, ctx) => {
       const sub = (arg ?? "").trim().split(/\s+/)[0]?.toLowerCase() || "status";
       const running = registry.getRunningChildren();
@@ -2988,7 +3073,24 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
           return;
         }
         saveSubagentSettings({ maxDelegates: parsed.value }, { scope: project ? "project" : "global", cwd });
-        ctx.ui.notify(`Max delegates: ${parsed.value}${project ? " (project)" : " (global)"}`, "info");
+        ctx.ui.notify(`Max delegates (legacy concurrent cap): ${parsed.value}${project ? " (project)" : " (global)"}. Admission uses the strictest configured ceiling.`, "info");
+        return;
+      }
+      if (sub === "batch") {
+        // The reset is deliberately user-owned: a model reporting a full batch
+        // must surface this command, never run it to bypass its own refusal.
+        if (!ownerSessionId) {
+          ctx.ui.notify("No session is active, so there is no batch to reset.", "error");
+          return;
+        }
+        const settings = loadSubagentSettings((ctx as any).cwd || process.cwd());
+        const next = registry.newBatch(ownerSessionId);
+        const caps = resolveBudgets(settings);
+        ctx.ui.notify(
+          `New work batch ${next.id}. Launch budget: ${next.launches}/${caps.launchesPerBatch}. `
+            + `Old results keep their review obligations (${registry.getPendingResults(ownerSessionId).length} pending) — a reset never discharges them.`,
+          "info",
+        );
         return;
       }
       if (sub === "escalations") {
@@ -3004,16 +3106,24 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
         return;
       }
 
+      const occupiedSlots = ownerSessionId ? registry.getOccupiedChildren(ownerSessionId) : [];
+      const batch = ownerSessionId ? registry.getBatch(ownerSessionId) : undefined;
+      const caps = resolveBudgets(loadSubagentSettings(cwd));
+      const pendingResults = ownerSessionId ? registry.getPendingResults(ownerSessionId) : [];
       ctx.ui.notify(
         [
           `Orchestrator`,
           `Running: ${running.length} of ${all.length} tracked`,
-          `Delegates: ${ownRunning.length} running / ${delegateCap} cap (this process)`,
+          `Delegation: ${occupiedSlots.length} occupied slot(s) (running, blocked, or awaiting your result disposition) — concurrent cap ${caps.concurrent}, launch budget ${batch ? `${batch.launches}/${caps.launchesPerBatch}` : "n/a"} (batch reset: /agent batch)`,
+          pendingResults.length
+            ? `Results awaiting YOUR review: ${pendingResults.map((c) => `${c.name} [${c.id}]`).join(", ")} — a finished child is not an accepted result`
+            : `No results awaiting review`,
+          `Legacy delegate cap: ${delegateCap} (/agent max <n>)`,
           registry.isPaused()
             ? `Paused: yes — ${registry.getPausedChildren().length} child(ren) await /agent-resume`
             : `Paused: no`,
           `Escalations: ${escalations.forOrchestrator().length} waiting on you, ${escalations.forUser().length} waiting on the user`,
-          `Usage: /agent status | list | escalations | max [n]`,
+          `Usage: /agent status | list | escalations | max [n] | batch`,
         ].join("\n"),
         "info",
       );

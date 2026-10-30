@@ -16,6 +16,18 @@ export interface SubagentSettings {
   modelAliases?: Record<string, { provider: string; model: string }>;
   /** Max children this process may have running at once. Absent = default. */
   maxDelegates?: number;
+  /**
+   * Occupancy-aware delegation ceiling an owner session may hold at once
+   * (running + blocked + results awaiting parent review). Absent = default 2;
+   * the strictest explicitly configured value wins over the default, never the
+   * reverse, so a migrated setup keeps the ceiling its owner chose.
+   */
+  maxConcurrentDelegations?: number;
+  /**
+   * Successful child launches allowed per work batch, before the user resets
+   * the batch with /agent batch. Absent = default 4.
+   */
+  maxLaunchesPerBatch?: number;
 }
 
 export function getSubagentSettingsFile(
