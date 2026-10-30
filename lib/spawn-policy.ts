@@ -75,8 +75,7 @@ export function spawnRefusal(
  * `undefined` means "canonical worker allowlist", which is the spec/adhoc shape.
  */
 const RESEARCH_TOOLS: readonly string[] = [
-  "read", "grep", "find", "ls", "ffgrep", "fffind",
-  "code_map", "code_search", "code_read", "shell_read",
+  "read", "grep", "find", "ls", "ffgrep", "fffind", "shell_read",
   "web_read", "web_search", "google_search", "web_research", "web_fetch", "vcc_recall",
   // Evidence artifacts only, scoped to the research unit; discovery stays denied.
   "artifact_save", "artifact_edit", "artifact_recall",

@@ -19,7 +19,7 @@ test("the removed pipeline purposes are refused with a clear reason", () => {
 
 test("childToolsForPurpose provides a read-only surface for research/planner without write tools or bash", () => {
   const tools = (childToolsForPurpose("research") ?? "").split(",");
-  for (const tool of ["read", "grep", "find", "ls", "ffgrep", "fffind", "code_map", "code_search", "code_read", "shell_read", "artifact_save", "artifact_edit", "artifact_recall"]) {
+  for (const tool of ["read", "grep", "find", "ls", "ffgrep", "fffind", "shell_read", "artifact_save", "artifact_edit", "artifact_recall"]) {
     assert.ok(tools.includes(tool), `research tools should include ${tool}`);
   }
   for (const tool of ["bash", "write", "edit", "browser", "agent_spawn"]) {

@@ -13,9 +13,6 @@ test("the caps are the documented ones", () => {
   assert.equal(RESEARCH_LIMITS.web_research, 6);
   assert.equal(RESEARCH_LIMITS.web_page, 20);
   assert.equal(RESEARCH_LIMITS.web_chars, 200_000);
-  assert.equal(RESEARCH_LIMITS.code_search, 50);
-  assert.equal(RESEARCH_LIMITS.code_read, 100);
-  assert.equal(RESEARCH_LIMITS.code_bytes, 2_000_000);
 });
 
 test("the seventh web search is refused and says why", () => {
@@ -43,8 +40,8 @@ test("actions are budgeted independently", () => {
   const budget = createBudget();
   consumeBudget(budget, "web_research", 6);
   assert.ok(budgetProblem(budget, "web_research"));
-  assert.equal(consumeBudget(budget, "code_search"), undefined);
-  assert.equal(consumeBudget(budget, "code_read"), undefined);
+  assert.equal(consumeBudget(budget, "web_page"), undefined);
+  assert.equal(consumeBudget(budget, "web_chars"), undefined);
 });
 
 test("a huge single request is refused rather than partially consumed", () => {

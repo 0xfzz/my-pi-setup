@@ -1,10 +1,10 @@
 /**
  * research-budget.ts — a bounded research loop.
  *
- * Six web searches, twenty pages, 200k characters; fifty code searches, a hundred
- * reads, 2 MB. The caps are per process, which is per delegated child: a reviewer
- * cannot spend the whole review on the web, and a runaway loop is refused with the
- * number it hit rather than silently degrading.
+ * Six web searches, twenty pages, 200k characters. The caps are per process,
+ * which is per delegated child: a reviewer cannot spend the whole review on the
+ * web, and a runaway loop is refused with the number it hit rather than silently
+ * degrading.
  *
  * Pure counters: the caller owns the state, so a test can exhaust a budget without
  * a network or a repository.
@@ -14,9 +14,6 @@ export const RESEARCH_ACTIONS = [
   "web_research",
   "web_page",
   "web_chars",
-  "code_search",
-  "code_read",
-  "code_bytes",
 ] as const;
 
 export type ResearchAction = (typeof RESEARCH_ACTIONS)[number];
@@ -25,18 +22,12 @@ export const RESEARCH_LIMITS: Readonly<Record<ResearchAction, number>> = {
   web_research: 6,
   web_page: 20,
   web_chars: 200_000,
-  code_search: 50,
-  code_read: 100,
-  code_bytes: 2_000_000,
 };
 
 const LABELS: Readonly<Record<ResearchAction, string>> = {
   web_research: "web searches",
   web_page: "pages fetched",
   web_chars: "web characters",
-  code_search: "code searches",
-  code_read: "code reads",
-  code_bytes: "code bytes read",
 };
 
 export interface ResearchBudget {
@@ -49,9 +40,6 @@ export function createBudget(): ResearchBudget {
       web_research: 0,
       web_page: 0,
       web_chars: 0,
-      code_search: 0,
-      code_read: 0,
-      code_bytes: 0,
     },
   };
 }

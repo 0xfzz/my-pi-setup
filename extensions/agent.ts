@@ -106,8 +106,7 @@ import {
   reserveLaunchSlot,
   resolveBudgets,
 } from "../lib/orchestrator/admission.ts";
-import { codeMap, codeRead } from "../lib/orchestrator/code-tools.ts";
-import { createExecRunner, runSearch } from "../lib/orchestrator/search-engine.ts";
+import { createExecRunner } from "../lib/orchestrator/exec-runner.ts";
 import { shellReadCommand } from "../lib/orchestrator/shell-read.ts";
 import { webFetch, webResearch, type WebFetchPort, type WebSearchPort } from "../lib/orchestrator/web-research.ts";
 import { ensureScratch, resolveScratchRoot } from "../lib/orchestrator/scratch.ts";
@@ -122,7 +121,6 @@ import {
   spawnRefusal,
 } from "../lib/spawn-policy.ts";
 import type { SpawnPurpose } from "../lib/delegation-tools.ts";
-import { pathPolicyProblem } from "../lib/orchestrator/review-policy.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardState } from "../lib/dashboard/integration.ts";
 import { projectChildProvenance, projectOrchestrator } from "../lib/dashboard/projection.ts";
 import { displayName as namingDisplayName, givenNameFor, givenNamePart, isHumanName } from "../lib/naming.ts";
@@ -1991,11 +1989,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
     return { cwd, roots: [cwd], deny: sessionDir ? [sessionDir] : [] };
   }
 
-  function researchGuard(ctx: ExtensionContext): (candidate: string) => string | undefined {
-    const scope = researchScope(ctx);
-    return (candidate) => pathPolicyProblem(candidate, scope);
-  }
-
   function hostWebSearch(): WebSearchPort | undefined {
     const tool = pi.getAllTools().find((candidate: any) => candidate?.name === "google_search" || candidate?.name === "web_search") as any;
     if (!tool?.execute) return undefined;
@@ -2057,106 +2050,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       },
     };
   }
-
-  pi.registerTool({
-    name: "code_map",
-    label: "Code Map",
-    description:
-      "Repository outline: files, language, size and exported symbols, listed through rg --files (or git ls-files). "
-      + "Read-only, path-guarded, and never a JavaScript directory walk.",
-    parameters: Type.Object({
-      path: Type.Optional(Type.String({ description: "Subtree to map (default: repository root)." })),
-      depth: Type.Optional(Type.Number({ description: "Maximum path depth (default 3, cap 4)." })),
-      maxFiles: Type.Optional(Type.Number({ description: "File cap (default 400, cap 800)." })),
-      includeSymbols: Type.Optional(Type.Boolean({ description: "Extract exported symbols (default true)." })),
-    }),
-    async execute(_id, params, _signal, _onUpdate, ctx) {
-      const map = await codeMap(params, {
-        cwd: researchScope(ctx).cwd,
-        runner: researchRunner,
-        guard: researchGuard(ctx),
-      });
-      const lines = map.files.map((file) => {
-        const symbols = file.symbols?.length
-          ? ` · ${file.symbols.map((symbol) => `${symbol.kind} ${symbol.name}@${symbol.line}`).join(", ")}`
-          : "";
-        return `${file.path} (${file.language}, ${file.bytes}b${symbols})`;
-      });
-      return text(
-        [...lines, ...(map.truncated ? ["(truncated: file cap reached)"] : [])].join("\n") || "(no files)",
-        map,
-      );
-    },
-  });
-
-  pi.registerTool({
-    name: "code_search",
-    label: "Code Search",
-    description:
-      "Multi-pattern repository search with context, backed by ripgrep / git grep / grep (never a JS walk). "
-      + "Path-scoped and control-plane-denied; reports truncation rather than stopping silently.",
-    parameters: Type.Object({
-      patterns: Type.Array(Type.String(), { description: "1–5 patterns (literal unless regex: true)." }),
-      path: Type.Optional(Type.String({ description: "Directory or file to search." })),
-      exclude: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())])),
-      context: Type.Optional(Type.Number({ description: "Context lines (default 2, cap 5)." })),
-      maxMatches: Type.Optional(Type.Number({ description: "Match cap (default 40, cap 100)." })),
-      regex: Type.Optional(Type.Boolean()),
-      caseSensitive: Type.Optional(Type.Boolean()),
-    }),
-    async execute(_id, params, _signal, _onUpdate, ctx) {
-      const refusal = consumeBudget(researchBudget, "code_search");
-      if (refusal) return text(refusal, { error: "budget" });
-      const scope = researchScope(ctx);
-      if (params.path) {
-        const problem = researchGuard(ctx)(params.path);
-        if (problem) return text(problem, { error: "path-refused", problem });
-      }
-      try {
-        const result = await runSearch({ ...params, cwd: scope.cwd }, { runner: researchRunner });
-        const lines = result.matches.map((match) => `${match.path}:${match.line}:${match.column}: ${match.text}`);
-        const trailer = [
-          ...result.warnings,
-          ...(result.truncated ? ["(truncated: match cap reached)"] : []),
-        ];
-        return text([...lines, ...trailer].join("\n") || "(no matches)", result);
-      } catch (error: any) {
-        return text(`code_search is unavailable: ${error?.message ?? error}`, { error: "no-engine" });
-      }
-    },
-  });
-
-  pi.registerTool({
-    name: "code_read",
-    label: "Code Read",
-    description: "Bounded, line-numbered read with a whole-file sha256 digest, path-guarded. Read-only.",
-    parameters: Type.Object({
-      path: Type.String(),
-      start: Type.Optional(Type.Number({ description: "1-based first line." })),
-      limit: Type.Optional(Type.Number({ description: "Lines to return (default 200, cap 800)." })),
-      maxBytes: Type.Optional(Type.Number({ description: "Byte cap (default 80k)." })),
-    }),
-    async execute(_id, params, _signal, _onUpdate, ctx) {
-      const refusal = consumeBudget(researchBudget, "code_read");
-      if (refusal) return text(refusal, { error: "budget" });
-      try {
-        const read = codeRead(params, {
-          cwd: researchScope(ctx).cwd,
-          runner: researchRunner,
-          guard: researchGuard(ctx),
-        });
-        const body = read.lines.map((line) => `${line.n}\t${line.text}`).join("\n");
-        const bytes = read.lines.reduce((sum, line) => sum + Buffer.byteLength(line.text, "utf8"), 0);
-        const note = consumeBudget(researchBudget, "code_bytes", bytes);
-        return text(
-          [...(note ? [`Warning: ${note}`] : []), `${read.path} (${read.language}, sha256:${read.digest.slice(0, 12)}…)\n${body}`].join("\n"),
-          read,
-        );
-      } catch (error: any) {
-        return text(error?.message ?? String(error), { error: "read-refused" });
-      }
-    },
-  });
 
   pi.registerTool({
     name: "web_research",

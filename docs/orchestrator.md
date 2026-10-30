@@ -237,20 +237,15 @@ writer. The tool surface is deliberately narrow on the write side and wide on th
 | Concern | Tools | Guarantee |
 | --- | --- | --- |
 | Web | `web_research`, `web_fetch`, `web_read` | every source carries `url`, `fetchedAt`, `sha256`, excerpt; content is untrusted data |
-| Codebase | `code_map`, `code_search`, `code_read`, `read/grep/find/ls`, `ffgrep/fffind` | path-scoped; control-plane state stays denied |
+| Codebase | `read/grep/find/ls`, `ffgrep/fffind` | path-scoped; control-plane state stays denied |
 | History | `shell_read` | closed grammar (`git status/log/diff/show`, `rg`, `find`, `cat`, `wc`); no redirection, heredoc, `$()`, or unknown commands |
 | Evidence | `artifact_save/edit/recall` | scoped to `review:<runId>:<chunkId>` or `orch-research:<scope>`; `artifact_search/list` stay denied for reviewers |
 
-Search is engine-backed, never a JavaScript directory walk: `rg --json` → `git grep` → `grep -r`,
-spawned with an argv array at most two at a time, with a 10 s timeout that returns partial results.
-`ffgrep`/`fffind` remain available directly for fast interactive lookups; `code_search` prefers the
-structured engine because it needs context and stable `path:line:column` citations. `code_read`
-returns a line-numbered window plus a whole-file digest, so a review can cite the exact revision it
-read.
+Fast repository search and navigation rely on Pi's built-in read/search tools (`read`, `grep`, `find`, `ls`)
+alongside the fff plugin (`ffgrep`, `fffind`).
 
-Budgets are per child: 6 web searches, 20 pages and 200k characters; 50 code searches, 100 reads
-and 2 MB. Fetched pages are cached in scratch for 10 minutes, so a re-read costs no network call and
-deleting the scratch directory is always safe.
+Budgets are per child: 6 web searches, 20 pages and 200k characters. Fetched pages are cached in scratch
+for 10 minutes, so a re-read costs no network call and deleting the scratch directory is always safe.
 
 Research may write scratch (page cache, index) only under `.pi/orch-research/<run>/` — `.pi/` is
 gitignored — falling back to `$TMPDIR/orch-research/<run>/` when it is not, and `PI_ORCH_SCRATCH`
@@ -306,7 +301,7 @@ nobody could answer.
 
 A reviewer gets only its own chunk's pinned text, `read`, named-path search, the todo
 tools, and `agent_spec_review_submit`, plus the read-only research surface:
-`code_map`/`code_search`/`code_read`, `web_read`/`web_research`/`web_fetch`, and
+`web_read`/`web_research`/`web_fetch`, and
 `shell_read` (the closed grammar). It may write **evidence artifacts** scoped to
 `review:<runId>:<chunkId>` (`artifact_save/edit/recall`) — never a user artifact,
 never the work tree. It has **no** write/edit/patch, **no** general shell, **no**
@@ -432,8 +427,7 @@ merged gate rubric a chunk reviewer applies, plus the cross-member checks: a sec
 opinion is a chunk split, not a second reader of the same text.
 
 Reviewer context is the ticket's pinned text, explicitly named references, and
-the read-only research surface (`code_map`/`code_search`/`code_read`,
-`web_read`/`web_research`/`web_fetch`, `shell_read`). Reviewers get `read`,
+the read-only research surface (`web_read`/`web_research`/`web_fetch`, `shell_read`). Reviewers get `read`,
 named-path search, todo tools, the submit tool, and scoped evidence artifacts
 (`artifact_save/edit/recall`); `artifact_search`/`artifact_list` stay denied. A
 search with no path is refused because it can walk control-plane state; a
