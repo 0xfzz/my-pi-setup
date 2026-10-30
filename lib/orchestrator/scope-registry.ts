@@ -41,6 +41,35 @@ export interface WatchdogState {
   lastFailure?: string;
 }
 
+export interface ResultDisposition {
+  disposition: "accepted" | "changes-requested" | "abandoned";
+  resultRevision: number;
+  summary: string;
+  evidence: string[];
+  integration: string;
+  at: string;
+}
+
+export interface ChildAccountability {
+  ownerSessionId: string;
+  batchId: string;
+  workUnitKey: string;
+  delegationReason: string;
+  reviewPlan: string;
+  resultRevision: number;
+  disposition: "pending" | ResultDisposition["disposition"];
+  reviews: ResultDisposition[];
+  /** Prior attempts survive resume, including the decisions made on them. */
+  attempts: Array<{ id: string; resultRevision: number; reviews: ResultDisposition[] }>;
+}
+
+export interface DelegationBatch {
+  id: string;
+  ownerSessionId: string;
+  generation: number;
+  launches: number;
+}
+
 export interface ScopedChild {
   id: string;
   name: string;
@@ -64,6 +93,8 @@ export interface ScopedChild {
   paneId?: string;
   /** PID of the parent process that spawned this child, for the per-process cap. */
   parentPid?: number;
+  /** Absent on legacy rows: legacy/unreviewed, never implicitly accepted. */
+  accountability?: ChildAccountability;
   status: "running" | "completed" | "blocked" | "failed" | "closed";
   /** Audit copy of the handoff spec. Orchestrator-side evidence, never handed to the child. */
   specPath?: string;
@@ -193,6 +224,7 @@ export interface ReviewRecord {
 export interface RegistrySnapshot {
   version: 1;
   savedAt: string;
+  delegationBatch?: DelegationBatch;
   children: ScopedChild[];
   steers: SteerRecord[];
   reviews: ReviewRecord[];
@@ -210,6 +242,7 @@ export interface RegistrySnapshot {
 }
 
 export class ScopeRegistry {
+  private batch?: DelegationBatch;
   private readonly childrenById = new Map<string, ScopedChild>();
   private readonly childrenBySession = new Map<string, ScopedChild>();
   private readonly runScopes = new Map<string, string>(); // sessionFile -> scope
@@ -239,6 +272,19 @@ export class ScopeRegistry {
     const superseded: ScopedChild[] = [];
     for (const [id, existing] of this.childrenById) {
       if (id === child.id || existing.sessionFile !== child.sessionFile) continue;
+      if (existing.accountability) {
+        child.accountability = {
+          ...existing.accountability,
+          resultRevision: existing.accountability.resultRevision + 1,
+          disposition: "pending",
+          reviews: [],
+          attempts: [...existing.accountability.attempts, {
+            id: existing.id,
+            resultRevision: existing.accountability.resultRevision,
+            reviews: [...existing.accountability.reviews],
+          }],
+        };
+      }
       existing.status = "closed";
       existing.pendingPing = false;
       existing.closedAt = new Date().toISOString();
@@ -274,6 +320,7 @@ export class ScopeRegistry {
    * replaced) and wrote them into its own sidecar on the first persist.
    */
   public reset(): void {
+    this.batch = undefined;
     this.childrenById.clear();
     this.childrenBySession.clear();
     this.runScopes.clear();
@@ -349,6 +396,9 @@ export class ScopeRegistry {
   ): ScopedChild | undefined {
     const child = this.childrenBySession.get(sessionFile);
     if (!child) return undefined;
+    if (child.status !== status && status !== "running" && status !== "blocked") {
+      this.invalidateResult(child);
+    }
     child.status = status;
     child.updatedAt = new Date().toISOString();
     if (details?.pendingPing !== undefined) {
@@ -369,6 +419,7 @@ export class ScopeRegistry {
   public updateMilestone(sessionFile: string, files: string[]): ScopedChild | undefined {
     const child = this.childrenBySession.get(sessionFile);
     if (!child) return undefined;
+    if (child.status !== "running" && child.status !== "blocked") this.invalidateResult(child);
     child.lastMilestoneFiles = files;
     child.updatedAt = new Date().toISOString();
     return child;
@@ -408,6 +459,8 @@ export class ScopeRegistry {
     const child = this.childrenBySession.get(sessionFile);
     if (!child) return undefined;
     if (child.status === "closed") return child;
+    // Pane cleanup after a terminal report must not invalidate its reviewed result.
+    if (child.status === "running" || child.status === "blocked") this.invalidateResult(child);
     child.status = "closed";
     child.pendingPing = false;
     child.stallStrikes = 0;
@@ -425,6 +478,7 @@ export class ScopeRegistry {
   ): ScopedChild | undefined {
     const child = this.childrenBySession.get(sessionFile);
     if (!child) return undefined;
+    this.invalidateResult(child);
     child.watchdog = { trip: null, interrupts: 0 };
     child.stallStrikes = 0;
     child.lastTail = null;
@@ -539,10 +593,78 @@ export class ScopeRegistry {
     });
   }
 
+  private invalidateResult(child: ScopedChild): void {
+    if (!child.accountability) return;
+    child.accountability.resultRevision++;
+    child.accountability.disposition = "pending";
+  }
+
+  /** Legacy rows consume live capacity but do not create a retroactive review backlog. */
+  public getOccupiedChildren(ownerSessionId?: string): ScopedChild[] {
+    return this.getAllChildren().filter((child) => {
+      const a = child.accountability;
+      if (a && ownerSessionId && a.ownerSessionId !== ownerSessionId) return false;
+      return child.status === "running" || child.status === "blocked"
+        || (a !== undefined && (a.disposition === "pending" || a.disposition === "changes-requested"));
+    });
+  }
+
+  public getPendingResults(ownerSessionId?: string): ScopedChild[] {
+    return this.getOccupiedChildren(ownerSessionId).filter((child) =>
+      child.accountability && child.status !== "running" && child.status !== "blocked"
+      && child.accountability.disposition === "pending");
+  }
+
+  public getBatch(ownerSessionId: string): DelegationBatch {
+    if (!this.batch || this.batch.ownerSessionId !== ownerSessionId) {
+      this.batch = { id: `${ownerSessionId}:1`, ownerSessionId, generation: 1, launches: 0 };
+    }
+    return { ...this.batch };
+  }
+
+  public recordLaunch(ownerSessionId: string): void {
+    this.getBatch(ownerSessionId);
+    this.batch!.launches++;
+  }
+
+  /** User command only. Unresolved child ownership deliberately remains intact. */
+  public newBatch(ownerSessionId: string): DelegationBatch {
+    const previous = this.getBatch(ownerSessionId);
+    this.batch = {
+      id: `${ownerSessionId}:${previous.generation + 1}`,
+      ownerSessionId, generation: previous.generation + 1, launches: 0,
+    };
+    return { ...this.batch };
+  }
+
+  /** Identity/revision gate shared by the tool and tests. Evidence is checked by the tool. */
+  public recordDisposition(
+    ownerSessionId: string, childId: string, decision: Omit<ResultDisposition, "at">,
+  ): ScopedChild {
+    const child = this.getChildById(childId);
+    if (!child?.accountability || child.accountability.ownerSessionId !== ownerSessionId) {
+      throw new Error("Unknown child attempt or wrong parent owner (legacy rows cannot be accepted).");
+    }
+    if (child.status === "running" || child.status === "blocked") throw new Error("Child is still active.");
+    if (decision.resultRevision !== child.accountability.resultRevision) throw new Error("Stale result revision.");
+    if (!decision.summary.trim() || !decision.integration.trim()) throw new Error("Summary and integration/cleanup notes are required.");
+    if (decision.disposition === "accepted" && !decision.evidence.length) throw new Error("Acceptance requires checked evidence.");
+    const previous = child.accountability.reviews.at(-1);
+    if (previous && JSON.stringify({ ...previous, at: undefined }) === JSON.stringify({ ...decision, at: undefined })) return child;
+    if (child.accountability.disposition === "accepted" || child.accountability.disposition === "abandoned") {
+      throw new Error("Result already settled; resume or invalidate it before reviewing again.");
+    }
+    child.accountability.disposition = decision.disposition;
+    child.accountability.reviews.push({ ...decision, at: new Date().toISOString() });
+    child.updatedAt = new Date().toISOString();
+    return child;
+  }
+
   public toSnapshot(): RegistrySnapshot {
     return {
       version: 1,
       savedAt: new Date().toISOString(),
+      delegationBatch: this.batch ? { ...this.batch } : undefined,
       children: this.getAllChildren(),
       steers: [...this.steers],
       reviews: [...this.reviews],
@@ -560,6 +682,7 @@ export class ScopeRegistry {
    * them verbatim resurrected every one of them on the next start.
    */
   public loadSnapshot(snapshot: RegistrySnapshot): void {
+    this.batch = snapshot.delegationBatch ? { ...snapshot.delegationBatch } : undefined;
     this.paused = snapshot.paused === true;
     this.authorWrites.length = 0;
     this.authorShells.length = 0;
