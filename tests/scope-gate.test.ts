@@ -169,6 +169,24 @@ test("an opaque shell construct still asks once, and a rule for bash silences it
   assert.equal(ruled.asked.length, 1, "so the same class of command asks once");
 });
 
+test("an opaque command names the narrowest rule instead of a blanket one", async () => {
+  const h = harness([]);
+  const result = await h.gate.gate("bash", { command: "find . -exec rm {} ;" });
+  assert.equal(result?.block, true);
+  assert.match(result!.reason, /"resource":"find \*"/, "the narrow rule is what the model is told to ask for");
+  assert.doesNotMatch(result!.reason, /"resource":"\*"/, "the old blanket bash rule must not be suggested");
+});
+
+test("bash -c cannot be narrowed, so no standing grant is offered at all", async () => {
+  // Every rule this construct could produce is tool-wide, so the honest answer is
+  // to restructure rather than to sell a blanket grant.
+  const h = harness([]);
+  const result = await h.gate.gate("bash", { command: "bash -c 'rm -rf /'" });
+  assert.equal(result?.block, true);
+  assert.doesNotMatch(result!.reason, /"resource":"\*"/);
+  assert.match(result!.reason, /restructure/i);
+});
+
 test("bash claims are judged per path and a denial stops the whole call", async () => {
   const h = harness([{ kind: "deny" }]);
   assert.equal(await h.gate.gate("bash", { command: "cat src/a.ts && ls" }), undefined);

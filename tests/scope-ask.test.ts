@@ -87,6 +87,23 @@ test("digits choose directly; Escape denies; arrows and Enter select", () => {
   assert.equal(arrows.answers[0]?.kind, "allow", "down once selects option 2");
 });
 
+test("an opaque command offers the narrowest rule, never a blanket grant", () => {
+  const { component, answers } = popup({
+    tool: "bash",
+    display: "(command cannot be analysed)",
+    write: true,
+    reason: "find -exec runs code the gate cannot read",
+    suggestion: suggestion({ path: "/work", glob: "/work", exact: true }),
+    commandRule: { action: "bash", resource: "find *" },
+  });
+  const text = plain(component.render(100));
+  assert.match(text, /Allow find \* commands \(session\)/);
+  assert.match(text, /saves bash find \*/);
+  assert.doesNotMatch(text, /Allow only this file/, "a command question is not a file grant");
+  component.handleInput("2");
+  assert.deepEqual(answers, [{ kind: "rule", text: "bash find * allow" }], "option 2 saves the rule it printed, not a wildcard");
+});
+
 test("a denial can carry instructions for the model", () => {
   const { component, answers } = popup();
   component.handleInput("4");

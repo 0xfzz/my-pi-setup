@@ -35,6 +35,13 @@ export interface AskRequest {
   write: boolean;
   reason: string;
   suggestion: ScopeSuggestion;
+  /**
+   * Set when the call is an opaque shell construct, so there is no directory to
+   * grant. The narrowest standing answer is a rule scoped to the command's
+   * leading word (`find *`), and it is only offered when it actually narrows the
+   * call: for `bash -c ...` every rule would be tool-wide, so none is offered.
+   */
+  commandRule?: { action: string; resource: string };
   /** How many other calls are already waiting behind this one. */
   queued: number;
 }
@@ -144,6 +151,22 @@ export interface Gate {
 }
 
 const DENY_HINT = "Ask for a path inside the workspace, or run /scope allow <path> to grant it.";
+/**
+ * The hint on an opaque-command decision.
+ *
+ * The path hint is the wrong instruction here: nothing about the construct is a
+ * path question, and the old hint sent the model to a blanket tool-wide rule.
+ */
+const COMMAND_HINT = "Restructure the command (a script file, explicit paths), or run /scope rules to see what is in force.";
+
+/** The word a standing rule should lead with: `find . -exec rm {} \;` -> `find`. */
+function commandHead(command: unknown): string | undefined {
+  if (typeof command !== "string") return undefined;
+  const first = command.trim().split(/\s+/)[0];
+  if (!first) return undefined;
+  const bare = first.split("/").pop() ?? first;
+  return bare.replace(/^["']|["']$/g, "") || undefined;
+}
 
 /**
  * A deny is either "stop" or "no, do this instead".
@@ -318,13 +341,19 @@ export function createGate(deps: GateDeps): Gate {
         // Re-evaluate inside the lane: an earlier answer may have covered this.
         const again = decide("recheck");
         if (again.effect === "allow") return undefined;
-        if (again.effect === "deny") return { block: true, reason: `Scope: ${again.reason}. ${tool} was not run. ${DENY_HINT}` };
+        if (again.effect === "deny") return { block: true, reason: `Scope: ${again.reason}. ${tool} was not run. ${COMMAND_HINT}` };
+        const head = commandHead(input?.command);
+        // Only offer a rule that narrows. For `bash -c ...` the head is the tool
+        // itself, so any rule would be tool-wide; the dialog offers none and the
+        // block below says to restructure instead of granting everything.
+        const commandRule = head && head !== tool ? { action: tool, resource: `${head} *` } : undefined;
         const request: AskRequest = {
           tool,
-          display: "(paths not declared)",
+          display: "(command cannot be analysed)",
           write: true,
           reason: claimSet.reason ?? again.reason,
           suggestion: { path: deps.cwd(), access: "ro", glob: deps.cwd(), exact: true },
+          ...(commandRule ? { commandRule } : {}),
           queued: Math.max(0, queue.size - 1),
         };
         deps.onAsk?.(request);
@@ -334,18 +363,22 @@ export function createGate(deps: GateDeps): Gate {
           // A rule that names the tool is the standing grant for "unknown paths".
           const after = decide("recheck");
           if (after.effect === "allow") return undefined;
-          if (after.effect === "deny") return { block: true, reason: `Scope: ${after.reason}. ${tool} was not run. ${DENY_HINT}` };
+          if (after.effect === "deny") return { block: true, reason: `Scope: ${after.reason}. ${tool} was not run. ${COMMAND_HINT}` };
         }
         if (answer?.kind === "unavailable") return { block: true, reason: answer.message };
         if (answer?.kind === "once") return undefined;
         if (answer?.kind === "deny" && answer.feedback?.trim()) {
-          return denyResult(tool, "its undeclared paths", answer.feedback);
+          return denyResult(tool, "an unreadable command", answer.feedback);
         }
         return {
           block: true,
           reason:
             `Scope: ${tool} was not run; ${opaque ?? "the command could not be analysed"}. ` +
-            `To stop asking, add the rule {"action":"${tool}","resource":"*","effect":"allow"} to .pi/scope.json. ${DENY_HINT}`,
+            `${
+              commandRule
+                ? `The narrowest standing grant is the rule {"action":"${tool}","resource":"${commandRule.resource}","effect":"allow"}.`
+                : `No narrow rule exists for this construct: restructure it into a script file with explicit paths instead of granting every ${tool} command.`
+            } ${COMMAND_HINT}`,
         };
       });
     }

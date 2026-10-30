@@ -32,6 +32,12 @@ export interface ScopeAskRequest {
   /** Why the gate asked, e.g. `outside the workspace`. */
   reason: string;
   suggestion: ScopeSuggestion;
+  /**
+   * Present when the call is an opaque shell construct. There is no directory to
+   * grant, so the standing answer is a rule scoped to the command's leading word
+   * and the grant row offers that rule instead of a folder.
+   */
+  commandRule?: { action: string; resource: string };
   /** Number of other calls already waiting behind this one. */
   queued?: number;
 }
@@ -146,10 +152,11 @@ export class ScopeAskPopup implements Component, Focusable {
     const grantLabel = suggestion.exact
       ? `Allow only this file (${access} · session)`
       : `Allow ${suggestion.path} (${access} · session)`;
+    const rule = this.options.commandRule;
     const rows: PopupRow[] = [
       option(0, "Allow once"),
-      option(1, grantLabel),
-      theme.fg("dim", `      saves ${suggestion.glob}`),
+      rule ? option(1, `Allow ${rule.resource} commands (session)`) : option(1, grantLabel),
+      theme.fg("dim", `      saves ${rule ? `${rule.action} ${rule.resource}` : suggestion.glob}`),
       option(2, "Deny"),
       option(3, "Deny with instructions…"),
       option(4, "Edit a rule…"),
@@ -243,8 +250,13 @@ export class ScopeAskPopup implements Component, Focusable {
 
   private choose(index: number): void {
     const suggestion = this.options.suggestion;
+    const rule = this.options.commandRule;
     if (index === 0) return this.finish({ kind: "once" });
-    if (index === 1) return this.finish({ kind: "allow", grant: suggestion });
+    if (index === 1) {
+      return this.finish(rule
+        ? { kind: "rule", text: `${rule.action} ${rule.resource} allow` }
+        : { kind: "allow", grant: suggestion });
+    }
     if (index === 2) return this.finish({ kind: "deny" });
     if (index === 3) return this.startReject();
     this.startEditing();
@@ -254,7 +266,11 @@ export class ScopeAskPopup implements Component, Focusable {
     this.stage = "rule";
     this.ruleInput.focused = this.isFocused;
     this.rejectInput.focused = false;
-    setValueAtEnd(this.ruleInput, `${this.options.tool} ${this.options.suggestion.glob} allow`);
+    const rule = this.options.commandRule;
+    setValueAtEnd(
+      this.ruleInput,
+      rule ? `${rule.action} ${rule.resource} allow` : `${this.options.tool} ${this.options.suggestion.glob} allow`,
+    );
   }
 
   /** opencode's reject stage: empty means a plain deny, a note becomes guidance. */

@@ -133,18 +133,27 @@ export default function scopeExtension(pi: ExtensionAPI) {
     if (context?.hasUI && typeof ui?.select === "function") {
       const labels = [
         "Allow once",
-        request.suggestion.exact
-          ? `Allow only ${request.display} for this session`
-          : `Allow ${request.suggestion.path} (${request.suggestion.access === "ro" ? "read-only" : "read-write"}) for this session`,
+        request.commandRule
+          ? `Allow ${request.commandRule.resource} commands for this session`
+          : request.suggestion.exact
+            ? `Allow only ${request.display} for this session`
+            : `Allow ${request.suggestion.path} (${request.suggestion.access === "ro" ? "read-only" : "read-write"}) for this session`,
         "Deny",
         "Deny with instructions…",
       ];
+      const saves = request.commandRule
+        ? `${request.commandRule.action} ${request.commandRule.resource}`
+        : request.suggestion.glob;
       const chosen = await ui.select(
-        `${request.write ? "write" : "read"} ${request.display}\n${request.reason}\n\nsaves ${request.suggestion.glob}`,
+        `${request.write ? "write" : "read"} ${request.display}\n${request.reason}\n\nsaves ${saves}`,
         labels,
       );
       if (chosen === labels[0]) return { kind: "once" };
-      if (chosen === labels[1]) return { kind: "allow", grant: request.suggestion };
+      if (chosen === labels[1]) {
+        return request.commandRule
+          ? { kind: "rule", text: `${request.commandRule.action} ${request.commandRule.resource} allow` }
+          : { kind: "allow", grant: request.suggestion };
+      }
       if (chosen === labels[3] && typeof ui.input === "function") {
         // opencode's reject-with-a-message: the note becomes the model's instruction.
         const note = await ui.input("Deny — tell the model what to do instead", "e.g. read /work/config.yaml instead");
