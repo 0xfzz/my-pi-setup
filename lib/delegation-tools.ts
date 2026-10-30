@@ -37,6 +37,7 @@ export type DelegationVerb =
   | "progress"
   | "done"
   | "ping"
+  | "accept-result"
   | "parent-recall"
   | "parent-digest"
   | "spec-review-submit";
@@ -65,6 +66,10 @@ const TOOLS: readonly DelegationTool[] = [
   { name: "agent_steer", role: "parent", planSafe: true, verb: "steer" },
   { name: "agent_route", role: "parent", planSafe: true, verb: "route", exposure: "deferred" },
   { name: "agent_running", role: "parent", planSafe: true, verb: "list" },
+  // The parent's verdict on a child's result: accepted (with checked evidence),
+  // changes-requested, or abandoned. Recording it is what releases the child's
+  // delegation slot, so it is bookkeeping Plan mode may keep active.
+  { name: "agent_accept_result", role: "parent", planSafe: true, verb: "accept-result" },
   { name: "agent_escalate", role: "parent", planSafe: true, verb: "escalate" },
   { name: "agent_history", role: "parent", planSafe: true, verb: "history" },
 

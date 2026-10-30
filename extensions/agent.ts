@@ -1740,7 +1740,8 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
           `Pane: ${started.paneId}`,
           `Lane: ${laneFiles.join(", ") || "not declared"}`,
           `Work unit: ${workUnitKey} — ${delegationReason}`,
-          `Review duty: when it finishes, the result waits for YOUR verification (plan: ${accountability.reviewPlan}) — the slot stays occupied until you accept it, send it back for changes, or abandon it.`,
+          `Review duty: when it finishes, the result waits for YOUR verification (plan: ${accountability.reviewPlan}) — accept, request changes or abandon it with agent_accept_result; the slot stays occupied until then.`,
+          `Check agent_running for the row's resultRevision before judging: a verdict on a superseded result is refused.`,
           `Rework: steer or resume THIS child instead of spawning a replacement; a replacement needs \`replaces\` plus capacity.`,
           `Batch budget: ${registry.getBatch(ownerSessionId).launches}/${budgets.launchesPerBatch} launch(es), ${occupied.length + 1}/${budgets.concurrent} slot(s) occupied.`,
           ...(roleModel ? [`Model: ${renderAttribution(roleModel)}.`] : []),
@@ -2597,6 +2598,99 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
         ].join("\n"),
         { count: filtered.length, children: filtered, pendingEscalations: pending },
       );
+    },
+  });
+
+  // ── agent_accept_result — the parent's verdict on a child's result ────────
+  // A finished child is not an accepted result: its slot stays occupied and its
+  // work-unit obligation stays open until the parent records one of three
+  // dispositions, each revision-checked against the row's accountability.
+  pi.registerTool({
+    name: "agent_accept_result",
+    label: "Accept / Review Subagent Result",
+    description:
+      "Record YOUR verified disposition of a finished child's result: 'accepted' (requires checked evidence), "
+      + "'changes-requested' (steer/resume the same child), or 'abandoned' (with cleanup notes). This is what "
+      + "releases the child's delegation slot; a pane closing does not. resultRevision comes from the row's "
+      + "accountability so a verdict issued against a superseded result is refused.",
+    parameters: Type.Object({
+      childId: Type.String({ description: "The child attempt id (agent_running output)." }),
+      disposition: Type.Union([
+        Type.Literal("accepted"),
+        Type.Literal("changes-requested"),
+        Type.Literal("abandoned"),
+      ], {
+        description: "accepted = you verified the work; changes-requested = reuse the child; abandoned = recorded as wasted, with cleanup obligations.",
+      }),
+      resultRevision: Type.Number({ description: "The accountability resultRevision you are judging, so a stale verdict is refused." }),
+      summary: Type.String({ description: "What you checked against the row's reviewPlan and acceptance criteria — your words, not the child's report copied." }),
+      evidence: Type.Optional(Type.Array(Type.String(), {
+        description: "Required for 'accepted': concrete checked references (files inspected, commands run, artifact versions). Claims must be verified, not quoted from the child.",
+      })),
+      integration: Type.String({ description: "How the result is integrated or used; for 'abandoned', what was left behind and what cleanup remains." }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // The owner is resolved from the request's context first — same authority
+      // agent_spawn uses — with the session-scoped module variable as fallback.
+      // A command-context or restarted session must not silently disposition
+      // under the wrong owner.
+      const owner = typeof (ctx as any)?.sessionManager?.getSessionId === "function"
+        ? (ctx as any).sessionManager.getSessionId()
+        : ownerSessionId;
+      if (!owner) {
+        return text("Error: no owning session is active, so there is no work-unit state to disposition.", {
+          error: "no-owner-session",
+        });
+      }
+      if (params.disposition === "accepted" && (!params.evidence || params.evidence.length === 0)) {
+        return text(
+          "Refused: 'accepted' requires at least one checked evidence reference — a file you inspected, a command "
+            + "you ran, or an artifact version you read. A child's own summary is not evidence.",
+          { error: "evidence-required", childId: params.childId, disposition: params.disposition },
+        );
+      }
+      try {
+        const child = registry.recordDisposition(owner, params.childId, {
+          disposition: params.disposition,
+          resultRevision: params.resultRevision,
+          summary: params.summary.trim(),
+          evidence: (params.evidence ?? []).map((e) => e.trim()).filter(Boolean),
+          integration: params.integration.trim(),
+        });
+        publishDashboard();
+        persistState();
+        const occupied = registry.getOccupiedChildren(owner);
+        const batch = registry.getBatch(owner);
+        const follow = params.disposition === "changes-requested"
+          ? "The slot stays occupied by this work unit: steer or resume the SAME child with the defects; do not spawn a replacement."
+          : params.disposition === "abandoned"
+            ? "Recorded as wasted work. Its cleanup obligations are in the audit; side effects remain YOUR responsibility."
+            : `Result accepted. Occupied slots: ${occupied.length}, launches used this batch: ${batch.launches}. `
+              + "A child-level acceptance is not proof the INTEGRATED change works — verify the combined result once all lanes are done.";
+        return text(
+          `${child.name} [${child.id}] dispositioned: ${params.disposition} (revision ${params.resultRevision}). ${follow}`,
+          {
+            childId: child.id,
+            name: child.name,
+            scope: child.scope,
+            disposition: params.disposition,
+            resultRevision: params.resultRevision,
+            occupiedSlots: occupied.length,
+            batchLaunches: batch.launches,
+            summary: params.summary.trim(),
+            integration: params.integration.trim(),
+            evidence: (params.evidence ?? []).map((e) => e.trim()).filter(Boolean),
+          },
+        );
+      } catch (error: any) {
+        const message = String(error?.message ?? error);
+        const code = message.includes("still active") ? "child-active"
+          : message.includes("Stale") ? "stale-result"
+          : message.includes("Unknown child") ? "unknown-or-not-owned"
+          : message.includes("already settled") ? "already-settled"
+          : "invalid-disposition";
+        return text(`Refused: ${message}`, { error: code, childId: params.childId, disposition: params.disposition });
+      }
     },
   });
 
