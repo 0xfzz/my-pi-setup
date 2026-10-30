@@ -169,7 +169,8 @@ export function escalationGuidance(escalationId: string): string[] {
  */
 export const RETRIGGER_CONTRACT =
   "Your turn ends here. You will be re-triggered when a child completes (report), asks a question (escalation), "
-  + "or hits its budget/stalls (watchdog). Do not poll or sleep; act only when triggered.";
+  + "or hits its budget/stalls (watchdog). A completed child's result is NOT verified work: it stays pending "
+  + "YOUR review until you disposition it with agent_accept_result. Do not poll or sleep; act only when triggered.";
 
 /**
  * Fingerprints of the last status/collect answer per session and action.
@@ -432,7 +433,11 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
     activeWatchers.clear();
     registry.reset();
     escalations.clear();
+    settledNotified.clear();
   }
+
+  /** Work units whose pending results already consumed their one settle continuation. */
+  const settledNotified = new Set<string>();
 
   function restorePersistedState(): void {
     const path = registryPath();
@@ -1299,7 +1304,19 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
     persistState();
 
     const message = buildOutcomeMessage(running, outcome);
-    if (message) pi.sendMessage(message, { triggerTurn: true, deliverAs: "steer" });
+    if (message) {
+      // A terminal report is a claim, not an outcome. The parent still owns the
+      // verification decision, and the obligation is stated in the message the
+      // parent acts on — not only in the row nobody says out loud.
+      const row = registry.getChildBySession(running.sessionFile);
+      const revision = row?.accountability?.resultRevision;
+      const plan = row?.accountability?.reviewPlan ?? "verify the report against its task before accepting";
+      message.content += "\n\n"
+        + `This result is PENDING YOUR review (disposition pending; resultRevision ${revision ?? "n/a"}). Review plan: ${plan}. `
+        + "Record the verdict with agent_accept_result — the work-unit slot stays occupied until then. "
+        + "The child's own summary is not evidence.";
+      pi.sendMessage(message, { triggerTurn: true, deliverAs: "steer" });
+    }
   }
 
 
@@ -1408,7 +1425,8 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
     name: "agent_spawn",
     label: "Spawn Agent",
     description:
-      "Spawn one agent: a read-only planner (research and plan creation) or a read-and-write worker (plan execution and verification). With planId/stepId the worker's lane and criteria come from one plan step. A child sees only its own ticket. Spawns are capped per process; /agent max <n> changes the ceiling.",
+      "Spawn one agent: a read-only planner (research and plan creation) or a read-and-write worker (plan execution and verification). With planId/stepId the worker's lane and criteria come from one plan step. A child sees only its own ticket; its result stays YOUR responsibility to verify — record the verdict with agent_accept_result. "
+      + "Admission is need-based and owned: required delegationReason, duplicate work units refused (steer/resume/settle, or replaces with capacity), 2 occupied slots and 4 launches per batch by default (the strictest explicitly configured ceiling wins), and a finished child keeps its slot until dispositioned. /agent batch is the user-owned reset.",
     parameters: Type.Object({
       name: Type.Optional(
         Type.String({
@@ -1416,7 +1434,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
             "Display name for the worker. Optional: omit it and a Javanese given name plus role is derived from the handoff scope (e.g. 'Bima · Skeleton Builder'). An explicit human name is kept; a slug is replaced.",
         }),
       ),
-      task: Type.String({ description: "The specific assignment. For an ad-hoc spawn this is the whole brief; for a spec spawn it must stay inside the handoff's lane." }),
+      task: Type.String({ description: "The specific assignment. It is delivered verbatim as the child's whole brief; changes after launch go through agent_steer, never a silent re-author." }),
       delegationReason: Type.String({ description: "REQUIRED. The concrete benefit of a separate agent: independent work on a distinct lane, bounded substantial research, or specialised context. Small, tightly coupled, quick or coordination-heavy tasks belong in this session. Its result stays YOUR responsibility to verify and integrate; a slot frees only when the result is accepted, sent back for changes or abandoned — not when the pane closes." }),
       workUnitKey: Type.Optional(Type.String({ description: "Stable work-unit key for this batch (default: the scope). A duplicate occupied key is refused: steer or resume that child, settle its result, or pass `replaces`." })),
       reviewPlan: Type.Optional(Type.String({ description: "How THIS parent will verify the result before accepting (default: inspect the final report, lane edits and acceptance criteria)." })),
@@ -1440,7 +1458,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
           ],
           {
             description:
-              "What this spawn is for. Defaults to spec when handoffId is present, research in Plan mode, adhoc otherwise. Plan admits research/review/spec; Supervise admits spec only.",
+              "Legacy selector. Only 'adhoc' (worker) and 'research' (planner) are admitted; the spec/review/implementation pipeline was removed and those values are refused.",
           },
         ),
       ),
@@ -2538,7 +2556,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
     parameters: Type.Object({
       scope: Type.Optional(Type.String({ description: "Filter by scope." })),
     }),
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       // Lazy zombie reconcile: a running/blocked child whose pane is gone is
       // never coming back — reporting it sends the orchestrator into the same
       // cleanup loop every session (observed live: 40 messages re-handling one
@@ -2556,6 +2574,13 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
           persistState();
         }
       }
+      const owner = typeof (ctx as any)?.sessionManager?.getSessionId === "function"
+        ? (ctx as any).sessionManager.getSessionId()
+        : ownerSessionId;
+      const occupied = owner ? registry.getOccupiedChildren(owner) : [];
+      const awaiting = owner ? registry.getPendingResults(owner) : [];
+      const batch = owner ? registry.getBatch(owner) : undefined;
+      const budgets = resolveBudgets(loadSubagentSettings((ctx as any)?.cwd ?? process.cwd()));
       const running = registry.getRunningChildren();
       const filtered = params.scope ? running.filter((c) => c.scope === params.scope) : running;
       const pending = escalations.forOrchestrator();
@@ -2565,8 +2590,10 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       const fingerprint = JSON.stringify({
         children: filtered.map((child) => [child.id, child.status, child.pendingPing === true]),
         escalations: pending.map((entry) => entry.id),
+        // A NEW pending result is a new event: the review duty changed state.
+        awaiting: awaiting.map((child) => [child.id, child.accountability?.resultRevision]),
       });
-      if (notePoll(ownerSessionId ?? "parent", `running:${params.scope ?? "*"}`, fingerprint)) {
+      if (notePoll(owner ?? "parent", `running:${params.scope ?? "*"}`, fingerprint)) {
         return text(`No new events since your last check. ${RETRIGGER_CONTRACT}`, {
           error: "no-new-events",
           count: filtered.length,
@@ -2588,15 +2615,37 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
 
       // One line per child. The previous form spent four lines each on facts the
       // orchestrator reads once, and it is re-read on every tick of the loop.
+      const reviewLines = awaiting.map((child) =>
+        `- ${child.name} [${child.id}] ${child.scope} revision=${child.accountability?.resultRevision ?? "n/a"}`
+        + ` disposition=${child.accountability?.disposition ?? "pending"} — judge with agent_accept_result`);
       return text(
         [
           filtered.length ? `children (${filtered.length}):` : "no running children",
           ...lines,
+          ...(awaiting.length
+            ? [`results awaiting YOUR review (${awaiting.length}) — a finished child is NOT an accepted result:`, ...reviewLines]
+            : []),
+          ...(owner
+            ? [`Delegation: ${occupied.length}/${budgets.concurrent} slot(s) occupied (running, blocked, or awaiting disposition), `
+              + `batch ${batch ? `${batch.launches}/${budgets.launchesPerBatch}` : "n/a"} launches — user reset: /agent batch`]
+            : []),
           ...(pending.length
             ? [`escalations (${pending.length}):`, ...pending.map((e) => `- ${e.id} [${e.scope}] ${e.question}`)]
             : []),
         ].join("\n"),
-        { count: filtered.length, children: filtered, pendingEscalations: pending },
+        {
+          count: filtered.length,
+          children: filtered,
+          pendingEscalations: pending,
+          awaitingReview: awaiting.map((child) => ({
+            id: child.id,
+            name: child.name,
+            scope: child.scope,
+            resultRevision: child.accountability?.resultRevision,
+            reviewPlan: child.accountability?.reviewPlan,
+          })),
+          delegationBudgets: owner ? { ...budgets, occupied: occupied.length, batchId: batch?.id, launches: batch?.launches } : undefined,
+        },
       );
     },
   });
@@ -2692,6 +2741,52 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
         return text(`Refused: ${message}`, { error: code, childId: params.childId, disposition: params.disposition });
       }
     },
+  });
+
+  // ── bounded settlement: one continuation per changed pending-result set ────
+  // A finished child triggers a steer turn. If the parent ends that turn
+  // without recording a verdict, ONE continuation asks it to review; after
+  // that the obligations stay visible in agent_running, but settlement never
+  // loops and nothing reports success that was never verified. Active children
+  // are deliberate abstention: they re-trigger the parent by themselves, so a
+  // settle with live work yields instead of forging ahead.
+  pi.on("agent_before_settle", async (_event, ctx) => {
+    if (isChildSession) return;
+    const owner = typeof (ctx as any)?.sessionManager?.getSessionId === "function"
+      ? (ctx as any).sessionManager.getSessionId()
+      : ownerSessionId;
+    if (!owner) return;
+    if (registry.getActiveChildren().length > 0) return;
+    const fresh = registry.getPendingResults(owner).filter((child) => !settledNotified.has(child.id));
+    if (fresh.length === 0) return;
+    for (const child of fresh) settledNotified.add(child.id);
+    const lines = fresh.map((child) =>
+      `- ${child.name} [${child.id}] ${child.scope} resultRevision=${child.accountability?.resultRevision ?? "n/a"}`
+      + ` — plan: ${child.accountability?.reviewPlan ?? "verify before accepting"}`);
+    return {
+      continue: true,
+      entries: [{
+        type: "custom_message",
+        customType: "review_owed",
+        display: true,
+        content:
+          "These child results are PENDING YOUR review — a finished child is NOT an accepted result:\n"
+          + lines.join("\n")
+          + "\nVerify each against its review plan yourself (run the checks; the child's summary is not evidence), "
+          + "then record a verdict with agent_accept_result: accepted (with checked evidence), changes-requested "
+          + "(steer/resume the SAME child), or abandoned (with cleanup notes). The work-unit slot stays occupied "
+          + "until a verdict is recorded. Continuations stop once every pending result has surfaced once; "
+          + "the obligations remain visible in agent_running and unresolved work is never reported as done.",
+        details: {
+          pending: fresh.map((child) => ({
+            id: child.id,
+            name: child.name,
+            scope: child.scope,
+            resultRevision: child.accountability?.resultRevision,
+          })),
+        },
+      }],
+    };
   });
 
   // ── agent_escalate — the uncertainty ladder ─────────────────────────────────
