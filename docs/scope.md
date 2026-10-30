@@ -45,17 +45,66 @@ conservative than it is.
    literal, printed grant) and `reject` — and a reject may carry a note, which
    reaches the model as `Do this instead: …` rather than a bare refusal.
 
+## Jurisdiction: builtin path tools only
+
+Scope judges a closed set of builtin tools whose inputs name a path:
+
+```text
+bash  read  write  edit  grep  find  ls  ffgrep  fffind
+```
+
+Everything else is **outside its jurisdiction**. That is not an approval and not
+a denial — the call is not judged at all: no claim, no question, no rule, no
+audit record.
+
+- **MCP tools are out.** An MCP server's inputs are its own business, so gating
+them would mean inventing path semantics the host cannot verify. Permission
+rules here deliberately do not name MCP tools, and an MCP server can reach the
+filesystem beyond this gate. That is a stated limit, not a silent promise.
+- **Custom and session tools are out** (`todo_*`, `artifact_*`, `ask_user`,
+  delegation, web and search tools). There is no "unknown tool" consent state and
+  no `defaults.unknown`; the earlier per-tool consent question is gone.
+
+A bypass cannot be widened later, because nothing is stored. What it does mean is
+that Scope must not be mistaken for a complete gate: it governs the builtin tools
+above and nothing more.
+
 ## Quiet by construction
 
-A question must be a boundary escape, never a parsing accident. The matcher is
-therefore narrow on purpose:
+A question must be a boundary escape, never a parsing accident. A bash path comes
+from a **named channel**, never from the presence of a slash:
 
-- **A shell path comes from an argv slot, not from a slash.** `git -C <dir>`,
-  `npm --prefix <dir>`, `tar -f <file>`, `cp` operands and redirection targets are
-  path slots because the binary says so. `origin/main`, `HEAD:src/x`,
-  `ghcr.io/a/b:1`, `2024/01/02` and a `grep -E 'a/b'` pattern are data.
-- **An operand counts when it is path-shaped or actually exists.** A token that
-  resolves nowhere is not a claim.
+- **The call's directory.** The session cwd, after applying the configured shell
+  command prefix: a `cd /repo &&` prefix moves the base, so relative claims are
+  judged where the process will actually run. A prefix target that is computed or
+  a glob is reported instead of guessed.
+- **`cd` / `pushd` arguments.** A directory change is a read of that directory,
+  and it moves the base for later segments. A `cd` inside a subshell does not
+  move the outer base.
+- **Redirection targets** (`>`, `>>`, `2>`, `<`, and a `tee` destination). These
+  are the write and read channels a shell gives us explicitly.
+- **An interpreter's entry script** (`node script.js`, `python3 -m mod`). The
+  script is a read claim. In `node /c /e`, `/c` is that script and `/e` is an
+  argument whose meaning belongs to the program, so only `/c` is a claim.
+- **Mutator operands** (`cp`, `mv`, `rm`, `tar`, `ln`, `install`, …) when they are
+  path-shaped or actually exist — the channel where a real write escape shows up.
+- **Reader operands** (`cat`, `grep`, `ls`, `sed`) when they are path-shaped or
+  exist. Data operands and data flags are excluded, so `grep -E 'a/b'`, a URL and
+  a write-out format are never paths.
+
+An **inline program is data**: `node -e '…'` and `python3 -c '…'` produce no path
+claim and do not make the call unreadable, so a repo-local
+`node -e 'require("./.e2e/run.json")'` runs quietly. A **shell's** `-c` argument
+is different: `bash -c '…'` is another shell program the gate cannot read, so it
+stays opaque and asks.
+
+A binary with no table entry does not get its arguments guessed by shape or
+existence. Its command text is still covered by rules, and its `cd` and redirect
+channels are still judged, but an unknown program's arguments are its own.
+
+Nothing above is a claim about data: `origin/main`, `HEAD:src/x`,
+`ghcr.io/a/b:1`, `2024/01/02` and a pattern are never paths.
+
 - **Posture is per claim**, taken from the segment's binary and sub-command:
   `sed -i` writes, `sed` reads, `git add` writes, `git status` reads. Only a
   command we cannot classify is judged as a write would be.
@@ -193,13 +242,12 @@ values override global ones; branch grants are layered on top.
     { "path": "~/scratch", "access": "ro" },
     { "path": "~/projects/*", "access": "rw" }
   ],
-  "defaults": { "external": "ask", "readExternal": "allow", "unknown": "ask" },
+  "defaults": { "external": "ask", "readExternal": "allow" },
   "rules": [
     { "action": "read", "resource": "**/.env*", "effect": "deny" },
     { "action": "bash", "resource": "git push *", "effect": "deny" },
-    { "action": "mcp__fs", "resource": "*", "effect": "allow" }
-  ],
-  "mcp": { "mcp__fs": { "pathField": "path" } }
+    { "action": "bash", "resource": "find *", "effect": "allow" }
+  ]
 }
 ```
 
@@ -209,18 +257,27 @@ values override global ones; branch grants are layered on top.
 - `defaults.external` is the answer for a **write** outside every root (`ask` by
   default). `defaults.readExternal` is the answer for an ordinary **read**
   outside every root (`allow` by default; a sensitive read still asks, and
-  `"ask"` here makes every outside read prompt). `defaults.unknown` is the answer
-  for a tool whose inputs this extension cannot map — a new MCP server, a
-  dispatcher (`ask` by default; choose `deny` for a strict setup).
+  `"ask"` here makes every outside read prompt).
 - `rules` are `{ action, resource, effect }`, matched with opencode's wildcards
   (`*` any run of characters, `?` exactly one) and **last match wins**. Put the
   catch-all first and exceptions after it. A leading `~`/`$HOME` in `resource`
-  expands. A rule keyed on a tool name (`{"action":"mcp__fs","resource":"*",
-  "effect":"allow"}`) is how a tool that declares no paths is silenced for good.
-- `mcp` maps a server's path field so its calls can be judged instead of asking
-  once per call.
+  expands. A rule keyed on `bash` covers a whole command habit
+  (`{"action":"bash","resource":"find *","effect":"allow"}`).
 - `yolo` is deliberately **not** configurable: a file that sets it is reported
   and ignored, so arming always takes a keystroke.
+
+### Migrating from the previous model
+
+`defaults.unknown` and the `mcp` path-field map were removed together with the
+unknown-tool consent state. A config that still carries either one loads and
+reports a problem line naming it, instead of silently doing nothing:
+
+- `defaults.unknown` — Scope now judges only the builtin path tools, so a tool it
+  cannot map bypasses it. Delete the key.
+- `mcp` — MCP tools are outside the gate; there is no path field to declare.
+  Delete the section. MCP permissions belong to the host or the server, not here.
+- Rules keyed on `mcp__…` no longer match anything; remove them so `/scope rules`
+  shows only rules that can fire.
 
 Migrating an older file: nothing has to change. A root ending in `*` used to be
 accepted and silently inert; it now works, and a pattern that could re-expose
@@ -245,21 +302,31 @@ whole inherited snapshot.
 
 ## Where the gate sits
 
+- **Jurisdiction is a closed set**: `bash`, `read`, `write`, `edit`, `grep`,
+  `find`, `ls`, `ffgrep`, `fffind`. A call to anything else — MCP, a custom tool,
+  a session-state tool — is not judged at all. See
+  [Jurisdiction](#jurisdiction-builtin-path-tools-only).
 - `read`, `write`, `edit` claim their `path`; `grep`, `find`, `ls` and the
-  fff equivalents claim their search directory (cwd by default).
-- `bash` is split into `|`/`&&`/`;` segments and each one is judged by its binary:
-  operands and path-valued flags are claims, `>` writes, `<` reads. A bare
-  relative filename is not a claim, because it resolves inside the workspace.
-- A command a tokenizer cannot model (`$(…)`, backticks, `<(…)`, `bash -c`,
-  `xargs`, `find -exec`, a heredoc fed to an interpreter) is **opaque**: it asks
-  once per call, the message names the construct, and a rule for the tool is the
-  way to stop asking.
+  fff equivalents claim their search directory (the cwd by default).
+- `bash` is split into `|`/`&&`/`;` segments and judged by named channels: the
+  call directory, `cd`/`pushd` arguments, redirection and `tee` targets,
+  interpreter entry scripts, mutator operands and reader operands. A relative
+  file that exists inside the workspace resolves inside it and does not ask.
+- The **base is the directory the process will use**, not just the session cwd:
+  the configured shell command prefix is applied first, so a `cd /repo &&` prefix
+  moves it. A prefix whose target is computed or a glob is reported rather than
+  guessed.
+- `node -e '…'` and `python3 -c '…'` are **data**: the payload is never scanned
+  for paths and the call is not made opaque. `bash -c '…'` is a nested shell
+  program and stays opaque.
+- A command a tokenizer cannot model (`bash -c`, `xargs`, `find -exec`, a heredoc
+  fed to an interpreter, a path computed at runtime) is **opaque**: it asks once
+  per call, the message names the construct, and the offer is the narrowest rule
+  that genuinely narrows it (`find *`). When no narrow rule exists, the block says
+  to restructure the command rather than granting every bash command.
 - A **heredoc is data, not code**: `git commit -F - <<EOF` keeps working. It is
   opaque only when an interpreter reads the body (`python3 <<EOF`), because then
   the body is a program.
-- Session-state tools (`todo_*`, `artifact_*`, `ask_user`, delegation) claim
-  nothing. An unmapped tool is *unknown* unless it declares `readOnlyHint`
-  (and `destructiveHint` outranks that).
 - Read-only roots allow reads and ask before a write; `--ro` is how you grant
   "look, don't touch".
 
@@ -277,17 +344,27 @@ Deliberate, and each one is a failure we did not want to import:
 | Denial | reject is bare, or carries a message the model reads | same, as the dialog's fourth answer |
 | Policy hook | a plugin may flip a `deny` into an `allow` | a hook is never asked about a `deny` |
 
+The sourced comparison behind that table, including which channels each harness
+uses and what it admits its text rules cannot cover, is
+[research/opencode-v2-bash-permissions.md](research/opencode-v2-bash-permissions.md).
+
 ## Limits
 
 This raises the cost of an accident. It does not contain a determined escape:
 
+- **MCP is outside the gate by decision.** An MCP server can read or write files
+  beyond any Scope boundary, and nothing here asks or records it. Scope governs
+  the builtin path tools listed above; per-server trust is the host's concern.
+  Do not read this document as an MCP control.
 - **Not an OS sandbox.** Pi itself, extensions, plugins and MCP servers run with
   the process's permissions. Containers/VMs remain the only real boundary — see
   [Run Pi safely](../node_modules/@earendil-works/pi-coding-agent/docs/security.md).
 - `bash` can leave the workspace in ways a tokenizer cannot see: `bash -c`,
   `find -exec`, `git -C`, interpreters, subshells. Those become *opaque* when
-  they are recognizable; the rest is a heuristic. This is why the real fix for a
-  strict setup is an OS sandbox, not a better parser — see [Limits](#limits).
+  they are recognizable; the rest is a heuristic. A binary with no table entry no
+  longer has its arguments guessed, which is quieter but also less coverage.
+  This is why the real fix for a strict setup is an OS sandbox, not a better
+  parser.
 - A symlinked ancestor is resolved with `realpath`, so `link -> /etc` is judged
   by its target. A path created *after* the check is not.
 - Network egress, secret redaction and resource cost are out of scope.
@@ -298,14 +375,17 @@ This raises the cost of an accident. It does not contain a determined escape:
 
 `tests/scope-glob.test.ts` and `tests/scope-paths.test.ts` cover wildcard and
 last-match semantics, `~`/`..`/symlink classification, wildcard roots and the
-narrowest-grant rules. `tests/scope-tool-paths.test.ts` covers the argv-slot
-table, posture and the opaque cases. `tests/scope-policy.test.ts` covers the
-decision order, special paths, sensitive reads, the `.env` template exception,
-the yolo narrowing and rule-silenced tools.
+narrowest-grant rules. `tests/scope-tool-paths.test.ts` covers the gated set, the
+bypass, the named channels, interpreter entry scripts and the opaque cases.
+`tests/scope-cwd.test.ts` covers the prefix base: `cd`, subshells, transparent
+`source` lines and a target that cannot be resolved.
+`tests/scope-policy.test.ts` covers the decision order, special paths, sensitive
+reads, the `.env` template exception, the yolo narrowing and rule-silenced tools.
 `tests/scope-ask.test.ts` covers the dialog's keys, the literal glob row, the
-reject stage and narrow widths. `tests/scope-gate.test.ts` covers the queue, allow
-once, folder grants covering queued calls, deny, deny-with-a-note, rule answers,
-duplicate rule answers, the policy hook and fail-closed dialogs.
+rule row for an unreadable command, the reject stage and narrow widths.
+`tests/scope-gate.test.ts` covers the queue, allow once, folder grants covering
+queued calls, deny, deny-with-a-note, rule answers, duplicate rule answers, the
+policy hook, the base from the shell prefix, the bypass and fail-closed dialogs.
 `tests/scope-state.test.ts` covers config merge, wildcard validation, `~`
 expansion in rules, broken files, refused stored grants and snapshot replay.
 `tests/scope-command.test.ts` and `tests/scope-audit.test.ts` cover parsing,
