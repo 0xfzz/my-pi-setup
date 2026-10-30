@@ -88,8 +88,17 @@ export const GATED_TOOLS: ReadonlySet<string> = new Set([
   "bash", "read", "write", "edit", "grep", "find", "ls", "ffgrep", "fffind",
 ]);
 
-/** Inline programs remain opaque; their data may name arbitrary runtime paths. */
+/**
+ * Flags whose value is a program, not a path.
+ *
+ * The value is data for a language runtime (`node -e`, `python3 -c`) and is never
+ * scanned for paths; for a shell it is a nested program the gate cannot read, so
+ * it makes the call opaque instead.
+ */
 const INLINE_CODE_FLAGS = new Set(["-c", "-e", "-p", "-r", "--eval", "--print", "--command"]);
+
+/** Binaries whose -c/-e argument is another shell program the gate cannot read. */
+const SHELLS = new Set(["bash", "sh", "zsh", "fish", "dash", "ksh", "osascript"]);
 
 /**
  * Binaries whose heredoc body is *code*, not data. `git commit -F - <<EOF` feeds
@@ -134,6 +143,14 @@ interface PathSpec {
   dataFlags?: readonly string[];
   /** Positional data arguments before file operands (grep/sed/awk patterns). */
   dataOperands?: number;
+  /**
+   * How many leading operands can be an entry script (`node script.js`).
+   *
+   * Only the entry script is a path claim. For `node /c /e`, `/c` is the script
+   * and `/e` is an argument whose meaning belongs to that program, so it is
+   * never claimed. This is the difference between "an argv slot" and "a path".
+   */
+  entryOperands?: number;
   /** Commands such as git/npm can read or mutate their effective cwd implicitly. */
   usesCwd?: boolean;
 }
@@ -217,9 +234,11 @@ const SPECS: Readonly<Record<string, PathSpec>> = {
   helm: { posture: EITHER, valueFlags: ["-f", "--values", "--kubeconfig"], inlineFlags: ["--values", "--kubeconfig"] },
   cargo: { operands: true, posture: EITHER, valueFlags: ["--manifest-path", "--target-dir"], inlineFlags: ["--manifest-path", "--target-dir"] },
   go: { operands: true, posture: EITHER, valueFlags: ["-C", "-o", "-modfile"] },
-  python: { operands: true, posture: EITHER },
-  python3: { operands: true, posture: EITHER },
-  node: { operands: true, posture: EITHER },
+  // Language runtimes: the first operand may be an entry script; a -e/-c/-m value
+  // is program text or a module name, never a path.
+  node: { entryOperands: 1, posture: READ, dataFlags: ["-e", "--eval", "-p", "--print", "-r", "--require", "-m"] },
+  python: { entryOperands: 1, posture: READ, dataFlags: ["-c", "-m", "-W", "-X"] },
+  python3: { entryOperands: 1, posture: READ, dataFlags: ["-c", "-m", "-W", "-X"] },
 };
 
 const stripQuotes = (word: string): string => word.replace(/^["']|["']$/g, "");
@@ -371,7 +390,12 @@ export function shellClaim(command: unknown, cwd: string): ClaimSet {
 
     if (OPAQUE_BINARIES.has(binary)) return opaque(`"${binary}" runs code the gate cannot read`);
     if (INTERPRETERS.has(binary)) {
-      if (args.some(arg => INLINE_CODE_FLAGS.has(arg.text))) return opaque(`"${binary}" was given inline code (-c/-e)`);
+      // A shell's -c argument is another shell program the gate cannot see, so the
+      // call is opaque. A language runtime's -e/-c argument is data: it produces no
+      // path claim and does not make the call unreadable.
+      if (SHELLS.has(binary) && args.some(arg => INLINE_CODE_FLAGS.has(arg.text))) {
+        return opaque(`"${binary}" was given inline code (-c)`);
+      }
       if (item.heredoc) return opaque(`"${binary}" reads a heredoc as a program`);
     }
     if (binary === "find" && args.some(arg => arg.text === "-exec" || arg.text === "-execdir")) {
@@ -403,22 +427,16 @@ export function shellClaim(command: unknown, cwd: string): ClaimSet {
     }
 
     if (!spec) {
-      // No table entry: only a word we can trust is a claim.
-      for (const arg of args) {
-        if (arg.text.startsWith("-")) continue;
-        if (arg.value === undefined) {
-          if (pathShaped(arg.text) || /[/\\]/.test(arg.text)) {
-            return opaque(`a path argument is computed at runtime (${arg.text})`);
-          }
-          continue;
-        }
-        if (!pathShaped(arg.text) && !existing(base, arg.value)) continue;
-        claim(arg, posture, base, source);
-      }
+      // No table entry: an arbitrary program's arguments belong to that program.
+      // This is the `node /c /e` class — a slash in an application argument is
+      // data, not a filesystem claim — so nothing here becomes a path claim. The
+      // command text is still covered by rules, and its cd/redirect channels were
+      // already judged above.
       continue;
     }
 
     let data = spec.dataOperands ?? 0;
+    let entry = 0;
     for (let index = 0; index < args.length; index++) {
       const arg = args[index]!;
       if (spec.dataFlags?.some(flag => arg.text === flag || arg.text.startsWith(`${flag}=`))) {
@@ -447,6 +465,21 @@ export function shellClaim(command: unknown, cwd: string): ClaimSet {
         continue;
       }
       if (index === subIndex) continue;
+      if (spec.entryOperands !== undefined) {
+        // Only the leading operands can be entry scripts, and an interpreter takes
+        // one: in `node /c /e`, /c is the script (a read) and /e is the program's
+        // own argument (not a claim). A relative script that exists inside the
+        // workspace still resolves inside it, so it costs nothing to name.
+        if (entry >= spec.entryOperands) continue;
+        entry++;
+        if (arg.value === undefined) {
+          if (pathShaped(arg.text)) return opaque(`an entry script is computed at runtime (${arg.text})`);
+          continue;
+        }
+        if (!pathShaped(arg.text) && !existing(base, arg.value)) continue;
+        claim(arg, "read", base, source);
+        continue;
+      }
       if (data > 0) {
         data--;
         continue;

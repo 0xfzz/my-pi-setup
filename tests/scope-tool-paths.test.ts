@@ -62,6 +62,45 @@ test("bash refuses to guess when the command can escape a tokenizer", () => {
   }
 });
 
+test("an inline program is data, not a path: node -e runs without asking", () => {
+  // Reported twice in the Oct 2026 sessions: `node -e 'require("./.e2e/run.json")'`
+  // inside a repo was refused as "given inline code" and the only offered exit was
+  // a blanket `bash:* allow` rule.
+  const claim = shellClaim(`node -e 'const j=require("./.e2e/run.json"); console.log(j)'`, "/work/repo");
+  assert.equal(claim.unknown, false, claim.reason ?? "");
+  assert.deepEqual(claim.paths, [], "the payload is program text, never a path claim");
+});
+
+test("python -c is data too", () => {
+  const claim = shellClaim("python3 -c 'print(1)'", cwd);
+  assert.equal(claim.unknown, false, claim.reason ?? "");
+  assert.deepEqual(claim.paths, []);
+});
+
+test("an interpreter claims its entry script, not the program's own arguments", () => {
+  // `node /c /e`: /c is the script (a read), /e belongs to that program. The gate
+  // must not invent a second path from an application argument.
+  const claim = shellClaim("node /c /e", cwd);
+  assert.equal(claim.unknown, false);
+  assert.deepEqual(claim.paths.map(path => [path.raw, path.posture]), [["/c", "read"]]);
+
+  const relative = shellClaim("node ../tool/run.mjs --out /tmp/x", cwd);
+  assert.deepEqual(relative.paths.map(path => path.raw), ["../tool/run.mjs"], "a --out value is the program's argument");
+});
+
+test("a shell's -c argument stays opaque", () => {
+  // The payload is another shell program, which is the case a text rule genuinely
+  // cannot follow; a language runtime's payload is data instead.
+  assert.equal(shellClaim("bash -c 'rm -rf /'", cwd).unknown, true);
+  assert.equal(shellClaim("sh -c 'cat /etc/hosts'", cwd).unknown, true);
+});
+
+test("an unmapped binary's arguments are not path claims", () => {
+  const claim = shellClaim("frobnicate /etc/passwd ./x", cwd);
+  assert.equal(claim.unknown, false);
+  assert.deepEqual(claim.paths.map(path => path.raw), [], "the program's arguments are its own business");
+});
+
 test("a backtick substitution is analysed like $(), not refused", () => {
   // The command inside the substitution is checked; its output is data. Only a
   // substitution that lands in a *path* slot is unresolvable (see `cat $(pwd)/x`).
