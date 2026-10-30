@@ -199,6 +199,68 @@ test("yolo arms with a warning, approves, and still respects a deny rule", async
   }
 });
 
+test("the shapes that used to ask now run without a dialog", async () => {
+  const f = await fixture();
+  try {
+    // Every one of these produced a Scope question or a block in the sessions
+    // this work came from. None of them is a boundary escape.
+    const commands = [
+      `node -e 'const j=require("./.e2e/run.json"); console.log(j)'`,
+      "python3 -c 'print(1)'",
+      `grep -rn "/auth/me" src/`,
+      "for p in /api/a /api/b; do code=$(curl -s -o /dev/null -w '%{http_code}' \"https://host$p\"); echo \"$code $p\"; done",
+      "git status",
+    ];
+    for (const command of commands) {
+      assert.deepEqual(await f.emit("tool_call", { toolName: "bash", input: { command } }), [], command);
+    }
+    assert.equal(f.dialog, undefined, "none of these is a boundary question");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("tools outside the jurisdiction never open a dialog", async () => {
+  const f = await fixture();
+  try {
+    // MCP and custom tools bypass the gate: not allowed, not denied, not asked.
+    for (const toolName of ["mcp__ruumi_taiga", "TaskCreate", "code_read", "brand_new"]) {
+      const result = await f.emit("tool_call", { toolName, input: { path: "/etc/passwd", file: "../x" } });
+      assert.deepEqual(result, [], toolName);
+    }
+    assert.equal(f.dialog, undefined);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("/scope status reports the two defaults and no removed unknown key", async () => {
+  const f = await fixture();
+  try {
+    await f.commands.get("scope").handler("status", f.ctx);
+    const text = f.notices.at(-1)!;
+    assert.match(text, /write-outside=ask read-outside=allow/);
+    assert.doesNotMatch(text, /unknown=/);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("an opaque shell construct still opens exactly one question", async () => {
+  const f = await fixture();
+  try {
+    const pending = f.emit("tool_call", { toolName: "bash", input: { command: "bash -c 'rm -rf /'" } });
+    await tick();
+    assert.ok(f.dialog, "a nested shell program is still asked about");
+    f.dialog!.component.handleInput("3");
+    const [result] = await pending as Array<{ block: boolean; reason: string }>;
+    assert.equal(result?.block, true);
+    assert.doesNotMatch(result!.reason, /"resource":"\*"/, "the blanket rule is never suggested");
+  } finally {
+    await f.cleanup();
+  }
+});
+
 test("the sidebar offer carries the workspace row and falls back to a widget", async () => {
   const f = await fixture();
   try {
