@@ -10,6 +10,7 @@
  * leave the workspace; `docs/scope.md` states the exact limits.
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { dirname } from "node:path";
 import { Type } from "typebox";
 import { popupOverlayOptions } from "../lib/popup.ts";
@@ -23,6 +24,7 @@ import {
   usage,
 } from "../lib/scope/command.ts";
 import { createGate, type AskAnswer, type AskRequest } from "../lib/scope/gate.ts";
+import { effectiveBase } from "../lib/scope/cwd.ts";
 import { classifyPath } from "../lib/scope/paths.ts";
 import { evaluateClaim, narrowYoloSensitiveRead } from "../lib/scope/policy.ts";
 import {
@@ -52,8 +54,25 @@ export default function scopeExtension(pi: ExtensionAPI) {
   const refresh = () => pi.events?.emit(REFRESH_EVENT, {});
   const persist = () => pi.appendEntry?.(SCOPE_RECORD_TYPE, scopeSnapshot(state));
 
+  /**
+   * Pi's configured shell command prefix, read the way its own shell tool reads
+   * it. A settings problem must not take the gate down: no prefix means the
+   * session cwd, which is the unconfigured default anyway.
+   */
+  function shellPrefix(): string {
+    try {
+      return SettingsManager.create(cwd, getAgentDir()).getShellCommandPrefix() ?? "";
+    } catch {
+      return "";
+    }
+  }
+
   const gate = createGate({
     cwd: () => cwd,
+    // Pi prepends the configured command prefix to every bash call, so a `cd` in
+    // it moves the directory the model's relative paths actually resolve against.
+    // The prefix is the same for every command, so it needs no argument.
+    baseFor: () => effectiveBase(cwd, shellPrefix()),
     state: () => state,
     setState: next => {
       state = next;

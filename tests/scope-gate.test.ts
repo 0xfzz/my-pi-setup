@@ -187,6 +187,30 @@ test("bash -c cannot be narrowed, so no standing grant is offered at all", async
   assert.match(result!.reason, /restructure/i);
 });
 
+test("the gate judges a bash call against the directory the prefix selects", async () => {
+  // Pi prepends the configured prefix, so a `cd` there is where the command runs;
+  // the claim's base must be that directory, not the session cwd.
+  const h = harness([], DEFAULT_SCOPE_DEFAULTS, { baseFor: () => ({ base: "/other/repo" }) });
+  const claim = h.gate.claimsFor("bash", { command: "cat ../data.txt" });
+  assert.equal(claim.paths[0]?.base, "/other/repo");
+});
+
+test("an unreadable prefix makes the call unjudgeable instead of silently wrong", async () => {
+  const h = harness([], DEFAULT_SCOPE_DEFAULTS, {
+    baseFor: () => ({ base: cwd, opaque: "the shell command prefix could not be analysed" }),
+  });
+  const result = await h.gate.gate("bash", { command: "ls" });
+  assert.equal(result?.block, true);
+  assert.match(result!.reason, /prefix could not be analysed/);
+});
+
+test("a non-bash tool is never re-based by the shell prefix", () => {
+  const h = harness([], DEFAULT_SCOPE_DEFAULTS, { baseFor: () => ({ base: "/other/repo" }) });
+  const claim = h.gate.claimsFor("read", { path: "src/a.ts" });
+  assert.equal(claim.paths[0]?.raw, "src/a.ts");
+  assert.equal(claim.paths[0]?.base, undefined);
+});
+
 test("bash claims are judged per path and a denial stops the whole call", async () => {
   const h = harness([{ kind: "deny" }]);
   assert.equal(await h.gate.gate("bash", { command: "cat src/a.ts && ls" }), undefined);

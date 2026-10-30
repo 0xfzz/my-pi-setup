@@ -92,6 +92,13 @@ export interface GateDeps {
   state: () => ScopeState;
   setState: (state: ScopeState) => void;
   cwd: () => string;
+  /**
+   * Where a bash call actually runs, once Pi's configured command prefix is
+   * applied. A `cd` in that prefix moves the directory every relative claim
+   * resolves against, so the gate must use the same base the process will use.
+   * Optional: without it, the session cwd is the base.
+   */
+  baseFor?: (command: unknown) => { base: string; opaque?: string };
   /** Ask the user. Rejecting/returning `undefined` means deny. */
   ask: (request: AskRequest) => Promise<AskAnswer | undefined>;
   /** Record a grant that must outlive this call (branch / config / audit). */
@@ -192,8 +199,15 @@ function denyResult(tool: string, target: string, feedback?: string): GateResult
 export function createGate(deps: GateDeps): Gate {
   const queue = new SerialQueue();
 
-  const claimsFor = (tool: string, input: Record<string, unknown> | undefined) =>
-    claimSetFor(tool, input, { cwd: deps.cwd() });
+  const claimsFor = (tool: string, input: Record<string, unknown> | undefined) => {
+    // A prefix whose directory cannot be resolved makes the call unjudgeable: the
+    // relative paths could mean anything, so it is reported instead of guessed.
+    const effective = tool === "bash" ? deps.baseFor?.(input?.command) : undefined;
+    if (effective?.opaque) {
+      return { paths: [], unknown: true, opaque: effective.opaque, reason: effective.opaque };
+    }
+    return claimSetFor(tool, input, { cwd: effective?.base ?? deps.cwd() });
+  };
 
   function toPathClaim(tool: string, request: PathRequest): PathClaim {
     // A `cd` earlier in the command moves what a later relative path means.
