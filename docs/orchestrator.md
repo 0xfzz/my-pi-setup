@@ -151,29 +151,49 @@ visible as drift rather than silently re-attributed.
 
 `purpose` is resolved before any registry row or pane exists. A refused spawn writes nothing.
 
-| `purpose` | Normal | Plan | Child policy |
-|---|---|---|---|
-| `research` (Plan default) | ✅ | ✅ | read-only tools + `bash`/web inspection; no `write`/`edit`/patch |
-| `review` | `agent_qa` / `qaFor` | `agent_qa` / `qaFor` | isolated reviewer: read-only research, `shell_read`, scoped evidence; no write/edit |
-| `spec` (`handoffId`) | ✅ | ✅ | worker allowlist, lane frozen |
-| `adhoc` (Normal default) | ✅ | ❌ | worker allowlist; no lane unless declared |
-| `implementation` | ✅ | ❌ without an execution approval | worker allowlist |
+| `purpose` | Admitted | Child policy |
+|---|---|---|
+| `adhoc` (worker; Normal default) | ✅ | worker allowlist; no lane unless declared |
+| `research` (planner; Plan default) | ✅ | read-only reader tools; no `write`/`edit`/patch/bash-writes |
+| `spec`, `review`, `implementation` | ❌ | the handoff/spec-review/QA pipeline was removed; these values are refused |
 
-Plan is read-only for the **parent**; delegating research, review or spec work is not implementation. Plan refuses `adhoc` and `implementation` with an explicit message. `agent_check` reports `lane: not-declared` for an ad-hoc unit with no `laneFiles` (it is not a failure), and `agent_review` treats an empty lane as "nothing to violate".
+Plan is read-only for the **parent**; delegating research (and answering a child's question) is not implementation. `agent_check` reports `lane: not-declared` for an ad-hoc unit with no `laneFiles` (it is not a failure), and `agent_review` treats an empty lane as "nothing to violate". Every spawn additionally requires a concrete `delegationReason` (see [occupancy](#occupancy-need-based-admission-with-owned-budgets)).
 
-A delegated child may not spawn again (`PI_SUBAGENT_DEPTH`, default max-depth 1), and one parent may hold at most 8 running children (`PI_SUBAGENT_MAX_CHILDREN`). Both are hard stops before a pane exists and both are overridable.
+A delegated child may not spawn again (`PI_SUBAGENT_DEPTH`, default max-depth 1). `PI_SUBAGENT_MAX_CHILDREN` survives as one concurrency-ceiling source, folded into the strictest-configured rule below.
 
-### Waves: worker and QA concurrency
+### Occupancy: need-based admission with owned budgets
 
-A wave runs in two tiers: at most **5 concurrent workers** (`spec`, `implementation`, `adhoc`), then at most **3 QA reviewers**, each judging at most **3 units**. These caps are concurrency, not lifetime quotas — a completed child frees its slot, which is what makes wave → review → next wave work. Research readers are not workers and hold no slot; a running specification reviewer is not QA and holds no QA slot, so a live spec review cannot silently halve QA capacity.
+Delegation is gated by `delegationReason` in `lib/orchestrator/admission.ts`, in one occupancy count against one set of ceilings:
+
+- A child must state the concrete benefit of a separate agent (independent lane, bounded substantial research, specialised context). Small, tightly coupled, quick or coordination-heavy work belongs to the parent session.
+- Duplicate **work units** are refused: an occupied work unit is steered (`agent_steer`) or resumed (`agent_resume`), not re-spawned. A true replacement names `replaces` with the child id — and still needs capacity.
+- Defaults: **2 occupied slots** and **4 successful launches per batch**. A slot is occupied by a running or blocked child AND by a finished child whose result still awaits a verdict, so closing a pane frees nothing. The **strictest explicitly configured ceiling wins**, so `maxDelegates` written by `/agent max` keeps a migrated setup's chosen cap; defaults only fill unmapped slots.
 
 ```text
-agent_qa({ scopes: ["a", "b", "c", "d", "e"] })
-  → qa-1 judges a, b
-  → qa-2 judges c, d, e
+/agent batch        # user-owned batch reset; models must ask, never run it to bypass a refusal
 ```
 
-The split is balanced with the remainder on later groups, and each reviewer gets a batch ticket naming only its own units, criteria, lanes and verify commands — a finding never crosses verdicts. Capacity is checked for the whole batch before the first pane opens, so a wave is never half-reviewed. `agent_spawn({ purpose: "review", qaFor: [...] })` is the manual single-reviewer form; `agent_qa` is the wave form. Labels are `qa-1…qa-K` and are reused once an earlier reviewer is closed.
+`/agent max <n> [--project]` remains the legacy concurrency setting. Admission, its refusals and the batch budget are user-visible in `/agent status` and `agent_running`.
+
+Launch admission is atomic: the slot is reserved synchronously before the first await, so two spawn calls in one assistant message cannot both pass the last-slot check, and a launch that fails anywhere releases the reservation. Once the row is registered the registry owns the count; a failed launch never eats capacity.
+
+### Accountability: a finished child is not an accepted result
+
+The parent owns every result it caused to exist. Each child row carries durable accountability — owner session, batch, work unit, the accepted delegation reason, a review plan, and a `resultRevision` that bumps whenever the result is superseded (resume, resettle, watchdog restart) so a verdict cannot bind to stale output.
+
+A verdict is recorded with `agent_accept_result`:
+
+- **accepted** — requires checked evidence (a file inspected, a command run, an artifact version read; the child's summary is not evidence) plus how the result was integrated. The slot frees only here.
+- **changes-requested** — the defect list is recorded and the SAME child is steered or resumed with it; spawning a replacement is refused while the unit is occupied.
+- **abandoned** — recorded as wasted work with cleanup notes. It is not success, and side effects stay the parent's responsibility.
+
+```text
+agent_accept_result({ childId, disposition, resultRevision, summary, evidence?, integration })
+```
+
+Refusal codes cover the whole stale-verdict class: verdicts on live work, wrong owner, superseded revisions and already-settled results are refused in code. A repeated identical disposition is idempotent.
+
+At settle time the parent gets **one** continuation per changed pending-result set asking it to judge (`agent_before_settle`, once per work unit). After that the obligations stay visible in `agent_running` — with each row's `resultRevision` and review plan — but settlement never loops and never reports unverified work as done. Accepting every child is still not proof the combined change works: the parent owes one integration verification across the lanes it accepted.
 
 ### Which model and system prompt a child runs on
 

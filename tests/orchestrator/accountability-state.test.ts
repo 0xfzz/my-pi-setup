@@ -58,7 +58,9 @@ test("resume retains owner, audit trail and spend but invalidates accepted outpu
   assert.equal(a.resultRevision, 2);
   assert.equal(a.attempts[0].reviews[0].disposition, "accepted");
   assert.equal(r.getBatch("parent").launches, 1);
-  assert.throws(() => r.recordDisposition("parent", "first", decision), /Unknown/);
+  // The superseded attempt is unknown by id but named in its successor's trail:
+  // the refusal says the verdict is stale, not that the child never existed.
+  assert.throws(() => r.recordDisposition("parent", "first", decision), /Stale/);
 });
 
 test("snapshot preserves obligations and cumulative batches; reset is session isolated", () => {

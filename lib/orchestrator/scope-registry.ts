@@ -643,7 +643,14 @@ export class ScopeRegistry {
   ): ScopedChild {
     const child = this.getChildById(childId);
     if (!child?.accountability || child.accountability.ownerSessionId !== ownerSessionId) {
-      throw new Error("Unknown child attempt or wrong parent owner (legacy rows cannot be accepted).");
+      // A superseded attempt is unknown by id, but its successor still carries
+      // it in the attempt trail — name that case a stale verdict instead of a
+      // lookup miss, so the parent learns WHICH refusal applies.
+      const superseded = [...this.childrenById.values()].some((row) =>
+        row.accountability?.attempts.some((attempt) => attempt.id === childId));
+      throw new Error(superseded
+        ? "Stale result revision: that attempt was superseded; verdicts bind to the current row's revision."
+        : "Unknown child attempt or wrong parent owner (legacy rows cannot be accepted).");
     }
     if (child.status === "running" || child.status === "blocked") throw new Error("Child is still active.");
     if (decision.resultRevision !== child.accountability.resultRevision) throw new Error("Stale result revision.");

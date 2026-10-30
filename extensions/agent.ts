@@ -3235,6 +3235,11 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       const cwd = (ctx as any).cwd || process.cwd();
       const delegateCap = resolveMaxDelegates(loadSubagentSettings(cwd));
       const ownRunning = all.filter((child) => child.status === "running" && child.parentPid === process.pid);
+      // The owner is ctx-first, like the delegation tools: a command ctx or a
+      // restarted session must reset/account the batch it actually owns.
+      const reader = typeof (ctx as any)?.sessionManager?.getSessionId === "function"
+        ? (ctx as any).sessionManager.getSessionId()
+        : ownerSessionId;
 
       if (sub === "list") {
         ctx.ui.notify(
@@ -3268,16 +3273,16 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       if (sub === "batch") {
         // The reset is deliberately user-owned: a model reporting a full batch
         // must surface this command, never run it to bypass its own refusal.
-        if (!ownerSessionId) {
+        if (!reader) {
           ctx.ui.notify("No session is active, so there is no batch to reset.", "error");
           return;
         }
-        const settings = loadSubagentSettings((ctx as any).cwd || process.cwd());
-        const next = registry.newBatch(ownerSessionId);
+        const settings = loadSubagentSettings(cwd);
+        const next = registry.newBatch(reader);
         const caps = resolveBudgets(settings);
         ctx.ui.notify(
           `New work batch ${next.id}. Launch budget: ${next.launches}/${caps.launchesPerBatch}. `
-            + `Old results keep their review obligations (${registry.getPendingResults(ownerSessionId).length} pending) — a reset never discharges them.`,
+            + `Old results keep their review obligations (${registry.getPendingResults(reader).length} pending) — a reset never discharges them.`,
           "info",
         );
         return;
@@ -3295,10 +3300,10 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
         return;
       }
 
-      const occupiedSlots = ownerSessionId ? registry.getOccupiedChildren(ownerSessionId) : [];
-      const batch = ownerSessionId ? registry.getBatch(ownerSessionId) : undefined;
+      const occupiedSlots = reader ? registry.getOccupiedChildren(reader) : [];
+      const batch = reader ? registry.getBatch(reader) : undefined;
       const caps = resolveBudgets(loadSubagentSettings(cwd));
-      const pendingResults = ownerSessionId ? registry.getPendingResults(ownerSessionId) : [];
+      const pendingResults = reader ? registry.getPendingResults(reader) : [];
       ctx.ui.notify(
         [
           `Orchestrator`,
