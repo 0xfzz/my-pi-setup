@@ -8,14 +8,19 @@
 import {
   Input,
   matchesKey,
+  wrapTextWithAnsi,
   type Component,
   type Focusable,
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
-import { PLAIN_THEME, isPopupCloseKey, type PopupRow, type PopupTheme } from "../popup.ts";
+import { PLAIN_THEME, isPopupCloseKey, wrapRowWithHangingIndent, type PopupRow, type PopupTheme } from "../popup.ts";
 import { PopupShell, type PopupShellModel } from "./shell.ts";
 import { KEY_HINT } from "./tokens.ts";
+
+export type AskAnswer =
+  | { kind: "option"; value: string }
+  | { kind: "text"; value: string };
 
 export interface AskUserPopupOptions {
   question: string;
@@ -25,7 +30,7 @@ export interface AskUserPopupOptions {
   recommended?: number;
   theme?: PopupTheme;
   terminalRows?: () => number;
-  onDone: (answer: string | undefined) => void;
+  onDone: (answer: AskAnswer | undefined) => void;
 }
 
 const OWN_ANSWER = "Type your own answer…";
@@ -40,12 +45,15 @@ export class AskUserPopup implements Component, Focusable {
   private finished = false;
   private isFocused = false;
   private renderTick = 0;
+  private validationError?: string;
+  private starts: number[] = [];
+  private inputLineIndex = 0;
 
   constructor(options: AskUserPopupOptions) {
     this.options = options;
     this.theme = options.theme ?? PLAIN_THEME;
     this.typing = !options.options?.length;
-    this.input.onSubmit = (value) => this.submit(value);
+    this.input.onSubmit = (value) => this.submit(value, false);
     this.input.onEscape = () => this.escapeFromInput();
     this.shell = new PopupShell({
       theme: this.theme,
@@ -108,58 +116,91 @@ export class AskUserPopup implements Component, Focusable {
 
   private model(width: number): PopupShellModel {
     const theme = this.theme;
-    const header: PopupRow[] = [theme.bold(this.options.question)];
+    const header: PopupRow[] = [];
+    for (const line of wrapTextWithAnsi(theme.bold(this.options.question), width)) {
+      header.push(line);
+    }
     if (this.options.context) {
       header.push("");
-      for (const line of wrapPlain(this.options.context, width)) {
-        header.push(theme.fg("dim", line));
+      const contextLines = wrapTextWithAnsi(this.options.context, width);
+      const maxContextLines = 6;
+      if (contextLines.length > maxContextLines) {
+        for (let i = 0; i < maxContextLines; i++) {
+          header.push(theme.fg("dim", contextLines[i]!));
+        }
+        header.push(theme.fg("dim", "… (context truncated; Esc to cancel)"));
+      } else {
+        for (const line of contextLines) {
+          header.push(theme.fg("dim", line));
+        }
       }
     }
     header.push("");
 
     if (this.typing && !this.options.options?.length) {
-      return { header, body: this.input.render(width) };
+      const body: PopupRow[] = [...this.input.render(width)];
+      this.inputLineIndex = 0;
+      if (this.validationError) {
+        body.push(theme.fg("warning", this.validationError));
+      }
+      return { header, body };
     }
 
     if (this.typing) {
-      return {
-        header,
-        body: [
-          ...this.optionRows(),
-          "",
-          ...this.input.render(width),
-          theme.fg("dim", "Enter submit · Esc back"),
-        ],
-      };
+      const optRows = this.optionRows(width);
+      const body: PopupRow[] = [
+        ...optRows,
+        "",
+        ...this.input.render(width),
+      ];
+      this.inputLineIndex = optRows.length + 1;
+      if (this.validationError) {
+        body.push(theme.fg("warning", this.validationError));
+      } else {
+        body.push(theme.fg("dim", "Enter submit · Esc back"));
+      }
+      return { header, body };
     }
 
-    return { header, body: this.optionRows() };
+    return { header, body: this.optionRows(width) };
   }
 
-  private optionRows(): PopupRow[] {
+  private optionRows(width: number): PopupRow[] {
     const theme = this.theme;
     const options = this.options.options ?? [];
     const rows: PopupRow[] = [];
+    this.starts = [];
     for (let index = 0; index < options.length; index++) {
-      const selected = index === this.selected;
+      this.starts[index] = rows.length;
+      const selected = !this.typing && index === this.selected;
       const marker = selected ? theme.fg("accent", "→ ") : "  ";
       const number = `${index + 1}. `;
       const recommended = this.options.recommended === index + 1
         ? "  " + theme.fg("accent", "(recommended answer)")
         : "";
-      rows.push(marker + number + options[index] + recommended);
+      const rawLine = marker + number + options[index] + recommended;
+      const wrapped = wrapRowWithHangingIndent(rawLine, width);
+      for (const line of wrapped) {
+        rows.push(line);
+      }
     }
-    const ownSelected = this.selected === options.length;
-    rows.push(
-      (ownSelected ? theme.fg("accent", "→ ") : "  ") + "✎ " + OWN_ANSWER,
-    );
+    const ownIndex = options.length;
+    this.starts[ownIndex] = rows.length;
+    const ownSelected = !this.typing && this.selected === ownIndex;
+    const ownMarker = ownSelected ? theme.fg("accent", "→ ") : "  ";
+    const ownLine = ownMarker + "✎ " + OWN_ANSWER;
+    for (const line of wrapRowWithHangingIndent(ownLine, width)) {
+      rows.push(line);
+    }
     return rows;
   }
 
   private revealRow(): number {
-    const options = this.options.options ?? [];
-    if (!options.length) return 0;
-    return Math.min(this.selected, options.length);
+    if (this.typing) {
+      return this.inputLineIndex;
+    }
+    const target = this.starts[this.selected];
+    return target !== undefined ? target : 0;
   }
 
   private handleKey(data: string): boolean {
@@ -170,10 +211,15 @@ export class AskUserPopup implements Component, Focusable {
         this.escapeFromInput();
         return true;
       }
+      if (this.validationError) {
+        this.validationError = undefined;
+        this.shell.invalidate();
+      }
       try {
         this.input.handleInput(data);
-      } catch {
-        this.finish(undefined);
+      } catch (err) {
+        this.validationError = `Input error: ${err instanceof Error ? err.message : String(err)}`;
+        this.shell.invalidate();
       }
       return true;
     }
@@ -195,7 +241,7 @@ export class AskUserPopup implements Component, Focusable {
       const index = Number(data) - 1;
       if (index < options.length) {
         this.selected = index;
-        this.submit(options[index]!);
+        this.submit(options[index]!, true);
       }
       return true;
     }
@@ -203,7 +249,7 @@ export class AskUserPopup implements Component, Focusable {
       if (this.selected >= options.length) {
         this.startTyping();
       } else {
-        this.submit(options[this.selected]!);
+        this.submit(options[this.selected]!, true);
       }
       return true;
     }
@@ -213,6 +259,8 @@ export class AskUserPopup implements Component, Focusable {
   private startTyping(): void {
     this.typing = true;
     this.input.focused = this.isFocused;
+    this.validationError = undefined;
+    this.shell.invalidate();
   }
 
   private escapeFromInput(): void {
@@ -221,60 +269,40 @@ export class AskUserPopup implements Component, Focusable {
     this.finish(undefined);
   }
 
-  private handleBodyClick(index: number): boolean {
+  private handleBodyClick(lineIndex: number): boolean {
     const options = this.options.options ?? [];
     if (!options.length || this.typing) return false;
-    if (index < options.length) {
-      this.selected = index;
-      this.submit(options[index]!);
-      return true;
-    }
-    if (index === options.length) {
-      this.selected = index;
-      this.startTyping();
-      return true;
+    for (let i = this.starts.length - 1; i >= 0; i--) {
+      if (lineIndex >= this.starts[i]!) {
+        this.selected = i;
+        if (i < options.length) {
+          this.submit(options[i]!, true);
+        } else {
+          this.startTyping();
+        }
+        return true;
+      }
     }
     return false;
   }
 
-  private submit(value: string): void {
+  private submit(value: string, fromOption = false): void {
     const answer = value.trim();
     if (!answer) {
       // Keep the popup open; empty input is not consent.
+      this.validationError = "An answer is required. Esc leaves it unanswered.";
+      this.shell.invalidate();
       return;
     }
-    this.finish(answer);
+    this.finish({ kind: fromOption ? "option" : "text", value: answer });
   }
 
-  private finish(answer: string | undefined): void {
+  private finish(answer: AskAnswer | undefined): void {
     if (this.finished) return;
     this.finished = true;
     this.input.focused = false;
     this.options.onDone(answer);
   }
-}
-
-/** Small word wrapper for dim context lines, preserving explicit newlines. */
-function wrapPlain(text: string, width: number): string[] {
-  const safe = Math.max(1, width);
-  const out: string[] = [];
-  for (const raw of text.split(/\r\n|\r|\n/)) {
-    if (raw.length <= safe) {
-      out.push(raw);
-      continue;
-    }
-    let line = "";
-    for (const word of raw.split(/\s+/)) {
-      if (!line) line = word;
-      else if (line.length + 1 + word.length <= safe) line += ` ${word}`;
-      else {
-        out.push(line);
-        line = word;
-      }
-    }
-    if (line) out.push(line);
-  }
-  return out.length ? out : [""];
 }
 
 /** Render tick used by tests to assert resize/reflow recomputes the body. */

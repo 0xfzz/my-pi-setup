@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { isSubagentChildSession } from "../lib/subagent-context.ts";
-import { AskUserPopup } from "../lib/ui/ask.ts";
+import { AskUserPopup, type AskAnswer } from "../lib/ui/ask.ts";
 import { popupOverlayOptions } from "../lib/popup.ts";
 
 type AskResult = {
@@ -9,6 +9,8 @@ type AskResult = {
   question: string;
   answer?: string;
   message?: string;
+  answeredWith?: "option" | "text";
+  matchedOption?: string;
 };
 
 const parentGuidance =
@@ -136,7 +138,7 @@ export default function askUser(pi: ExtensionAPI) {
         if (signal?.aborted) return cancelled();
         signal?.addEventListener("abort", onAbort, { once: true });
         try {
-          const answer = await ctx.ui.custom<string | undefined>((tui, theme, _keys, done) => {
+          const answer = await ctx.ui.custom<AskAnswer | string | undefined>((tui, theme, _keys, done) => {
             component = new AskUserPopup({
               question, context, options, recommended,
               theme,
@@ -145,14 +147,27 @@ export default function askUser(pi: ExtensionAPI) {
             });
             return component;
           }, { overlay: true, overlayOptions: popupOverlayOptions("84%", 46, "90%") as any });
-          if (signal?.aborted || answer === undefined || !answer.trim()) return cancelled();
-          if (options?.length && !options.includes(answer)) {
+          if (signal?.aborted || answer === undefined) return cancelled();
+          const answerValue = typeof answer === "string" ? answer : answer.value;
+          if (!answerValue || !answerValue.trim()) return cancelled();
+
+          const kind = typeof answer === "string"
+            ? (options?.includes(answer) ? "option" : "text")
+            : answer.kind;
+
+          if (kind === "option" && options?.length && !options.includes(answerValue)) {
             return result({
               status: "unavailable", question,
               message: "Unanswered: UI returned an invalid choice. Ask again; do not infer consent.",
             });
           }
-          return result({ status: "answered", question, answer });
+          return result({
+            status: "answered",
+            question,
+            answer: answerValue.trim(),
+            answeredWith: kind,
+            ...(kind === "option" ? { matchedOption: answerValue.trim() } : {}),
+          });
         } catch (error) {
           if (signal?.aborted) return cancelled();
           return result({
@@ -178,7 +193,13 @@ export default function askUser(pi: ExtensionAPI) {
         if (options?.length && !options.includes(answer)) {
           return result({ status: "unavailable", question, message: "Unanswered: UI returned an invalid choice. Ask again; do not infer consent." });
         }
-        return result({ status: "answered", question, answer });
+        return result({
+          status: "answered",
+          question,
+          answer: answer.trim(),
+          answeredWith: options?.length ? "option" : "text",
+          ...(options?.length ? { matchedOption: answer.trim() } : {}),
+        });
       } catch (error) {
         if (signal?.aborted) return cancelled();
         return result({ status: "unavailable", question, message: `Unanswered: user dialog failed (${error instanceof Error ? error.message : String(error)}). Retry using a supported UI.` });

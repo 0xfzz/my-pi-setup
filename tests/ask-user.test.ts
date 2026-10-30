@@ -106,6 +106,32 @@ test("TUI custom popup resolves the recommended choice through AskUserPopup", ()
   assert.equal(out.details.answer, "a");
 }));
 
+test("custom typed answer is accepted when options are provided in custom popup", () => withSession(false, async () => {
+  const { run, ctx } = setup();
+  ctx.ui.custom = async (factory: any) => {
+    let result: any;
+    const done = (value: any) => { result = value; };
+    const component = factory(
+      { terminal: { rows: 24 }, requestRender() {} },
+      { fg: (_token: string, text: string) => text, bold: (text: string) => text },
+      {},
+      done,
+    );
+    component.focused = true;
+    // Down to "Type your own answer..."
+    component.handleInput("\x1b[B");
+    component.handleInput("\x1b[B");
+    component.handleInput("\r");
+    for (const char of "custom choice") component.handleInput(char);
+    component.handleInput("\r");
+    return result;
+  };
+  const out = await run({ question: "Pick", options: ["a", "b"] } as any);
+  status(out, "answered");
+  assert.equal(out.details.answer, "custom choice");
+  assert.equal(out.details.answeredWith, "text");
+}));
+
 test("free-text answer includes context and passes cancellation options", () => withSession(false, async () => {
   const { run, calls } = setup();
   const signal = new AbortController().signal;
