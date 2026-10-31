@@ -9,26 +9,24 @@ import type { SandboxPolicy } from "./policy.ts";
  * 2. In `crates/nowrite-guard/target/release/nowrite-guard`
  * 3. On PATH
  */
-export function findLandlockBinary(): string | undefined {
+/** Since `findLandlockBinary` falls back to a PATH lookup whose argv[0] the caller
+ *  passes through untouched, the return type is always a concrete string. */
+export function findLandlockBinary(): string {
   const currentDir = dirname(fileURLToPath(import.meta.url));
   const root = dirname(dirname(dirname(currentDir)));
 
   const candidates = [
     join(root, "lib", "nowrite-guard"),
     join(root, "crates", "nowrite-guard", "target", "release", "nowrite-guard"),
-    "nowrite-guard",
   ];
 
   for (const candidate of candidates) {
-    if (candidate === "nowrite-guard") {
-      // Checked via PATH during probe
-      continue;
-    }
     if (existsSync(candidate)) {
       return candidate;
     }
   }
 
+  // Checked via PATH during probe.
   return "nowrite-guard";
 }
 
@@ -44,14 +42,13 @@ export function findLandlockBinary(): string | undefined {
 export function planLandlock(
   policy: SandboxPolicy,
   command: string,
-  _env: Record<string, string> = {},
+  env: Record<string, string> = {},
 ): { argv: string[] } | { block: string } {
   if (policy.mode === "off") {
     return { argv: ["/bin/sh", "-c", command] };
   }
 
-  const binary = findLandlockBinary() ?? "nowrite-guard";
-  const argv: string[] = [binary];
+  const argv: string[] = [findLandlockBinary()];
 
   if (policy.cwd && existsSync(policy.cwd)) {
     argv.push("--chdir", policy.cwd);
@@ -67,7 +64,21 @@ export function planLandlock(
     }
   }
 
-  argv.push("--", "/bin/sh", "-c", command);
+  argv.push("--");
+
+  // The helper execs the payload directly, so the env scrub must ride the
+  // payload: `/usr/bin/env K=V … /bin/sh -c <command>`.
+  argv.push(...envPrefix(env), "/bin/sh", "-c", command);
 
   return { argv };
+}
+
+/**
+ * The argv prefix that applies `env` to the child command, via `/usr/bin/env`.
+ * Empty when there is nothing to apply.
+ */
+export function envPrefix(env: Record<string, string>): string[] {
+  const entries = Object.entries(env);
+  if (!entries.length) return [];
+  return ["/usr/bin/env", ...entries.map(([key, value]) => `${key}=${value}`)];
 }

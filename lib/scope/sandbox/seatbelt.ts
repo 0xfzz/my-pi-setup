@@ -1,3 +1,4 @@
+import { envPrefix } from "./landlock.ts";
 import type { SandboxPolicy } from "./policy.ts";
 
 function escapeSchemeString(str: string): string {
@@ -17,7 +18,7 @@ function escapeSchemeString(str: string): string {
 export function planSeatbelt(
   policy: SandboxPolicy,
   command: string,
-  _env: Record<string, string> = {},
+  env: Record<string, string> = {},
 ): { argv: string[] } | { block: string } {
   if (policy.mode === "off") {
     return { argv: ["/bin/sh", "-c", command] };
@@ -47,10 +48,14 @@ export function planSeatbelt(
 
   const profile = rules.join("\n");
 
+  // sandbox-exec has no `--` separator: every argument after the profile is
+  // taken as the command itself, so `"--"` would be exec'd as a program name.
+  // The env scrub rides the payload through `/usr/bin/env` instead of the
+  // profile, where it belongs to the spawned child, not the scheme.
   const argv: string[] = [
     "sandbox-exec",
     "-p", profile,
-    "--",
+    ...envPrefix(env),
     "/bin/sh", "-c", command,
   ];
 

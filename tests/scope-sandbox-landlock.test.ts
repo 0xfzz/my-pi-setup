@@ -35,11 +35,20 @@ test("planLandlock produces valid argv with rw roots, chdir, and target command"
   assert.ok(argv.includes("/tmp"));
   assert.ok(argv.includes("--rw"));
 
-  // Must end with: -- /bin/sh -c 'echo hello'
-  assert.equal(argv[argv.length - 4], "--");
+  // Must end with: -- /usr/bin/env TEST=1 /bin/sh -c 'echo hello'
+  const envIdx = argv.indexOf("/usr/bin/env");
+  assert.ok(envIdx > 0, "env scrub rides the payload via /usr/bin/env");
+  assert.equal(argv[envIdx + 1], "TEST=1");
   assert.equal(argv[argv.length - 3], "/bin/sh");
   assert.equal(argv[argv.length - 2], "-c");
   assert.equal(argv[argv.length - 1], "echo hello");
+  assert.equal(argv[argv.length - 4], "TEST=1");
+
+  // No env, no /usr/bin/env hop: the payload stays minimal.
+  const bare = planLandlock(policy, "echo hello");
+  assert.ok("argv" in bare);
+  assert.equal(bare.argv[bare.argv.length - 3], "/bin/sh");
+  assert.ok(!bare.argv.includes("/usr/bin/env"));
 });
 
 test("probeBackend probes Landlock and detects functional ABI on Linux", async () => {

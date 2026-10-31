@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import type { SandboxBackendId } from "./config.ts";
 import { findLandlockBinary } from "./landlock.ts";
@@ -17,6 +20,12 @@ const probeCache = new Map<SandboxBackendId, ProbeResult>();
 /** Clear the probe cache, mainly for tests. */
 export function clearProbeCache(): void {
   probeCache.clear();
+}
+
+/** Test-only: pin a probe outcome so tests can drive degradation and
+ *  availability without spawning real backends. */
+export function primeProbeCacheForTest(backend: SandboxBackendId, result: ProbeResult): void {
+  probeCache.set(backend, result);
 }
 
 /**
@@ -119,31 +128,39 @@ async function probeLandlock(): Promise<ProbeResult> {
     };
   }
 
-  const binary = findLandlockBinary();
-  if (!binary) {
-    return {
-      ok: false,
-      backend: "landlock",
-      detail: "Landlock helper binary not installed",
-    };
-  }
-
   try {
-    const { stdout } = await execFileAsync(binary, ["--version"], { timeout: 3000 });
-    const match = /ABI\s+(\d+|\w+)/i.exec(stdout);
-    const abiNum = match ? parseInt(match[1]!, 10) : undefined;
+    const { stdout } = await execFileAsync(findLandlockBinary(), ["--version"], { timeout: 3000 });
+    const match = /ABI\s+(\d+)/.exec(stdout);
+    const abiNum = match ? Number.parseInt(match[1]!, 10) : undefined;
+
+    // A version banner proves nothing: the smoke run writes inside an
+    // rw-listed dir and asserts a non-listed dir stays refused. If the kernel
+    // cannot enforce, either step fails and the backend degrades to `off`.
+    const inside = mkdtempSync(join(tmpdir(), "pi-scope-landlock-a-"));
+    const outside = mkdtempSync(join(tmpdir(), "pi-scope-landlock-b-"));
+    try {
+      await execFileAsync(
+        findLandlockBinary(),
+        ["--rw", inside, "--", "/bin/sh", "-c", `touch '${inside}/ok' && ! test -e '${outside}/ok'`],
+        { timeout: 3000 },
+      );
+    } finally {
+      rmSync(inside, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+
     return {
       ok: true,
       backend: "landlock",
       abi: Number.isFinite(abiNum) ? abiNum : undefined,
-      detail: `Landlock functional (${stdout.trim()})`,
+      detail: `Landlock smoke run passed${Number.isFinite(abiNum) ? ` (ABI ${abiNum})` : ""}`,
     };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     return {
       ok: false,
       backend: "landlock",
-      detail: `Landlock helper probe failed: ${msg}`,
+      detail: `Landlock probe failed: ${msg}`,
     };
   }
 }
