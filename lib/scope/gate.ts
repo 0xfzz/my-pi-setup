@@ -185,9 +185,17 @@ export class SerialQueue {
   }
 }
 
+export interface RefusalOutcome {
+  allowed: boolean;
+  reason?: string;
+  grantSummary?: string;
+}
+
 export interface Gate {
   claimsFor: (tool: string, input: Record<string, unknown> | undefined) => ReturnType<typeof claimSetFor>;
   gate: (tool: string, input: Record<string, unknown> | undefined) => Promise<GateResult | undefined>;
+  evaluate: (claim: PathClaim) => ScopeDecision;
+  handleRefusal: (tool: string, absolutePath: string) => Promise<RefusalOutcome>;
   queue: SerialQueue;
 }
 
@@ -623,7 +631,97 @@ export function createGate(deps: GateDeps): Gate {
     return undefined;
   }
 
-  return { claimsFor, gate, queue };
+  const evaluate = (claim: PathClaim): ScopeDecision =>
+    withHook(evaluateClaim(claim, deps.state()), { tool: claim.tool, claim, phase: "initial" });
+
+  async function handleRefusal(tool: string, absolutePath: string): Promise<RefusalOutcome> {
+    const classified = classifyPath(deps.cwd(), deps.state().roots, absolutePath);
+    const claim: PathClaim = {
+      tool,
+      action: tool,
+      absolute: classified.absolute,
+      resource: classified.resource,
+      write: true,
+      posture: "write",
+      external: classified.external,
+      kind: "unknown",
+    };
+
+    const decision = withHook(evaluateClaim(claim, deps.state()), { tool, claim, phase: "initial" });
+    if (decision.effect === "deny") {
+      report({ tool, input: absolutePath, effect: "deny", asked: false, reason: decision.reason, decision, claim });
+      return { allowed: false, reason: decision.reason };
+    }
+    if (decision.effect === "allow") {
+      const auto = Boolean(deps.state().yolo && decision.reason.includes("(yolo"));
+      if (auto) deps.onAutoApprove?.(decision, claim);
+      report({ tool, input: absolutePath, effect: "allow", asked: false, auto, reason: decision.reason, decision, claim });
+      return { allowed: true, grantSummary: "allowed by existing rule or yolo" };
+    }
+
+    return await queue.run(async (): Promise<RefusalOutcome> => {
+      const again = withHook(evaluateClaim(claim, deps.state()), { tool, claim, phase: "recheck" });
+      if (again.effect === "allow") {
+        report({ tool, input: absolutePath, effect: "allow", asked: false, reason: again.reason, decision: again, claim });
+        return { allowed: true, grantSummary: "allowed by prior grant" };
+      }
+      if (again.effect === "deny") {
+        report({ tool, input: absolutePath, effect: "deny", asked: false, reason: again.reason, decision: again, claim });
+        return { allowed: false, reason: again.reason };
+      }
+
+      const answer = await askFor(tool, claim, again);
+      if (answer.kind === "unavailable") {
+        report({
+          tool,
+          input: absolutePath,
+          effect: "deny",
+          asked: true,
+          answer: deps.isChild?.() ? "escalated" : "no-answer",
+          reason: again.reason,
+          decision: again,
+          claim,
+        });
+        return { allowed: false, reason: answer.message };
+      }
+      if (answer.kind === "deny") {
+        report({
+          tool,
+          input: absolutePath,
+          effect: "deny",
+          asked: true,
+          answer: answer.feedback?.trim() ? "deny-feedback" : "deny",
+          reason: again.reason,
+          decision: again,
+          claim,
+        });
+        return { allowed: false, reason: answer.feedback ?? again.reason };
+      }
+      if (answer.kind === "once") {
+        report({ tool, input: absolutePath, effect: "allow", asked: true, answer: "once", reason: again.reason, decision: again, claim });
+        return { allowed: true, grantSummary: "allowed once" };
+      }
+
+      applyAnswer(answer, claim);
+      const after = withHook(evaluateClaim(claim, deps.state()), { tool, claim, phase: "recheck" });
+      const summary = answer.kind === "allow"
+        ? `allowed for ${answer.grant.exact ? "this file" : "this folder"} (${answer.persist === "workspace" ? "workspace config" : "this session"})`
+        : `rule added: ${answer.text}`;
+      report({
+        tool,
+        input: absolutePath,
+        effect: after.effect,
+        asked: true,
+        answer: answer.kind === "allow" ? (answer.persist === "workspace" ? "allow-workspace" : "allow-session") : "rule",
+        reason: after.reason,
+        decision: after,
+        claim,
+      });
+      return { allowed: after.effect === "allow", reason: after.reason, grantSummary: summary };
+    });
+  }
+
+  return { claimsFor, gate, evaluate, handleRefusal, queue };
 }
 
 /** `<tool|*> <glob> <allow|ask|deny>`; a bare glob gets the claim's action. */

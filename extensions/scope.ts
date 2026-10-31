@@ -36,6 +36,7 @@ import { deriveSandboxPolicy } from "../lib/scope/sandbox/policy.ts";
 import { buildSandboxEnv } from "../lib/scope/sandbox/env.ts";
 import { wrapBashCommand } from "../lib/scope/sandbox/wrap.ts";
 import { probeBackend } from "../lib/scope/sandbox/probe.ts";
+import { RefusalDeduper, scanRefusals } from "../lib/scope/sandbox/refusal.ts";
 import { accessLabel, DEFAULT_LABELS, settingsRows, type SettingsAction, type SettingsTarget } from "../lib/scope/settings.ts";
 import {
   globalScopeFile,
@@ -72,6 +73,7 @@ export default function scopeExtension(pi: ExtensionAPI) {
   let draw: (() => void) | undefined;
   let sessionScratchDir: string | undefined;
   let sandboxDegradedWarned = false;
+  const refusalDeduper = new RefusalDeduper();
 
   function getOrCreateScratchDir(): string | undefined {
     const cfg = state.sandbox ?? DEFAULT_SANDBOX_CONFIG;
@@ -883,23 +885,45 @@ export default function scopeExtension(pi: ExtensionAPI) {
     return undefined;
   });
 
+  function appendTrailer(event: { content?: Array<{ type: string; text?: string }> }, trailer: string): void {
+    if (!event.content || event.content.length === 0) {
+      event.content = [{ type: "text", text: trailer.trimStart() }];
+      return;
+    }
+    const last = event.content[event.content.length - 1];
+    if (last && "text" in last && typeof last.text === "string") {
+      last.text += trailer;
+    } else {
+      event.content.push({ type: "text", text: trailer.trimStart() });
+    }
+  }
+
   pi.on("tool_result", async (event, _ctx) => {
     if (event.toolName !== "bash") return;
     const cfg = state.sandbox ?? DEFAULT_SANDBOX_CONFIG;
     if (cfg.mode === "off") return;
 
     const text = event.content?.map(c => ("text" in c ? c.text : "")).join("\n") ?? "";
-    const isRefusal = /Read-only file system|Permission denied|Operation not permitted|EACCES|EROFS/i.test(text);
-    if (!isRefusal) return;
-
-    const trailer = `\n[sandbox] blocked a write outside the workspace (sandbox mode: ${cfg.mode}).`;
-    if (event.content && event.content.length > 0) {
-      const last = event.content[event.content.length - 1];
-      if (last && "text" in last) {
-        last.text += trailer;
-      } else {
-        event.content.push({ type: "text", text: trailer });
+    const hits = scanRefusals(text);
+    if (!hits.length) {
+      const isRefusal = /Read-only file system|Permission denied|Operation not permitted|EACCES|EROFS/i.test(text);
+      if (isRefusal) {
+        appendTrailer(event, `\n[sandbox] blocked a write outside the workspace (sandbox mode: ${cfg.mode}).`);
       }
+      return;
+    }
+
+    for (const hit of hits) {
+      if (refusalDeduper.has(hit.path)) continue;
+      refusalDeduper.add(hit.path);
+
+      const outcome = await gate.handleRefusal("bash", hit.path);
+      const trailer = outcome.allowed
+        ? `\n[sandbox] blocked a write outside the workspace: ${hit.path}.\nAnswer: ${outcome.grantSummary ?? "allowed"}. Retry the command.`
+        : `\n[sandbox] blocked a write outside the workspace: ${hit.path}.\nAccess denied: ${outcome.reason ?? "denied by policy"}`;
+      appendTrailer(event, trailer);
+      draw?.();
+      refresh();
     }
   });
 
