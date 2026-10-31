@@ -205,6 +205,7 @@ root still wins over a broad read-write one.
 | `/scope log [n] [--stats]` | Recent decisions, or a summary by tool and asked-about path |
 | `/scope telemetry [n]` | The global log, summarized: asked targets, repeated asks, detection gaps, deny rules that fired |
 | `/scope yolo [on\|off\|all\|status] [--persist]` | Auto-approve the remaining questions |
+| `/scope sandbox [status\|on\|off\|mode\|backend\|ask\|retry\|probe\|allow\|deny\|test]` | Kernel-enforced write sandbox for `bash` (Landlock, bubblewrap, Seatbelt) |
 
 ## Delegated children
 
@@ -245,6 +246,84 @@ tone, arming emits a warning that names the strength and the disarm command, and
 a persisted arm is announced again on reload. Everything it approved lands in
 `/scope log`, and a `deny` hit while armed is reported to the user, because that
 is exactly where the assumption "yolo means anything goes" is wrong.
+
+## Sandbox: kernel-enforced write boundaries for `bash`
+
+While tools like `read`, `write`, `edit`, `grep`, and `find` carry discrete path
+arguments that Scope checks deterministically in-process, `bash` executes
+arbitrary shell programs where filesystem writes cannot be predicted reliably
+from text alone.
+
+Scope solves this by separating reads and writes:
+- **Reads** remain open across the machine by default (`readExternal: "allow"`),
+  with parser checks for sensitive paths (credentials, private keys, `.env` files).
+- **Writes** are enforced at the OS kernel level:
+  - Inside the workspace and granted read-write roots: unrestricted.
+  - Outside the workspace: denied by the kernel (`EROFS` or `EACCES`).
+  - Scratch space (`/tmp/pi-scope-scratch-<rand>`) and virtual devices (`/dev/null`,
+    `/dev/zero`, `/dev/tty`, `/dev/pts`) remain writable so Unix pipelines and
+    utilities function without friction.
+
+### Refusal → Gate Ask
+
+When a sandboxed command attempts to write outside the workspace:
+1. The kernel denies the mutation (`EROFS` via mount namespaces or `EACCES` via Landlock).
+2. Scope inspects the output for permission refusals and extracts candidate absolute paths.
+3. Each candidate path is evaluated through the Scope gate (`gate.evaluate`):
+   - If blocked by a configured `deny` rule, access is refused without asking.
+   - If auto-approved (e.g. `yolo all`), access is permitted.
+   - Otherwise, the standard Scope boundary dialog opens, offering literal standing grants.
+4. If approved by the user, the path is added as a root, Scope annotates the tool result trailer:
+   ```text
+   [sandbox] blocked a write outside the workspace: /srv/data.
+   Answer: allowed for this folder (this session). Retry the command.
+   ```
+   The retried command is sandboxed with the new root and succeeds.
+
+### Backends
+
+- **`landlock`** (Linux 5.13+): Uses Linux's unprivileged Landlock LSM via the
+  official `landlock` Rust crate (`crates/nowrite-guard`). Handles only write
+  rights (reads remain unrestricted), does not unshare namespaces, keeps host
+  networking and tty untouched, and background processes survive.
+- **`bwrap`** (Linux): Uses bubblewrap to mount the host root read-only and
+  bind-mount writable roots. Does NOT unshare pid, network, or session, so
+  background servers, dev ports, and interactive tools continue working.
+- **`seatbelt`** (macOS): Uses `sandbox-exec` with a profile allowing default
+  reads and denying `file-write*` outside allowed paths.
+- **`auto`** (default): Probes in order `landlock` → `bwrap` → `seatbelt` → `none`.
+
+### Sandbox commands
+
+| Command | Effect |
+|---|---|
+| `/scope sandbox status` | Show current mode, active backend, probe result, scratch dir, and writable paths |
+| `/scope sandbox on` | Arm sandbox in `workspace` mode |
+| `/scope sandbox off` | Disarm sandbox |
+| `/scope sandbox mode <workspace\|readonly\|off>` | Set mode (`readonly` denies all writes except scratch/devices) |
+| `/scope sandbox backend <auto\|landlock\|bwrap\|seatbelt\|none>` | Select sandbox mechanism |
+| `/scope sandbox probe` | Probe backend availability on the current host |
+| `/scope sandbox allow <path>` | Add an extra writable path (e.g. `/var/run/docker.sock`) |
+| `/scope sandbox deny <path>` | Mark a path read-only even if within workspace |
+| `/scope sandbox test '<command>'` | Dry-run wrapping and display exact argv and policies |
+
+### Configuration
+
+In `.pi/scope.json` or `~/.pi/agent/scope.json`:
+
+```json
+{
+  "sandbox": {
+    "mode": "off",
+    "backend": "auto",
+    "ask": "both",
+    "retry": "model",
+    "scratch": "session",
+    "allow": [],
+    "deny": []
+  }
+}
+```
 
 ## Configuration
 
@@ -454,15 +533,17 @@ This raises the cost of an accident. It does not contain a determined escape:
   beyond any Scope boundary, and nothing here asks or records it. Scope governs
   the builtin path tools listed above; per-server trust is the host's concern.
   Do not read this document as an MCP control.
-- **Not an OS sandbox.** Pi itself, extensions, plugins and MCP servers run with
-  the process's permissions. Containers/VMs remain the only real boundary — see
-  [Run Pi safely](../node_modules/@earendil-works/pi-coding-agent/docs/security.md).
+- **Kernel sandbox for `bash` writes.** `bash` writes outside the workspace can
+  be enforced at the OS kernel level via Landlock or bubblewrap (or Seatbelt on
+  macOS) using `/scope sandbox on` or in Plan mode. Without the sandbox armed,
+  `bash` is policy-gated via in-process parsing.
 - `bash` can leave the workspace in ways a tokenizer cannot see: `bash -c`,
-  `find -exec`, `git -C`, interpreters, subshells. Those become *opaque* when
-  they are recognizable; the rest is a heuristic. A binary with no table entry no
-  longer has its arguments guessed, which is quieter but also less coverage.
-  This is why the real fix for a strict setup is an OS sandbox, not a better
-  parser.
+  `find -exec`, `git -C`, interpreters, subshells. Under `/scope sandbox on`,
+  mutations outside permitted roots cannot succeed because the kernel refuses
+  them (`EACCES` / `EROFS`), and the refusal is caught and presented to the user.
+- Containers/VMs remain the complete boundary against determined attacks: Landlock
+  and mount namespaces restrict filesystem mutations, but do not isolate
+  network egress, `ptrace`, or kernel `io_uring` bypasses from hostile code.
 - A symlinked ancestor is resolved with `realpath`, so `link -> /etc` is judged
   by its target. A path created *after* the check is not.
 - Network egress, secret redaction and resource cost are out of scope.
