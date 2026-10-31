@@ -238,7 +238,44 @@ export type RouterModelInfo = {
   type?: string;
   /** Virtual models carry `pi-virtual`; a route target must be physical. */
   api?: string;
+  contextWindow?: number;
+  maxTokens?: number;
+  reasoning?: boolean;
+  input?: readonly string[];
 };
+
+/** Token counts the way `/models` prints them, so the two lists read alike. */
+export function formatTokens(count: number): string {
+  if (count >= 1_000_000) {
+    const millions = count / 1_000_000;
+    return millions % 1 === 0 ? `${millions}M` : `${millions.toFixed(1)}M`;
+  }
+  if (count >= 1_000) {
+    const thousands = count / 1_000;
+    return thousands % 1 === 0 ? `${thousands}K` : `${thousands.toFixed(1)}K`;
+  }
+  return String(count);
+}
+
+/**
+ * The facts `/models` prints for a model, in the same order.
+ *
+ * A picker that is choosing a route target has to answer "can this model do the
+ * job this route needs", and context, output limit, thinking and image input
+ * are exactly what decides that.
+ */
+export function describeModelFacts(model: RouterModelInfo): string {
+  const facts: string[] = [];
+  if (typeof model.contextWindow === "number" && model.contextWindow > 0) {
+    facts.push(`${formatTokens(model.contextWindow)} ctx`);
+  }
+  if (typeof model.maxTokens === "number" && model.maxTokens > 0) {
+    facts.push(`${formatTokens(model.maxTokens)} out`);
+  }
+  if (model.reasoning === true) facts.push("thinking");
+  if (model.input?.includes("image")) facts.push("images");
+  return facts.join(" · ");
+}
 
 /**
  * Models a route may target, as `provider/model` choices.
@@ -264,7 +301,8 @@ export function routerModelChoices(
     const key = `${provider}/${id}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    choices.push({ id: key, name: model.name ?? id });
+    const detail = describeModelFacts(model);
+    choices.push({ id: key, name: model.name ?? id, ...(detail ? { detail } : {}) });
   }
   return choices.sort((a, b) => a.id.localeCompare(b.id));
 }

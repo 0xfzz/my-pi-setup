@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  classifyFailure, cycleMethod, cycleValue, cycleWhen, describeChain, describeTarget, fileChoiceOf,
-  mergeTargets, moveTarget, replaceTarget, routeIssues, routeNameProblem, routerModelChoices, routerRows,
-  suggestRouteName, whenOf, withPolicy,
+  classifyFailure, cycleMethod, cycleValue, cycleWhen, describeChain, describeModelFacts, describeTarget,
+  fileChoiceOf, formatTokens, mergeTargets, moveTarget, replaceTarget, routeIssues, routeNameProblem,
+  routerModelChoices, routerRows, suggestRouteName, whenOf, withPolicy,
 } from "../lib/router-settings.ts";
 import type { SourcedRoute } from "../lib/router-config.ts";
 
@@ -148,4 +148,33 @@ test("a failure is classified for the quota and overflow triggers", () => {
   assert.equal(classifyFailure("401 invalid token"), "other");
   assert.equal(classifyFailure("stream ended without a result"), "other");
   assert.equal(classifyFailure(undefined), "other");
+});
+
+test("the picker shows the same facts /models does, in the same order", () => {
+  assert.equal(describeModelFacts({
+    provider: "p", id: "m", contextWindow: 200_000, maxTokens: 8_192, reasoning: true, input: ["text", "image"],
+  }), "200K ctx · 8.2K out · thinking · images");
+  assert.equal(describeModelFacts({ provider: "p", id: "m", contextWindow: 1_000_000 }), "1M ctx");
+  assert.equal(describeModelFacts({ provider: "p", id: "m", maxTokens: 1_500 }), "1.5K out");
+  assert.equal(describeModelFacts({ provider: "p", id: "m", input: ["text"] }), "",
+    "text-only and non-thinking models add nothing rather than noise");
+  assert.equal(describeModelFacts({ provider: "p", id: "m" }), "");
+});
+
+test("token counts are abbreviated exactly like the model list", () => {
+  assert.equal(formatTokens(8192), "8.2K", "the same rounding /models uses");
+  assert.equal(formatTokens(8000), "8K");
+  assert.equal(formatTokens(200_000), "200K");
+  assert.equal(formatTokens(1_000_000), "1M");
+  assert.equal(formatTokens(1_500_000), "1.5M");
+  assert.equal(formatTokens(512), "512");
+});
+
+test("each choice carries its facts so the picker can show them", () => {
+  const [choice] = routerModelChoices([
+    { provider: "openai", id: "gpt-6", name: "GPT-6", contextWindow: 200_000, maxTokens: 8_192, reasoning: true },
+  ]);
+  assert.deepEqual(choice, { id: "openai/gpt-6", name: "GPT-6", detail: "200K ctx · 8.2K out · thinking" });
+  const [bare] = routerModelChoices([{ provider: "p", id: "m" }]);
+  assert.deepEqual(bare, { id: "p/m", name: "m" }, "a model with no metadata gains no empty detail");
 });

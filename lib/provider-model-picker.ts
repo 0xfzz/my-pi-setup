@@ -4,8 +4,22 @@ import {
   type Component, type Focusable, type SelectListTheme, type TuiMouseEvent, type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 
-export type ModelChoice = { id: string; name?: string };
+/**
+ * One pickable model.
+ *
+ * `name` is the display name; `detail` is the catalog facts `/models` prints
+ * (context, output limit, thinking, images) so a route target is chosen with
+ * the same information the model list gives.
+ */
+export type ModelChoice = { id: string; name?: string; detail?: string };
 export type ModelSelection = { ids: string[] } | { manual: true } | undefined;
+
+/** Display name and catalog facts on one line, like `/models` shows them. */
+export function describeChoice(model: ModelChoice): string | undefined {
+  const parts = [model.name, model.detail].filter((part): part is string => Boolean(part));
+  return parts.length ? parts.join(" · ") : undefined;
+}
+
 const plain = (text: string) => text;
 const plainTheme: SelectListTheme = {
   selectedPrefix: plain, selectedText: plain, description: plain, scrollInfo: plain, noMatch: plain,
@@ -57,7 +71,7 @@ export class ProviderModelPicker implements Component, Focusable {
     this.#list = new SelectList(this.#filtered.map(model => ({
       value: model.id,
       label: `[${this.#selected.has(model.id) ? "x" : " "}] ${model.id}`,
-      description: model.name,
+      description: describeChoice(model),
     })), this.#visible, this.#theme);
     if (current) this.#list.setSelectedIndex(this.#filtered.findIndex(model => model.id === current));
     this.#list.onSelect = item => {

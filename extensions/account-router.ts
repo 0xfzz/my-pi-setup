@@ -1148,9 +1148,19 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     return `Saved router/${action.route.name} in ${file}.`;
   };
 
-  /** Models a route may target, from the live registry rather than the config. */
+  /**
+   * Models a route may target, from the live registry rather than the config.
+   *
+   * `getAvailable()` is the set `/models` lists — models whose provider has
+   * working credentials — so the picker cannot offer a target that would fail
+   * on its first request. The catalog facts travel with each choice so the
+   * decision is made with the same information `/models` shows.
+   */
   const routeModelChoices = (ctx: ExtensionCommandContext) => {
-    const models = typeof ctx.modelRegistry?.getAll === "function" ? ctx.modelRegistry.getAll() : [];
+    const registry = ctx.modelRegistry;
+    const models = typeof registry?.getAvailable === "function"
+      ? registry.getAvailable()
+      : typeof registry?.getAll === "function" ? registry.getAll() : [];
     return routerModelChoices(
       models.map((model) => ({
         provider: model.provider,
@@ -1158,6 +1168,10 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
         ...(model.name ? { name: model.name } : {}),
         ...(model.type ? { type: model.type } : {}),
         ...(model.api ? { api: model.api } : {}),
+        ...(typeof model.contextWindow === "number" ? { contextWindow: model.contextWindow } : {}),
+        ...(typeof model.maxTokens === "number" ? { maxTokens: model.maxTokens } : {}),
+        ...(typeof model.reasoning === "boolean" ? { reasoning: model.reasoning } : {}),
+        ...(Array.isArray(model.input) ? { input: model.input as readonly string[] } : {}),
       })),
       { excludeProviders: [table.provider] },
     );
