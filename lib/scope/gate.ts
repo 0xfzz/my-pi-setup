@@ -14,6 +14,7 @@
  *    session grant so the caller can persist it on the branch and show it in
  *    `/scope log`; nothing is written here.
  */
+import { dirname } from "node:path";
 import { describeDecision, evaluateClaim } from "./policy.ts";
 import { classifyPath, suggestGrant } from "./paths.ts";
 import { claimSetFor, displayPath, type PathRequest } from "./tool-paths.ts";
@@ -29,6 +30,7 @@ import type {
   UnknownClaim,
 } from "./types.ts";
 import type { ClaimSnapshot, DecisionRecord } from "./telemetry.ts";
+import type { SandboxBoundary } from "./sandbox/policy.ts";
 
 export interface AskRequest {
   tool: string;
@@ -174,6 +176,15 @@ export interface GateDeps {
    * deny is re-checked in every lane and always wins.
    */
   bashAskLane?: () => "ask" | "refusal";
+  /**
+   * What the armed sandbox can actually write, consulted by every evaluation.
+   *
+   * Supplying it keeps the gate and the kernel answering the same question the
+   * same way: without it, the table's own temp/device silences would approve
+   * writes the kernel is about to refuse. Return `undefined` when no boundary is
+   * enforced (sandbox off, or a degraded backend running bare).
+   */
+  sandboxBoundary?: () => SandboxBoundary | undefined;
 }
 
 /** One question at a time, FIFO. `size` is what the sidebar shows. */
@@ -200,10 +211,34 @@ export class SerialQueue {
   }
 }
 
+/**
+ * The path a kernel sandbox needs in order to honour an approval.
+ *
+ * Landlock and bwrap allow writes *beneath* a path, so approving a file that
+ * does not exist yet needs its directory: a `--rw <file>` grant approves the
+ * name and still refuses creating it. Writing at `/` is never the answer.
+ */
+function sandboxGrantFor(absolute: string): readonly string[] {
+  const parent = dirname(absolute);
+  return parent && parent !== "/" && parent !== absolute ? [parent] : [];
+}
+
 export interface RefusalOutcome {
   allowed: boolean;
   reason?: string;
   grantSummary?: string;
+  /**
+   * Paths the answered question just approved, to be added to the next wrap.
+   * A gate rule cannot widen the kernel, so a rule answer grants nothing here.
+   */
+  granted?: readonly string[];
+  /**
+   * Whether retrying the command can actually succeed.
+   *
+   * A trailer may only say "retry" when this is true; an approval that never
+   * reaches the sandbox is exactly the loop this field exists to end.
+   */
+  retrySafe: boolean;
 }
 
 export interface Gate {
@@ -325,6 +360,16 @@ export function createGate(deps: GateDeps): Gate {
 
   function denied(tool: string, decision: ScopeDecision): GateResult {
     return { block: true, reason: `Scope: ${decision.reason}. ${tool} was not run. ${DENY_HINT}` };
+  }
+
+  /**
+   * Evaluate one claim with the armed sandbox's boundary attached.
+   *
+   * Every evaluation goes through here: a decision reached without the boundary
+   * is a decision that can disagree with the kernel.
+   */
+  function decideClaim(claim: Claim, tool: string, phase: EvaluateContext["phase"]): ScopeDecision {
+    return withHook(evaluateClaim(claim, deps.state(), { sandbox: deps.sandboxBoundary?.() }), { tool, claim, phase });
   }
 
   async function askFor(tool: string, claim: PathClaim, decision: ScopeDecision): Promise<AskAnswer> {
@@ -493,8 +538,7 @@ export function createGate(deps: GateDeps): Gate {
       // name it, and let a rule cover it, instead of letting it read as suspicion.
       const opaque = claimSet.opaque;
       const unknownClaim: UnknownClaim = { tool, unknown: true };
-      const decide = (phase: EvaluateContext["phase"]) =>
-        withHook(evaluateClaim(unknownClaim, deps.state()), { tool, claim: unknownClaim, phase });
+      const decide = (phase: EvaluateContext["phase"]) => decideClaim(unknownClaim, tool, phase);
       const decision = decide("initial");
       if (decision.effect === "deny") {
         report({ tool, input: inputText, effect: "deny", asked: false, unknown: true, ...(opaque ? { opaque } : {}), reason: decision.reason, decision });
@@ -590,7 +634,7 @@ export function createGate(deps: GateDeps): Gate {
 
     for (const request of claimSet.paths) {
       const claim = toPathClaim(tool, request);
-      const decision = withHook(evaluateClaim(claim, deps.state()), { tool, claim, phase: "initial" });
+      const decision = decideClaim(claim, tool, "initial");
       if (decision.effect === "deny") {
         report({ tool, input: inputText, effect: "deny", asked: false, reason: decision.reason, decision, claim });
         return denied(tool, decision);
@@ -607,7 +651,7 @@ export function createGate(deps: GateDeps): Gate {
       }
       const result = await queue.run(async (): Promise<GateResult | undefined> => {
         const claimed = toPathClaim(tool, request);
-        const again = withHook(evaluateClaim(claimed, deps.state()), { tool, claim: claimed, phase: "recheck" });
+        const again = decideClaim(claimed, tool, "recheck");
         if (again.effect === "allow") {
           report({ tool, input: inputText, effect: "allow", asked: false, reason: again.reason, decision: again, claim: claimed });
           return undefined;
@@ -648,7 +692,7 @@ export function createGate(deps: GateDeps): Gate {
           return undefined;
         }
         applyAnswer(answer, claimed);
-        const after = withHook(evaluateClaim(claimed, deps.state()), { tool, claim: claimed, phase: "recheck" });
+        const after = decideClaim(claimed, tool, "recheck");
         report({
           tool,
           input: inputText,
@@ -666,8 +710,7 @@ export function createGate(deps: GateDeps): Gate {
     return undefined;
   }
 
-  const evaluate = (claim: PathClaim): ScopeDecision =>
-    withHook(evaluateClaim(claim, deps.state()), { tool: claim.tool, claim, phase: "initial" });
+  const evaluate = (claim: PathClaim): ScopeDecision => decideClaim(claim, claim.tool, "initial");
 
   async function handleRefusal(tool: string, absolutePath: string): Promise<RefusalOutcome> {
     const classified = classifyPath(deps.cwd(), deps.state().roots, absolutePath);
@@ -682,27 +725,36 @@ export function createGate(deps: GateDeps): Gate {
       kind: "unknown",
     };
 
-    const decision = withHook(evaluateClaim(claim, deps.state()), { tool, claim, phase: "initial" });
+    const decision = decideClaim(claim, tool, "initial");
     if (decision.effect === "deny") {
       report({ tool, input: absolutePath, effect: "deny", asked: false, reason: decision.reason, decision, claim });
-      return { allowed: false, reason: decision.reason };
+      return { allowed: false, reason: decision.reason, retrySafe: false };
     }
     if (decision.effect === "allow") {
       const auto = Boolean(deps.state().yolo && decision.reason.includes("(yolo"));
       if (auto) deps.onAutoApprove?.(decision, claim);
       report({ tool, input: absolutePath, effect: "allow", asked: false, auto, reason: decision.reason, decision, claim });
-      return { allowed: true, grantSummary: "allowed by existing rule or yolo" };
+      // The gate approved it, but the kernel still refused: widen the next wrap
+      // so the retry can succeed. Saying "retry" without this is the loop.
+      const granted = sandboxGrantFor(claim.absolute);
+      return {
+        allowed: true,
+        grantSummary: "allowed by existing rule or yolo",
+        granted,
+        retrySafe: granted.length > 0,
+      };
     }
 
     return await queue.run(async (): Promise<RefusalOutcome> => {
-      const again = withHook(evaluateClaim(claim, deps.state()), { tool, claim, phase: "recheck" });
+      const again = decideClaim(claim, tool, "recheck");
       if (again.effect === "allow") {
         report({ tool, input: absolutePath, effect: "allow", asked: false, reason: again.reason, decision: again, claim });
-        return { allowed: true, grantSummary: "allowed by prior grant" };
+        const granted = sandboxGrantFor(claim.absolute);
+        return { allowed: true, grantSummary: "allowed by prior grant", granted, retrySafe: granted.length > 0 };
       }
       if (again.effect === "deny") {
         report({ tool, input: absolutePath, effect: "deny", asked: false, reason: again.reason, decision: again, claim });
-        return { allowed: false, reason: again.reason };
+        return { allowed: false, reason: again.reason, retrySafe: false };
       }
 
       const answer = await askFor(tool, claim, again);
@@ -717,7 +769,7 @@ export function createGate(deps: GateDeps): Gate {
           decision: again,
           claim,
         });
-        return { allowed: false, reason: answer.message };
+        return { allowed: false, reason: answer.message, retrySafe: false };
       }
       if (answer.kind === "deny") {
         report({
@@ -730,15 +782,16 @@ export function createGate(deps: GateDeps): Gate {
           decision: again,
           claim,
         });
-        return { allowed: false, reason: answer.feedback ?? again.reason };
+        return { allowed: false, reason: answer.feedback ?? again.reason, retrySafe: false };
       }
       if (answer.kind === "once") {
         report({ tool, input: absolutePath, effect: "allow", asked: true, answer: "once", reason: again.reason, decision: again, claim });
-        return { allowed: true, grantSummary: "allowed once" };
+        const granted = sandboxGrantFor(claim.absolute);
+        return { allowed: true, grantSummary: "allowed once", granted, retrySafe: granted.length > 0 };
       }
 
       applyAnswer(answer, claim);
-      const after = withHook(evaluateClaim(claim, deps.state()), { tool, claim, phase: "recheck" });
+      const after = decideClaim(claim, tool, "recheck");
       const summary = answer.kind === "allow"
         ? `allowed for ${answer.grant.exact ? "this file" : "this folder"} (${answer.persist === "workspace" ? "workspace config" : "this session"})`
         : `rule added: ${answer.text}`;
@@ -752,7 +805,14 @@ export function createGate(deps: GateDeps): Gate {
         decision: after,
         claim,
       });
-      return { allowed: after.effect === "allow", reason: after.reason, grantSummary: summary };
+      const granted = answer.kind === "allow" ? [answer.grant.path] : [];
+      return {
+        allowed: after.effect === "allow",
+        reason: after.reason,
+        grantSummary: summary,
+        granted,
+        retrySafe: after.effect === "allow" && granted.length > 0,
+      };
     });
   }
 

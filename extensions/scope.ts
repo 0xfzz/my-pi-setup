@@ -32,7 +32,7 @@ import { evaluateClaim, narrowYoloSensitiveRead } from "../lib/scope/policy.ts";
 import {
   DEFAULT_SANDBOX_CONFIG,
 } from "../lib/scope/sandbox/config.ts";
-import { deriveSandboxPolicy } from "../lib/scope/sandbox/policy.ts";
+import { deriveSandboxPolicy, type SandboxBoundary, type SandboxPolicy } from "../lib/scope/sandbox/policy.ts";
 import { buildSandboxEnv } from "../lib/scope/sandbox/env.ts";
 import { wrapBashCommand } from "../lib/scope/sandbox/wrap.ts";
 import { probeBackend, type ProbeResult } from "../lib/scope/sandbox/probe.ts";
@@ -75,6 +75,42 @@ export default function scopeExtension(pi: ExtensionAPI) {
   let sessionScratchDir: string | undefined;
   let sandboxDegradedWarned = false;
   const refusalDeduper = new RefusalDeduper();
+  /**
+   * One-shot write approvals from the refusal lane.
+   *
+   * "Allowed once" deliberately does not become a root: it widens exactly one
+   * bash wrap, so the retry can succeed without turning a single answer into a
+   * standing grant. Expiry covers a retry that never comes.
+   */
+  let pendingSandboxGrants: Array<{ path: string; expiresAt: number }> = [];
+  /** The boundary the current bash call is judged and wrapped with. */
+  let activeBoundary: SandboxBoundary | undefined;
+
+  const SANDBOX_GRANT_TTL_MS = 2 * 60_000;
+
+  /** Consume every pending grant: one approval covers exactly one bash call. */
+  function takeSandboxGrants(): string[] {
+    if (!pendingSandboxGrants.length) return [];
+    const now = Date.now();
+    const live = pendingSandboxGrants.filter(grant => grant.expiresAt > now).map(grant => grant.path);
+    pendingSandboxGrants = [];
+    return live;
+  }
+
+  function rememberSandboxGrants(paths: readonly string[]): void {
+    const expiresAt = Date.now() + SANDBOX_GRANT_TTL_MS;
+    for (const path of paths) {
+      if (!pendingSandboxGrants.some(grant => grant.path === path)) {
+        pendingSandboxGrants.push({ path, expiresAt });
+      }
+    }
+  }
+
+  /** The directory `/scope sandbox allow` needs in order to cover a refused path. */
+  function sandboxAllowHint(path: string): string {
+    const parent = dirname(path);
+    return parent && parent !== "/" ? parent : path;
+  }
 
   /** The sandbox context of the bash call just wrapped: telemetry and the
    *  refusal loop read this. `undefined` (or `degraded`) means bash ran bare,
@@ -176,6 +212,7 @@ export default function scopeExtension(pi: ExtensionAPI) {
     // suppressed because the kernel is the one that asks — it refuses the
     // outside write and the refusal opens the question afterwards.
     bashAskLane: () => (bashAskRefusal() ? "refusal" : "ask"),
+    sandboxBoundary: () => activeBoundary,
     sandbox: () => lastSandboxMeta,
     onAutoApprove: (decision, claim) => {
       log.add({
@@ -894,21 +931,35 @@ export default function scopeExtension(pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     context = ctx;
     const input = event.input as Record<string, unknown> | undefined;
+    const command = event.toolName === "bash" && typeof input?.command === "string" ? input.command : undefined;
+    const isBash = command !== undefined;
+    const planActive = planModeFromBranch(context?.sessionManager?.getBranch?.())?.enabled === true;
+    const cfg = state.sandbox ?? DEFAULT_SANDBOX_CONFIG;
+    const effectiveMode = planActive ? "readonly" : cfg.mode;
+    const effectiveCfg = { ...cfg, mode: effectiveMode };
+
+    // Derive the write boundary before the gate judges the call. The gate must not
+    // approve what the kernel is about to refuse, and a one-shot grant from the
+    // refusal lane has to be visible to both halves or the retry cannot work.
+    const grants = isBash ? takeSandboxGrants() : [];
+    const scratch = isBash && effectiveMode !== "off" ? getOrCreateScratchDir() : undefined;
+    const policy: SandboxPolicy | undefined = isBash && effectiveMode !== "off"
+      ? deriveSandboxPolicy(state, effectiveCfg, cwd, { scratchDir: scratch, extraWritable: grants })
+      : undefined;
+    activeBoundary = policy ? { writable: policy.writable, deny: policy.deny } : undefined;
+
     const result = await gate.gate(event.toolName, input);
     if (result) {
+      activeBoundary = undefined;
       log.add({ tool: event.toolName, path: String(input?.path ?? input?.command ?? "*"), write: true, outcome: "deny", detail: result.reason.slice(0, 80) });
       draw?.();
       return { block: true, reason: result.reason };
     }
 
-    if (event.toolName === "bash" && typeof input?.command === "string") {
-      const planActive = planModeFromBranch(context?.sessionManager?.getBranch?.())?.enabled === true;
-      const cfg = state.sandbox ?? DEFAULT_SANDBOX_CONFIG;
-      const effectiveMode = planActive ? "readonly" : cfg.mode;
+    if (isBash) {
       if (effectiveMode === "off") {
         lastSandboxMeta = undefined;
       } else {
-        const effectiveCfg = { ...cfg, mode: effectiveMode };
         const probe = await probeBackend(effectiveCfg.backend);
         lastSandboxMeta = { backend: probe.backend, mode: effectiveMode, ...(probe.ok ? {} : { degraded: true }) };
         if (!probe.ok) {
@@ -916,17 +967,15 @@ export default function scopeExtension(pi: ExtensionAPI) {
             sandboxDegradedWarned = true;
             ctx.ui.notify(`Scope: sandbox backend "${probe.backend}" is unavailable (${probe.detail}). Running unsandboxed.`, "warning");
           }
-        } else {
-          const scratch = getOrCreateScratchDir();
-          const policy = deriveSandboxPolicy(state, effectiveCfg, cwd, { scratchDir: scratch });
+        } else if (policy) {
           const env = buildSandboxEnv({ scratchDir: scratch });
-          const wrapped = wrapBashCommand(input.command, policy, probe.backend, env);
+          const wrapped = wrapBashCommand(command, policy, probe.backend, env);
           if ("block" in wrapped) {
-            log.add({ tool: "bash", path: input.command, write: true, outcome: "deny", detail: wrapped.block.slice(0, 80) });
+            log.add({ tool: "bash", path: command, write: true, outcome: "deny", detail: wrapped.block.slice(0, 80) });
             draw?.();
             return { block: true, reason: wrapped.block };
           }
-          input.command = wrapped.command;
+          input!.command = wrapped.command;
         }
       }
     }
@@ -967,13 +1016,26 @@ export default function scopeExtension(pi: ExtensionAPI) {
     }
 
     for (const hit of hits) {
-      if (refusalDeduper.has(hit.path)) continue;
+      if (refusalDeduper.has(hit.path)) {
+        // Asking again would be noise, but silence is how the loop hides: state
+        // that it is still blocked and name the remedy.
+        appendTrailer(
+          event,
+          `\n[sandbox] still blocked: ${hit.path} (already answered this session).\nWiden it with /scope sandbox allow ${sandboxAllowHint(hit.path)}.`,
+        );
+        continue;
+      }
       refusalDeduper.add(hit.path);
 
       const outcome = await gate.handleRefusal("bash", hit.path);
-      const trailer = outcome.allowed
+      if (outcome.retrySafe && outcome.granted?.length) rememberSandboxGrants(outcome.granted);
+      // "Retry the command" only when the approval reached the sandbox. An
+      // approval the kernel never hears is the infinite-retry loop this replaced.
+      const trailer = outcome.retrySafe
         ? `\n[sandbox] blocked a write outside the workspace: ${hit.path}.\nAnswer: ${outcome.grantSummary ?? "allowed"}. Retry the command.`
-        : `\n[sandbox] blocked a write outside the workspace: ${hit.path}.\nAccess denied: ${outcome.reason ?? "denied by policy"}`;
+        : outcome.allowed
+          ? `\n[sandbox] blocked a write outside the workspace: ${hit.path}.\nAnswer: ${outcome.grantSummary ?? "allowed"}, but the sandbox cannot be widened for it — a retry is refused the same way.\nWiden it with /scope sandbox allow ${sandboxAllowHint(hit.path)}.`
+          : `\n[sandbox] blocked a write outside the workspace: ${hit.path}.\nAccess denied: ${outcome.reason ?? "denied by policy"}`;
       appendTrailer(event, trailer);
       draw?.();
       refresh();

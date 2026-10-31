@@ -17,6 +17,7 @@
 import { resolveRule } from "./glob.ts";
 import { tmpdir } from "node:os";
 import { rootCovering, toResourceSlash } from "./paths.ts";
+import { denyCovers, STANDARD_WRITABLE_DEVICES, type SandboxBoundary } from "./sandbox/policy.ts";
 import type {
   Claim,
   ScopeDecision,
@@ -29,6 +30,15 @@ import type {
 export interface EvaluateOptions {
   /** Set by the gate after the user answered "allow once" for this call. */
   approvedOnce?: boolean;
+  /**
+   * The armed sandbox's write boundary, when one enforces anything.
+   *
+   * Absent means no kernel boundary: the legacy device/temp rules below decide
+   * on their own. Present means the silences must match the sandbox exactly — a
+   * path the gate allows but the kernel refuses produces a refusal answer that
+   * asks the model to retry a command that cannot succeed.
+   */
+  sandbox?: SandboxBoundary;
 }
 
 /**
@@ -79,16 +89,41 @@ function reasonForDeny(rule: { action: string; resource: string }, tool: string)
  * escape. Deny rules still win — this runs after them.
  */
 const DEVICE_PREFIXES = ["/dev/", "/proc/", "/sys/"];
+/** Virtual trees that are never a write target, so a redirect there is not a question. */
+const VIRTUAL_PREFIXES = ["/proc/", "/sys/"];
+/**
+ * The process's own stdio. `/dev/stdout` is a magic link to the tty or pipe the
+ * sandbox already allows, so a script redirecting there is not reaching outside.
+ */
+const STDIO_DEVICES = ["/dev/stdout", "/dev/stderr", "/dev/stdin"];
+const STDIO_PREFIX = "/dev/fd/";
 const TEMP_PREFIXES = ["/tmp/", "/var/tmp/", "/private/tmp/", "/private/var/folders/"];
 
-function isSpecialPath(absolute: string, workspace: string): boolean {
+function isSpecialPath(absolute: string, workspace: string, sandbox: SandboxBoundary | undefined): boolean {
   const path = toResourceSlash(absolute);
-  if (DEVICE_PREFIXES.some(prefix => path.startsWith(prefix))) return true;
-  const scratch = toResourceSlash(tmpdir());
-  // A workspace that itself lives in the temp root does not turn its siblings
-  // into scratch: there the boundary is real and must still ask.
-  if (workspace === scratch || workspace.startsWith(`${scratch}/`)) return false;
-  return path === scratch || path.startsWith(`${scratch}/`) || TEMP_PREFIXES.some(prefix => path.startsWith(prefix));
+  if (!sandbox) {
+    if (DEVICE_PREFIXES.some(prefix => path.startsWith(prefix))) return true;
+    const scratch = toResourceSlash(tmpdir());
+    // A workspace that itself lives in the temp root does not turn its siblings
+    // into scratch: there the boundary is real and must still ask.
+    if (workspace === scratch || workspace.startsWith(`${scratch}/`)) return false;
+    return path === scratch || path.startsWith(`${scratch}/`) || TEMP_PREFIXES.some(prefix => path.startsWith(prefix));
+  }
+  // A kernel boundary is armed: silence exactly what it can write, so the gate
+  // never approves a write the kernel is about to refuse. `/tmp` is therefore no
+  // longer scratch by default — it asks, and `sandbox.allow` is how it goes quiet.
+  if (VIRTUAL_PREFIXES.some(prefix => path.startsWith(prefix))) return true;
+  if (STDIO_DEVICES.includes(path) || path.startsWith(STDIO_PREFIX)) return true;
+  if (denyCovers(sandbox.deny, path)) return false;
+  if (sandbox.writable.some(entry => coveredByEntry(path, entry))) return true;
+  // The devices a pipeline needs are never a question, even if the boundary was
+  // built without them (a custom policy, a test fixture).
+  return STANDARD_WRITABLE_DEVICES.includes(path);
+}
+
+function coveredByEntry(path: string, entry: string): boolean {
+  const canonical = toResourceSlash(entry);
+  return path === canonical || path.startsWith(canonical.endsWith("/") ? canonical : `${canonical}/`);
 }
 
 /**
@@ -169,10 +204,19 @@ export function evaluateClaim(claim: Claim, state: ScopeState, options: Evaluate
     return { ...base, effect: "deny", reason: reasonForDeny(byCommand.rule, pathClaim.tool), rule: byCommand.rule };
   }
 
+  // 1b. The armed sandbox's own deny list is a refusal, not a question: the kernel
+  //     refuses the write whatever the answer, so asking would only produce a
+  //     retry that cannot work. A gate `deny` still won above this.
+  if (base.write && options.sandbox && denyCovers(options.sandbox.deny, toResourceSlash(pathClaim.absolute))) {
+    return { ...base, effect: "deny", reason: `sandbox.deny refuses writes to ${pathClaim.absolute}` };
+  }
+
   // 2. Device, /proc and temp targets are never a boundary question. `cmd
   //    2>/dev/null` must not prompt, and a scratch file under $TMPDIR is not an
   //    escape — this was the loudest source of asking in a shell-heavy session.
-  if (isSpecialPath(pathClaim.absolute, state.roots[0]?.path ?? "")) {
+  //    With a sandbox armed the list is exactly the sandbox's writable set, so
+  //    the two answers agree.
+  if (isSpecialPath(pathClaim.absolute, state.roots[0]?.path ?? "", options.sandbox)) {
     return { ...base, effect: "allow", reason: `special path ${pathClaim.absolute}` };
   }
 
