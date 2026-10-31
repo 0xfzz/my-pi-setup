@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { ScopeAskPopup, type ScopeAnswer } from "../lib/ui/scope-ask.ts";
+import { ScopeAskPopup, scopeChoices, type ScopeAnswer } from "../lib/ui/scope-ask.ts";
 import { PLAIN_THEME } from "../lib/popup.ts";
 import type { ScopeSuggestion } from "../lib/scope/types.ts";
 
@@ -18,6 +18,7 @@ function popup(overrides: Partial<ConstructorParameters<typeof ScopeAskPopup>[0]
   const component = new ScopeAskPopup({
     tool: "read",
     display: "../shared/config.yaml",
+    absolute: "/home/u/shared/config.yaml",
     write: false,
     reason: "outside the workspace: /home/u/shared/config.yaml",
     suggestion: suggestion(),
@@ -34,33 +35,60 @@ function popup(overrides: Partial<ConstructorParameters<typeof ScopeAskPopup>[0]
 
 const plain = (lines: string[]) => lines.map(stripTerminalSequences).join("\n");
 
-test("the dialog shows the target, the reason and the literal glob it would save", () => {
+test("the dialog offers the four grants and prints what each one stores", () => {
   const { component } = popup();
   const text = plain(component.render(72));
   assert.match(text, /read {2}\.\.\/shared\/config\.yaml/);
   assert.match(text, /outside the workspace/);
-  assert.match(text, /Allow once/);
-  assert.match(text, /Allow \/home\/u\/shared \(read-only · session\)/);
-  assert.match(text, /saves \/home\/u\/shared\/\*/);
-  assert.match(text, /Deny/);
-  assert.match(text, /Edit a rule/);
+  assert.match(text, /Allow \.\.\/shared\/config\.yaml for once/);
+  assert.match(text, /Always allow \.\.\/shared\/config\.yaml for this workspace/);
+  assert.match(text, /saves \/home\/u\/shared\/config\.yaml in \.pi\/scope\.json/);
+  assert.match(text, /Allow all \/home\/u\/shared\/\* for once/);
+  assert.match(text, /session only, not saved/);
+  assert.match(text, /Always allow \/home\/u\/shared\/\* for this workspace/);
+  assert.match(text, /saves \/home\/u\/shared\/\* in \.pi\/scope\.json/);
+  assert.match(text, /Deny with reason/);
   assert.match(text, /Esc deny/, "Escape must be documented as a denial, not a close");
 });
 
-test("a write request is labelled as a write and offers read-write access", () => {
-  const { component } = popup({ tool: "write", write: true, suggestion: suggestion({ access: "rw" }) });
+test("the rows are ordered once, workspace, folder, folder-for-workspace, deny, deny-with-reason", () => {
+  const labels = scopeChoices({
+    tool: "read",
+    display: "../shared/config.yaml",
+    absolute: "/home/u/shared/config.yaml",
+    write: false,
+    reason: "outside the workspace",
+    suggestion: suggestion(),
+  }).map(choice => choice.label);
+  assert.deepEqual(labels, [
+    "Allow ../shared/config.yaml for once",
+    "Always allow ../shared/config.yaml for this workspace",
+    "Allow all /home/u/shared/* for once",
+    "Always allow /home/u/shared/* for this workspace",
+    "Deny with reason",
+    "Deny",
+  ]);
+});
+
+test("a write request is labelled as a write and its grants carry read-write", () => {
+  const { component, answers } = popup({ tool: "write", write: true, suggestion: suggestion({ access: "rw" }) });
   const text = plain(component.render(72));
   assert.match(text, /^.*write {2}\.\.\/shared\/config\.yaml/m);
-  assert.match(text, /read-write/);
+  component.handleInput("3");
+  assert.equal(answers[0]?.kind, "allow");
+  assert.equal(answers[0]?.kind === "allow" ? answers[0].grant.access : undefined, "rw");
 });
 
 test("an exact-file suggestion never widens to a directory", () => {
   const { component } = popup({
+    display: "/home/u/.bashrc",
+    absolute: "/home/u/.bashrc",
     suggestion: suggestion({ path: "/home/u/.bashrc", glob: "/home/u/.bashrc", exact: true }),
   });
   const text = plain(component.render(72));
-  assert.match(text, /Allow only this file/);
-  assert.doesNotMatch(text, /Allow \/home\/u \(/);
+  assert.match(text, /Allow \/home\/u\/\.bashrc for once/);
+  assert.match(text, /Always allow \/home\/u\/\.bashrc for this workspace/);
+  assert.doesNotMatch(text, /Allow all/, "the folder that contains the workspace is never offered");
 });
 
 test("digits choose directly; Escape denies; arrows and Enter select", () => {
@@ -68,13 +96,27 @@ test("digits choose directly; Escape denies; arrows and Enter select", () => {
   once.component.handleInput("1");
   assert.deepEqual(once.answers, [{ kind: "once" }]);
 
-  const allow = popup();
-  allow.component.handleInput("2");
-  assert.equal(allow.answers[0]?.kind, "allow");
-  assert.equal(allow.answers[0]?.kind === "allow" ? allow.answers[0].grant.path : undefined, "/home/u/shared");
+  const exact = popup();
+  exact.component.handleInput("2");
+  assert.equal(exact.answers[0]?.kind, "allow");
+  assert.equal(exact.answers[0]?.kind === "allow" ? exact.answers[0].persist : undefined, "workspace");
+  assert.equal(exact.answers[0]?.kind === "allow" ? exact.answers[0].grant.path : undefined, "/home/u/shared/config.yaml");
+  assert.equal(exact.answers[0]?.kind === "allow" ? exact.answers[0].grant.exact : undefined, true);
+
+  const folder = popup();
+  folder.component.handleInput("3");
+  assert.equal(folder.answers[0]?.kind, "allow");
+  assert.equal(folder.answers[0]?.kind === "allow" ? folder.answers[0].persist : undefined, undefined);
+  assert.equal(folder.answers[0]?.kind === "allow" ? folder.answers[0].grant.path : undefined, "/home/u/shared");
+
+  const folderPersisted = popup();
+  folderPersisted.component.handleInput("4");
+  assert.equal(folderPersisted.answers[0]?.kind, "allow");
+  assert.equal(folderPersisted.answers[0]?.kind === "allow" ? folderPersisted.answers[0].persist : undefined, "workspace");
+  assert.equal(folderPersisted.answers[0]?.kind === "allow" ? folderPersisted.answers[0].grant.path : undefined, "/home/u/shared");
 
   const deny = popup();
-  deny.component.handleInput("3");
+  deny.component.handleInput("6");
   assert.deepEqual(deny.answers, [{ kind: "deny" }]);
 
   const escape = popup();
@@ -97,16 +139,17 @@ test("an opaque command offers the narrowest rule, never a blanket grant", () =>
     commandRule: { action: "bash", resource: "find *" },
   });
   const text = plain(component.render(100));
-  assert.match(text, /Allow find \* commands \(session\)/);
+  assert.match(text, /Allow find \* commands for this session/);
   assert.match(text, /saves bash find \*/);
-  assert.doesNotMatch(text, /Allow only this file/, "a command question is not a file grant");
+  assert.doesNotMatch(text, /for once/, "a command question is not a file grant");
+  assert.doesNotMatch(text, /for this workspace/);
   component.handleInput("2");
   assert.deepEqual(answers, [{ kind: "rule", text: "bash find * allow" }], "option 2 saves the rule it printed, not a wildcard");
 });
 
 test("a denial can carry instructions for the model", () => {
   const { component, answers } = popup();
-  component.handleInput("4");
+  component.handleInput("5");
   assert.match(plain(component.render(72)), /Tell the model what to do instead/);
 
   for (const char of "read ok.yaml instead") component.handleInput(char);
@@ -116,16 +159,16 @@ test("a denial can carry instructions for the model", () => {
 
 test("an empty note is a plain denial, and Escape returns to the options", () => {
   const empty = popup();
-  empty.component.handleInput("4");
+  empty.component.handleInput("5");
   empty.component.handleInput("\r");
   assert.deepEqual(empty.answers, [{ kind: "deny" }], "Enter on an empty note must not invent guidance");
 
   const back = popup();
-  back.component.handleInput("4");
+  back.component.handleInput("5");
   back.component.handleInput("\x1b");
   assert.deepEqual(back.answers, [], "Escape inside the note backs out of the stage, it does not answer");
-  assert.match(plain(back.component.render(72)), /Allow once/, "the question is still open");
-  back.component.handleInput("3");
+  assert.match(plain(back.component.render(72)), /for once/, "the question is still open");
+  back.component.handleInput("6");
   assert.deepEqual(back.answers, [{ kind: "deny" }]);
 });
 
@@ -157,7 +200,7 @@ test("the dialog never exceeds a narrow width and stays readable", () => {
       for (const line of lines) {
         assert.ok(visibleWidth(line) <= width, `width ${width}: ${JSON.stringify(stripTerminalSequences(line))}`);
       }
-      assert.match(plain(lines), /Allow once/);
+      assert.match(plain(lines), /1 {2}Allow/, "the first option stays readable at every width");
     }
   }
 });

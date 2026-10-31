@@ -73,6 +73,45 @@ test("allow this folder adds a session root and stops asking for its files", asy
   assert.equal(h.asked.length, 1, "the folder grant must cover its siblings");
 });
 
+test("a workspace answer adds the root and asks the caller to persist it", async () => {
+  const persisted: string[] = [];
+  const grant = { path: "/other", access: "rw" as const, glob: "/other/*", exact: false };
+  const h = harness(
+    [{ kind: "allow", grant, persist: "workspace" }],
+    { external: "ask", readExternal: "ask" },
+    { onPersistGrant: suggestion => persisted.push(suggestion.path) },
+  );
+  assert.equal(await h.gate.gate("write", { path: "/other/a.txt" }), undefined);
+  assert.deepEqual(persisted, ["/other"], "the caller is the only one that knows where the project config is");
+  assert.deepEqual(h.grants.map(root => root?.path), ["/other"], "the session root is still recorded for the call in flight");
+  assert.equal(h.state.roots.length, 2);
+});
+
+test("a session answer never asks the caller to persist anything", async () => {
+  const persisted: string[] = [];
+  const h = harness(
+    [{ kind: "allow", grant: { path: "/other", access: "ro", glob: "/other/*", exact: false } }],
+    { external: "ask", readExternal: "ask" },
+    { onPersistGrant: suggestion => persisted.push(suggestion.path) },
+  );
+  assert.equal(await h.gate.gate("read", { path: "/other/a.txt" }), undefined);
+  assert.deepEqual(persisted, []);
+});
+
+test("a second answer upgrades a read-only root to read-write", async () => {
+  // Otherwise "allow read-write" on a folder already granted read-only would
+  // change nothing, and the write would ask again forever.
+  const h = harness([
+    { kind: "allow", grant: { path: "/other", access: "ro", glob: "/other/*", exact: false } },
+    { kind: "allow", grant: { path: "/other", access: "rw", glob: "/other/*", exact: false } },
+  ], { external: "ask", readExternal: "ask" });
+  await h.gate.gate("read", { path: "/other/a.txt" });
+  assert.equal(await h.gate.gate("write", { path: "/other/a.txt" }), undefined);
+  assert.equal(h.state.roots.length, 2, "an upgrade must not stack a second root");
+  assert.equal(h.state.roots.find(root => root.path === "/other")?.access, "rw");
+  assert.deepEqual(h.grants.map(root => root?.access), ["ro", "rw"]);
+});
+
 test("a folder grant is read-only until a write asks for read-write", async () => {
   const h = harness([
     { kind: "allow", grant: { path: "/other", access: "ro", glob: "/other/*", exact: false } },

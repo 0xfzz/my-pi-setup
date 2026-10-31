@@ -32,6 +32,14 @@ import type {
 export interface AskRequest {
   tool: string;
   display: string;
+  /**
+   * The canonical target of the claim.
+   *
+   * The dialog needs it because `display` is workspace-relative whenever it can
+   * be, while an "always allow this one file" answer has to store an absolute
+   * path; deriving it from `suggestion.path` would store the containing folder.
+   */
+  absolute: string;
   write: boolean;
   reason: string;
   suggestion: ScopeSuggestion;
@@ -48,7 +56,15 @@ export interface AskRequest {
 
 export type AskAnswer =
   | { kind: "once" }
-  | { kind: "allow"; grant: ScopeSuggestion }
+  /**
+   * A standing grant.
+   *
+   * `persist: "workspace"` means the user asked for it to outlive the session,
+   * so `onPersistGrant` writes it to the project config. The session root is
+   * still added: the call in flight must pass its own re-check whether or not
+   * the file write lands.
+   */
+  | { kind: "allow"; grant: ScopeSuggestion; persist?: "workspace" }
   /**
    * `feedback` is opencode's `CorrectedError`: a denial that carries what to do
    * instead. A plain deny ends the attempt; a deny with a note lets the model
@@ -103,6 +119,14 @@ export interface GateDeps {
   ask: (request: AskRequest) => Promise<AskAnswer | undefined>;
   /** Record a grant that must outlive this call (branch / config / audit). */
   onGrant?: (grant: { root: ScopeRoot; rule?: ScopeRule }) => void;
+  /**
+   * Write a grant the user asked to keep "for this workspace".
+   *
+   * Separate from `onGrant` on purpose: the branch snapshot reinforces a session
+   * answer, while this one has to reach the project's config file so a *new*
+   * session starts with it already granted.
+   */
+  onPersistGrant?: (grant: ScopeSuggestion) => void;
   /**
    * Is this a delegated child session?
    *
@@ -260,6 +284,7 @@ export function createGate(deps: GateDeps): Gate {
     const request: AskRequest = {
       tool,
       display: displayPath(deps.cwd(), claim.absolute),
+      absolute: claim.absolute,
       write: claim.write,
       reason: describeDecision(decision, tool, claim.absolute),
       suggestion,
@@ -306,22 +331,37 @@ export function createGate(deps: GateDeps): Gate {
     };
   }
 
+  /**
+   * Add a root, upgrading `ro` to `rw` when the user asked for more.
+   *
+   * Without the upgrade a second "allow read-write" answer on an already
+   * read-only folder would change nothing and the call would ask again forever.
+   */
+  function grantsRoot(state: ScopeState, root: ScopeRoot): ScopeState | undefined {
+    const existing = state.roots.find(candidate => candidate.path === root.path);
+    if (!existing) return { ...state, roots: [...state.roots, root] };
+    if (existing.access !== "ro" || root.access !== "rw") return undefined;
+    return { ...state, roots: state.roots.map(candidate => (candidate.path === root.path ? { ...candidate, access: "rw" } : candidate)) };
+  }
+
   function applyAnswer(answer: AskAnswer, claim: PathClaim): void {
-    const state = deps.state();
     if (answer.kind === "allow") {
       const root: ScopeRoot = {
         path: answer.grant.path,
         access: answer.grant.access,
         source: "session",
       };
-      if (!state.roots.some(existing => existing.path === root.path)) {
-        deps.setState({ ...state, roots: [...state.roots, root] });
+      const next = grantsRoot(deps.state(), root);
+      if (next) {
+        deps.setState(next);
         deps.onGrant?.({ root });
       }
+      if (answer.persist === "workspace") deps.onPersistGrant?.(answer.grant);
       return;
     }
     if (answer.kind === "rule") {
       const rule = parseRule(answer.text, claim.resource);
+      const state = deps.state();
       // Repeating an answer that is already stored must not stack a second copy:
       // `resolveRule` is last-match-wins, so a duplicate can later shadow the rule
       // it duplicates and make a narrowing edit appear to do nothing.
@@ -364,6 +404,7 @@ export function createGate(deps: GateDeps): Gate {
         const request: AskRequest = {
           tool,
           display: "(command cannot be analysed)",
+          absolute: deps.cwd(),
           write: true,
           reason: claimSet.reason ?? again.reason,
           suggestion: { path: deps.cwd(), access: "ro", glob: deps.cwd(), exact: true },

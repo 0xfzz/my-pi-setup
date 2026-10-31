@@ -41,9 +41,10 @@ conservative than it is.
    sensitive-read rule below. A hook may tighten or relax `allow`/`ask`; it is
    never consulted about a `deny`. That difference is what keeps a policy seam
    from becoming a hole.
-5. **"Ask" is a request, not a modal.** The answers are `once`, `always` (a
-   literal, printed grant) and `reject` — and a reject may carry a note, which
-   reaches the model as `Do this instead: …` rather than a bare refusal.
+5. **"Ask" is a request, not a modal.** The answers are `once`, three standing
+   grants (this file or its folder, for this session or for this workspace) and
+   `reject` — every grant is literal and printed, and a reject may carry a note,
+   which reaches the model as `Do this instead: …` rather than a bare refusal.
 
 ## Jurisdiction: builtin path tools only
 
@@ -127,33 +128,47 @@ that were asked about most; that is the input a grant or a rule needs.
 ## The question
 
 ```text
-╭─ Access outside the workspace ────────────────────────────╮
-│ read  ../shared/config.yaml                               │
-│ outside the workspace: /home/u/shared/config.yaml         │
-│                                                           │
-│   1  Allow once                                           │
-│ › 2  Allow /home/u/shared (read-only · session)           │
-│      saves /home/u/shared/*                               │
-│   3  Deny                                                 │
-│   4  Deny with instructions…                              │
-│   5  Edit a rule…                                         │
-╰─ ↑↓ select · Enter choose · 1-5 · e rule · Esc deny ───────╯
+╭─ Access outside the workspace ──────────────────────────────────────╮
+│ read  ../shared/config.yaml                                        │
+│ outside the workspace: /home/u/shared/config.yaml                  │
+│                                                                    │
+│ › 1  Allow ../shared/config.yaml for once                          │
+│   2  Always allow ../shared/config.yaml for this workspace         │
+│      saves /home/u/shared/config.yaml in .pi/scope.json            │
+│   3  Allow all /home/u/shared/* for once                           │
+│      session only, not saved                                       │
+│   4  Always allow /home/u/shared/* for this workspace              │
+│      saves /home/u/shared/* in .pi/scope.json                      │
+│   5  Deny with reason                                              │
+│   6  Deny                                                          │
+╰─ ↑↓ select · Enter choose · 1-6 · e rule · Esc deny ────────────────╯
 ```
+
+The four grants are the two axes the question really has: **the target** (this
+one file, or everything in its folder as `dir/*`) and **the lifetime** (this
+session, or this workspace). "For once" on the folder row is the branch snapshot
+— it covers the calls queued behind it but is gone after a restart; "for this
+workspace" is a config write that a new session starts with.
 
 - **Escape denies.** The hint says so; a dialog that closes on Escape is never
   approval, and an aborted turn is a denial.
-- **A denial can say what to do instead.** Option 4 is opencode's reject stage:
+- **A denial can say what to do instead.** Option 5 is opencode's reject stage:
   a note becomes `Do this instead: …` in the block the model reads, and Enter on
   an empty note is a plain deny. Escape inside the stage returns to the question,
   so opening it cannot accidentally answer it — the same reason a closing dialog
   is never consent.
-- **The grant is literal and visible.** Option 2 prints the exact glob it will
-  save. Widening is never implicit — the failure that made one opencode approval
-  a standing `$HOME` grant was an invisible `save` pattern (opencode #52715).
+- **The grant is literal and visible.** Options 2 and 4 print the exact value
+  they store and the file they store it in. Widening is never implicit — the
+  failure that made one opencode approval a standing `$HOME` grant was an
+  invisible `save` pattern (opencode #52715).
 - **The offer is the narrowest useful one.** A file grants its directory
   (`dir/*`). If that directory is `$HOME`, `/`, a system tree, or a directory
-  that contains the workspace, the option degrades to *Allow only this file*
-  instead.
+  that contains the workspace, the folder rows are not offered at all: the only
+  standing grant is the file itself.
+- **The rule editor stays behind a key.** `e` opens a prefilled
+  `<tool> <glob> allow|ask|deny` line for the cases the six answers cannot say
+  (a `deny`, a wildcard the dialog did not compute); it is not a seventh row, so
+  the six answers keep their digits.
 - **One question at a time.** Parallel tool calls queue; an "allow this folder"
   answer re-evaluates the calls waiting behind it, so five reads in one outside
   directory cost one question.
@@ -288,7 +303,9 @@ accepted and silently inert; it now works, and a pattern that could re-expose
 | Answer | Stored | Survives reload/resume | Survives fork | Survives a new session |
 |---|---|---|---|---|
 | Allow once | memory | no | no | no |
-| Allow this folder | branch snapshot | yes | only in the branch that has it | no |
+| Allow all `<dir>/*` for once | branch snapshot | yes | only in the branch that has it | no |
+| Always allow `<dir>/*` for this workspace | `.pi/scope.json` | yes | yes | yes |
+| Always allow this file for this workspace | `.pi/scope.json` | yes | yes | yes |
 | `scope_answer` (child) | branch snapshot | yes | no | no |
 | `/scope allow --project` | `.pi/scope.json` | yes | yes | yes |
 | `/scope allow --global` | `~/.pi/agent/scope.json` | yes | yes | yes |
@@ -381,11 +398,14 @@ bypass, the named channels, interpreter entry scripts and the opaque cases.
 `source` lines and a target that cannot be resolved.
 `tests/scope-policy.test.ts` covers the decision order, special paths, sensitive
 reads, the `.env` template exception, the yolo narrowing and rule-silenced tools.
-`tests/scope-ask.test.ts` covers the dialog's keys, the literal glob row, the
-rule row for an unreadable command, the reject stage and narrow widths.
+`tests/scope-ask.test.ts` covers the dialog's keys, the six answers and the
+literal value each one stores, the rule row for an unreadable command, the
+reject stage and narrow widths.
 `tests/scope-gate.test.ts` covers the queue, allow once, folder grants covering
-queued calls, deny, deny-with-a-note, rule answers, duplicate rule answers, the
-policy hook, the base from the shell prefix, the bypass and fail-closed dialogs.
+queued calls, workspace answers reaching `onPersistGrant`, a read-only root
+upgraded to read-write, deny, deny-with-a-note, rule answers, duplicate rule
+answers, the policy hook, the base from the shell prefix, the bypass and
+fail-closed dialogs.
 `tests/scope-state.test.ts` covers config merge, wildcard validation, `~`
 expansion in rules, broken files, refused stored grants and snapshot replay.
 `tests/scope-command.test.ts` and `tests/scope-audit.test.ts` cover parsing,

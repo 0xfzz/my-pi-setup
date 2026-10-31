@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import scopeExtension from "../extensions/scope.ts";
@@ -113,7 +113,7 @@ test("an outside write opens one dialog; allow-once runs it, deny blocks it", as
   try {
     const pending = denied.emit("tool_call", { toolName: "write", input: { path: "../elsewhere/a.txt", content: "x" } });
     await tick();
-    denied.dialog!.component.handleInput("3");
+    denied.dialog!.component.handleInput("6");
     const [result] = await pending as Array<{ block: boolean; reason: string }>;
     assert.equal(result?.block, true);
     assert.match(result!.reason, /denied access to/);
@@ -133,12 +133,12 @@ test("an outside read runs with no dialog at all", async () => {
   }
 });
 
-test("allow this folder writes a branch snapshot and stops asking", async () => {
+test("allow all in this folder writes a branch snapshot and stops asking", async () => {
   const f = await fixture();
   try {
     const pending = f.emit("tool_call", { toolName: "write", input: { path: "../elsewhere/a.txt", content: "x" } });
     await tick();
-    f.dialog!.component.handleInput("2");
+    f.dialog!.component.handleInput("3");
     assert.deepEqual(await pending, []);
     assert.equal(f.appended.length, 1);
     assert.equal(f.appended[0]?.type, "agent-scope:v1");
@@ -146,6 +146,52 @@ test("allow this folder writes a branch snapshot and stops asking", async () => 
 
     const again = await f.emit("tool_call", { toolName: "read", input: { path: "../elsewhere/b.txt" } });
     assert.deepEqual(again, [], "the folder grant covers its siblings");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("always allow for this workspace writes .pi/scope.json and starts the next session granted", async () => {
+  const f = await fixture();
+  try {
+    const pending = f.emit("tool_call", { toolName: "write", input: { path: "../elsewhere/a.txt", content: "x" } });
+    await tick();
+    f.dialog!.component.handleInput("4");
+    assert.deepEqual(await pending, [], "the call in flight runs on the answer it just gave");
+
+    const config = JSON.parse(await readFile(join(f.dir, ".pi", "scope.json"), "utf8"));
+    const stored = config.roots.map((root: any) => root.path);
+    assert.equal(stored.length, 1);
+    assert.match(stored[0], /\/elsewhere$/);
+    assert.equal(config.roots[0].access, "rw");
+
+    await f.commands.get("scope").handler("status", f.ctx);
+    assert.match(f.notices.at(-1)!, /\.pi\/scope\.json/, "the status names the file the grant now lives in");
+
+    // A sibling still passes: the grant is the folder, not the one file.
+    assert.deepEqual(await f.emit("tool_call", { toolName: "read", input: { path: "../elsewhere/b.txt" } }), []);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("always allow this one file never grants its folder", async () => {
+  const f = await fixture();
+  try {
+    const pending = f.emit("tool_call", { toolName: "write", input: { path: "../elsewhere/a.txt", content: "x" } });
+    await tick();
+    f.dialog!.component.handleInput("2");
+    assert.deepEqual(await pending, []);
+
+    const config = JSON.parse(await readFile(join(f.dir, ".pi", "scope.json"), "utf8"));
+    assert.match(config.roots[0].path, /\/elsewhere\/a\.txt$/);
+
+    const sibling = f.emit("tool_call", { toolName: "write", input: { path: "../elsewhere/b.txt", content: "x" } });
+    await tick();
+    assert.ok(f.dialog, "a sibling file is still a separate question");
+    f.dialog!.component.handleInput("6");
+    const [blocked] = await sibling as Array<{ block: boolean }>;
+    assert.equal(blocked?.block, true);
   } finally {
     await f.cleanup();
   }
@@ -252,7 +298,7 @@ test("an opaque shell construct still opens exactly one question", async () => {
     const pending = f.emit("tool_call", { toolName: "bash", input: { command: "bash -c 'rm -rf /'" } });
     await tick();
     assert.ok(f.dialog, "a nested shell program is still asked about");
-    f.dialog!.component.handleInput("3");
+    f.dialog!.component.handleInput("4");
     const [result] = await pending as Array<{ block: boolean; reason: string }>;
     assert.equal(result?.block, true);
     assert.doesNotMatch(result!.reason, /"resource":"\*"/, "the blanket rule is never suggested");

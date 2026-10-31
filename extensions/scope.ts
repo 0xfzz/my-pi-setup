@@ -40,7 +40,7 @@ import {
 } from "../lib/scope/state.ts";
 import { SCOPE_RECORD_TYPE, type PathClaim, type ScopeRoot, type ScopeState } from "../lib/scope/types.ts";
 import { childContextState, isSubagentChildProcess, isSubagentChildSession } from "../lib/subagent-context.ts";
-import { ScopeAskPopup } from "../lib/ui/scope-ask.ts";
+import { ScopeAskPopup, scopeChoices } from "../lib/ui/scope-ask.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar-channel.ts";
 
 export default function scopeExtension(pi: ExtensionAPI) {
@@ -85,6 +85,20 @@ export default function scopeExtension(pi: ExtensionAPI) {
     // this session applies with scope_answer.
     isChild: () => isSubagentChildSession(context),
     onGrant: persist,
+    // "Always allow … for this workspace" writes the project config, so the next
+    // session starts already granted. The session root is added by the gate
+    // first, which is why a failed write still lets the call in flight through.
+    onPersistGrant: grant => {
+      try {
+        writeScopeRoot(projectScopeFile(cwd), cwd, grant.path, grant.access);
+      } catch (error) {
+        context?.ui.notify(`Scope: could not write ${projectScopeFile(cwd)} — ${(error as Error).message}`, "error");
+        return;
+      }
+      // Reload so the grant reports its real source (`project`, not `session`)
+      // and `/scope status` lists the file that now carries it.
+      if (context) reload(context);
+    },
     // Policy the decision table cannot see. `yolo` approves ordinary outside
     // paths, never a private key or a dotenv: the arm says "stop asking about
     // paths", not "publish my credentials".
@@ -150,30 +164,19 @@ export default function scopeExtension(pi: ExtensionAPI) {
       return answer ?? { kind: "deny" };
     }
     if (context?.hasUI && typeof ui?.select === "function") {
-      const labels = [
-        "Allow once",
-        request.commandRule
-          ? `Allow ${request.commandRule.resource} commands for this session`
-          : request.suggestion.exact
-            ? `Allow only ${request.display} for this session`
-            : `Allow ${request.suggestion.path} (${request.suggestion.access === "ro" ? "read-only" : "read-write"}) for this session`,
-        "Deny",
-        "Deny with instructions…",
-      ];
-      const saves = request.commandRule
-        ? `${request.commandRule.action} ${request.commandRule.resource}`
-        : request.suggestion.glob;
+      // Same list as the TUI popup: two surfaces offering different grants under
+      // the same question is how an answer stops meaning what it says.
+      const choices = scopeChoices(request);
+      const labels = choices.map(choice => choice.label);
+      const saves = choices.map(choice => choice.detail).filter((detail): detail is string => Boolean(detail));
       const chosen = await ui.select(
-        `${request.write ? "write" : "read"} ${request.display}\n${request.reason}\n\nsaves ${saves}`,
+        `${request.write ? "write" : "read"} ${request.display}\n${request.reason}${saves.length ? `\n\n${saves.join("\n")}` : ""}`,
         labels,
       );
-      if (chosen === labels[0]) return { kind: "once" };
-      if (chosen === labels[1]) {
-        return request.commandRule
-          ? { kind: "rule", text: `${request.commandRule.action} ${request.commandRule.resource} allow` }
-          : { kind: "allow", grant: request.suggestion };
-      }
-      if (chosen === labels[3] && typeof ui.input === "function") {
+      const action = choices[labels.indexOf(chosen ?? "")]?.action;
+      if (!action) return { kind: "deny" };
+      if (action.kind === "answer") return action.answer;
+      if (typeof ui.input === "function") {
         // opencode's reject-with-a-message: the note becomes the model's instruction.
         const note = await ui.input("Deny — tell the model what to do instead", "e.g. read /work/config.yaml instead");
         const feedback = note?.trim();

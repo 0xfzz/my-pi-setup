@@ -1,13 +1,18 @@
 /**
  * The "access outside the workspace" dialog.
  *
- * Four answers, in the order the user is most likely to want them, and no
- * preselection: Escape denies, it never approves. Option 2 always prints the
- * literal glob it will save, because opencode's `save` patterns turned a single
+ * Six answers, and no preselection: Escape denies, it never approves. The four
+ * grants are the two axes the question actually has:
+ *
+ *   the target  — this one file, or everything in its folder (`dir/*`)
+ *   the lifetime — this call / this session, or this workspace (a config write)
+ *
+ * Every persisting answer prints the literal value it stores and the file it
+ * stores it in, because opencode's invisible `save` patterns turned a single
  * "always" into a standing `$HOME` grant (issue #52715) — the widening must be
  * visible at the moment of consent, not discovered later in a config file.
  *
- * The fifth answer is opencode's reject-with-a-message: a denial that carries
+ * "Deny with reason" is opencode's reject-with-a-message: a denial that carries
  * what to do instead. It is a separate stage, not a second dialog, so backing
  * out returns to the options rather than discarding the question.
  */
@@ -21,6 +26,7 @@ import {
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 import { PLAIN_THEME, isPopupCloseKey, type PopupRow, type PopupTheme } from "../popup.ts";
+import { toResourceSlash } from "../scope/paths.ts";
 import type { ScopeSuggestion } from "../scope/types.ts";
 import { PopupShell, type PopupShellModel } from "./shell.ts";
 
@@ -28,6 +34,8 @@ export interface ScopeAskRequest {
   tool: string;
   /** Target as the user should read it: workspace-relative or absolute. */
   display: string;
+  /** Canonical target, so a single-file grant never stores its folder. */
+  absolute: string;
   write: boolean;
   /** Why the gate asked, e.g. `outside the workspace`. */
   reason: string;
@@ -44,10 +52,85 @@ export interface ScopeAskRequest {
 
 export type ScopeAnswer =
   | { kind: "once" }
-  | { kind: "allow"; grant: ScopeSuggestion }
+  /** `persist: "workspace"` means the grant is also written to `.pi/scope.json`. */
+  | { kind: "allow"; grant: ScopeSuggestion; persist?: "workspace" }
   /** `feedback` turns a denial into an instruction the model can act on. */
   | { kind: "deny"; feedback?: string }
   | { kind: "rule"; text: string };
+
+export interface ScopeChoice {
+  label: string;
+  /** Dim line under the label: the literal value stored, and where. */
+  detail?: string;
+  /** The answer this row gives, or the stage it opens. */
+  action: { kind: "answer"; answer: ScopeAnswer } | { kind: "reject" };
+}
+
+/** The file a "for this workspace" answer is written to. */
+const WORKSPACE_CONFIG = ".pi/scope.json";
+
+/**
+ * The answers, in one place.
+ *
+ * The TUI popup and the plain `select` fallback render the same list, so the two
+ * surfaces cannot drift into offering different grants under the same wording.
+ */
+export function scopeChoices(request: ScopeAskRequest): ScopeChoice[] {
+  const { suggestion } = request;
+  const rule = request.commandRule;
+  if (rule) {
+    return [
+      { label: "Allow once", action: { kind: "answer", answer: { kind: "once" } } },
+      {
+        label: `Allow ${rule.resource} commands for this session`,
+        detail: `saves ${rule.action} ${rule.resource}`,
+        action: { kind: "answer", answer: { kind: "rule", text: `${rule.action} ${rule.resource} allow` } },
+      },
+      { label: "Deny with reason", action: { kind: "reject" } },
+      { label: "Deny", action: { kind: "answer", answer: { kind: "deny" } } },
+    ];
+  }
+  // The exact-file target. For a degraded suggestion `path` already is the file;
+  // otherwise it is the directory, so the claim's own absolute path is the file.
+  const file = suggestion.exact ? suggestion.path : request.absolute;
+  const fileGlob = toResourceSlash(file);
+  const choices: ScopeChoice[] = [
+    { label: `Allow ${request.display} for once`, action: { kind: "answer", answer: { kind: "once" } } },
+    {
+      label: `Always allow ${request.display} for this workspace`,
+      detail: `saves ${fileGlob} in ${WORKSPACE_CONFIG}`,
+      action: {
+        kind: "answer",
+        answer: {
+          kind: "allow",
+          grant: { path: file, access: suggestion.access, glob: fileGlob, exact: true },
+          persist: "workspace",
+        },
+      },
+    },
+  ];
+  // A directory that would re-expose `$HOME`, a system tree, or the workspace is
+  // never offered: the only standing grant is the file itself.
+  if (!suggestion.exact) {
+    choices.push(
+      {
+        label: `Allow all ${suggestion.glob} for once`,
+        detail: "session only, not saved",
+        action: { kind: "answer", answer: { kind: "allow", grant: suggestion } },
+      },
+      {
+        label: `Always allow ${suggestion.glob} for this workspace`,
+        detail: `saves ${suggestion.glob} in ${WORKSPACE_CONFIG}`,
+        action: { kind: "answer", answer: { kind: "allow", grant: suggestion, persist: "workspace" } },
+      },
+    );
+  }
+  choices.push(
+    { label: "Deny with reason", action: { kind: "reject" } },
+    { label: "Deny", action: { kind: "answer", answer: { kind: "deny" } } },
+  );
+  return choices;
+}
 
 export interface ScopeAskPopupOptions extends ScopeAskRequest {
   theme?: PopupTheme;
@@ -58,11 +141,13 @@ export interface ScopeAskPopupOptions extends ScopeAskRequest {
 /** Where the popup is: choosing, typing a rule, or typing a denial note. */
 type Stage = "permission" | "rule" | "reject";
 
-const OPTION_COUNT = 5;
-/** Body row for each option: the saved-glob line sits under "Allow …". */
-const ROW_FOR_OPTION: readonly number[] = [0, 1, 3, 4, 5];
-/** Which option a body row answers; the saved-glob line belongs to option 1. */
-const OPTION_FOR_ROW: readonly number[] = [0, 1, 1, 2, 3, 4];
+/** Rows for one render, plus the body-line → choice mapping a click needs. */
+interface Layout {
+  /** First body line of each choice, for `reveal`. */
+  firstRow: number[];
+  /** Which choice a body line belongs to (labels and their detail line). */
+  choiceForRow: number[];
+}
 
 export class ScopeAskPopup implements Component, Focusable {
   private readonly options: ScopeAskPopupOptions;
@@ -74,6 +159,7 @@ export class ScopeAskPopup implements Component, Focusable {
   private stage: Stage = "permission";
   private finished = false;
   private isFocused = false;
+  private layout: Layout = { firstRow: [], choiceForRow: [] };
 
   constructor(options: ScopeAskPopupOptions) {
     this.options = options;
@@ -135,33 +221,33 @@ export class ScopeAskPopup implements Component, Focusable {
     return this.shell.render(width);
   }
 
+  private choices(): ScopeChoice[] {
+    return scopeChoices(this.options);
+  }
+
   private hint(): string {
     if (this.stage === "rule") return "Enter save rule · Esc back";
     if (this.stage === "reject") return "Enter deny with note · empty = plain deny · Esc back";
-    return "↑↓ select · Enter choose · 1-5 · e rule · Esc deny";
+    return `↑↓ select · Enter choose · 1-${this.choices().length} · e rule · Esc deny`;
   }
 
-  private rows(width: number): PopupRow[] {
+  /** The option rows, recording which body line answers which choice. */
+  private rows(): PopupRow[] {
     const theme = this.theme;
-    const suggestion = this.options.suggestion;
-    const access = suggestion.access === "ro" ? "read-only" : "read-write";
-    const option = (index: number, label: string): string => {
+    const rows: PopupRow[] = [];
+    const firstRow: number[] = [];
+    const choiceForRow: number[] = [];
+    this.choices().forEach((choice, index) => {
+      firstRow[index] = rows.length;
       const marker = this.selected === index ? theme.bold("›") : " ";
-      return `${marker} ${index + 1}  ${label}`;
-    };
-    const grantLabel = suggestion.exact
-      ? `Allow only this file (${access} · session)`
-      : `Allow ${suggestion.path} (${access} · session)`;
-    const rule = this.options.commandRule;
-    const rows: PopupRow[] = [
-      option(0, "Allow once"),
-      rule ? option(1, `Allow ${rule.resource} commands (session)`) : option(1, grantLabel),
-      theme.fg("dim", `      saves ${rule ? `${rule.action} ${rule.resource}` : suggestion.glob}`),
-      option(2, "Deny"),
-      option(3, "Deny with instructions…"),
-      option(4, "Edit a rule…"),
-    ];
-    void width;
+      rows.push(`${marker} ${index + 1}  ${choice.label}`);
+      choiceForRow.push(index);
+      if (choice.detail) {
+        rows.push(theme.fg("dim", `      ${choice.detail}`));
+        choiceForRow.push(index);
+      }
+    });
+    this.layout = { firstRow, choiceForRow };
     return rows;
   }
 
@@ -187,7 +273,7 @@ export class ScopeAskPopup implements Component, Focusable {
       return {
         header,
         body: [
-          ...this.rows(width).filter((_row, index) => index !== ROW_FOR_OPTION[4]),
+          ...this.rows(),
           "",
           ...wrapTextWithAnsi(theme.fg("dim", "Format: <tool|*> <glob> <allow|ask|deny>"), Math.max(8, width - 2)),
           ...this.ruleInput.render(width),
@@ -197,7 +283,7 @@ export class ScopeAskPopup implements Component, Focusable {
     }
     return {
       header,
-      body: this.rows(width),
+      body: this.rows(),
       footer: request.queued ? [theme.fg("warning", `${request.queued} more waiting`)] : undefined,
     };
   }
@@ -212,12 +298,13 @@ export class ScopeAskPopup implements Component, Focusable {
       this.activeInput().handleInput(data);
       return true;
     }
+    const count = this.choices().length;
     if (matchesKey(data, "up") || data === "k") {
-      this.selected = (this.selected + OPTION_COUNT - 1) % OPTION_COUNT;
+      this.selected = (this.selected + count - 1) % count;
       return true;
     }
     if (matchesKey(data, "down") || data === "j") {
-      this.selected = (this.selected + 1) % OPTION_COUNT;
+      this.selected = (this.selected + 1) % count;
       return true;
     }
     if (matchesKey(data, "enter")) {
@@ -228,7 +315,7 @@ export class ScopeAskPopup implements Component, Focusable {
       this.startEditing();
       return true;
     }
-    for (let index = 0; index < OPTION_COUNT; index++) {
+    for (let index = 0; index < count; index++) {
       if (data === String(index + 1)) {
         this.choose(index);
         return true;
@@ -238,28 +325,21 @@ export class ScopeAskPopup implements Component, Focusable {
   }
 
   private handleBodyClick(index: number): boolean {
-    const option = OPTION_FOR_ROW[index];
-    if (option === undefined) return false;
-    this.choose(option);
+    const choice = this.layout.choiceForRow[index];
+    if (choice === undefined) return false;
+    this.choose(choice);
     return true;
   }
 
   private revealRow(): number | undefined {
-    return ROW_FOR_OPTION[this.selected];
+    return this.layout.firstRow[this.selected];
   }
 
   private choose(index: number): void {
-    const suggestion = this.options.suggestion;
-    const rule = this.options.commandRule;
-    if (index === 0) return this.finish({ kind: "once" });
-    if (index === 1) {
-      return this.finish(rule
-        ? { kind: "rule", text: `${rule.action} ${rule.resource} allow` }
-        : { kind: "allow", grant: suggestion });
-    }
-    if (index === 2) return this.finish({ kind: "deny" });
-    if (index === 3) return this.startReject();
-    this.startEditing();
+    const action = this.choices()[index]?.action;
+    if (!action) return;
+    if (action.kind === "answer") return this.finish(action.answer);
+    this.startReject();
   }
 
   private startEditing(): void {
