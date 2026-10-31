@@ -28,6 +28,7 @@ import type {
   ScopeSuggestion,
   UnknownClaim,
 } from "./types.ts";
+import type { ClaimSnapshot, DecisionRecord } from "./telemetry.ts";
 
 export interface AskRequest {
   tool: string;
@@ -140,6 +141,15 @@ export interface GateDeps {
   /** Called for every automatic approval while yolo is armed. */
   onAutoApprove?: (decision: ScopeDecision, claim: PathClaim | undefined) => void;
   /**
+   * Called once per claim with the verdict it finally received.
+   *
+   * Unlike `onAsk`/`onAutoApprove`, which mark the two exceptional outcomes, this
+   * sees the ordinary internal allow too: the point is a complete record of what
+   * the gate judged, so a later pass can tune detection and find false positives.
+   * A throwing hook cannot change the verdict.
+   */
+  onDecision?: (record: DecisionRecord) => void;
+  /**
    * Policy that is not about a path, consulted for every decision the gate makes
    * including the re-checks inside the question lane.
    *
@@ -197,6 +207,20 @@ function commandHead(command: unknown): string | undefined {
   if (!first) return undefined;
   const bare = first.split("/").pop() ?? first;
   return bare.replace(/^["']|["']$/g, "") || undefined;
+}
+
+/**
+ * The part of a tool call worth recording: the shell command, or the path the
+ * tool names. File contents and edit bodies are deliberately never included.
+ */
+function summarizeInput(tool: string, input: Record<string, unknown> | undefined): string {
+  if (!input) return "";
+  const keys = tool === "bash" ? ["command"] : ["path", "file_path", "pattern", "query", "dir", "directory"];
+  for (const key of keys) {
+    const value = input[key];
+    if (typeof value === "string" && value) return value;
+  }
+  return "";
 }
 
 /**
@@ -374,8 +398,58 @@ export function createGate(deps: GateDeps): Gate {
     }
   }
 
+  /** Flatten a claim for the telemetry record. */
+  function claimSnapshot(claim: PathClaim): ClaimSnapshot {
+    return {
+      action: claim.action,
+      absolute: claim.absolute,
+      resource: claim.resource,
+      write: claim.write,
+      posture: claim.posture,
+      external: claim.external,
+      kind: claim.kind,
+      ...(claim.command ? { command: claim.command } : {}),
+      ...(claim.base ? { base: claim.base } : {}),
+    };
+  }
+
+  /**
+   * Emit one telemetry record for a verdict that has already been reached.
+   *
+   * A sink that throws keeps the verdict it was told about: diagnostics must not
+   * become a policy, and a read-only telemetry destination must not block a tool.
+   */
+  function report(record: Omit<DecisionRecord, "cwd"> & { decision?: ScopeDecision; claim?: PathClaim }): void {
+    const hook = deps.onDecision;
+    if (!hook) return;
+    const { decision, claim, ...rest } = record;
+    const state = deps.state();
+    const stored: DecisionRecord = {
+      ...rest,
+      cwd: deps.cwd(),
+      reason: decision?.reason ?? rest.reason,
+      ...(claim ? { claim: claimSnapshot(claim) } : {}),
+      ...(decision?.rule ? { rule: decision.rule } : {}),
+      ...(decision?.root ? { root: decision.root } : {}),
+      ...(decision && state.yolo && decision.reason.includes("(yolo") ? { yolo: state.yolo.strength } : {}),
+      state: {
+        roots: state.roots.length,
+        rules: state.rules.length,
+        ...(state.yolo ? { yolo: state.yolo.strength } : {}),
+        external: state.defaults.external,
+        readExternal: state.defaults.readExternal,
+      },
+    };
+    try {
+      hook(stored);
+    } catch {
+      // A broken sink is not a verdict: swallow it and keep the decision.
+    }
+  }
+
   async function gate(tool: string, input: Record<string, unknown> | undefined): Promise<GateResult | undefined> {
     const claimSet = claimsFor(tool, input);
+    const inputText = summarizeInput(tool, input);
     if (claimSet.unknown) {
       // A command the scanner cannot analyse is a parser limit, not a verdict:
       // name it, and let a rule cover it, instead of letting it read as suspicion.
@@ -385,17 +459,26 @@ export function createGate(deps: GateDeps): Gate {
         withHook(evaluateClaim(unknownClaim, deps.state()), { tool, claim: unknownClaim, phase });
       const decision = decide("initial");
       if (decision.effect === "deny") {
+        report({ tool, input: inputText, effect: "deny", asked: false, unknown: true, ...(opaque ? { opaque } : {}), reason: decision.reason, decision });
         return { block: true, reason: `Scope: ${claimSet.reason ?? decision.reason}. ${tool} was not run. ${DENY_HINT}` };
       }
       if (decision.effect === "allow") {
-        if (deps.state().yolo) deps.onAutoApprove?.(decision, undefined);
+        const auto = Boolean(deps.state().yolo && decision.reason.includes("(yolo"));
+        if (auto) deps.onAutoApprove?.(decision, undefined);
+        report({ tool, input: inputText, effect: "allow", asked: false, auto, unknown: true, ...(opaque ? { opaque } : {}), reason: decision.reason, decision });
         return undefined;
       }
       return queue.run(async () => {
         // Re-evaluate inside the lane: an earlier answer may have covered this.
         const again = decide("recheck");
-        if (again.effect === "allow") return undefined;
-        if (again.effect === "deny") return { block: true, reason: `Scope: ${again.reason}. ${tool} was not run. ${COMMAND_HINT}` };
+        if (again.effect === "allow") {
+          report({ tool, input: inputText, effect: "allow", asked: false, unknown: true, ...(opaque ? { opaque } : {}), reason: again.reason, decision: again });
+          return undefined;
+        }
+        if (again.effect === "deny") {
+          report({ tool, input: inputText, effect: "deny", asked: false, unknown: true, ...(opaque ? { opaque } : {}), reason: again.reason, decision: again });
+          return { block: true, reason: `Scope: ${again.reason}. ${tool} was not run. ${COMMAND_HINT}` };
+        }
         const head = commandHead(input?.command);
         // Only offer a rule that narrows. For `bash -c ...` the head is the tool
         // itself, so any rule would be tool-wide; the dialog offers none and the
@@ -413,18 +496,43 @@ export function createGate(deps: GateDeps): Gate {
         };
         deps.onAsk?.(request);
         const answer = deps.isChild?.() ? escalateUnknown(tool) : await deps.ask(request).catch(() => undefined);
+        const asked = true;
         if (answer?.kind === "rule") {
           applyAnswer(answer, { tool, action: tool, absolute: deps.cwd(), resource: "*", write: false, posture: "unknown", external: true, kind: "unknown" });
           // A rule that names the tool is the standing grant for "unknown paths".
           const after = decide("recheck");
-          if (after.effect === "allow") return undefined;
-          if (after.effect === "deny") return { block: true, reason: `Scope: ${after.reason}. ${tool} was not run. ${COMMAND_HINT}` };
+          if (after.effect === "allow") {
+            report({ tool, input: inputText, effect: "allow", asked, answer: "rule", unknown: true, ...(opaque ? { opaque } : {}), reason: after.reason, decision: after });
+            return undefined;
+          }
+          if (after.effect === "deny") {
+            report({ tool, input: inputText, effect: "deny", asked, answer: "rule", unknown: true, ...(opaque ? { opaque } : {}), reason: after.reason, decision: after });
+            return { block: true, reason: `Scope: ${after.reason}. ${tool} was not run. ${COMMAND_HINT}` };
+          }
         }
-        if (answer?.kind === "unavailable") return { block: true, reason: answer.message };
-        if (answer?.kind === "once") return undefined;
+        if (answer?.kind === "unavailable") {
+          report({ tool, input: inputText, effect: "deny", asked, answer: deps.isChild?.() ? "escalated" : "no-answer", unknown: true, ...(opaque ? { opaque } : {}), reason: again.reason, decision: again });
+          return { block: true, reason: answer.message };
+        }
+        if (answer?.kind === "once") {
+          report({ tool, input: inputText, effect: "allow", asked, answer: "once", unknown: true, ...(opaque ? { opaque } : {}), reason: again.reason, decision: again });
+          return undefined;
+        }
         if (answer?.kind === "deny" && answer.feedback?.trim()) {
+          report({ tool, input: inputText, effect: "deny", asked, answer: "deny-feedback", unknown: true, ...(opaque ? { opaque } : {}), reason: again.reason, decision: again });
           return denyResult(tool, "an unreadable command", answer.feedback);
         }
+        report({
+          tool,
+          input: inputText,
+          effect: "deny",
+          asked,
+          answer: answer?.kind === "deny" ? "deny" : "no-answer",
+          unknown: true,
+          ...(opaque ? { opaque } : {}),
+          reason: again.reason,
+          decision: again,
+        });
         return {
           block: true,
           reason:
@@ -441,22 +549,70 @@ export function createGate(deps: GateDeps): Gate {
     for (const request of claimSet.paths) {
       const claim = toPathClaim(tool, request);
       const decision = withHook(evaluateClaim(claim, deps.state()), { tool, claim, phase: "initial" });
-      if (decision.effect === "deny") return denied(tool, decision);
+      if (decision.effect === "deny") {
+        report({ tool, input: inputText, effect: "deny", asked: false, reason: decision.reason, decision, claim });
+        return denied(tool, decision);
+      }
       if (decision.effect === "allow") {
-        if (deps.state().yolo && decision.reason.includes("yolo")) deps.onAutoApprove?.(decision, claim);
+        const auto = Boolean(deps.state().yolo && decision.reason.includes("(yolo"));
+        if (auto) deps.onAutoApprove?.(decision, claim);
+        report({ tool, input: inputText, effect: "allow", asked: false, auto, reason: decision.reason, decision, claim });
         continue;
       }
       const result = await queue.run(async (): Promise<GateResult | undefined> => {
         const claimed = toPathClaim(tool, request);
         const again = withHook(evaluateClaim(claimed, deps.state()), { tool, claim: claimed, phase: "recheck" });
-        if (again.effect === "allow") return undefined;
-        if (again.effect === "deny") return denied(tool, again);
+        if (again.effect === "allow") {
+          report({ tool, input: inputText, effect: "allow", asked: false, reason: again.reason, decision: again, claim: claimed });
+          return undefined;
+        }
+        if (again.effect === "deny") {
+          report({ tool, input: inputText, effect: "deny", asked: false, reason: again.reason, decision: again, claim: claimed });
+          return denied(tool, again);
+        }
         const answer = await askFor(tool, claimed, again);
-        if (answer.kind === "unavailable") return { block: true, reason: answer.message };
-        if (answer.kind === "deny") return denyResult(tool, claimed.absolute, answer.feedback);
-        if (answer.kind === "once") return undefined;
+        if (answer.kind === "unavailable") {
+          report({
+            tool,
+            input: inputText,
+            effect: "deny",
+            asked: true,
+            answer: deps.isChild?.() ? "escalated" : "no-answer",
+            reason: again.reason,
+            decision: again,
+            claim: claimed,
+          });
+          return { block: true, reason: answer.message };
+        }
+        if (answer.kind === "deny") {
+          report({
+            tool,
+            input: inputText,
+            effect: "deny",
+            asked: true,
+            answer: answer.feedback?.trim() ? "deny-feedback" : "deny",
+            reason: again.reason,
+            decision: again,
+            claim: claimed,
+          });
+          return denyResult(tool, claimed.absolute, answer.feedback);
+        }
+        if (answer.kind === "once") {
+          report({ tool, input: inputText, effect: "allow", asked: true, answer: "once", reason: again.reason, decision: again, claim: claimed });
+          return undefined;
+        }
         applyAnswer(answer, claimed);
         const after = withHook(evaluateClaim(claimed, deps.state()), { tool, claim: claimed, phase: "recheck" });
+        report({
+          tool,
+          input: inputText,
+          effect: after.effect,
+          asked: true,
+          answer: answer.kind === "allow" ? (answer.persist === "workspace" ? "allow-workspace" : "allow-session") : "rule",
+          reason: after.reason,
+          decision: after,
+          claim: claimed,
+        });
         return after.effect === "allow" ? undefined : denied(tool, after);
       });
       if (result) return result;

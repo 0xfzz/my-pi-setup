@@ -194,7 +194,7 @@ root still wins over a broad read-write one.
 
 | Command | Effect |
 |---|---|
-| `/scope` or `/scope status` | Roots with access and provenance, the three defaults, rule count, config files, yolo state |
+| `/scope` or `/scope status` | Roots with access and provenance, the three defaults, rule count, config files, yolo state, telemetry file |
 | `/scope allow <path> [--ro\|--rw] [--project\|--global]` | Add a root (a glob is allowed) for this session, the project, or every project |
 | `/scope deny <path> [--project\|--global]` | Deny the path and everything under it (writes `dir` and `dir/*`) |
 | `/scope remove <path>` | Drop a session root |
@@ -317,6 +317,81 @@ grant that would re-expose `$HOME`, `/`, or a directory containing the workspace
 is refused with a warning when the session loads, and a seeded child ignores the
 whole inherited snapshot.
 
+## Telemetry
+
+`/scope log` is bounded and dies with the session. To answer the slower question
+— *is this gate asking about things it should not, and missing things it
+should?* — every decision is also appended to **one global file**, not a
+per-workspace one:
+
+```text
+~/.pi/agent/scope-telemetry.jsonl
+```
+
+Every workspace and every session appends to that same file, so a decision made
+in one project can be compared with the same shape of decision in another. The
+`cwd` field on each record is what tells the workspaces apart — the path is a
+single log, the records inside it are not.
+
+One JSON object per line, one line per **claim** (a `bash` call with three path
+operands writes three). Records are written for ordinary internal allows too, not
+just questions and denials, because a detector can only be tuned against what it
+saw.
+
+```json
+{
+  "v": 1, "at": 1760000000000, "source": "gate", "tool": "bash",
+  "input": "rm -rf ../build", "cwd": "/work/app",
+  "effect": "ask", "asked": true, "answer": "once",
+  "reason": "bash wants to write /build — outside the workspace",
+  "claim": { "action": "external_directory", "absolute": "/build", "resource": "/build", "write": true, "posture": "write", "external": true, "kind": "directory" },
+  "state": { "roots": 1, "rules": 2, "external": "ask", "readExternal": "allow" }
+}
+```
+
+The fields that make a later analysis possible:
+
+| Field | Reads as |
+|---|---|
+| `asked`, `answer` | The gate bothered someone — the candidate false positive — and what resolved it (`once`, `allow-session`, `allow-workspace`, `rule`, `deny`, `deny-feedback`, `escalated`, `no-answer`) |
+| `effect` | The final verdict for this claim (`allow`, `ask` only when a standing answer failed to settle it, `deny`) |
+| `auto`, `yolo` | A yolo arm, not the user, approved it |
+| `unknown`, `opaque` | The parser could not analyse the construct — a detection gap, named |
+| `child` | A delegated child escalated instead of asking a user |
+| `claim` | Absolute target, resource, read/write posture, whether it was external |
+| `rule`, `root` | Which stored consent produced the verdict |
+| `state` | The scope state in force, so a surprising decision can be explained later |
+| `source` | `gate`, `scope_answer` (a parent's decision) or `command` (a `/scope` change) |
+
+Privacy and lifecycle:
+
+- **Local only.** Nothing is sent anywhere; the file sits in the agent directory.
+- **Narrow.** File contents and edit bodies are never stored. Command text is
+  truncated at 2000 characters and credential-shaped values (`Authorization:`,
+  `Bearer …`, `TOKEN=…`, `--password …`) are redacted before the line is written.
+- **Bounded.** The file rotates at 4 MiB into a single `.1` predecessor; a long
+  session cannot grow it without limit.
+- **Best effort.** A read-only home or a full disk drops the record and never
+  changes a verdict.
+- **Off switch.** `PI_SCOPE_TELEMETRY=off` disables it. `PI_SCOPE_TELEMETRY_FILE`
+  overrides the path (useful for tests or a per-machine location).
+
+Quick reads without any tooling:
+
+```sh
+# the decisions that asked a question, newest last
+jq -c 'select(.asked) | {at, tool, input, answer}' ~/.pi/agent/scope-telemetry.jsonl
+
+# the detection gaps the parser gave up on
+jq -c 'select(.unknown) | {tool, input, opaque}' ~/.pi/agent/scope-telemetry.jsonl
+
+# questions by target, most frequent first
+jq -r 'select(.asked) | .claim.absolute' ~/.pi/agent/scope-telemetry.jsonl | sort | uniq -c | sort -rn
+
+# every automatic yolo approval
+jq -c 'select(.auto) | {tool, input, yolo}' ~/.pi/agent/scope-telemetry.jsonl
+```
+
 ## Where the gate sits
 
 - **Jurisdiction is a closed set**: `bash`, `read`, `write`, `edit`, `grep`,
@@ -413,6 +488,9 @@ in-place config edits (root access, root removal, rule effect, default merge).
 "can this be kept/removed" rules; `tests/scope-settings-popup.test.ts` covers the
 screen's keys, its menus, the add flow, the failure notice and narrow widths.
 `tests/scope-command.test.ts` and `tests/scope-audit.test.ts` cover parsing,
-reporting, stats and the bounded log. `tests/scope-runtime.test.ts` boots the
+reporting, stats and the bounded log. `tests/scope-telemetry.test.ts` covers the
+persistent sink (append, rotation, disabled, unwritable destination, redaction
+and truncation) and the gate's one-record-per-claim emission for an internal
+allow, a question, a denial, an opaque command and a yolo approval. `tests/scope-runtime.test.ts` boots the
 extension against a fake Pi and checks the wired behaviour end to end, including
 bare `/scope` opening the settings screen.

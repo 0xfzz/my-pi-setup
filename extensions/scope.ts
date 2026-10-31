@@ -44,6 +44,7 @@ import {
   writeScopeRule,
 } from "../lib/scope/state.ts";
 import { displayPath } from "../lib/scope/tool-paths.ts";
+import { ScopeTelemetry } from "../lib/scope/telemetry.ts";
 import { SCOPE_RECORD_TYPE, type PathClaim, type ScopeRoot, type ScopeRule, type ScopeState } from "../lib/scope/types.ts";
 import { childContextState, isSubagentChildProcess, isSubagentChildSession } from "../lib/subagent-context.ts";
 import { ScopeAskPopup, scopeChoices } from "../lib/ui/scope-ask.ts";
@@ -56,6 +57,9 @@ export default function scopeExtension(pi: ExtensionAPI) {
   let context: ExtensionContext | undefined;
   let config = loadScopeConfig(cwd);
   const log = new ScopeLog();
+  // The persistent half of the audit: `/scope log` is this session, this file is
+  // every session, so detection and false positives can be reviewed later.
+  const telemetry = new ScopeTelemetry();
   let draw: (() => void) | undefined;
 
   const refresh = () => pi.events?.emit(REFRESH_EVENT, {});
@@ -114,6 +118,7 @@ export default function scopeExtension(pi: ExtensionAPI) {
       log.add({ tool: request.tool, path: request.display, write: request.write, outcome: "ask" });
       draw?.();
     },
+    onDecision: record => telemetry.record(record),
     onAutoApprove: (decision, claim) => {
       log.add({
         tool: claim?.tool ?? "unknown",
@@ -242,6 +247,16 @@ export default function scopeExtension(pi: ExtensionAPI) {
       refresh();
       log.add({ tool: "scope_answer", path: classified.absolute, write: true, outcome: "deny", detail: "parent denied" });
       const instruction = feedback?.trim();
+      telemetry.record({
+        source: "scope_answer",
+        tool: "scope_answer",
+        input: path,
+        cwd,
+        effect: "deny",
+        asked: true,
+        answer: instruction ? "deny-feedback" : "deny",
+        reason: instruction ? "parent denied with feedback" : "parent denied",
+      });
       return instruction
         ? `Recorded the parent's denial for ${classified.absolute}, so retrying it will be blocked. Do this instead: ${instruction}`
         : `Recorded the parent's denial for ${classified.absolute}. Report the blocker instead of retrying.`;
@@ -258,6 +273,16 @@ export default function scopeExtension(pi: ExtensionAPI) {
       write: access === "rw",
       outcome: "auto",
       detail: `parent ${decision}`,
+    });
+    telemetry.record({
+      source: "scope_answer",
+      tool: "scope_answer",
+      input: path,
+      cwd,
+      effect: "allow",
+      asked: true,
+      answer: decision,
+      reason: `parent ${decision} for ${target}`,
     });
     return `Applied the parent's ${decision}: ${target} is ${access === "ro" ? "read-only" : "read-write"} for this session. Retry the call.`;
   }
@@ -431,7 +456,13 @@ export default function scopeExtension(pi: ExtensionAPI) {
           await openSettings(ctx);
           return;
         }
-        ctx.ui.notify(statusLines(state, cwd, config.sources).join("\n"), "info");
+        ctx.ui.notify(
+          [
+            ...statusLines(state, cwd, config.sources),
+            `  telemetry: ${telemetry.enabled ? telemetry.path : "off (set PI_SCOPE_TELEMETRY=on to record)"}`,
+          ].join("\n"),
+          "info",
+        );
         return;
       case "rules":
         ctx.ui.notify(ruleLines(state).join("\n"), "info");
