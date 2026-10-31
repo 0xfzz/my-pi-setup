@@ -36,6 +36,7 @@ primitives instead of hand-rolling rows, scrolling or hints.
 | `MarkdownPopup` / `renderMarkdown` | Markdown detail with `/` search, match highlighting, OSC 8 repair and code highlighting from the host theme. |
 | `AskUserPopup` (`lib/ui/ask.ts`) | `ask_user` recommended marker, free-text row, scrolling and abort handling. |
 | `RouterSettingsPopup` (`lib/ui/router-settings.ts`) | Route editor: add models, set the routing method and trigger, order the chain. |
+| `ProviderSettingsPopup` (`lib/ui/provider-settings.ts`) | Provider editor: a durable step wizard, per-provider models, accounts and deletion. |
 
 `popupOverlayOptions(width, minWidth, maxHeight)` remains the standard geometry.
 `popupBodyRows(terminalRows, desired)` computes a safe body budget.

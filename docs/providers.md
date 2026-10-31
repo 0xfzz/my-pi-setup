@@ -5,13 +5,44 @@
 Command: **`/provider`** only. The redundant `/providers` alias has been removed. Opens Pi dialogs—no AI request or generated extension code.
 
 ```text
-/provider             # interactive menu
+/provider             # the editor in the TUI (a dialog menu in RPC)
 /provider add         # provider ID, display name, API key, connection, fetched model
 /provider edit        # change a configured provider's connection
 /provider model       # add/update one or more models on a configured provider
 /provider remove      # remove only its models.json entry
 /provider list        # list configured providers (not the entire built-in catalog)
 ```
+
+## The editor
+
+Bare `/provider` in the TUI opens an editor over `models.json`:
+
+```text
+╭ Providers ───────────────────────────── ↑↓ move · Enter open · a add · Esc close ╮
+│ file       /home/you/.pi/agent/models.json                                       │
+│ providers  2 · 5 configured models                                               │
+│                                                                                  │
+│ PROVIDERS                                                                        │
+│ › acme      Acme Cloud          account 1/2                                      │
+│     OpenAI Chat Completions · 3 models · https://api.acme.com/v1                 │
+│   acme-2    Acme (Account 2)    account 2/2                                      │
+│     OpenAI Chat Completions · 3 models · https://api.acme.com/v1                 │
+│   + add a provider…                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────╯
+```
+
+- **Add (`a`)** walks the connection: id, display name, protocol, base URL, key — one screen each. `Enter` continues, `Esc` goes back.
+- **The draft is durable while you walk it, and only while you walk it.** Going back keeps every answer: each keypress lands in the draft, so even half-typed text survives, and returning to the list and picking `add` again resumes the unfinished draft. Closing the popup discards it, so a new `/provider` starts blank and a half-finished provider can never reach `models.json`.
+- **Each step validates on its own**, so a bad id or URL names the problem and stays on that screen instead of rejecting a whole form. A duplicate id is refused where it is typed; the display name defaults to the id.
+- **The key field is masked** and its input is never rendered. Editing a provider starts that step blank — the stored credential is not re-displayed — and a blank key means "keep what is stored", which is how `/login` credentials survive an edit. A typed literal is escaped exactly as the dialog flow escapes it, so `$` and a leading `!` cannot become interpolation or a command.
+- **`Enter` on a provider** shows its endpoint, protocol, how its stored authentication resolves, its account family, and what you can do: edit the connection, add models, review or remove a model, add an account, delete the entry. `e` edits the connection directly, `d` deletes.
+- **Models** lists each model with its limits, reasoning flag and whether a native `modelOverrides` entry also describes it. Removing one deletes that override too, so it does not come back on reload.
+- **A new connection saves by itself** and the editor reopens on it, because discovery is a separate dialog. The dialog flow still collects models before saving; from the editor, a connection saved without models says so, and its `Add models…` step is one keypress away.
+- **Delete** asks once and names what is *not* deleted: built-in providers, extension-owned providers, and credentials stored through `/login`.
+- **Adding an account** turns a lone `acme` into `acme-1` plus the new `acme-2`, keeps the first account's models and credential, and requires a credential for the new one — two accounts sharing a key would bill the same account twice.
+- A `models.json` that cannot be parsed is shown in the header instead of opened as an empty file, so a broken file is never overwritten by the editor.
+
+Every edit re-reads the file first and `saveConfig` compares that snapshot with what is on disk, so a change made elsewhere while the popup was open is detected instead of overwritten. The dialog commands below remain for RPC clients, print mode, and scripted use.
 
 Supports OpenAI Chat Completions (`openai-completions`), OpenAI Responses (`openai-responses`), Anthropic Messages, and Google Generative AI compatible endpoints. For Ollama/LM Studio/vLLM and gateways, use the exact base URL (including `/v1` when required).
 
@@ -46,4 +77,4 @@ Escape or rejecting confirmation saves nothing. Writes use a private temporary f
 
 Main session only, idle between runs. RPC clients supporting native dialogs use environment references instead of masked key entry; print mode and Herdr children do not open setup UI. Already included in this package: **restart Pi or use `/reload` after all children finish**, then run `/provider add`. No real provider configuration is changed merely by installing this extension.
 
-Verification: `node --experimental-strip-types --test tests/providers.test.ts tests/provider-discovery.test.ts tests/provider-key-input.test.ts tests/provider-model-picker.test.ts tests/provider-model-picker-layout.test.ts` covers fetched metadata, separate native provider display names, masked key rendering/editing/cancellation, literal-key escaping, and discovery protocol paths, authentication, pagination, timeouts/redirects/response limits, automatic selection, manual fallback, cancellation, trust-before-network, field validation, auth precedence guards, native secret login, private/atomic writes, stale/concurrent saves, model override precedence, advanced-field preservation, removal, failed refresh, and real Pi 1.3.0 model loading across fresh runtimes. Tests use fixture credentials and injected responses or loopback HTTP, never real provider inference.
+Verification: `node --experimental-strip-types --test tests/providers.test.ts tests/provider-settings.test.ts tests/provider-settings-popup.test.ts tests/provider-discovery.test.ts tests/provider-key-input.test.ts tests/provider-model-picker.test.ts tests/provider-model-picker-layout.test.ts` covers the editor's steps, per-step validation, the durable draft (back keeps answers, closing discards them), the masked key step, account migration and model inheritance, model removal including its override, fetched metadata, separate native provider display names, masked key rendering/editing/cancellation, literal-key escaping, and discovery protocol paths, authentication, pagination, timeouts/redirects/response limits, automatic selection, manual fallback, cancellation, trust-before-network, field validation, auth precedence guards, native secret login, private/atomic writes, stale/concurrent saves, model override precedence, advanced-field preservation, removal, failed refresh, and real Pi 1.3.0 model loading across fresh runtimes. Tests use fixture credentials and injected responses or loopback HTTP, never real provider inference.
