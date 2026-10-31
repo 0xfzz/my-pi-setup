@@ -261,24 +261,51 @@ Scope solves this by separating reads and writes:
   - Inside the workspace and granted read-write roots: unrestricted.
   - Outside the workspace: denied by the kernel (`EROFS` or `EACCES`).
   - Scratch space (`/tmp/pi-scope-scratch-<rand>`) and virtual devices (`/dev/null`,
-    `/dev/zero`, `/dev/tty`, `/dev/pts`) remain writable so Unix pipelines and
-    utilities function without friction.
+    `/dev/zero`, `/dev/full`, `/dev/tty`, `/dev/pts`, plus `/dev/stdout`,
+    `/dev/stderr`, `/dev/stdin` and `/dev/fd/*`) remain writable so Unix pipelines
+    and utilities function without friction. `/tmp` itself is **not** on that list:
+    with a sandbox armed, a write there asks, and `sandbox.allow` is how it goes
+    quiet.
 
 ### Refusal → Gate Ask
 
 When a sandboxed command attempts to write outside the workspace:
 1. The kernel denies the mutation (`EROFS` via mount namespaces or `EACCES` via Landlock).
 2. Scope inspects the output for permission refusals and extracts candidate absolute paths.
-3. Each candidate path is evaluated through the Scope gate (`gate.evaluate`):
+3. Each candidate path is evaluated through the Scope gate (`gate.evaluate`) **with the
+   sandbox's own writable set attached**. The gate and the kernel therefore answer the
+   same question the same way: a path the kernel refuses is never auto-approved by the
+   gate's device/temp rules, because those rules *are* the sandbox's writable set while
+   a boundary is armed. A `sandbox.deny` entry is a refusal, never a question.
    - If blocked by a configured `deny` rule, access is refused without asking.
-   - If auto-approved (e.g. `yolo all`), access is permitted.
+   - If auto-approved by a covering rule or `yolo`, the folder is added to the next
+     wrap so the retry can actually succeed.
    - Otherwise, the standard Scope boundary dialog opens, offering literal standing grants.
-4. If approved by the user, the path is added as a root, Scope annotates the tool result trailer:
+4. An answer widens the **next** bash wrap: a standing grant adds a root, and "allow
+   once" becomes a one-shot path that is consumed by the following bash call and expires
+   after two minutes. A rule answer cannot widen the kernel, so it is not reported as a
+   retry.
+5. Scope annotates the tool result trailer only when the approval reached the sandbox:
    ```text
-   [sandbox] blocked a write outside the workspace: /srv/data.
+   [sandbox] blocked a write outside the workspace: /srv/data/out.txt.
    Answer: allowed for this folder (this session). Retry the command.
    ```
-   The retried command is sandboxed with the new root and succeeds.
+   When it did not, the trailer says so instead of inviting a retry that is refused the
+   same way:
+   ```text
+   [sandbox] blocked a write outside the workspace: /srv/data/out.txt.
+   Answer: rule added: bash /srv/data/* allow, but the sandbox cannot be widened for it — a retry is refused the same way.
+   Widen it with /scope sandbox allow /srv/data.
+   ```
+
+> **Behaviour change:** a write to `/tmp`, `/var/tmp` or `/dev/shm` used to be allowed
+> silently by the gate while the kernel refused it, which produced a "retry" that could
+> never succeed. Those paths now ask when a sandbox is armed. To keep them quiet, add the
+> root explicitly (`sandbox.allow: ["/tmp"]`), which widens the kernel to match.
+>
+> The bubblewrap backend mounts a throwaway `--tmpfs /tmp`, so a `/tmp` write there lands
+> in a per-call filesystem instead of being refused. The ask still applies: the file is
+> not on the host afterwards.
 
 ### Backends
 
