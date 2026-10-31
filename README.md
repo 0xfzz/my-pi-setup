@@ -41,7 +41,7 @@ diff record, not documentation.
 | [Clipboard](docs/clipboard.md) | Pasting in every Linux terminal: Wayland, X11, tmux and Termux backends, and why plain `Ctrl+V` used to do nothing. |
 | [UI](docs/ui.md) | The shared popup frame, list, markdown viewer, ask popup, keys and responsive rules. |
 | [Providers](docs/providers.md) | Adding and editing providers and models in the TUI, including compatibility flags. |
-| [Accounts](docs/accounts.md) | Pooling several accounts per provider and routing each request. |
+| [Accounts](docs/accounts.md) | Pooling several accounts per provider and routing each request, with `/router` as an editor for the routes, their routing method and when they re-decide. |
 | [Antigravity](docs/antigravity.md) | Linking Google accounts as `antigravity-1…n` providers. |
 | [Verification](docs/verification.md) | What the suites cover, what they mock, and how to run them. |
 | [References](docs/references.md) | Upstream projects and prior art, and what this package adds on top. |
