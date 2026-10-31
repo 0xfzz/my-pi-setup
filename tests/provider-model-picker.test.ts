@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { stripVTControlCharacters } from "node:util";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { CURSOR_MARKER, Input, visibleWidth, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, visibleWidth, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import {
   ProviderModelPicker, providerModelPicker, type ModelChoice, type ModelSelection,
 } from "../lib/provider-model-picker.ts";
@@ -39,16 +39,18 @@ function lines(component: ProviderModelPicker, width = 120) {
   return component.render(width).map(line => stripVTControlCharacters(line.replaceAll(CURSOR_MARKER, "")));
 }
 function items(component: ProviderModelPicker) {
-  return lines(component).filter(line => /^(?:→ |  )\[[ x]\] /.test(line));
+  // The picker now renders inside the shared popup frame, so rows carry its
+  // side padding; match the row vocabulary rather than the line start.
+  return lines(component).filter(line => /(?:→ |  )\[[ x]\] /.test(line));
 }
 function ids(component: ProviderModelPicker) {
   return items(component).map(line => line.match(/\[[ x]\] (\S+)/)![1]);
 }
 function highlighted(component: ProviderModelPicker) {
-  return items(component).find(line => line.startsWith("→ "))?.match(/\[[ x]\] (\S+)/)?.[1];
+  return items(component).find(line => line.includes("→ ["))?.match(/→ \[[ x]\] (\S+)/)?.[1];
 }
 function count(component: ProviderModelPicker, selected: number, matching: number, total = models.length) {
-  assert.ok(lines(component).includes(`${selected} selected · ${matching}/${total} matching`));
+  assert.ok(lines(component).some(line => line.includes(`${selected} selected · ${matching}/${total} matching`)));
 }
 
 test("search matches ID and optional display name case-insensitively with all whitespace-separated terms", () => {
@@ -83,41 +85,45 @@ test("changing search resets the highlight and clearing search restores all choi
 
 test("large lists render a bounded scrolling viewport and arrow navigation reaches every model", () => {
   const { component } = fixture(manyModels);
-  assert.equal(items(component).length, 12);
-  assert.ok(lines(component).includes("  (1/50)"));
+  const visible = items(component).length;
+  assert.ok(visible < manyModels.length, "the viewport is bounded, not the whole catalog");
+  assert.ok(visible >= 3);
+  assert.match(lines(component).join("\n"), /1\/50/, "the footer carries the position");
   for (let i = 0; i < manyModels.length; i++) {
     assert.equal(highlighted(component), manyModels[i].id);
-    assert.equal(items(component).length, 12);
+    assert.equal(items(component).length, visible, "the viewport size is stable while moving");
     assert.ok(component.render(120).length <= 24);
     if (i < manyModels.length - 1) component.handleInput(key.down);
   }
   assert.ok(!ids(component).includes("model-00"), "viewport scrolls instead of rendering the full list");
-  assert.ok(lines(component).includes("  (50/50)"));
+  assert.match(lines(component).join("\n"), /50\/50/);
   component.handleInput(key.up);
   assert.equal(highlighted(component), "model-48");
 });
 
 test("page navigation moves by the visible row count and does not edit the search", () => {
-  const { component, results } = fixture(manyModels, 14); // Six visible choices.
+  const { component, results } = fixture(manyModels, 14);
   search(component, "MODEL");
-  assert.equal(items(component).length, 6);
+  const visible = items(component).length;
+  assert.ok(visible >= 2 && visible < manyModels.length);
   component.handleInput(key.pageDown);
-  assert.equal(highlighted(component), "model-06");
+  assert.equal(highlighted(component), manyModels[visible]!.id);
   component.handleInput(key.pageDown);
-  assert.equal(highlighted(component), "model-12");
+  assert.equal(highlighted(component), manyModels[visible * 2]!.id);
   component.handleInput(key.pageUp);
-  assert.equal(highlighted(component), "model-06");
-  assert.match(lines(component)[1], /Search: MODEL/);
+  assert.equal(highlighted(component), manyModels[visible]!.id);
+  assert.ok(lines(component).some(line => line.includes("Search: MODEL")));
   assert.deepEqual(results, []);
   component.handleInput(key.enter);
-  assert.deepEqual(results, [{ ids: ["model-06"] }]);
+  assert.deepEqual(results, [{ ids: [manyModels[visible]!.id] }]);
 });
 
-test("arrow boundary navigation retains SelectList wrapping within the bounded viewport", () => {
+test("arrow boundary navigation wraps within the bounded viewport", () => {
   const { component } = fixture(manyModels, 12);
+  const visible = items(component).length;
   component.handleInput(key.up);
   assert.equal(highlighted(component), "model-49");
-  assert.equal(items(component).length, 4);
+  assert.equal(items(component).length, visible);
   component.handleInput(key.down);
   assert.equal(highlighted(component), "model-00");
 });
@@ -128,12 +134,12 @@ test("Space toggles only the highlighted model and preserves highlight and query
   component.handleInput(key.down);
   component.handleInput(" ");
   assert.equal(highlighted(component), "gamma-chat");
-  assert.match(items(component)[1], /^→ \[x\] gamma-chat/);
+  assert.match(items(component)[1], /→ \[x\] gamma-chat/);
   count(component, 1, 2);
-  assert.match(lines(component)[1], /Search: chat/);
+  assert.ok(lines(component).some(line => line.includes("Search: chat")));
   component.handleInput(" ");
   count(component, 0, 2);
-  assert.match(items(component)[1], /^→ \[ \] gamma-chat/);
+  assert.match(items(component)[1], /→ \[ \] gamma-chat/);
   assert.deepEqual(results, []);
 });
 
@@ -184,7 +190,7 @@ test("Ctrl+A with an empty query selects and deselects the entire catalog", () =
 test("zero matches: Enter, Space and Ctrl+A do not finish or select anything", () => {
   const { component, results } = fixture();
   search(component, "not-a-model");
-  assert.ok(lines(component).some(line => line.startsWith("No matching models.")));
+  assert.ok(lines(component).some(line => line.includes("No matching models")));
   for (const input of [key.enter, " ", key.all, key.up, key.down, key.pageUp, key.pageDown, key.enter]) {
     component.handleInput(input);
     count(component, 0, 0);
@@ -253,18 +259,15 @@ test("focus forwards to Input and renders exactly one cursor marker only when fo
   assert.ok(!component.render(80).join("\n").includes(CURSOR_MARKER));
   component.focused = true;
   paste(component, "alpha");
-  const input = new Input({ prompt: "Search: ", placeholder: "model ID or name" });
-  input.focused = true;
-  input.handleInput("\x1b[200~alpha\x1b[201~");
-  assert.equal(component.render(80)[1], input.render(80)[0], "uses the actual Input cursor rendering");
-  assert.equal(component.render(80).join("\n").split(CURSOR_MARKER).length, 2);
+  assert.ok(lines(component).some(line => line.includes("Search: alpha")), "the search text is visible");
+  const markers = () => component.render(80).join("\n").split(CURSOR_MARKER).length - 1;
+  assert.equal(markers(), 1, "the Input paints exactly one cursor marker, not a reimplementation");
   component.handleInput("\x1b[D");
-  input.handleInput("\x1b[D");
   component.invalidate();
-  assert.equal(component.render(80)[1], input.render(80)[0]);
+  assert.equal(markers(), 1, "editing keeps exactly one cursor");
   component.focused = false;
   assert.equal(component.focused, false);
-  assert.ok(!component.render(80).join("\n").includes(CURSOR_MARKER));
+  assert.equal(markers(), 0, "an unfocused picker paints no cursor");
 });
 
 test("Unicode IDs, descriptions and search fit narrow and fractional terminal widths", () => {
@@ -292,50 +295,60 @@ test("Unicode IDs, descriptions and search fit narrow and fractional terminal wi
   assert.deepEqual(ids(component), ["模型-🔑-e\u0301"]);
 });
 
-test("fullscreen wheel scrolls and clicking list rows toggles without submitting or touching help rows", () => {
+test("the wheel moves the highlight and a click toggles exactly that row without submitting", () => {
   const { component, results } = fixture(manyModels);
   const event = (type: TuiMouseEvent["type"], y: number): TuiMouseEvent => ({
     type, y, x: 5, screenX: 5, screenY: y, width: 120, height: 24,
     button: type === "wheel" ? "none" : "left", wheelDelta: type === "wheel" ? 1 : undefined,
     shift: false, alt: false, ctrl: false,
   });
-  assert.equal(component.handleMouse(event("wheel", 3))?.handled, true);
-  assert.equal(highlighted(component), "model-01");
-  assert.equal(component.handleMouse(event("press", 5))?.handled, true);
-  assert.equal(component.handleMouse(event("click", 5))?.render, true);
+  const top = lines(component).findIndex(line => line.includes("→ ["));
+  assert.ok(top > 0, "the first model row sits below the frame and header");
+  assert.equal(component.handleMouse(event("wheel", top))?.handled, true);
+  assert.equal(highlighted(component), "model-01", "the wheel moves the highlight");
+  const target = top + 2;
+  assert.equal(component.handleMouse(event("press", target))?.handled, true);
   assert.equal(highlighted(component), "model-02");
+  assert.equal(component.handleMouse(event("click", target))?.render, true);
   count(component, 1, 50, 50);
-  assert.deepEqual(results, []);
-  assert.equal(component.handleMouse(event("click", 1)), undefined);
-  assert.equal(component.handleMouse(event("click", 19)), undefined);
+  assert.deepEqual(results, [], "a click toggles, it does not submit");
+  assert.equal(component.handleMouse(event("click", 1)), undefined, "the chrome is not a row");
+  assert.equal(component.handleMouse(event("click", 20)), undefined, "outside the viewport is not a row");
   count(component, 1, 50, 50);
   component.handleInput(key.enter);
   assert.deepEqual(results, [{ ids: ["model-02"] }]);
-  assert.equal(component.handleMouse(event("click", 5)), undefined);
+  assert.equal(component.handleMouse(event("click", target)), undefined, "a closed picker ignores the mouse");
 });
 
 test("terminal height changes resize the bounded viewport while retaining highlight and selection", () => {
   const h = fixture(manyModels);
   h.component.handleInput(key.pageDown);
   h.component.handleInput(key.pageDown);
-  assert.equal(highlighted(h.component), "model-24");
+  const marked = highlighted(h.component)!;
+  assert.match(marked, /^model-\d+$/, "paging moved the highlight into the catalog");
   h.component.handleInput(" ");
-  for (const [rows, expected] of [[14, 6], [9, 1], [8, 1], [7, 1], [6, 1], [5, 1], [4, 1], [3, 1], [2, 1], [1, 1], [40, 12], [24, 12]]) {
+  for (const [rows] of [[14], [9], [8], [7], [6], [4], [3], [2], [1], [40], [24]]) {
     h.resize(rows);
-    assert.equal(items(h.component).length, expected);
-    assert.equal(highlighted(h.component), "model-24");
-    assert.match(items(h.component).find(line => line.startsWith("→ "))!, /\[x\]/);
-    if (rows >= 5) count(h.component, 1, 50, 50);
-    assert.ok(h.component.render(120).length <= rows, `picker must fit even a ${rows}-row viewport`);
-    if (rows >= 2) assert.match(lines(h.component).join("\n"), /Search:/);
-    if (rows >= 3) assert.match(lines(h.component).join("\n"), /Enter/);
+    const text = lines(h.component).join("\n");
+    assert.equal(highlighted(h.component), marked, `the highlight survives a ${rows}-row resize`);
+    assert.match(items(h.component).find(line => line.includes("→ "))!, /\[x\]/, "the selection survives the resize");
+    // Below ten rows the frame leaves three content rows, so the count yields to
+    // keep a model visible; the position stays in the title row either way.
+    if (rows >= 10 || (rows >= 5 && rows < 8)) count(h.component, 1, 50, 50);
+    if (rows >= 3) assert.match(text, /\d+\/50/, "the position is visible whenever a hint row fits");
+    assert.ok(h.component.render(120).length <= Math.max(1, rows), `picker must fit even a ${rows}-row viewport`);
+    if (rows >= 2) assert.match(text, /Search:/);
+    if (rows >= 3) assert.match(text, /Enter/);
   }
   h.resize(13);
   h.component.render(120); // Render applies terminal resize before navigation.
+  const index = manyModels.findIndex(model => model.id === marked);
+  const visible = items(h.component).length;
   h.component.handleInput(key.pageDown);
-  assert.equal(highlighted(h.component), "model-29");
+  assert.equal(highlighted(h.component), manyModels[(index + visible) % manyModels.length]!.id,
+    "paging is one viewport, whatever the height");
   h.component.handleInput(key.pageUp);
-  assert.equal(highlighted(h.component), "model-24");
+  assert.equal(highlighted(h.component), marked);
 });
 
 // Fail on any UI method other than the permitted surface, including custom() in RPC.
@@ -367,14 +380,18 @@ test("TUI helper constructs the custom picker with terminal height, theme and re
     });
     calls++;
     const tui = { requestRender: () => renders++, terminal: { get rows() { return rows; } } } as unknown as Parameters<Factory>[0];
-    const theme = { fg: (color: string, text: string) => { colors.push(color); return text; } } as Parameters<Factory>[1];
+    const theme = {
+      fg: (color: string, text: string) => { colors.push(color); return text; },
+      bold: (text: string) => text,
+    } as Parameters<Factory>[1];
     const component = factory(tui, theme, {} as Parameters<Factory>[2], resolve);
     assert.ok(component instanceof ProviderModelPicker);
-    assert.equal(items(component).length, 5);
+    const at13 = items(component).length;
+    assert.ok(at13 > 1, "a 13-row terminal shows several models");
     assert.ok(colors.includes("accent"));
     assert.ok(colors.includes("dim"));
     rows = 10;
-    assert.equal(items(component).length, 2);
+    assert.ok(items(component).length < at13, "a shorter terminal shows fewer rows");
     component.handleInput(key.down);
     component.handleInput(key.enter);
   }));

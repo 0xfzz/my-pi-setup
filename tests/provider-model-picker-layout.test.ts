@@ -153,7 +153,7 @@ function assertFits(h: Fixture) {
   assert.match(overlay.join("\n"), /Enter.*Esc/, "confirmation/cancel help survives even at four rows");
   if (h.terminal.rows >= 8) {
     assert.match(overlay.join("\n"), /PgUp\/PgDn/, "navigation help is visible when space permits");
-    assert.match(overlay.join("\n"), /Enter:.*Esc:/, "confirmation/cancel help is visible when space permits");
+    assert.match(overlay.join("\n"), /Enter .*Esc/, "confirmation/cancel help is visible when space permits");
   }
   return overlay;
 }

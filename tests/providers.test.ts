@@ -363,7 +363,8 @@ test("real picker keys batch models across searches with one discovery and one a
   const h = harness(["48000"], ["acme"], [true]);
   h.ctx.ui.custom = async (factory: any) => {
     let result: unknown;
-    const component = factory({ requestRender() {}, terminal: { rows: 24 } }, { fg: (_: string, text: string) => text }, {}, (value: unknown) => { result = value; });
+    const theme = { fg: (_: string, text: string) => text, bold: (text: string) => text };
+    const component = factory({ requestRender() {}, terminal: { rows: 24 } }, theme, {}, (value: unknown) => { result = value; });
     assert.ok(component instanceof ProviderModelPicker);
     component.focused = true;
     component.handleInput(" ");

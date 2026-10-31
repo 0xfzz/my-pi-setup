@@ -74,6 +74,11 @@ export class PopupShell implements Component {
     return this.scrollTop;
   }
 
+  /** Body rows visible in the last render; callers page by exactly this. */
+  get viewport(): number {
+    return this.lastViewport;
+  }
+
   scrollBy(delta: number): void {
     this.scrollTop += delta;
     this.clamp();
@@ -154,10 +159,18 @@ export class PopupShell implements Component {
     const footer = flattenPopupRows(model.footer ?? [], contentWidth);
 
     const available = popupBodyRows(this.options.terminalRows?.() ?? 24, this.options.rows);
-    const rawViewport = Math.max(1, available - header.length - footer.length);
-    const viewport = Math.max(1, Math.min(rawViewport, Math.max(1, body.length)));
+    // Chrome can exceed the budget on a short, narrow terminal: a hint line that
+    // wraps costs two rows. The frame must never overflow the screen (the
+    // overlay would be clipped mid-row), so the footer — hint text — yields
+    // first, then the body may shrink to nothing.
+    const visibleFooter = header.length + footer.length > available
+      ? footer.slice(0, Math.max(0, available - header.length))
+      : footer;
+    const visibleHeader = header.slice(0, available);
+    const rawViewport = Math.max(0, available - visibleHeader.length - visibleFooter.length);
+    const viewport = Math.max(0, Math.min(rawViewport, Math.max(1, body.length)));
 
-    this.lastHeader = header.length;
+    this.lastHeader = visibleHeader.length;
     this.lastViewport = viewport;
     this.lastBodyLength = body.length;
 
@@ -171,7 +184,7 @@ export class PopupShell implements Component {
     if (this.options.pad) {
       while (window.length < viewport) window.push("");
     }
-    const rows = [...header, ...window, ...footer];
+    const rows = [...visibleHeader, ...window, ...visibleFooter];
 
     if (!chrome) {
       const rule = theme.fg("border", "─".repeat(Math.max(1, width)));
