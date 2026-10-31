@@ -73,6 +73,8 @@ export interface ProviderSettingsPopupOptions {
 }
 
 type Stage =
+  /** Page 1: pick what to do, before any list is shown. */
+  | { kind: "home" }
   | { kind: "list" }
   | { kind: "provider"; row: ProviderRow }
   | { kind: "models"; row: ProviderRow }
@@ -99,7 +101,7 @@ export class ProviderSettingsPopup implements Component, Focusable {
   private readonly shell: PopupShell;
   /** One input per text step, so a step's editing state survives leaving it. */
   private readonly inputs = new Map<string, Input>();
-  private stage: Stage = { kind: "list" };
+  private stage: Stage = { kind: "home" };
   private selected = 0;
   private notice?: string;
   /** A step's validation failure; painted separately so it cannot look like a hint. */
@@ -199,7 +201,8 @@ export class ProviderSettingsPopup implements Component, Focusable {
   private hint(): string {
     switch (this.stage.kind) {
       case "wizard": return "Enter continue · Esc back";
-      case "list": return "↑↓ move · Enter open · a add · Esc close";
+      case "home": return "↑↓ move · Enter open · a add · Esc close";
+      case "list": return "↑↓ move · Enter open · a add · Esc back";
       default: return "↑↓ move · Enter apply · Esc back";
     }
   }
@@ -227,6 +230,8 @@ export class ProviderSettingsPopup implements Component, Focusable {
     const header = this.header();
     const stage = this.stage;
     switch (stage.kind) {
+      case "home":
+        return { header, body: this.homeBody() };
       case "list":
         return { header, body: this.listBody() };
       case "provider":
@@ -243,6 +248,12 @@ export class ProviderSettingsPopup implements Component, Focusable {
         return { header, body: step.choices ? this.choiceBody(step) : this.fieldBody(step, width) };
       }
     }
+  }
+
+  /** Page 1: the two things you can do, nothing else. */
+  private homeBody(): PopupRow[] {
+    const theme = this.theme;
+    return [theme.bold("What would you like to do?"), "", ...this.menuBody(this.entries())];
   }
 
   private listBody(): PopupRow[] {
@@ -380,6 +391,7 @@ export class ProviderSettingsPopup implements Component, Focusable {
   private entries(): Entry[] {
     const stage = this.stage;
     switch (stage.kind) {
+      case "home": return this.homeEntries();
       case "provider": return this.providerEntries(stage.row);
       case "models": return this.modelEntries(stage.row);
       case "confirm-delete": return [
@@ -403,14 +415,41 @@ export class ProviderSettingsPopup implements Component, Focusable {
     }
   }
 
+  private homeEntries(): Entry[] {
+    const rows = this.rows();
+    return [
+      {
+        label: "List available providers",
+        detail: rows.length ? `${rows.length} configured — open one to edit, clone or delete` : "none configured yet",
+        run: () => this.go({ kind: "list" }),
+      },
+      {
+        label: "Add a new provider…",
+        detail: "starts the connection wizard",
+        run: () => this.startAdd(),
+      },
+    ];
+  }
+
   private providerEntries(row: ProviderRow): Entry[] {
     const provider = this.options.view().providers[row.id] ?? {};
     const models = modelRows(provider).length;
+    const plan = accountPlan(this.options.view().providers, row.family);
     const entries: Entry[] = [
       { label: "Edit connection…", detail: "name, protocol, URL, key", run: () => this.startEdit(row) },
       { label: "Add models…", detail: "fetch the model list, or type an id", run: () => this.finish({ kind: "add-models", id: row.id }) },
       { label: `Models (${models})…`, detail: models ? "review or remove one" : "none yet", run: () => this.go({ kind: "models", row }) },
-      { label: "Add an account…", detail: row.accounts > 1 ? `next slot in ${row.family}` : "turns this into a family", run: () => this.startAccount(row) },
+      {
+        label: "Clone with a new key…",
+        // A lone provider is renamed to its first slot before the clone lands,
+        // so say that here rather than surprising the user afterwards.
+        detail: !plan
+          ? `next slot in ${row.family}`
+          : plan.migration
+            ? `renames this to ${plan.migration.to} and creates ${plan.draft.id}`
+            : `creates ${plan.draft.id}, keeps this one's models`,
+        run: () => this.startAccount(row),
+      },
       { label: "Delete this provider", detail: "removes only its models.json entry", run: () => this.go({ kind: "confirm-delete", row }) },
       { label: "← back", run: () => this.toList() },
     ];
@@ -564,8 +603,11 @@ export class ProviderSettingsPopup implements Component, Focusable {
   private back(): void {
     const stage = this.stage;
     switch (stage.kind) {
-      case "list":
+      case "home":
         this.finish({ kind: "close" });
+        return;
+      case "list":
+        this.go({ kind: "home" });
         return;
       case "provider":
         this.toList();
@@ -594,7 +636,7 @@ export class ProviderSettingsPopup implements Component, Focusable {
   private handleKey(data: string): boolean | void {
     const stage = this.stage;
     if (isPopupCloseKey(data)) {
-      if (stage.kind === "list") return false;
+      if (stage.kind === "home") return false;
       this.back();
       return true;
     }
@@ -627,8 +669,12 @@ export class ProviderSettingsPopup implements Component, Focusable {
       this.selected = (this.current() + 1) % count;
       return true;
     }
-    if (stage.kind === "list" && data === "a") {
+    if ((stage.kind === "home" || stage.kind === "list") && data === "a") {
       this.startAdd();
+      return true;
+    }
+    if (stage.kind === "provider" && data === "c") {
+      this.startAccount(stage.row);
       return true;
     }
     if (stage.kind === "provider" && data === "e") {

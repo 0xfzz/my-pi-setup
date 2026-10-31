@@ -18,28 +18,37 @@ Command: **`/provider`** only. The redundant `/providers` alias has been removed
 Bare `/provider` in the TUI opens an editor over `models.json`:
 
 ```text
-╭ Providers ───────────────────────────── ↑↓ move · Enter open · a add · Esc close ╮
-│ file       /home/you/.pi/agent/models.json                                       │
-│ providers  2 · 5 configured models                                               │
-│                                                                                  │
+╭ Providers ───────────────────────────────── ↑↓ move · Enter open · a add · Esc close ╮
+│ file       /home/you/.pi/agent/models.json                                         │
+│ providers  2 · 5 configured models                                                 │
+│                                                                                    │
+│ What would you like to do?                                                         │
+│ › List available providers 2 configured — open one to edit, clone or delete         │
+│   Add a new provider…  starts the connection wizard                                 │
+╰────────────────────────────────────────────────────────────────────────────────────╯
+```
+
+Entering the list shows every provider in `models.json`, with its protocol, model
+count and endpoint, and an `+ add a provider…` row:
+
+```text
 │ PROVIDERS                                                                        │
 │ › acme      Acme Cloud          account 1/2                                      │
 │     OpenAI Chat Completions · 3 models · https://api.acme.com/v1                 │
 │   acme-2    Acme (Account 2)    account 2/2                                      │
 │     OpenAI Chat Completions · 3 models · https://api.acme.com/v1                 │
 │   + add a provider…                                                              │
-╰──────────────────────────────────────────────────────────────────────────────────╯
 ```
 
 - **Add (`a`)** walks the connection: id, display name, protocol, base URL, key — one screen each. `Enter` continues, `Esc` goes back.
 - **The draft is durable while you walk it, and only while you walk it.** Going back keeps every answer: each keypress lands in the draft, so even half-typed text survives, and returning to the list and picking `add` again resumes the unfinished draft. Closing the popup discards it, so a new `/provider` starts blank and a half-finished provider can never reach `models.json`.
 - **Each step validates on its own**, so a bad id or URL names the problem and stays on that screen instead of rejecting a whole form. A duplicate id is refused where it is typed; the display name defaults to the id.
 - **The key field is masked** and its input is never rendered. Editing a provider starts that step blank — the stored credential is not re-displayed — and a blank key means "keep what is stored", which is how `/login` credentials survive an edit. A typed literal is escaped exactly as the dialog flow escapes it, so `$` and a leading `!` cannot become interpolation or a command.
-- **`Enter` on a provider** shows its endpoint, protocol, how its stored authentication resolves, its account family, and what you can do: edit the connection, add models, review or remove a model, add an account, delete the entry. `e` edits the connection directly, `d` deletes.
+- **`Enter` on a provider** shows its endpoint, protocol, how its stored authentication resolves, its account family, and what you can do: **edit** the connection, add models, review or remove a model, **clone** it, **delete** the entry. `e` edits the connection directly, `c` clones, `d` deletes.
 - **Models** lists each model with its limits, reasoning flag and whether a native `modelOverrides` entry also describes it. Removing one deletes that override too, so it does not come back on reload.
 - **A new connection saves by itself** and the editor reopens on it, because discovery is a separate dialog. The dialog flow still collects models before saving; from the editor, a connection saved without models says so, and its `Add models…` step is one keypress away.
 - **Delete** asks once and names what is *not* deleted: built-in providers, extension-owned providers, and credentials stored through `/login`.
-- **Adding an account** turns a lone `acme` into `acme-1` plus the new `acme-2`, keeps the first account's models and credential, and requires a credential for the new one — two accounts sharing a key would bill the same account twice.
+- **Cloning** (`Clone with a new key…`) creates the next `{provider_slug}-{n}` — `acme-3` for a family, or `acme-2` for a lone `acme`, which is renamed to `acme-1` first so the clone has a sibling. The clone inherits the connection and the model list, and **must supply its own key**: two accounts sharing one credential would bill the same account twice. The menu says which id it will create (and which rename it will do) before the wizard opens.
 - A `models.json` that cannot be parsed is shown in the header instead of opened as an empty file, so a broken file is never overwritten by the editor.
 
 Every edit re-reads the file first and `saveConfig` compares that snapshot with what is on disk, so a change made elsewhere while the popup was open is detected instead of overwritten. The dialog commands below remain for RPC clients, print mode, and scripted use.

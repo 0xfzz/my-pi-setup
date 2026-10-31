@@ -804,8 +804,8 @@ function editor(scripts: Array<(component: any) => void>) {
 const typeInto = (component: any, text: string) => { for (const char of text) component.handleInput(char); };
 /** After a save the editor reopens on that provider, so closing is two Escapes. */
 const closeEditor = (component: any) => {
-  component.handleInput(ESCAPE);
-  component.handleInput(ESCAPE);
+  // provider -> list -> page one -> close; extra presses hit a closed popup.
+  for (let i = 0; i < 4; i++) component.handleInput(ESCAPE);
 };
 const ENTER = "\r";
 const ESCAPE = "\x1b";
@@ -855,8 +855,9 @@ test("adding an account migrates the lone provider and inherits its models, not 
 
   const h = editor([
     (component) => {
+      component.handleInput(ENTER);   // page one -> the provider list
       component.handleInput(ENTER);   // open acme
-      component.handleInput("4");     // Add an account…
+      component.handleInput("4");     // Clone with a new key…
       component.handleInput(ENTER);   // name: "Acme (Account 2)"
       component.handleInput(ENTER);   // api (current)
       component.handleInput(ENTER);   // base URL (kept)
@@ -885,6 +886,7 @@ test("deleting from the editor removes only that entry", async () => inAgentDir(
 
   const h = editor([
     (component) => {
+      component.handleInput(ENTER);   // page one -> the provider list
       component.handleInput(ENTER);   // open acme
       component.handleInput("d");     // delete
       component.handleInput(ENTER);   // confirm

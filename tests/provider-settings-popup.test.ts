@@ -24,7 +24,8 @@ const base = (): Record<string, ProviderConfig> => ({
   ollama: { name: "Local", api: "openai-completions", baseUrl: "http://127.0.0.1:11434/v1" },
 });
 
-function harness(providers: Record<string, ProviderConfig> = base(), extras: Partial<ProviderSettingsView> = {}) {
+function harness(providers: Record<string, ProviderConfig> = base(), extras: Partial<ProviderSettingsView> = {},
+  start: "home" | "list" = "list") {
   const results: ProviderPopupResult[] = [];
   let closed = 0;
   const component = new ProviderSettingsPopup({
@@ -40,6 +41,8 @@ function harness(providers: Record<string, ProviderConfig> = base(), extras: Par
     onDone: (result) => { results.push(result); closed++; },
   });
   component.focused = true;
+  // Page one is the home menu; most of these tests exercise the list behind it.
+  if (start === "list") component.handleInput("\r");
   return {
     component, results, providers,
     get closed() { return closed; },
@@ -91,7 +94,7 @@ test("the list names every provider, its protocol, models and endpoint", () => {
   assert.match(text, /ollama {2}Local/);
   assert.match(text, /\+ add a provider…/);
   assert.match(text, /a add/);
-  assert.match(text, /Esc close/);
+  assert.match(text, /Esc back/, "the list is one step below page one");
 });
 
 test("config errors and the extension's notice are shown, not swallowed", () => {
@@ -111,8 +114,8 @@ test("Enter opens a provider, showing how its stored auth resolves", () => {
   assert.match(text, /Edit connection…/);
   assert.match(text, /Add models…/);
   assert.match(text, /Models \(2\)…/);
-  assert.match(text, /Add an account…/);
-  assert.match(text, /next slot in acme/);
+  assert.match(text, /Clone with a new key…/);
+  assert.match(text, /creates acme-3, keeps this one's models/);
   assert.match(text, /Delete this provider/);
 });
 
@@ -127,7 +130,9 @@ test("an id Pi also provides says that saving is an override", () => {
 test("a lone provider offers turning itself into a family, not a second family entry", () => {
   const h = harness({ ollama: base().ollama! });
   h.component.handleInput(enter);
-  assert.match(plain(h.component.render(90)), /turns this into a family/);
+  const text = plain(h.component.render(90));
+  assert.match(text, /renames this to ollama-1 and creates ollama-2/,
+    "the lone provider becomes Account 1 before the clone lands");
 });
 
 // ── The wizard ───────────────────────────────────────────────────────────────
@@ -336,12 +341,17 @@ test("the frame fits narrow and wide terminals without overflowing", () => {
   }
 });
 
-test("Esc from the list closes the popup with no action, which is how a draft is discarded", () => {
+test("Escape walks back one page at a time, and only page one closes", () => {
   const h = harness();
   h.component.handleInput("a");
   type(h.component, "acme-cloud");
   h.component.handleInput(escape); // wizard -> list
-  h.component.handleInput(escape); // list -> close
+  assert.equal(h.closed, 0, "leaving the wizard does not close the popup");
+  assert.match(plain(h.component.render(90)), /PROVIDERS/);
+  h.component.handleInput(escape); // list -> page one
+  assert.equal(h.closed, 0);
+  assert.match(plain(h.component.render(90)), /What would you like to do\?/);
+  h.component.handleInput(escape); // page one -> close
   assert.equal(h.closed, 1);
   assert.deepEqual(h.results, [{ kind: "close" }], "closing is not an implicit save");
 });
@@ -374,4 +384,83 @@ test("the header renders with Pi's own theme, where an unknown token throws", ()
   const text = plain(component.render(90));
   assert.match(text, /models\.json is not strict JSON\./);
   assert.match(text, /Removed acme from models\.json\./);
+});
+
+// ── Page one ─────────────────────────────────────────────────────────────────
+
+test("page one offers only the two things you can do", () => {
+  const h = harness(base(), {}, "home");
+  const text = plain(h.component.render(90));
+  assert.match(text, /What would you like to do\?/);
+  assert.match(text, /List available providers/);
+  assert.match(text, /3 configured — open one to edit, clone or delete/);
+  assert.match(text, /Add a new provider…/);
+  assert.match(text, /starts the connection wizard/);
+  assert.match(text, /a add/, "the shortcut is offered");
+  assert.match(text, /Esc close/);
+  assert.doesNotMatch(text, /PROVIDERS/, "the list is its own page");
+});
+
+test("page one opens the list, and the list returns to page one", () => {
+  const h = harness(base(), {}, "home");
+  h.component.handleInput(enter);
+  assert.match(plain(h.component.render(90)), /PROVIDERS/);
+  h.component.handleInput(escape);
+  assert.match(plain(h.component.render(90)), /What would you like to do\?/);
+  assert.equal(h.closed, 0, "going back a page is not closing");
+});
+
+test("page one starts the wizard directly", () => {
+  const h = harness(base(), {}, "home");
+  h.component.handleInput("a");
+  assert.match(plain(h.component.render(90)), /Provider ID/);
+  assert.equal(h.closed, 0);
+});
+
+test("page one adds a provider through its second option too", () => {
+  const h = harness(base(), {}, "home");
+  h.component.handleInput(down);
+  h.component.handleInput(enter);
+  assert.match(plain(h.component.render(90)), /Provider ID/, "the add row starts the same wizard as the shortcut");
+});
+
+// ── Clone ────────────────────────────────────────────────────────────────────
+
+test("cloning offers the next provider_slug-n with a fresh, empty key", () => {
+  const h = harness();
+  h.component.handleInput(enter);   // open acme (account 1 of 2)
+  h.component.handleInput("4");     // Clone with a new key…
+  assert.match(plain(h.component.render(90)), /Display name/);
+  assert.match(plain(h.component.render(90)), /Acme Cloud \(Account 3\)/);
+  h.component.handleInput(escape);  // back to the id step, which is locked
+  const idStep = plain(h.component.render(90));
+  assert.match(idStep, /Provider ID \(locked\)/);
+  assert.match(idStep, /acme-3/);
+});
+
+test("a clone saves as an account draft so the extension renames the family", () => {
+  const h = harness();
+  h.component.handleInput(enter);   // open acme
+  h.component.handleInput("4");     // clone
+  h.component.handleInput(escape);  // id step
+  h.component.handleInput(escape);  // back to the list, values kept
+  h.component.handleInput(enter);   // open acme again
+  h.component.handleInput("4");     // clone again: the draft resumes
+  // Name -> protocol -> URL -> key -> save, keeping the prefilled values.
+  h.component.handleInput(enter);
+  h.component.handleInput(enter);
+  h.component.handleInput(enter);
+  type(h.component, "sk-second-account");
+  h.component.handleInput(enter);
+  const result = h.results[0];
+  assert.equal(result?.kind, "save");
+  if (result?.kind !== "save") return;
+  assert.deepEqual(result.draft, {
+    id: "acme-3",
+    name: "Acme Cloud (Account 3)",
+    api: "openai-completions",
+    baseUrl: "https://api.acme.com/v1",
+    apiKey: "sk-second-account",
+    accountOf: "acme",
+  });
 });
