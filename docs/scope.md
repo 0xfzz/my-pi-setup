@@ -285,13 +285,34 @@ When a sandboxed command attempts to write outside the workspace:
 - **`landlock`** (Linux 5.13+): Uses Linux's unprivileged Landlock LSM via the
   official `landlock` Rust crate (`crates/nowrite-guard`). Handles only write
   rights (reads remain unrestricted), does not unshare namespaces, keeps host
-  networking and tty untouched, and background processes survive.
+  networking and tty untouched, and background processes survive. The probe is
+  a real smoke run: it writes inside an rw-listed temp dir and asserts a
+  non-listed dir stays refused — a `--version` banner proves nothing.
 - **`bwrap`** (Linux): Uses bubblewrap to mount the host root read-only and
   bind-mount writable roots. Does NOT unshare pid, network, or session, so
   background servers, dev ports, and interactive tools continue working.
 - **`seatbelt`** (macOS): Uses `sandbox-exec` with a profile allowing default
   reads and denying `file-write*` outside allowed paths.
 - **`auto`** (default): Probes in order `landlock` → `bwrap` → `seatbelt` → `none`.
+
+The env scrub (`TMPDIR`, `XDG_CACHE_HOME`, `npm_config_cache`, `PIP_CACHE_DIR`,
+`HISTFILE`, `GIT_*`, `PYTHONDONTWRITEBYTECODE`) rides every backend: bubblewrap
+carries it as `--setenv`, the Landlock helper and seatbelt as a
+`/usr/bin/env K=V …` prefix on the wrapped payload.
+
+### Ask modes (`sandbox.ask`)
+
+| `ask` | Behaviour |
+|---|---|
+| `refusal` | Bash pre-flight questions are suppressed entirely (path asks and the opaque-command ask): bash just runs sandboxed. The kernel is the one that asks — an outside write is refused, and the refusal opens the boundary question afterwards. Requires a probe-passed backend; until the probe answers, the pre-flight ask stands. |
+| `preflight` | Today's parser question before running; no refusal backstop. |
+| `both` (default) | Pre-flight first, with the refusal lane as the backstop. |
+
+A configured `deny` rule always wins in every mode: the refusal lane converts
+`ask` into "let the kernel answer it", never `deny` into "ask". Decision records
+carry `sandbox: { backend, mode, degraded? }` so `/scope telemetry` can group by
+what was actually enforced; the settings popup's Sandbox row shows mode, backend
+and the ask mode, with Off / Workspace / Read-only as its actions.
 
 ### Sandbox commands
 

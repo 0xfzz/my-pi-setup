@@ -180,6 +180,7 @@ export class ScopeSettingsPopup implements Component, Focusable {
     if (row.kind === "grant") return row.label;
     if (row.kind === "rule") return row.label;
     if (row.kind === "default") return `${row.label}  ${row.effect}`;
+    if (row.kind === "sandbox") return `sandbox  ${row.label}`;
     return `yolo  ${row.label}`;
   }
 
@@ -307,6 +308,13 @@ export class ScopeSettingsPopup implements Component, Focusable {
         detail: row.effect === effect ? "current · saved to .pi/scope.json" : `saves it in ${WORKSPACE_CONFIG}`,
         run: () => this.applyAction({ kind: "default", key: row.key, effect }),
       }));
+    }
+    if (row.kind === "sandbox") {
+      return [
+        { label: "Off", detail: row.label === "off" ? "current" : "bash writes rely on parsing again", run: () => this.applyAction({ kind: "sandbox-mode", mode: "off" }) },
+        { label: "Workspace", detail: "workspace + rw roots writable, rest read-only", run: () => this.applyAction({ kind: "sandbox-mode", mode: "workspace" }) },
+        { label: "Read-only", detail: "nothing writable except scratch and devices", run: () => this.applyAction({ kind: "sandbox-mode", mode: "readonly" }) },
+      ];
     }
     return [
       { label: "Off", detail: row.strength === undefined ? "current" : "outside paths ask again", run: () => this.applyAction({ kind: "yolo", strength: undefined }) },

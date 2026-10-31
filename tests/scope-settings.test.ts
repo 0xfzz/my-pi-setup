@@ -19,8 +19,21 @@ test("the settings rows are the workspace, then rules, defaults and yolo in orde
     { path: "/srv/data", access: "ro", source: "project" },
   ];
   const rows = settingsRows(state({ roots, rules }), cwd);
-  assert.deepEqual(rows.map(sectionOf), ["Grants", "Grants", "Rules", "Defaults", "Defaults", "Yolo"]);
+  assert.deepEqual(rows.map(sectionOf), ["Grants", "Grants", "Rules", "Defaults", "Defaults", "Yolo", "Sandbox"]);
   assert.deepEqual(rows.filter(row => row.kind === "grant").map(row => row.label), ["workspace", "/srv/data"]);
+});
+
+test("the sandbox row reports the armed mode and backend, or the parsing fallback", () => {
+  const off = settingsRows(state(), cwd).find(row => row.kind === "sandbox");
+  assert.equal(off?.kind === "sandbox" ? off.label : undefined, "off");
+  assert.equal(off?.kind === "sandbox" ? off.badge : undefined, "bash writes outside the workspace rely on parsing");
+
+  const armed = settingsRows(
+    state({ sandbox: { mode: "workspace", backend: "landlock", ask: "refusal", retry: "model", scratch: "off", allow: [], deny: [] } }),
+    cwd,
+  ).find(row => row.kind === "sandbox");
+  assert.equal(armed?.kind === "sandbox" ? armed.label : undefined, "workspace · landlock");
+  assert.equal(armed?.kind === "sandbox" ? armed.badge : undefined, "kernel write-deny · ask: refusal");
 });
 
 test("the workspace row is marked built-in and cannot be removed or re-saved", () => {

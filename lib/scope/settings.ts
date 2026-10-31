@@ -9,6 +9,7 @@
  * whether the user may remove it — so the popup never has to re-derive policy
  * while rendering.
  */
+import type { SandboxMode } from "./sandbox/config.ts";
 import { displayPath } from "./tool-paths.ts";
 import type { ScopeAccess, ScopeEffect, ScopeRoot, ScopeRule, ScopeState } from "./types.ts";
 
@@ -67,16 +68,25 @@ export interface YoloRow {
   label: string;
 }
 
-export type SettingsRow = GrantRow | RuleRow | DefaultRow | YoloRow;
+export interface SandboxRow {
+  kind: "sandbox";
+  /** `off`, or `<mode> · <backend>` */
+  label: string;
+  /** The kernel-enforcement story behind the label. */
+  badge: string;
+}
+
+export type SettingsRow = GrantRow | RuleRow | DefaultRow | YoloRow | SandboxRow;
 
 /** The sections, in the order the popup renders them. */
-export const SETTINGS_SECTIONS = ["Grants", "Rules", "Defaults", "Yolo"] as const;
+export const SETTINGS_SECTIONS = ["Grants", "Rules", "Defaults", "Yolo", "Sandbox"] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 export function sectionOf(row: SettingsRow): SettingsSection {
   if (row.kind === "grant") return "Grants";
   if (row.kind === "rule") return "Rules";
   if (row.kind === "default") return "Defaults";
+  if (row.kind === "sandbox") return "Sandbox";
   return "Yolo";
 }
 
@@ -106,6 +116,13 @@ export function settingsRows(state: ScopeState, cwd: string): SettingsRow[] {
   rows.push({ kind: "default", key: "external", label: DEFAULT_LABELS.external, effect: state.defaults.external });
   rows.push({ kind: "default", key: "readExternal", label: DEFAULT_LABELS.readExternal, effect: state.defaults.readExternal });
   rows.push({ kind: "yolo", strength: state.yolo?.strength, label: yoloLabel(state.yolo?.strength) });
+  const sandbox = state.sandbox;
+  rows.push({
+    kind: "sandbox",
+    label: sandbox && sandbox.mode !== "off" ? `${sandbox.mode} · ${sandbox.backend}` : "off",
+    badge: sandbox && sandbox.mode !== "off" ? `kernel write-deny · ask: ${sandbox.ask}`
+      : "bash writes outside the workspace rely on parsing",
+  });
   return rows;
 }
 
@@ -129,5 +146,6 @@ export type SettingsAction =
   | { kind: "rule-remove"; rule: ScopeRule }
   | { kind: "default"; key: DefaultKey; effect: ScopeEffect }
   | { kind: "yolo"; strength?: ScopeAccess }
+  | { kind: "sandbox-mode"; mode: SandboxMode }
   | { kind: "add-grant"; path: string; access: ScopeAccess; target: SettingsTarget }
   | { kind: "add-rule"; text: string; target: SettingsTarget };
