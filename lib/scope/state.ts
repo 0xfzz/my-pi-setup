@@ -281,6 +281,74 @@ export function writeScopeRule(file: string, rule: ScopeRule): void {
   });
 }
 
+/** Is this config entry the same path as `canonical`? Leaves junk entries alone. */
+function entryMatches(base: string, entry: unknown, canonical: string): boolean {
+  const raw = typeof entry === "string" ? entry : (entry as { path?: unknown } | undefined)?.path;
+  return typeof raw === "string" && canonicalize(resolve(base, expandHome(raw))) === canonical;
+}
+
+/**
+ * Update one root's access in a config file.
+ *
+ * `writeScopeRoot` only appends, and a root is matched first-wins on load, so an
+ * edit that appended would be shadowed by the entry it meant to replace.
+ * Returns false when nothing matched, so the caller can say so instead of
+ * rewriting a file for a no-op.
+ */
+export function setScopeRootAccess(file: string, base: string, path: string, access: ScopeAccess): boolean {
+  const canonical = canonicalize(resolve(base, expandHome(path)));
+  const config = readConfigFile(file);
+  const roots = Array.isArray(config.roots) ? config.roots : [];
+  let changed = false;
+  const next = roots.map(entry => {
+    if (!entryMatches(base, entry, canonical)) return entry;
+    changed = true;
+    return typeof entry === "string" ? { path: entry, access } : { ...entry, access };
+  });
+  if (changed) writeConfigFile(file, { ...config, roots: next });
+  return changed;
+}
+
+/** Delete one root from a config file. Returns false when nothing matched. */
+export function removeScopeRoot(file: string, base: string, path: string): boolean {
+  const canonical = canonicalize(resolve(base, expandHome(path)));
+  const config = readConfigFile(file);
+  const roots = Array.isArray(config.roots) ? config.roots : [];
+  const kept = roots.filter(entry => !entryMatches(base, entry, canonical));
+  if (kept.length === roots.length) return false;
+  writeConfigFile(file, { ...config, roots: kept });
+  return true;
+}
+
+/**
+ * Change one rule's effect in a config file.
+ *
+ * Same reason as `setScopeRootAccess`: rules are last-match-wins, so appending a
+ * second copy of a rule would make the edit look inverted when read back.
+ */
+export function setScopeRuleEffect(file: string, action: string, resource: string, effect: ScopeEffect): boolean {
+  const config = readConfigFile(file);
+  const rules = Array.isArray(config.rules) ? config.rules.filter(isRule) : [];
+  let changed = false;
+  const next = rules.map(rule => {
+    if (rule.action !== action) return rule;
+    if (rule.resource !== resource && expandRuleResource(rule.resource) !== resource) return rule;
+    if (rule.effect === effect) return rule;
+    changed = true;
+    return { ...rule, effect };
+  });
+  if (changed) writeConfigFile(file, { ...config, rules: next });
+  return changed;
+}
+
+/** Merge the two boundary defaults into a config file. */
+export function writeScopeDefaults(
+  file: string,
+  defaults: { external?: ScopeEffect; readExternal?: ScopeEffect },
+): void {
+  updateConfig(file, config => ({ ...config, defaults: { ...config.defaults, ...defaults } }));
+}
+
 /**
  * Delete one rule from a config file.
  *

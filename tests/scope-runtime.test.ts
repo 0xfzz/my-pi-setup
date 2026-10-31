@@ -197,6 +197,33 @@ test("always allow this one file never grants its folder", async () => {
   }
 });
 
+test("bare /scope opens the settings screen and saves a default in the project config", async () => {
+  const f = await fixture();
+  try {
+    const pending = f.commands.get("scope").handler("", f.ctx);
+    await tick();
+    assert.ok(f.dialog, "bare /scope opens the settings popup");
+    const component = f.dialog!.component;
+    assert.match(component.render(100).join("\n"), /Scope settings/);
+
+    // Rows are workspace, write-default, read-default, yolo. Open the write
+    // default and pick deny (allow, ask, deny).
+    component.handleInput("\x1b[B");
+    component.handleInput("\r");
+    component.handleInput("\x1b[B");
+    component.handleInput("\x1b[B");
+    component.handleInput("\r");
+    component.handleInput("\x1b");
+    await pending;
+
+    const config = JSON.parse(await readFile(join(f.dir, ".pi", "scope.json"), "utf8"));
+    assert.equal(config.defaults.external, "deny");
+    assert.equal(f.appended.at(-1)?.type, "agent-scope:v1", "the session snapshot is kept in step");
+  } finally {
+    await f.cleanup();
+  }
+});
+
 test("a session with no UI blocks with an actionable message instead of pretending", async () => {
   const f = await fixture({ hasUI: false, mode: "print" });
   try {

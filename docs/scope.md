@@ -407,7 +407,12 @@ upgraded to read-write, deny, deny-with-a-note, rule answers, duplicate rule
 answers, the policy hook, the base from the shell prefix, the bypass and
 fail-closed dialogs.
 `tests/scope-state.test.ts` covers config merge, wildcard validation, `~`
-expansion in rules, broken files, refused stored grants and snapshot replay.
+expansion in rules, broken files, refused stored grants, snapshot replay and the
+in-place config edits (root access, root removal, rule effect, default merge).
+`tests/scope-settings.test.ts` covers the settings rows, their order and the
+"can this be kept/removed" rules; `tests/scope-settings-popup.test.ts` covers the
+screen's keys, its menus, the add flow, the failure notice and narrow widths.
 `tests/scope-command.test.ts` and `tests/scope-audit.test.ts` cover parsing,
 reporting, stats and the bounded log. `tests/scope-runtime.test.ts` boots the
-extension against a fake Pi and checks the wired behaviour end to end.
+extension against a fake Pi and checks the wired behaviour end to end, including
+bare `/scope` opening the settings screen.

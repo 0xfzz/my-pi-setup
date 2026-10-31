@@ -23,24 +23,31 @@ import {
   statusLines,
   usage,
 } from "../lib/scope/command.ts";
-import { createGate, type AskAnswer, type AskRequest } from "../lib/scope/gate.ts";
+import { createGate, parseRule, type AskAnswer, type AskRequest } from "../lib/scope/gate.ts";
 import { effectiveBase } from "../lib/scope/cwd.ts";
 import { classifyPath } from "../lib/scope/paths.ts";
 import { evaluateClaim, narrowYoloSensitiveRead } from "../lib/scope/policy.ts";
+import { accessLabel, DEFAULT_LABELS, settingsRows, type SettingsAction, type SettingsTarget } from "../lib/scope/settings.ts";
 import {
   globalScopeFile,
   initialScopeState,
   loadScopeConfig,
   projectScopeFile,
+  removeScopeRoot,
   removeScopeRule,
   scopeRecordFromBranch,
   scopeSnapshot,
+  setScopeRootAccess,
+  setScopeRuleEffect,
+  writeScopeDefaults,
   writeScopeRoot,
   writeScopeRule,
 } from "../lib/scope/state.ts";
-import { SCOPE_RECORD_TYPE, type PathClaim, type ScopeRoot, type ScopeState } from "../lib/scope/types.ts";
+import { displayPath } from "../lib/scope/tool-paths.ts";
+import { SCOPE_RECORD_TYPE, type PathClaim, type ScopeRoot, type ScopeRule, type ScopeState } from "../lib/scope/types.ts";
 import { childContextState, isSubagentChildProcess, isSubagentChildSession } from "../lib/subagent-context.ts";
 import { ScopeAskPopup, scopeChoices } from "../lib/ui/scope-ask.ts";
+import { ScopeSettingsPopup } from "../lib/ui/scope-settings.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar-channel.ts";
 
 export default function scopeExtension(pi: ExtensionAPI) {
@@ -255,10 +262,175 @@ export default function scopeExtension(pi: ExtensionAPI) {
     return `Applied the parent's ${decision}: ${target} is ${access === "ro" ? "read-only" : "read-write"} for this session. Retry the call.`;
   }
 
-  function handleScope(args: string, ctx: ExtensionContext) {
+  /** The config file a settings change targets. */
+  function settingsFile(target: SettingsTarget): string {
+    return target === "global" ? globalScopeFile() : projectScopeFile(cwd);
+  }
+
+  function labelFor(path: string): string {
+    return displayPath(cwd, path);
+  }
+
+  function sameRule(a: ScopeRule, b: ScopeRule): boolean {
+    return a.action === b.action && a.resource === b.resource && a.effect === b.effect;
+  }
+
+  /**
+   * Apply one change from the settings popup.
+   *
+   * The popup never mutates state itself: it returns an action and this function
+   * does exactly what the matching `/scope …` subcommand does, so the menu and
+   * the command line cannot disagree. Session changes go to the branch snapshot;
+   * file changes rewrite the config and reload it.
+   */
+  function applySettings(action: SettingsAction, ctx: ExtensionContext): string {
+    switch (action.kind) {
+      case "grant-access": {
+        const root = action.root;
+        if (root.source === "project" || root.source === "global") {
+          const file = settingsFile(root.source);
+          setScopeRootAccess(file, cwd, root.path, action.access);
+          reload(ctx);
+          return `${labelFor(root.path)} is ${accessLabel(action.access)} in ${file}.`;
+        }
+        state = {
+          ...state,
+          roots: state.roots.map(existing => (existing.path === root.path ? { ...existing, access: action.access } : existing)),
+        };
+        persist();
+        draw?.();
+        refresh();
+        return `${labelFor(root.path)} is ${accessLabel(action.access)} for this session.`;
+      }
+      case "grant-keep": {
+        const file = projectScopeFile(cwd);
+        writeScopeRoot(file, cwd, action.root.path, action.root.access);
+        // Drop the session copy before saving the snapshot: the branch replay
+        // upserts by path, so leaving it would make the row keep reporting
+        // "session" for a grant the workspace now owns.
+        state = { ...state, roots: state.roots.filter(root => root.path !== action.root.path) };
+        persist();
+        reload(ctx);
+        return `Saved ${labelFor(action.root.path)} (${accessLabel(action.root.access)}) in ${file}; new sessions start with it.`;
+      }
+      case "grant-remove": {
+        const root = action.root;
+        if (root.source === "session" && root.path === cwd) return "The workspace grant cannot be removed.";
+        if (root.source === "project" || root.source === "global") removeScopeRoot(settingsFile(root.source), cwd, root.path);
+        state = { ...state, roots: state.roots.filter(existing => existing.path !== root.path) };
+        persist();
+        // Reload so a root lifted from a config file is really gone, not just
+        // hidden in this session's copy of the state.
+        reload(ctx);
+        return `Removed ${labelFor(root.path)}.`;
+      }
+      case "rule-effect": {
+        const rule = action.rule;
+        const apply = (existing: ScopeRule) =>
+          existing.action === rule.action && existing.resource === rule.resource ? { ...existing, effect: action.effect } : existing;
+        state = { ...state, rules: state.rules.map(apply) };
+        persist();
+        if (rule.source === "project" || rule.source === "global") {
+          const file = settingsFile(rule.source);
+          setScopeRuleEffect(file, rule.action, rule.resource, action.effect);
+          reload(ctx);
+          return `${rule.action} ${rule.resource} is ${action.effect} in ${file}.`;
+        }
+        draw?.();
+        refresh();
+        return `${rule.action} ${rule.resource} is ${action.effect} for this session.`;
+      }
+      case "rule-keep": {
+        const file = projectScopeFile(cwd);
+        writeScopeRule(file, action.rule);
+        state = { ...state, rules: state.rules.filter(existing => !sameRule(existing, action.rule)) };
+        persist();
+        reload(ctx);
+        return `Saved the rule ${action.rule.action} ${action.rule.resource} ${action.rule.effect} in ${file}.`;
+      }
+      case "rule-remove": {
+        const rule = action.rule;
+        if (rule.source === "project" || rule.source === "global") removeScopeRule(settingsFile(rule.source), rule.action, rule.resource);
+        state = { ...state, rules: state.rules.filter(existing => !sameRule(existing, rule)) };
+        persist();
+        reload(ctx);
+        return `Removed the rule ${rule.action} ${rule.resource}.`;
+      }
+      case "default": {
+        // Defaults are policy, not a session preference, and the branch snapshot
+        // does not carry them: saving to the project config is what makes the
+        // answer survive the next reload.
+        const file = projectScopeFile(cwd);
+        writeScopeDefaults(file, { [action.key]: action.effect });
+        state = { ...state, defaults: { ...state.defaults, [action.key]: action.effect } };
+        persist();
+        reload(ctx);
+        return `${DEFAULT_LABELS[action.key]} is now ${action.effect} (saved in ${file}).`;
+      }
+      case "yolo": {
+        state = action.strength
+          ? { ...state, yolo: { strength: action.strength, persist: true, since: Date.now() } }
+          : { ...state, yolo: undefined };
+        persist();
+        draw?.();
+        refresh();
+        return action.strength
+          ? `yolo ${action.strength} armed for this branch; deny rules still win.`
+          : "yolo disarmed; outside paths ask again.";
+      }
+      case "add-grant": {
+        if (action.target === "session") {
+          const root = addRoot(action.path, action.access, "session");
+          return `${labelFor(root.path)} is ${accessLabel(action.access)} for this session.`;
+        }
+        const file = settingsFile(action.target);
+        writeScopeRoot(file, cwd, action.path, action.access);
+        reload(ctx);
+        return `Saved ${action.path} (${accessLabel(action.access)}) in ${file}.`;
+      }
+      case "add-rule": {
+        const parts = action.text.trim().split(/\s+/);
+        // A one-word answer would make `parseRule` fall back to a wildcard
+        // resource, which is the one thing this menu must never save by accident.
+        if (parts.length < 2) throw new Error("A rule needs a resource and an effect: <tool|*> <glob> <allow|ask|deny>.");
+        const rule = parseRule(action.text, ".");
+        if (action.target === "session") {
+          const duplicate = state.rules.some(existing => sameRule(existing, rule));
+          if (!duplicate) state = { ...state, rules: [...state.rules, { ...rule, source: "session" }] };
+          persist();
+          draw?.();
+          refresh();
+          return `${rule.action} ${rule.resource} ${rule.effect} is active for this session.`;
+        }
+        const file = settingsFile(action.target);
+        writeScopeRule(file, rule);
+        reload(ctx);
+        return `Saved the rule ${rule.action} ${rule.resource} ${rule.effect} in ${file}.`;
+      }
+    }
+  }
+
+  /** Bare `/scope` inside the TUI: the same state, as something you can edit. */
+  async function openSettings(ctx: ExtensionContext) {
+    await ctx.ui.custom<undefined>((tui, theme, _keys, done) => new ScopeSettingsPopup({
+      view: () => ({ cwd, sources: config.sources, rows: settingsRows(state, cwd) }),
+      apply: action => applySettings(action, ctx),
+      theme,
+      terminalRows: () => tui.terminal.rows,
+      onDone: () => done(undefined),
+    }), { overlay: true, overlayOptions: popupOverlayOptions("84%", 52, "88%") as never });
+  }
+
+  async function handleScope(args: string, ctx: ExtensionContext) {
     const action = parseScopeCommand(args);
     switch (action.kind) {
       case "status":
+        // Bare `/scope` is the settings screen; `status` stays the copyable text
+        // report, so neither surface has to guess what the user meant.
+        if (!args.trim() && ctx.mode === "tui" && typeof ctx.ui.custom === "function") {
+          await openSettings(ctx);
+          return;
+        }
         ctx.ui.notify(statusLines(state, cwd, config.sources).join("\n"), "info");
         return;
       case "rules":

@@ -7,9 +7,13 @@ import { canonicalize, expandHome, toResourceSlash } from "../lib/scope/paths.ts
 import {
   initialScopeState,
   loadScopeConfig,
+  removeScopeRoot,
   removeScopeRule,
   scopeRecordFromBranch,
   scopeSnapshot,
+  setScopeRootAccess,
+  setScopeRuleEffect,
+  writeScopeDefaults,
 } from "../lib/scope/state.ts";
 import { SCOPE_RECORD_TYPE, type ScopeState } from "../lib/scope/types.ts";
 
@@ -194,6 +198,67 @@ test("a rule resource expands ~ the way a root does", async () => {
     const loaded = loadScopeConfig(f.dir);
     const expected = toResourceSlash(expandHome("~/projects/*"));
     assert.ok(loaded.state.rules.some(rule => rule.resource === expected), JSON.stringify(loaded.state.rules));
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("a config root's access is rewritten in place, not appended", async () => {
+  const f = await fixture({ roots: [{ path: "/srv/data", access: "ro" }, "/opt/shared"] });
+  try {
+    const file = join(f.dir, ".pi", "scope.json");
+    assert.equal(setScopeRootAccess(file, f.dir, "/srv/data", "rw"), true);
+    const config = JSON.parse(await readFile(file, "utf8"));
+    assert.deepEqual(config.roots, [{ path: "/srv/data", access: "rw" }, "/opt/shared"], "the other entries survive untouched");
+    assert.equal(setScopeRootAccess(file, f.dir, "/nope", "rw"), false, "an unknown root is a reported no-op");
+    const loaded = loadScopeConfig(f.dir);
+    assert.equal(loaded.state.roots.find(root => root.path === "/srv/data")?.access, "rw");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("removing a config root keeps the rest of the file and reports a miss", async () => {
+  const f = await fixture({
+    roots: [{ path: "/srv/data", access: "ro" }, "/opt/shared"],
+    rules: [{ action: "read", resource: "*", effect: "ask" }],
+  });
+  try {
+    const file = join(f.dir, ".pi", "scope.json");
+    assert.equal(removeScopeRoot(file, f.dir, "/srv/data"), true);
+    const config = JSON.parse(await readFile(file, "utf8"));
+    assert.deepEqual(config.roots, ["/opt/shared"]);
+    assert.equal(config.rules.length, 1, "a root removal must not touch the rules");
+    assert.equal(removeScopeRoot(file, f.dir, "/srv/data"), false);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("a rule effect is edited in place instead of shadowed by a second copy", async () => {
+  const f = await fixture({ rules: [{ action: "read", resource: "/secrets/*", effect: "deny" }] });
+  try {
+    const file = join(f.dir, ".pi", "scope.json");
+    assert.equal(setScopeRuleEffect(file, "read", "/secrets/*", "allow"), true);
+    const config = JSON.parse(await readFile(file, "utf8"));
+    assert.deepEqual(config.rules, [{ action: "read", resource: "/secrets/*", effect: "allow" }], "one rule, new effect");
+    assert.equal(setScopeRuleEffect(file, "read", "/nope/*", "deny"), false);
+    assert.equal(loadScopeConfig(f.dir).state.rules[0]?.effect, "allow");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("defaults merge into the config without dropping the other keys", async () => {
+  const f = await fixture({ roots: ["/srv/data"], defaults: { external: "allow" } });
+  try {
+    const file = join(f.dir, ".pi", "scope.json");
+    writeScopeDefaults(file, { external: "deny", readExternal: "ask" });
+    const config = JSON.parse(await readFile(file, "utf8"));
+    assert.deepEqual(config.defaults, { external: "deny", readExternal: "ask" });
+    assert.deepEqual(config.roots, ["/srv/data"], "the roots are not rewritten by a defaults change");
+    const loaded = loadScopeConfig(f.dir).state.defaults;
+    assert.deepEqual(loaded, { external: "deny", readExternal: "ask" });
   } finally {
     await f.cleanup();
   }
