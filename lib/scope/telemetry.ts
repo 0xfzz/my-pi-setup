@@ -17,7 +17,7 @@
  * 3. **Narrow.** Only the decision vocabulary is stored — never file contents,
  *    never a tool's full payload — and command text is redacted and truncated.
  */
-import { appendFileSync, mkdirSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ScopeEffect, ScopePosture } from "./types.ts";
@@ -153,6 +153,146 @@ export function defaultTelemetryPath(env: NodeJS.ProcessEnv = process.env): stri
   if (override) return override;
   const agentDir = env.PI_CODING_AGENT_DIR?.trim() || env.PI_AGENT_DIR?.trim() || join(homedir(), ".pi", "agent");
   return join(agentDir, "scope-telemetry.jsonl");
+}
+
+/** Read a JSONL file, skipping lines that are corrupt or not a decision record. */
+export function readTelemetryRecords(path: string, limit = Number.POSITIVE_INFINITY): StoredDecisionRecord[] {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return [];
+  }
+  const records: StoredDecisionRecord[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line) as Partial<StoredDecisionRecord>;
+      if (typeof parsed?.tool === "string" && typeof parsed.effect === "string" && typeof parsed.at === "number") {
+        records.push(parsed as StoredDecisionRecord);
+      }
+    } catch {
+      // A truncated final line after a crash is not worth failing a report over.
+    }
+  }
+  const capped = Math.max(1, Math.floor(limit));
+  return records.length > capped ? records.slice(records.length - capped) : records;
+}
+
+/** The signals worth acting on, already counted. */
+export interface TelemetrySummary {
+  total: number;
+  /** Distinct `cwd` values: the log is global, the records are not. */
+  workspaces: number;
+  asked: number;
+  denied: number;
+  automatic: number;
+  unknown: number;
+  /** Targets the gate asked about, most frequent first. */
+  askedTargets: Array<{ target: string; count: number; once: number; denied: number }>;
+  /** Targets asked more than once and answered "once": a standing answer would silence them. */
+  repeats: Array<{ target: string; count: number; once: number }>;
+  /** Constructs the parser could not analyse, most frequent first. */
+  gaps: Array<{ construct: string; count: number; tools: string[] }>;
+  /** Deny rules that actually fired. */
+  deniedRules: Array<{ rule: string; count: number }>;
+}
+
+/**
+ * Count the decisions into the questions a person actually asks of them.
+ *
+ * Three shapes matter: a target that keeps asking is either a missing grant or a
+ * false positive; a target that keeps being answered "once" is the same thing
+ * with the answer already given; an opaque construct is a detection gap, not a
+ * user problem. `deniedRules` is how a too-broad deny rule becomes visible.
+ */
+export function summarizeTelemetry(
+  records: readonly DecisionRecord[],
+  options: { top?: number; repeatThreshold?: number } = {},
+): TelemetrySummary {
+  const top = Math.max(1, Math.floor(options.top ?? 8));
+  const repeatThreshold = Math.max(2, Math.floor(options.repeatThreshold ?? 2));
+  const workspaces = new Set<string>();
+  const byTarget = new Map<string, { target: string; count: number; once: number; denied: number }>();
+  const byGap = new Map<string, { construct: string; count: number; tools: Set<string> }>();
+  const byRule = new Map<string, { rule: string; count: number }>();
+  let asked = 0;
+  let denied = 0;
+  let automatic = 0;
+  let unknown = 0;
+
+  for (const record of records) {
+    workspaces.add(record.cwd);
+    if (record.effect === "deny") denied++;
+    if (record.auto) automatic++;
+    if (record.unknown) unknown++;
+    if (record.asked) {
+      asked++;
+      const key = record.claim?.absolute ?? record.input;
+      const row = byTarget.get(key) ?? { target: key, count: 0, once: 0, denied: 0 };
+      row.count++;
+      if (record.answer === "once") row.once++;
+      if (record.effect === "deny") row.denied++;
+      byTarget.set(key, row);
+    }
+    if (record.unknown) {
+      const construct = record.opaque ?? "unreadable command";
+      const row = byGap.get(construct) ?? { construct, count: 0, tools: new Set<string>() };
+      row.count++;
+      row.tools.add(record.tool);
+      byGap.set(construct, row);
+    }
+    if (record.effect === "deny" && record.rule) {
+      const key = `${record.rule.action}:${record.rule.resource}`;
+      byRule.set(key, { rule: key, count: (byRule.get(key)?.count ?? 0) + 1 });
+    }
+  }
+
+  const targets = [...byTarget.values()].sort((left, right) => right.count - left.count);
+  return {
+    total: records.length,
+    workspaces: workspaces.size,
+    asked,
+    denied,
+    automatic,
+    unknown,
+    askedTargets: targets.slice(0, top),
+    repeats: targets.filter(row => row.count >= repeatThreshold && row.once > 0).slice(0, top),
+    gaps: [...byGap.values()]
+      .sort((left, right) => right.count - left.count)
+      .slice(0, top)
+      .map(row => ({ construct: row.construct, count: row.count, tools: [...row.tools].sort() })),
+    deniedRules: [...byRule.values()].sort((left, right) => right.count - left.count).slice(0, top),
+  };
+}
+
+/** Render a summary for `/scope telemetry`. */
+export function formatTelemetrySummary(summary: TelemetrySummary, path: string): string[] {
+  if (!summary.total) return [`Scope telemetry: no records yet in ${path}`];
+  const lines = [
+    `Scope telemetry: ${summary.total} decisions in ${summary.workspaces} workspace${summary.workspaces === 1 ? "" : "s"}`,
+    `  ${summary.asked} asked, ${summary.denied} denied, ${summary.automatic} automatic, ${summary.unknown} detection gap${summary.unknown === 1 ? "" : "s"}`,
+  ];
+  if (summary.askedTargets.length) {
+    lines.push("asked targets (a grant or a rule would silence these):");
+    for (const row of summary.askedTargets) {
+      lines.push(`  ${String(row.count).padStart(4)}  ${row.target}  (${row.once} once, ${row.denied} denied)`);
+    }
+  }
+  if (summary.repeats.length) {
+    lines.push("repeated asks with no standing answer:");
+    for (const row of summary.repeats) lines.push(`  ${String(row.count).padStart(4)}  ${row.target}  (${row.once} answered once)`);
+  }
+  if (summary.gaps.length) {
+    lines.push("detection gaps (the parser could not analyse these):");
+    for (const row of summary.gaps) lines.push(`  ${String(row.count).padStart(4)}  [${row.tools.join(", ")}] ${row.construct}`);
+  }
+  if (summary.deniedRules.length) {
+    lines.push("deny rules that fired:");
+    for (const row of summary.deniedRules) lines.push(`  ${String(row.count).padStart(4)}  ${row.rule}`);
+  }
+  lines.push(`  log: ${path}`);
+  return lines;
 }
 
 export interface ScopeTelemetryOptions {

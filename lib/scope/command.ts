@@ -23,13 +23,14 @@ export type ScopeAction =
   | { kind: "test"; path: string }
   | { kind: "yolo"; mode: "on" | "off" | "all" | "status"; persist: boolean }
   | { kind: "log"; limit: number; stats?: boolean }
+  | { kind: "telemetry"; limit: number }
   | { kind: "usage"; detail: string };
 
 export const SCOPE_SUBCOMMANDS = [
-  "status", "allow", "deny", "remove", "reset", "rules", "test", "yolo", "log",
+  "status", "allow", "deny", "remove", "reset", "rules", "test", "yolo", "log", "telemetry",
 ] as const;
 
-const USAGE = "Usage: /scope [status|allow <path> [--ro|--rw] [--project|--global]|deny <path> [--project|--global]|remove [--rule] <path|action glob> [--project|--global]|reset|rules|test <path>|yolo [on|off|all|status] [--persist]|log [n] [--stats]]";
+const USAGE = "Usage: /scope [status|allow <path> [--ro|--rw] [--project|--global]|deny <path> [--project|--global]|remove [--rule] <path|action glob> [--project|--global]|reset|rules|test <path>|yolo [on|off|all|status] [--persist]|log [n] [--stats]|telemetry [n]]";
 
 const EFFECTS: ReadonlySet<string> = new Set(["allow", "ask", "deny"]);
 
@@ -54,6 +55,11 @@ export function parseScopeCommand(input: string): ScopeAction {
     const stats = rest.includes("--stats");
     const limit = Number.parseInt(rest.find(token => !token.startsWith("--")) ?? "", 10);
     return { kind: "log", limit: Number.isFinite(limit) && limit > 0 ? Math.min(200, limit) : 20, ...(stats ? { stats } : {}) };
+  }
+
+  if (command === "telemetry") {
+    const limit = Number.parseInt(rest.find(token => !token.startsWith("--")) ?? "", 10);
+    return { kind: "telemetry", limit: Number.isFinite(limit) && limit > 0 ? Math.min(10000, limit) : 1000 };
   }
 
   if (command === "remove") {

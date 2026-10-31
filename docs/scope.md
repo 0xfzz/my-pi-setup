@@ -203,6 +203,7 @@ root still wins over a broad read-write one.
 | `/scope rules` | The numbered effective rule table, last match wins, with provenance |
 | `/scope test <path>` | Dry run: prints the decision and the rule or root that produced it |
 | `/scope log [n] [--stats]` | Recent decisions, or a summary by tool and asked-about path |
+| `/scope telemetry [n]` | The global log, summarized: asked targets, repeated asks, detection gaps, deny rules that fired |
 | `/scope yolo [on\|off\|all\|status] [--persist]` | Auto-approve the remaining questions |
 
 ## Delegated children
@@ -391,6 +392,11 @@ jq -r 'select(.asked) | .claim.absolute' ~/.pi/agent/scope-telemetry.jsonl | sor
 # every automatic yolo approval
 jq -c 'select(.auto) | {tool, input, yolo}' ~/.pi/agent/scope-telemetry.jsonl
 ```
+
+`/scope telemetry [n]` does the counting for you over the newest `n` records
+(1000 by default) and names the three things worth changing: targets that keep
+asking, targets that keep being answered "once" (a standing grant or a rule
+would silence them), and opaque constructs the parser could not analyse.
 
 ## Where the gate sits
 

@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createGate, type AskAnswer, type GateDeps } from "../lib/scope/gate.ts";
+import { parseScopeCommand } from "../lib/scope/command.ts";
 import {
   DEFAULT_MAX_BYTES,
   defaultTelemetryPath,
+  formatTelemetrySummary,
+  readTelemetryRecords,
   sanitizeTelemetryText,
   ScopeTelemetry,
+  summarizeTelemetry,
   TELEMETRY_VERSION,
   telemetryEnabled,
   type DecisionRecord,
@@ -24,10 +27,7 @@ async function tempDir(): Promise<string> {
 }
 
 function lines(path: string): StoredDecisionRecord[] {
-  return readFileSync(path, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map(line => JSON.parse(line) as StoredDecisionRecord);
+  return readTelemetryRecords(path);
 }
 
 const record = (over: Partial<DecisionRecord> = {}): DecisionRecord => ({
@@ -111,7 +111,7 @@ test("rotation covers a file that already existed before the sink started", asyn
   const dir = await tempDir();
   try {
     const path = join(dir, "scope-telemetry.jsonl");
-    await writeFile(path, `${JSON.stringify(record({ input: "old" }))}\n`.repeat(30));
+    await writeFile(path, `${JSON.stringify({ ...record({ input: "old" }), v: 1, at: 1 })}\n`.repeat(30));
     new ScopeTelemetry({ path, maxBytes: 1024 }).record(record({ input: "new" }));
     assert.equal(lines(path).length, 1, "the oversized predecessor is rotated out");
     assert.equal(lines(`${path}.1`).length, 30);
@@ -249,4 +249,66 @@ test("a throwing sink cannot change a verdict", async () => {
   assert.equal(await h.gate.gate("read", { path: "src/a.ts" }), undefined);
   const blocked = await h.gate.gate("write", { path: "../other/a.ts" });
   assert.equal(blocked?.block, true, "the gate still decides exactly as it would without telemetry");
+});
+
+// ---- reading and summarizing ------------------------------------------------
+
+test("a missing log reads as empty instead of throwing", () => {
+  assert.deepEqual(readTelemetryRecords("/nonexistent/scope-telemetry.jsonl"), []);
+});
+
+test("the reader skips corrupt lines and keeps the newest limit", async () => {
+  const dir = await tempDir();
+  try {
+    const path = join(dir, "scope-telemetry.jsonl");
+    const line = (tool: string) => JSON.stringify({ ...record({ tool }), v: 1, at: 1 });
+    await writeFile(path, [line("read"), "{not json", line("write"), line("bash")].join("\n"));
+    assert.deepEqual(readTelemetryRecords(path).map(entry => entry.tool), ["read", "write", "bash"]);
+    assert.deepEqual(readTelemetryRecords(path, 2).map(entry => entry.tool), ["write", "bash"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("the summary counts the targets that ask, the gaps and the rules that fired", () => {
+  const rows: DecisionRecord[] = [
+    record({ asked: true, answer: "once", effect: "allow", claim: { action: "read", absolute: "/srv/data", resource: "/srv/data", write: false, posture: "read", external: true, kind: "directory" } }),
+    record({ asked: true, answer: "once", effect: "allow", claim: { action: "read", absolute: "/srv/data", resource: "/srv/data", write: false, posture: "read", external: true, kind: "directory" } }),
+    record({ asked: true, answer: "deny", effect: "deny", claim: { action: "read", absolute: "/srv/data", resource: "/srv/data", write: false, posture: "read", external: true, kind: "directory" } }),
+    record({ tool: "bash", input: "bash -c id", unknown: true, opaque: "bash -c", asked: true, answer: "deny", effect: "deny" }),
+    record({ tool: "read", input: "/etc/secret", effect: "deny", rule: { action: "read", resource: "*secret*", effect: "deny" } }),
+    record({ cwd: "/other", auto: true, effect: "allow", yolo: "ro" }),
+  ];
+  const summary = summarizeTelemetry(rows);
+  assert.equal(summary.total, 6);
+  assert.equal(summary.workspaces, 2, "the global log spans workspaces");
+  assert.equal(summary.asked, 4);
+  assert.equal(summary.denied, 3);
+  assert.equal(summary.automatic, 1);
+  assert.equal(summary.unknown, 1);
+  assert.deepEqual(summary.askedTargets[0], { target: "/srv/data", count: 3, once: 2, denied: 1 });
+  assert.deepEqual(summary.repeats, [{ target: "/srv/data", count: 3, once: 2, denied: 1 }]);
+  assert.deepEqual(summary.gaps, [{ construct: "bash -c", count: 1, tools: ["bash"] }]);
+  assert.deepEqual(summary.deniedRules, [{ rule: "read:*secret*", count: 1 }]);
+});
+
+test("the summary renders empty and populated states", () => {
+  assert.match(formatTelemetrySummary(summarizeTelemetry([]), "/tmp/t.jsonl").join("\n"), /no records yet in \/tmp\/t\.jsonl/);
+  const lines = formatTelemetrySummary(
+    summarizeTelemetry([
+      record({ asked: true, answer: "once", effect: "allow", claim: { action: "read", absolute: "/srv", resource: "/srv", write: false, posture: "read", external: true, kind: "directory" } }),
+      record({ asked: true, answer: "once", effect: "allow", claim: { action: "read", absolute: "/srv", resource: "/srv", write: false, posture: "read", external: true, kind: "directory" } }),
+    ]),
+    "/tmp/t.jsonl",
+  ).join("\n");
+  assert.match(lines, /2 decisions in 1 workspace/);
+  assert.match(lines, /asked targets/);
+  assert.match(lines, /repeated asks with no standing answer/);
+  assert.match(lines, /\(2 answered once\)/);
+});
+
+test("the command parses telemetry with a bounded limit", () => {
+  assert.deepEqual(parseScopeCommand("telemetry"), { kind: "telemetry", limit: 1000 });
+  assert.deepEqual(parseScopeCommand("telemetry 50"), { kind: "telemetry", limit: 50 });
+  assert.deepEqual(parseScopeCommand("telemetry 999999"), { kind: "telemetry", limit: 10000 });
 });

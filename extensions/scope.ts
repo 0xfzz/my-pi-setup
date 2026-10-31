@@ -44,7 +44,7 @@ import {
   writeScopeRule,
 } from "../lib/scope/state.ts";
 import { displayPath } from "../lib/scope/tool-paths.ts";
-import { ScopeTelemetry } from "../lib/scope/telemetry.ts";
+import { formatTelemetrySummary, readTelemetryRecords, ScopeTelemetry, summarizeTelemetry } from "../lib/scope/telemetry.ts";
 import { SCOPE_RECORD_TYPE, type PathClaim, type ScopeRoot, type ScopeRule, type ScopeState } from "../lib/scope/types.ts";
 import { childContextState, isSubagentChildProcess, isSubagentChildSession } from "../lib/subagent-context.ts";
 import { ScopeAskPopup, scopeChoices } from "../lib/ui/scope-ask.ts";
@@ -470,6 +470,12 @@ export default function scopeExtension(pi: ExtensionAPI) {
       case "log":
         ctx.ui.notify((action.stats ? formatStats(log.list()) : formatAudit(log.list(), action.limit)).join("\n"), "info");
         return;
+      case "telemetry": {
+        // Reads the global file, so the answer spans every workspace, not only this one.
+        const records = readTelemetryRecords(telemetry.path, action.limit);
+        ctx.ui.notify(formatTelemetrySummary(summarizeTelemetry(records), telemetry.path).join("\n"), "info");
+        return;
+      }
       case "allow": {
         if (action.target === "session") {
           const root = addRoot(action.path, action.access, "session");
