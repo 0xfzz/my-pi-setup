@@ -19,6 +19,12 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { canonicalize, expandHome, lexicalInside, literalPrefix, toResourceSlash } from "./paths.ts";
 import {
+  DEFAULT_SANDBOX_CONFIG,
+  mergeSandboxConfig,
+  parseSandboxConfig,
+  type SandboxConfig,
+} from "./sandbox/config.ts";
+import {
   DEFAULT_SCOPE_DEFAULTS,
   isUnsafeRoot,
   SCOPE_RECORD_TYPE,
@@ -35,6 +41,7 @@ export interface ScopeConfigFile {
   roots?: Array<string | { path: string; access?: ScopeAccess }>;
   rules?: ScopeRule[];
   defaults?: { external?: ScopeEffect; readExternal?: ScopeEffect; unknown?: ScopeEffect };
+  sandbox?: unknown;
   /**
    * Accepted so a hand-written file with the key is reported instead of
    * ignored: MCP tools bypass this gate and there is no path field to declare.
@@ -119,11 +126,16 @@ export function loadScopeConfig(cwd: string, records?: ScopeRecord | undefined):
   const roots: ScopeRoot[] = [{ path: canonicalize(cwd), access: "rw", source: "session" }];
   const rules: ScopeRule[] = [];
   const defaults = { ...DEFAULT_SCOPE_DEFAULTS };
+  let sandbox: SandboxConfig = { ...DEFAULT_SANDBOX_CONFIG };
 
   for (const file of files) {
     const parsed = readConfig(file.path, problems);
     if (!parsed) continue;
     sources.push(file.path);
+    if ("sandbox" in parsed) {
+      const parsedSandbox = parseSandboxConfig(parsed.sandbox, file.path, file.base, problems);
+      sandbox = mergeSandboxConfig(sandbox, parsedSandbox);
+    }
     for (const root of normalizeRoots(parsed.roots, file.base, file.source, problems)) upsertRoot(roots, root);
     for (const rule of parsed.rules ?? []) {
       if (!isRule(rule)) {
@@ -152,6 +164,9 @@ export function loadScopeConfig(cwd: string, records?: ScopeRecord | undefined):
   }
 
   if (records) {
+    if (records.sandbox) {
+      sandbox = mergeSandboxConfig(sandbox, records.sandbox);
+    }
     for (const root of records.roots ?? []) {
       if (typeof root?.path !== "string" || !root.path) continue;
       if (isUnsafeStoredRoot(root.path, cwd)) {
@@ -164,7 +179,7 @@ export function loadScopeConfig(cwd: string, records?: ScopeRecord | undefined):
   }
 
   return {
-    state: { roots, rules, defaults, ...(records?.yolo ? { yolo: yoloFrom(records.yolo) } : {}) },
+    state: { roots, rules, defaults, sandbox, ...(records?.yolo ? { yolo: yoloFrom(records.yolo) } : {}) },
     sources,
     problems,
   };
@@ -232,13 +247,19 @@ export function scopeSnapshot(state: ScopeState): ScopeRecord {
       .map(root => ({ path: root.path, access: root.access })),
     rules: state.rules.map(({ action, resource, effect }) => ({ action, resource, effect })),
     ...(state.yolo ? { yolo: { strength: state.yolo.strength } } : {}),
+    ...(state.sandbox && state.sandbox.mode !== "off" ? { sandbox: state.sandbox } : {}),
     seq: Date.now(),
   };
 }
 
 /** Default state for a session that has no config and no records yet. */
 export function initialScopeState(cwd: string): ScopeState {
-  return { roots: [{ path: canonicalize(cwd), access: "rw", source: "session" }], rules: [], defaults: { ...DEFAULT_SCOPE_DEFAULTS } };
+  return {
+    roots: [{ path: canonicalize(cwd), access: "rw", source: "session" }],
+    rules: [],
+    defaults: { ...DEFAULT_SCOPE_DEFAULTS },
+    sandbox: { ...DEFAULT_SANDBOX_CONFIG },
+  };
 }
 
 /** Where `/scope allow --project` writes. */

@@ -9,6 +9,8 @@
  * Kept free of imports so the policy core stays testable without a Pi session.
  */
 
+import type { SandboxConfig } from "./sandbox/config.ts";
+
 /** What should happen. `ask` is the safe default and never means "yes". */
 export type ScopeEffect = "allow" | "ask" | "deny";
 
@@ -69,6 +71,7 @@ export interface ScopeState {
   defaults: ScopeDefaults;
   /** `/scope yolo`. `undefined` means disarmed. */
   yolo?: ScopeYolo;
+  sandbox?: SandboxConfig;
 }
 
 export interface ScopeYolo {
@@ -145,6 +148,7 @@ export interface ScopeRecord {
   roots?: Array<{ path: string; access: ScopeAccess }>;
   rules?: ScopeRule[];
   yolo?: { strength: ScopeAccess } | null;
+  sandbox?: Partial<SandboxConfig>;
   /** Monotonic sequence so the last record wins on a branch. */
   seq?: number;
 }
