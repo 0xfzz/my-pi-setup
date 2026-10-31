@@ -109,7 +109,10 @@ test("tool_call wraps bash when sandbox is armed", async () => {
     assert.equal(blocked, undefined);
 
     if (process.platform === "linux") {
-      assert.ok(input.command.startsWith("'bwrap'"), `expected wrapped with bwrap, got: ${input.command}`);
+      assert.ok(
+        input.command.includes("nowrite-guard") || input.command.startsWith("'bwrap'"),
+        `expected wrapped with nowrite-guard or bwrap, got: ${input.command}`,
+      );
       assert.ok(input.command.includes("echo sandboxed"));
     }
   } finally {

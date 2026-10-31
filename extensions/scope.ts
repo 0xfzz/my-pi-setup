@@ -60,6 +60,7 @@ import { childContextState, isSubagentChildProcess, isSubagentChildSession } fro
 import { ScopeAskPopup, scopeChoices } from "../lib/ui/scope-ask.ts";
 import { ScopeSettingsPopup } from "../lib/ui/scope-settings.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar-channel.ts";
+import { planModeFromBranch } from "../lib/plan-mode.ts";
 
 export default function scopeExtension(pi: ExtensionAPI) {
   let state: ScopeState = initialScopeState(process.cwd());
@@ -859,9 +860,12 @@ export default function scopeExtension(pi: ExtensionAPI) {
     }
 
     if (event.toolName === "bash" && typeof input?.command === "string") {
+      const planActive = planModeFromBranch(context?.sessionManager?.getBranch?.())?.enabled === true;
       const cfg = state.sandbox ?? DEFAULT_SANDBOX_CONFIG;
-      if (cfg.mode !== "off") {
-        const probe = await probeBackend(cfg.backend);
+      const effectiveMode = planActive ? "readonly" : cfg.mode;
+      if (effectiveMode !== "off") {
+        const effectiveCfg = { ...cfg, mode: effectiveMode };
+        const probe = await probeBackend(effectiveCfg.backend);
         if (!probe.ok) {
           if (!sandboxDegradedWarned) {
             sandboxDegradedWarned = true;
@@ -869,7 +873,7 @@ export default function scopeExtension(pi: ExtensionAPI) {
           }
         } else {
           const scratch = getOrCreateScratchDir();
-          const policy = deriveSandboxPolicy(state, cfg, cwd, { scratchDir: scratch });
+          const policy = deriveSandboxPolicy(state, effectiveCfg, cwd, { scratchDir: scratch });
           const env = buildSandboxEnv({ scratchDir: scratch });
           const wrapped = wrapBashCommand(input.command, policy, probe.backend, env);
           if ("block" in wrapped) {
@@ -900,15 +904,17 @@ export default function scopeExtension(pi: ExtensionAPI) {
 
   pi.on("tool_result", async (event, _ctx) => {
     if (event.toolName !== "bash") return;
+    const planActive = planModeFromBranch(context?.sessionManager?.getBranch?.())?.enabled === true;
     const cfg = state.sandbox ?? DEFAULT_SANDBOX_CONFIG;
-    if (cfg.mode === "off") return;
+    const effectiveMode = planActive ? "readonly" : cfg.mode;
+    if (effectiveMode === "off") return;
 
     const text = event.content?.map(c => ("text" in c ? c.text : "")).join("\n") ?? "";
     const hits = scanRefusals(text);
     if (!hits.length) {
       const isRefusal = /Read-only file system|Permission denied|Operation not permitted|EACCES|EROFS/i.test(text);
       if (isRefusal) {
-        appendTrailer(event, `\n[sandbox] blocked a write outside the workspace (sandbox mode: ${cfg.mode}).`);
+        appendTrailer(event, `\n[sandbox] blocked a write outside the workspace (sandbox mode: ${effectiveMode}).`);
       }
       return;
     }
@@ -935,8 +941,10 @@ export default function scopeExtension(pi: ExtensionAPI) {
     const render = () => {
       const extra = state.roots.length - 1;
       const yolo = state.yolo ? ` · YOLO(${state.yolo.strength})` : "";
-      const sbMode = state.sandbox?.mode && state.sandbox.mode !== "off"
-        ? state.sandbox.mode === "readonly" ? " · sandbox(ro)" : " · sandbox"
+      const planActive = planModeFromBranch(context?.sessionManager?.getBranch?.())?.enabled === true;
+      const effectiveMode = planActive ? "readonly" : (state.sandbox?.mode ?? "off");
+      const sbMode = effectiveMode !== "off"
+        ? effectiveMode === "readonly" ? " · sandbox(ro)" : " · sandbox"
         : "";
       const waiting = gate.queue.size > 0 ? ` · ${gate.queue.size} waiting` : "";
       const title = `Scope${yolo}${sbMode}`;

@@ -376,7 +376,7 @@ export default function modesExtension(pi: ExtensionAPI) {
 
   // Enforce on execution too: stale, nested, deferred and late tools still pass
   // through this guard. Read-only annotations are trusted extension/server claims.
-  pi.on("tool_call", (event, ctx) => {
+  pi.on("tool_call", async (event, ctx) => {
     // Removed v1 names are refused in every mode, parent or child: a stale global
     // extension must not reopen the surface the migration closed.
     if (isRetiredDelegationTool(event.toolName)) {
