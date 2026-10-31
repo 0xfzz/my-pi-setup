@@ -46,6 +46,7 @@
     "test:orchestrator": "node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/orchestrator/*.test.ts",
     "typecheck": "tsc --noEmit",
     "build:dashboard": "node scripts/build-dashboard.mjs",
+    "build:nowrite": "node scripts/build-nowrite.mjs",
     "build:wasm": "cargo build --manifest-path crates/ascii-anim-engine/Cargo.toml --target wasm32-unknown-unknown --release && cp crates/ascii-anim-engine/target/wasm32-unknown-unknown/release/ascii_anim_engine.wasm lib/ascii_anim_engine.wasm",
     "lint:smell": "oxlint --deny-warnings extensions lib tests",
     "lint:dead": "knip",

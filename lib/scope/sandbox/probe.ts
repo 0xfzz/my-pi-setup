@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { SandboxBackendId } from "./config.ts";
+import { findLandlockBinary } from "./landlock.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -118,11 +119,33 @@ async function probeLandlock(): Promise<ProbeResult> {
     };
   }
 
-  return {
-    ok: false,
-    backend: "landlock",
-    detail: "Landlock helper binary not installed",
-  };
+  const binary = findLandlockBinary();
+  if (!binary) {
+    return {
+      ok: false,
+      backend: "landlock",
+      detail: "Landlock helper binary not installed",
+    };
+  }
+
+  try {
+    const { stdout } = await execFileAsync(binary, ["--version"], { timeout: 3000 });
+    const match = /ABI\s+(\d+|\w+)/i.exec(stdout);
+    const abiNum = match ? parseInt(match[1]!, 10) : undefined;
+    return {
+      ok: true,
+      backend: "landlock",
+      abi: Number.isFinite(abiNum) ? abiNum : undefined,
+      detail: `Landlock functional (${stdout.trim()})`,
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      backend: "landlock",
+      detail: `Landlock helper probe failed: ${msg}`,
+    };
+  }
 }
 
 async function probeAuto(): Promise<ProbeResult> {

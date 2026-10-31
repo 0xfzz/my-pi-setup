@@ -1,6 +1,7 @@
 import { scanShell } from "../shell-syntax.ts";
 import { planBwrap } from "./bwrap.ts";
 import type { SandboxBackendId } from "./config.ts";
+import { planLandlock } from "./landlock.ts";
 import type { SandboxPolicy } from "./policy.ts";
 import { planSeatbelt } from "./seatbelt.ts";
 
@@ -86,14 +87,15 @@ export function wrapBashCommand(
 
   let planned: { argv: string[] } | { block: string };
   switch (backend) {
+    case "landlock":
+      planned = planLandlock(policy, command, env);
+      break;
     case "bwrap":
       planned = planBwrap(policy, command, env);
       break;
     case "seatbelt":
       planned = planSeatbelt(policy, command, env);
       break;
-    case "landlock":
-      return { block: "landlock backend not installed yet" };
     default:
       return { block: `unsupported sandbox backend: ${String(backend)}` };
   }
