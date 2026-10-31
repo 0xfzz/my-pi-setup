@@ -7,3 +7,8 @@
 for (const key of ["PI_SUBAGENT_SESSION", "PI_SUBAGENT_ID", "PI_SUBAGENT_NAME"]) {
   delete process.env[key];
 }
+
+// The scope extension appends every gate decision to a global log in the agent
+// directory. A test suite must not write its fixtures into a user's real log, so
+// the sink is off unless a test turns it on with its own destination.
+if (!process.env.PI_SCOPE_TELEMETRY) process.env.PI_SCOPE_TELEMETRY = "off";

@@ -46,7 +46,7 @@ test("a record is one JSON line carrying the schema version", async () => {
   const dir = await tempDir();
   try {
     const path = join(dir, "scope-telemetry.jsonl");
-    new ScopeTelemetry({ path }).record(record());
+    new ScopeTelemetry({ path, enabled: true }).record(record());
     const [stored] = lines(path);
     assert.equal(stored?.v, TELEMETRY_VERSION);
     assert.equal(typeof stored?.at, "number");
@@ -61,7 +61,7 @@ test("the sink creates a missing directory instead of failing", async () => {
   const dir = await tempDir();
   try {
     const path = join(dir, "nested", "deeper", "scope-telemetry.jsonl");
-    new ScopeTelemetry({ path }).record(record());
+    new ScopeTelemetry({ path, enabled: true }).record(record());
     assert.equal(lines(path).length, 1);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -95,7 +95,7 @@ test("the file rotates at the threshold and keeps one predecessor", async () => 
   const dir = await tempDir();
   try {
     const path = join(dir, "scope-telemetry.jsonl");
-    const sink = new ScopeTelemetry({ path, maxBytes: 1024 });
+    const sink = new ScopeTelemetry({ path, maxBytes: 1024, enabled: true });
     for (let index = 0; index < 40; index++) sink.record(record({ input: `src/file-${index}.ts` }));
     const current = lines(path);
     const previous = lines(`${path}.1`);
@@ -112,7 +112,7 @@ test("rotation covers a file that already existed before the sink started", asyn
   try {
     const path = join(dir, "scope-telemetry.jsonl");
     await writeFile(path, `${JSON.stringify({ ...record({ input: "old" }), v: 1, at: 1 })}\n`.repeat(30));
-    new ScopeTelemetry({ path, maxBytes: 1024 }).record(record({ input: "new" }));
+    new ScopeTelemetry({ path, maxBytes: 1024, enabled: true }).record(record({ input: "new" }));
     assert.equal(lines(path).length, 1, "the oversized predecessor is rotated out");
     assert.equal(lines(`${path}.1`).length, 30);
   } finally {
@@ -140,7 +140,7 @@ test("redaction is applied to the stored record, not only to the helper", async 
   const dir = await tempDir();
   try {
     const path = join(dir, "scope-telemetry.jsonl");
-    new ScopeTelemetry({ path }).record(record({ input: "TOKEN=abc123 cmd", reason: "denied for SECRET=xyz" }));
+    new ScopeTelemetry({ path, enabled: true }).record(record({ input: "TOKEN=abc123 cmd", reason: "denied for SECRET=xyz" }));
     const [stored] = lines(path);
     assert.equal(stored?.input, "TOKEN=[redacted] cmd");
     assert.equal(stored?.reason, "denied for SECRET=[redacted]");
