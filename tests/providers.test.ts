@@ -761,3 +761,138 @@ test("/provider model offers to sync updated models to other accounts in the fam
   assert.equal(saved.providers["deepseek-2"].models[1].id, "deepseek-reasoner");
 }));
 
+
+// ── The TUI editor ───────────────────────────────────────────────────────────
+
+/** A ctx whose `ui.custom` drives the popup with a script, one script per open. */
+function editor(scripts: Array<(component: any) => void>) {
+  const commands = new Map<string, any>();
+  providers({ registerCommand: (name: string, command: any) => commands.set(name, command) } as any);
+  const notices: string[] = [];
+  let opens = 0;
+  let refreshes = 0;
+  const ctx: any = {
+    hasUI: true, mode: "tui", isIdle: () => true,
+    ui: {
+      custom: async (factory: any) => new Promise(resolve => {
+        opens++;
+        const component = factory(
+          { requestRender() {}, terminal: { rows: 32 } },
+          { fg: (_color: string, text: string) => text },
+          {},
+          resolve,
+        );
+        component.focused = true;
+        const script = scripts.shift();
+        if (script) script(component);
+        else resolve({ kind: "close" });
+      }),
+      input: async () => undefined,
+      select: async () => undefined,
+      confirm: async () => false,
+      notify: (message: string) => notices.push(message),
+    },
+    modelRegistry: {
+      getAll: () => [], getError: () => undefined, getProviderAuthStatus: () => ({ configured: false }),
+      getRegisteredProviderIds: () => [], refresh: async () => { refreshes++; },
+    },
+  };
+  return { commands, ctx, notices, opens: () => opens, refreshes: () => refreshes };
+}
+
+const typeInto = (component: any, text: string) => { for (const char of text) component.handleInput(char); };
+/** After a save the editor reopens on that provider, so closing is two Escapes. */
+const closeEditor = (component: any) => {
+  component.handleInput(ESCAPE);
+  component.handleInput(ESCAPE);
+};
+const ENTER = "\r";
+const ESCAPE = "\x1b";
+
+test("bare /provider in the TUI walks the wizard and writes the provider", async () => inAgentDir(async path => {
+  const h = editor([
+    (component) => {
+      component.handleInput("a");
+      typeInto(component, "acme-local");
+      component.handleInput(ENTER);   // id
+      component.handleInput(ENTER);   // name, defaulted from the id
+      component.handleInput(ENTER);   // api: openai-completions
+      typeInto(component, "http://localhost:11434/v1");
+      component.handleInput(ENTER);   // base URL
+      typeInto(component, "$LOCAL_KEY");
+      component.handleInput(ENTER);   // key -> save
+    },
+    closeEditor,
+  ]);
+
+  await h.commands.get("provider").handler("", h.ctx);
+
+  const saved = JSON.parse(await readFile(path, "utf8"));
+  assert.equal(saved.providers["acme-local"].name, "acme-local");
+  assert.equal(saved.providers["acme-local"].baseUrl, "http://localhost:11434/v1");
+  assert.equal(saved.providers["acme-local"].apiKey, "$LOCAL_KEY", "an environment reference is stored unresolved");
+  assert.equal(saved.providers["acme-local"].models, undefined,
+    "a connection with no models yet writes no models array; the editor's Add models step fills it");
+  assert.equal(h.refreshes(), 1, "Pi reloaded the configuration once, without network");
+  assert.equal(h.opens(), 2, "the editor reopens after a save so the next step is one keypress away");
+}));
+
+test("Esc in the editor writes nothing at all", async () => inAgentDir(async path => {
+  const h = editor([closeEditor]);
+  await h.commands.get("provider").handler("", h.ctx);
+  await assert.rejects(readFile(path, "utf8"), { code: "ENOENT" }, "a closed editor never creates models.json");
+  assert.equal(h.refreshes(), 0);
+}));
+
+test("adding an account migrates the lone provider and inherits its models, not its key", async () => inAgentDir(async path => {
+  await writeFile(path, JSON.stringify({ providers: {
+    acme: {
+      name: "Acme", api: "openai-completions", baseUrl: "https://api.acme.com/v1", apiKey: "$ACME_KEY",
+      models: [{ id: "acme-large", contextWindow: 128000, maxTokens: 8192 }],
+    },
+  } }));
+
+  const h = editor([
+    (component) => {
+      component.handleInput(ENTER);   // open acme
+      component.handleInput("4");     // Add an account…
+      component.handleInput(ENTER);   // name: "Acme (Account 2)"
+      component.handleInput(ENTER);   // api (current)
+      component.handleInput(ENTER);   // base URL (kept)
+      typeInto(component, "$ACME_KEY_2");
+      component.handleInput(ENTER);   // key -> save
+    },
+    closeEditor,
+  ]);
+
+  await h.commands.get("provider").handler("", h.ctx);
+
+  const saved = JSON.parse(await readFile(path, "utf8"));
+  assert.deepEqual(Object.keys(saved.providers).sort(), ["acme-1", "acme-2"]);
+  assert.equal(saved.providers["acme-1"].name, "Acme (Account 1)");
+  assert.equal(saved.providers["acme-1"].apiKey, "$ACME_KEY", "the first account keeps its credential");
+  assert.equal(saved.providers["acme-2"].apiKey, "$ACME_KEY_2");
+  assert.deepEqual(saved.providers["acme-2"].models, saved.providers["acme-1"].models,
+    "both accounts speak to the same service, so the model list is shared");
+}));
+
+test("deleting from the editor removes only that entry", async () => inAgentDir(async path => {
+  await writeFile(path, JSON.stringify({ providers: {
+    acme: { name: "Acme", api: "openai-completions", baseUrl: "https://api.acme.com/v1", apiKey: "$ACME_KEY" },
+    other: { name: "Other", api: "openai-completions", baseUrl: "https://other.example/v1", apiKey: "$OTHER" },
+  } }));
+
+  const h = editor([
+    (component) => {
+      component.handleInput(ENTER);   // open acme
+      component.handleInput("d");     // delete
+      component.handleInput(ENTER);   // confirm
+    },
+    closeEditor,
+  ]);
+
+  await h.commands.get("provider").handler("", h.ctx);
+
+  const saved = JSON.parse(await readFile(path, "utf8"));
+  assert.deepEqual(Object.keys(saved.providers), ["other"], "other providers are untouched");
+}));

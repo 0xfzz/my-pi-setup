@@ -67,6 +67,8 @@ export interface ProviderSettingsPopupOptions {
   terminalRows?: () => number;
   /** One line the extension wants shown once, e.g. what the last action did. */
   notice?: string;
+  /** Open straight on this provider, so a save lands where the next step is. */
+  startAt?: string;
   onDone: (result: ProviderPopupResult) => void;
 }
 
@@ -123,6 +125,10 @@ export class ProviderSettingsPopup implements Component, Focusable {
       onClose: () => this.finish({ kind: "close" }),
       pad: true,
     });
+    if (options.startAt) {
+      const row = providerRows(options.view().providers).find((entry) => entry.id === options.startAt);
+      if (row) this.stage = { kind: "provider", row };
+    }
   }
 
   get focused(): boolean {

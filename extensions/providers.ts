@@ -3,13 +3,20 @@ import { getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@e
 import {
   endpoint, environmentKey, findProviderAccounts, listProviderFamilies, nextProviderSlot, parseProviderSlot,
   positiveInteger, providerId, putModel, readConfig, saveConfig,
-  type JsonObject, type ProviderConfig,
+  type ConfigSnapshot, type JsonObject, type ModelsConfig, type ProviderConfig,
 } from "../lib/provider-config.ts";
 
 import { discoverModelDetails, discoveryAuth, DiscoveryError, modelsEndpoint, type DiscoveredModel } from "../lib/provider-discovery.ts";
 import { providerKeyInput } from "../lib/provider-key-input.ts";
 import { providerModelPicker } from "../lib/provider-model-picker.ts";
+import { accountPlan, apiKeyFromInput, draftToProvider, withAccount, withoutModel } from "../lib/provider-settings.ts";
+import { popupOverlayOptions } from "../lib/popup.ts";
 import { isSubagentChildSession } from "../lib/subagent-context.ts";
+import {
+  ProviderSettingsPopup,
+  type ProviderAction,
+  type ProviderPopupResult,
+} from "../lib/ui/provider-settings.ts";
 
 const APIS = ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"];
 const ACTIONS = new Map([
@@ -52,16 +59,9 @@ async function accountAuth(
     : await providerKeyInput(ctx, keyTitle);
   if (key === undefined) throw new Cancelled();
 
-  let apiKey: string | undefined;
-  if (!key) {
-    apiKey = "pi-local";
-  } else if (ctx.mode === "rpc" || /^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})$/.test(key)) {
-    apiKey = environmentKey(key);
-  } else {
-    const literal = key.replace(/\$/g, () => "$$");
-    apiKey = literal.startsWith("!") ? `$!${literal.slice(1)}` : literal;
-  }
-  return { name, apiKey };
+  const resolved = apiKeyFromInput(key, ctx.mode === "rpc");
+  if ("problem" in resolved) throw new Error(resolved.problem);
+  return { name, apiKey: key ? resolved.apiKey : "pi-local" };
 }
 
 async function connection(ctx: ExtensionCommandContext, id: string, current?: ProviderConfig): Promise<ProviderConfig> {
@@ -92,14 +92,11 @@ async function connection(ctx: ExtensionCommandContext, id: string, current?: Pr
   }
   const provider: ProviderConfig = { ...current, name, api, baseUrl };
   if (changingAuth) {
-    if (!key) provider.apiKey = "pi-local";
-    else if (ctx.mode === "rpc" || /^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})$/.test(key)) {
-      provider.apiKey = environmentKey(key);
-    } else {
-      // Literal keys must not become Pi environment expressions or !commands.
-      const literal = key.replace(/\$/g, () => "$$");
-      provider.apiKey = literal.startsWith("!") ? `$!${literal.slice(1)}` : literal;
-    }
+    // Blank is a local server; anything else is escaped exactly as the editor
+    // escapes it, so both paths write the same thing for the same answer.
+    const resolved = apiKeyFromInput(key, ctx.mode === "rpc");
+    if ("problem" in resolved) throw new Error(resolved.problem);
+    provider.apiKey = key ? resolved.apiKey : "pi-local";
   }
   return provider;
 }
@@ -187,6 +184,133 @@ async function configureModel(ctx: ExtensionCommandContext, provider: ProviderCo
   return putModel(provider, model);
 }
 
+/** Fetch or define models for one provider, then offer to copy them to its family. */
+async function addModels(ctx: ExtensionCommandContext, config: ModelsConfig, id: string): Promise<void> {
+  const provider = config.providers[id];
+  if (!provider) throw new Error(`${id} is not configured.`);
+  config.providers[id] = await modelDialog(ctx, id, provider);
+  const slot = parseProviderSlot(id);
+  if (!slot) return;
+  const siblings = findProviderAccounts(config.providers, slot.base).filter(account => account.id !== id);
+  if (!siblings.length || !await ctx.ui.confirm("Sync models to other accounts?",
+    `Copy updated models from ${id} to other accounts in the "${slot.base}" family (${siblings.map(sibling => sibling.id).join(", ")})?`)) return;
+  const updated = config.providers[id]!;
+  for (const sibling of siblings) {
+    config.providers[sibling.id] = {
+      ...config.providers[sibling.id],
+      models: structuredClone(updated.models),
+      ...(updated.modelOverrides ? { modelOverrides: structuredClone(updated.modelOverrides) } : {}),
+    };
+  }
+}
+
+const modelsFile = (): string => join(getAgentDir(), "models.json");
+
+/** Write the file and make Pi load it; the editor's single write path. */
+async function commitConfig(ctx: ExtensionCommandContext, snapshot: ConfigSnapshot, config: ModelsConfig): Promise<void> {
+  if (!ctx.isIdle()) throw new Error("Pi became busy while the editor was open; nothing was saved. Retry when idle.");
+  await saveConfig(snapshot, config);
+  // Reload native configuration, not a competing extension-owned provider registry.
+  await ctx.modelRegistry.refresh({ allowNetwork: false });
+  if (ctx.modelRegistry.getError()) {
+    throw new Error("models.json was saved, but Pi could not reload it. Fix the configuration, then restart Pi or reopen /model.");
+  }
+}
+
+/** Read for the editor without hiding a broken file: the popup shows the problem. */
+async function readForEditor(path: string): Promise<{ snapshot?: ConfigSnapshot; errors: string[] }> {
+  try {
+    return { snapshot: await readConfig(path), errors: [] };
+  } catch (error) {
+    return { errors: [(error as Error).message] };
+  }
+}
+
+/**
+ * Apply one editor action.
+ *
+ * Every action starts from a fresh read: the file may have been edited by hand
+ * while the popup was open, and `saveConfig` compares the snapshot it is handed
+ * with what is on disk instead of overwriting a change it never saw.
+ */
+async function applyEditorAction(ctx: ExtensionCommandContext, path: string, action: ProviderAction): Promise<string> {
+  const snapshot = await readConfig(path);
+  const config = structuredClone(snapshot.config);
+  if (action.kind === "delete") {
+    if (!config.providers[action.id]) return `${action.id} is no longer in models.json.`;
+    delete config.providers[action.id];
+    await commitConfig(ctx, snapshot, config);
+    return `Removed ${action.id} from models.json. Built-in providers and /login credentials are unchanged.`;
+  }
+  if (action.kind === "remove-model") {
+    const provider = config.providers[action.id];
+    if (!provider) return `${action.id} is no longer in models.json.`;
+    config.providers[action.id] = withoutModel(provider, action.modelId);
+    await commitConfig(ctx, snapshot, config);
+    return `Removed ${action.modelId} from ${action.id}.`;
+  }
+  if (action.kind === "add-models") {
+    if (!config.providers[action.id]) return `${action.id} is no longer in models.json.`;
+    await addModels(ctx, config, action.id);
+    await commitConfig(ctx, snapshot, config);
+    return `Saved models for ${action.id}. Use /model to choose one.`;
+  }
+  const draft = action.draft;
+  const plan = draft.accountOf ? accountPlan(snapshot.config.providers, draft.accountOf) : undefined;
+  if (draft.accountOf && !plan) return `${draft.accountOf} is no longer in models.json.`;
+  const existing = snapshot.config.providers[draft.id];
+  // An account inherits its family's models, headers and flags, but never its
+  // credential: two accounts sharing a key would bill the same account twice.
+  const template = plan ? snapshot.config.providers[plan.templateId] : existing;
+  const provider = draftToProvider(draft, template, plan ? { inheritAuth: false } : {});
+  await trustEndpoint(ctx, draft.id, provider, existing);
+  config.providers = plan ? withAccount(config.providers, plan, provider) : { ...config.providers, [draft.id]: provider };
+  await commitConfig(ctx, snapshot, config);
+  if (plan?.migration) return `Saved ${draft.id}. ${plan.migration.from} is now ${plan.migration.to} and keeps its models.`;
+  if (existing) return `Saved ${draft.id}.`;
+  return `Saved ${draft.id}. It has no models yet — add models to make it selectable in /model.`;
+}
+
+/**
+ * The editor loop.
+ *
+ * The popup reports actions instead of performing them, so the dialogs an
+ * action needs — endpoint trust, model discovery and its picker — can run
+ * between two popup instances. Cancelling one of them reopens the editor with
+ * a notice, because the provider is still worth editing.
+ */
+async function openEditor(ctx: ExtensionCommandContext): Promise<void> {
+  const path = modelsFile();
+  let notice: string | undefined;
+  let focus: string | undefined;
+  for (;;) {
+    const { snapshot, errors } = await readForEditor(path);
+    const known = [...new Set(ctx.modelRegistry.getAll().map(model => model.provider))];
+    const result = await ctx.ui.custom<ProviderPopupResult>((tui, theme, _keys, done) => new ProviderSettingsPopup({
+      view: () => ({ path: snapshot?.path ?? path, providers: snapshot?.config.providers ?? {}, errors, known }),
+      theme,
+      terminalRows: () => tui.terminal.rows,
+      notice,
+      startAt: focus,
+      onDone: done,
+    }), { overlay: true, overlayOptions: popupOverlayOptions("86%", 56, "92%") as never });
+    notice = undefined;
+    focus = undefined;
+    if (!result || result.kind === "close") return;
+    if (!snapshot) {
+      notice = errors[0] ?? "models.json could not be read.";
+      continue;
+    }
+    focus = result.kind === "save" ? result.draft.id : result.kind === "add-models" ? result.id : undefined;
+    try {
+      notice = await applyEditorAction(ctx, path, result);
+    } catch (error) {
+      if (!(error instanceof Cancelled)) throw error;
+      notice = "Cancelled; nothing was saved.";
+    }
+  }
+}
+
 export default function providers(pi: ExtensionAPI) {
   let active = false;
   const handler = async (args: string, ctx: ExtensionCommandContext) => {
@@ -201,7 +325,14 @@ export default function providers(pi: ExtensionAPI) {
     active = true;
     let saved = false;
     try {
-      const action = args.trim() || ACTIONS.get(await choose(ctx, "Custom providers", [...ACTIONS.keys()]));
+      const typed = args.trim();
+      // Bare `/provider` in the TUI is the editor; RPC keeps the dialog menu,
+      // because a custom terminal component is not part of that protocol.
+      if (!typed && ctx.mode === "tui") {
+        await openEditor(ctx);
+        return;
+      }
+      const action = typed || ACTIONS.get(await choose(ctx, "Custom providers", [...ACTIONS.keys()]));
       if (![...ACTIONS.values()].includes(action!)) {
         ctx.ui.notify("Usage: /provider [add|account|edit|model|remove|list]", "info");
         return;
@@ -315,21 +446,7 @@ export default function providers(pi: ExtensionAPI) {
           config.providers[id] = await connection(ctx, id, config.providers[id]);
           await trustEndpoint(ctx, id, config.providers[id], snapshot.config.providers[id]);
         } else {
-          config.providers[id] = await modelDialog(ctx, id, config.providers[id]);
-          const slot = parseProviderSlot(id);
-          if (slot) {
-            const siblings = findProviderAccounts(config.providers, slot.base).filter(a => a.id !== id);
-            if (siblings.length && await ctx.ui.confirm("Sync models to other accounts?",
-              `Copy updated models from ${id} to other accounts in the "${slot.base}" family (${siblings.map(s => s.id).join(", ")})?`)) {
-              for (const sibling of siblings) {
-                config.providers[sibling.id] = {
-                  ...config.providers[sibling.id],
-                  models: structuredClone(config.providers[id].models),
-                  ...(config.providers[id].modelOverrides ? { modelOverrides: structuredClone(config.providers[id].modelOverrides) } : {}),
-                };
-              }
-            }
-          }
+          await addModels(ctx, config, id);
         }
       }
       if (action !== "remove") {
@@ -354,7 +471,7 @@ export default function providers(pi: ExtensionAPI) {
     } finally { active = false; }
   };
   pi.registerCommand("provider", {
-      description: "Manage custom providers and multi-account configurations: /provider [add|account|edit|model|remove|list]",
+      description: "Manage custom providers: /provider opens the editor in the TUI, or /provider [add|account|edit|model|remove|list] for dialogs",
       getArgumentCompletions(prefix) {
         const values = [...ACTIONS.values()].filter(value => value.startsWith(prefix));
         return values.length ? values.map(value => ({ value, label: value })) : null;

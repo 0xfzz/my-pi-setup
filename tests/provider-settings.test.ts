@@ -80,8 +80,11 @@ test("a typed key becomes either a reference or an escaped literal, never a comm
     "a literal $ cannot become environment interpolation");
   assert.deepEqual(apiKeyFromInput("!echo secret", false), { apiKey: "$!echo secret" },
     "a literal ! is escaped so it stays a value, not a command");
-  assert.match((apiKeyFromInput("sk-literal", true) as { problem: string }).problem, /environment variable/,
-    "RPC cannot mask a key, so only references are accepted there");
+  assert.deepEqual(apiKeyFromInput("ACME_KEY", false), { apiKey: "ACME_KEY" },
+    "without the $ it is a literal, not a reference");
+  assert.deepEqual(apiKeyFromInput("ACME_KEY", true), { apiKey: "$ACME_KEY" },
+    "RPC has no masked input, so it reads a bare name as the environment variable");
+  assert.match((apiKeyFromInput("sk-literal", true) as { problem: string }).problem, /environment variable/);
 });
 
 // ── Drafts ───────────────────────────────────────────────────────────────────

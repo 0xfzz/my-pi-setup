@@ -141,11 +141,16 @@ const ENVIRONMENT_REFERENCE = /^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z
 export function apiKeyFromInput(value: string, requireEnvironment: boolean): { apiKey?: string } | { problem: string } {
   const text = value.trim();
   if (!text) return { apiKey: undefined };
-  const isEnvironment = ENVIRONMENT_REFERENCE.test(text);
-  if (requireEnvironment && !isEnvironment) {
-    return { problem: "Enter an environment variable name such as $ACME_API_KEY, not the key itself." };
+  // RPC has no masked input, so it only accepts an environment reference. A
+  // bare NAME is one, exactly as the dialog's own validation treats it.
+  if (requireEnvironment) {
+    try {
+      return { apiKey: environmentKey(text) };
+    } catch {
+      return { problem: "Enter an environment variable name such as $ACME_API_KEY, not the key itself." };
+    }
   }
-  if (isEnvironment) return { apiKey: environmentKey(text) };
+  if (ENVIRONMENT_REFERENCE.test(text)) return { apiKey: environmentKey(text) };
   const literal = text.replace(/\$/g, () => "$$");
   return { apiKey: literal.startsWith("!") ? `$!${literal.slice(1)}` : literal };
 }
@@ -212,7 +217,11 @@ export function providerToDraft(id: string, provider: ProviderConfig): ProviderD
 }
 
 /** The config entry a draft describes, keeping every field it does not edit. */
-export function draftToProvider(draft: ProviderDraft, base?: ProviderConfig): ProviderConfig {
+export function draftToProvider(
+  draft: ProviderDraft,
+  base?: ProviderConfig,
+  options: { inheritAuth?: boolean } = {},
+): ProviderConfig {
   const key = apiKeyFromInput(draft.apiKey, false);
   if ("problem" in key) throw new Error(key.problem);
   const provider: ProviderConfig = {
@@ -223,8 +232,9 @@ export function draftToProvider(draft: ProviderDraft, base?: ProviderConfig): Pr
   };
   if (key.apiKey !== undefined) provider.apiKey = key.apiKey;
   // Blank on a new provider means a local server; blank while editing keeps
-  // whatever authentication is already configured.
-  else if (base === undefined) provider.apiKey = "pi-local";
+  // whatever authentication is already configured. A new account never
+  // inherits the template's key: that would bill the wrong account.
+  else if (base === undefined || options.inheritAuth === false) provider.apiKey = "pi-local";
   return provider;
 }
 
@@ -308,6 +318,8 @@ export function withoutModel(provider: ProviderConfig, modelId: string): Provide
 
 export interface AccountPlan {
   draft: ProviderDraft;
+  /** The account whose models, headers and flags the new one inherits. */
+  templateId: string;
   /** The rename that turns a single base provider into its first slot. */
   migration?: { from: string; to: string };
 }
@@ -336,6 +348,7 @@ export function accountPlan(providers: Record<string, ProviderConfig>, baseId: s
       apiKey: "",
       accountOf: baseId,
     },
+    templateId: template.id,
     ...(soloBase ? { migration: { from: baseId, to: `${baseId}-1` } } : {}),
   };
 }
