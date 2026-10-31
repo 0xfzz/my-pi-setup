@@ -11,7 +11,9 @@
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
-import { dirname } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
 import { popupOverlayOptions } from "../lib/popup.ts";
 import { formatAudit, formatStats, ScopeLog } from "../lib/scope/audit.ts";
@@ -25,8 +27,15 @@ import {
 } from "../lib/scope/command.ts";
 import { createGate, parseRule, type AskAnswer, type AskRequest } from "../lib/scope/gate.ts";
 import { effectiveBase } from "../lib/scope/cwd.ts";
-import { classifyPath } from "../lib/scope/paths.ts";
+import { canonicalize, classifyPath, expandHome } from "../lib/scope/paths.ts";
 import { evaluateClaim, narrowYoloSensitiveRead } from "../lib/scope/policy.ts";
+import {
+  DEFAULT_SANDBOX_CONFIG,
+} from "../lib/scope/sandbox/config.ts";
+import { deriveSandboxPolicy } from "../lib/scope/sandbox/policy.ts";
+import { buildSandboxEnv } from "../lib/scope/sandbox/env.ts";
+import { wrapBashCommand } from "../lib/scope/sandbox/wrap.ts";
+import { probeBackend } from "../lib/scope/sandbox/probe.ts";
 import { accessLabel, DEFAULT_LABELS, settingsRows, type SettingsAction, type SettingsTarget } from "../lib/scope/settings.ts";
 import {
   globalScopeFile,
@@ -61,6 +70,31 @@ export default function scopeExtension(pi: ExtensionAPI) {
   // every session, so detection and false positives can be reviewed later.
   const telemetry = new ScopeTelemetry();
   let draw: (() => void) | undefined;
+  let sessionScratchDir: string | undefined;
+  let sandboxDegradedWarned = false;
+
+  function getOrCreateScratchDir(): string | undefined {
+    const cfg = state.sandbox ?? DEFAULT_SANDBOX_CONFIG;
+    if (cfg.scratch === "off") return undefined;
+    if (cfg.scratch !== "session") return cfg.scratch;
+    if (!sessionScratchDir) {
+      try {
+        sessionScratchDir = mkdtempSync(join(tmpdir(), "pi-scope-scratch-"));
+      } catch {
+        sessionScratchDir = undefined;
+      }
+    }
+    return sessionScratchDir;
+  }
+
+  function cleanupScratchDir(): void {
+    if (sessionScratchDir) {
+      try {
+        rmSync(sessionScratchDir, { recursive: true, force: true });
+      } catch {}
+      sessionScratchDir = undefined;
+    }
+  }
 
   const refresh = () => pi.events?.emit(REFRESH_EVENT, {});
   const persist = () => pi.appendEntry?.(SCOPE_RECORD_TYPE, scopeSnapshot(state));
@@ -624,6 +658,126 @@ export default function scopeExtension(pi: ExtensionAPI) {
         );
         return;
       }
+      case "sandbox": {
+        const sub = action.action;
+        const cfg = state.sandbox ?? DEFAULT_SANDBOX_CONFIG;
+        switch (sub.kind) {
+          case "status": {
+            const probe = await probeBackend(cfg.backend);
+            const scratch = getOrCreateScratchDir();
+            const policy = deriveSandboxPolicy(state, cfg, cwd, { scratchDir: scratch });
+            const lines = [
+              `Sandbox status: ${cfg.mode}`,
+              `  backend: ${cfg.backend} (probe: ${probe.ok ? "OK" : "FAILED — " + probe.detail})`,
+              `  ask: ${cfg.ask} · retry: ${cfg.retry}`,
+              `  scratch: ${scratch ?? "none"}`,
+              `  writable paths (${policy.writable.length}): ${policy.writable.join(", ") || "(none)"}`,
+              ...(policy.deny.length ? [`  denied paths (${policy.deny.length}): ${policy.deny.join(", ")}`] : []),
+            ];
+            ctx.ui.notify(lines.join("\n"), "info");
+            return;
+          }
+          case "on": {
+            state = { ...state, sandbox: { ...cfg, mode: "workspace" } };
+            persist();
+            draw?.();
+            refresh();
+            ctx.ui.notify("Scope: sandbox armed in workspace mode (kernel enforces write-deny outside workspace).", "info");
+            return;
+          }
+          case "off": {
+            state = { ...state, sandbox: { ...cfg, mode: "off" } };
+            persist();
+            draw?.();
+            refresh();
+            ctx.ui.notify("Scope: sandbox disarmed.", "info");
+            return;
+          }
+          case "mode": {
+            state = { ...state, sandbox: { ...cfg, mode: sub.mode } };
+            persist();
+            draw?.();
+            refresh();
+            ctx.ui.notify(`Scope: sandbox mode set to "${sub.mode}".`, "info");
+            return;
+          }
+          case "backend": {
+            state = { ...state, sandbox: { ...cfg, backend: sub.backend } };
+            persist();
+            draw?.();
+            refresh();
+            ctx.ui.notify(`Scope: sandbox backend set to "${sub.backend}".`, "info");
+            return;
+          }
+          case "ask": {
+            state = { ...state, sandbox: { ...cfg, ask: sub.ask } };
+            persist();
+            draw?.();
+            refresh();
+            ctx.ui.notify(`Scope: sandbox ask mode set to "${sub.ask}".`, "info");
+            return;
+          }
+          case "retry": {
+            state = { ...state, sandbox: { ...cfg, retry: sub.retry } };
+            persist();
+            draw?.();
+            refresh();
+            ctx.ui.notify(`Scope: sandbox retry mode set to "${sub.retry}".`, "info");
+            return;
+          }
+          case "probe": {
+            const probe = await probeBackend(cfg.backend);
+            ctx.ui.notify(`Scope sandbox probe (${probe.backend}): ${probe.ok ? "OK" : "FAILED"} — ${probe.detail}`, probe.ok ? "info" : "warning");
+            return;
+          }
+          case "allow": {
+            const path = canonicalize(resolve(cwd, expandHome(sub.path)));
+            const currentAllow = cfg.allow ?? [];
+            if (!currentAllow.includes(path)) {
+              state = { ...state, sandbox: { ...cfg, allow: [...currentAllow, path] } };
+              persist();
+              draw?.();
+              refresh();
+            }
+            ctx.ui.notify(`Scope sandbox: added writable path ${path}.`, "info");
+            return;
+          }
+          case "deny": {
+            const path = canonicalize(resolve(cwd, expandHome(sub.path)));
+            const currentDeny = cfg.deny ?? [];
+            if (!currentDeny.includes(path)) {
+              state = { ...state, sandbox: { ...cfg, deny: [...currentDeny, path] } };
+              persist();
+              draw?.();
+              refresh();
+            }
+            ctx.ui.notify(`Scope sandbox: added denied path ${path}.`, "info");
+            return;
+          }
+          case "test": {
+            const probe = await probeBackend(cfg.backend);
+            const scratch = getOrCreateScratchDir();
+            const policy = deriveSandboxPolicy(state, cfg, cwd, { scratchDir: scratch });
+            const env = buildSandboxEnv({ scratchDir: scratch });
+            const wrapped = wrapBashCommand(sub.command, policy, probe.ok ? probe.backend : "none", env);
+            if ("block" in wrapped) {
+              ctx.ui.notify(`Scope sandbox test BLOCKED: ${wrapped.block}`, "warning");
+              return;
+            }
+            const lines = [
+              "Scope sandbox test:",
+              `  backend: ${probe.backend} (${probe.ok ? "functional" : "unavailable"})`,
+              `  mode: ${policy.mode}`,
+              `  command: ${wrapped.command}`,
+              `  argv: ${JSON.stringify(wrapped.argv)}`,
+              `  writable: ${policy.writable.join(", ")}`,
+              ...(policy.deny.length ? [`  deny: ${policy.deny.join(", ")}`] : []),
+            ];
+            ctx.ui.notify(lines.join("\n"), "info");
+            return;
+          }
+        }
+      }
       default:
         ctx.ui.notify(usage(action.kind === "usage" ? action.detail : ""), "warning");
     }
@@ -696,19 +850,72 @@ export default function scopeExtension(pi: ExtensionAPI) {
     context = ctx;
     const input = event.input as Record<string, unknown> | undefined;
     const result = await gate.gate(event.toolName, input);
-    if (!result) return undefined;
-    log.add({ tool: event.toolName, path: String(input?.path ?? input?.command ?? "*"), write: true, outcome: "deny", detail: result.reason.slice(0, 80) });
-    draw?.();
-    return { block: true, reason: result.reason };
+    if (result) {
+      log.add({ tool: event.toolName, path: String(input?.path ?? input?.command ?? "*"), write: true, outcome: "deny", detail: result.reason.slice(0, 80) });
+      draw?.();
+      return { block: true, reason: result.reason };
+    }
+
+    if (event.toolName === "bash" && typeof input?.command === "string") {
+      const cfg = state.sandbox ?? DEFAULT_SANDBOX_CONFIG;
+      if (cfg.mode !== "off") {
+        const probe = await probeBackend(cfg.backend);
+        if (!probe.ok) {
+          if (!sandboxDegradedWarned) {
+            sandboxDegradedWarned = true;
+            ctx.ui.notify(`Scope: sandbox backend "${probe.backend}" is unavailable (${probe.detail}). Running unsandboxed.`, "warning");
+          }
+        } else {
+          const scratch = getOrCreateScratchDir();
+          const policy = deriveSandboxPolicy(state, cfg, cwd, { scratchDir: scratch });
+          const env = buildSandboxEnv({ scratchDir: scratch });
+          const wrapped = wrapBashCommand(input.command, policy, probe.backend, env);
+          if ("block" in wrapped) {
+            log.add({ tool: "bash", path: input.command, write: true, outcome: "deny", detail: wrapped.block.slice(0, 80) });
+            draw?.();
+            return { block: true, reason: wrapped.block };
+          }
+          input.command = wrapped.command;
+        }
+      }
+    }
+
+    return undefined;
   });
+
+  pi.on("tool_result", async (event, _ctx) => {
+    if (event.toolName !== "bash") return;
+    const cfg = state.sandbox ?? DEFAULT_SANDBOX_CONFIG;
+    if (cfg.mode === "off") return;
+
+    const text = event.content?.map(c => ("text" in c ? c.text : "")).join("\n") ?? "";
+    const isRefusal = /Read-only file system|Permission denied|Operation not permitted|EACCES|EROFS/i.test(text);
+    if (!isRefusal) return;
+
+    const trailer = `\n[sandbox] blocked a write outside the workspace (sandbox mode: ${cfg.mode}).`;
+    if (event.content && event.content.length > 0) {
+      const last = event.content[event.content.length - 1];
+      if (last && "text" in last) {
+        last.text += trailer;
+      } else {
+        event.content.push({ type: "text", text: trailer });
+      }
+    }
+  });
+
+  pi.on("session_shutdown", () => cleanupScratchDir());
+  process.on("exit", () => cleanupScratchDir());
 
   /** One quiet rail row; the sidebar owns the layout when it is installed. */
   function installSidebar(ctx: ExtensionContext) {
     const render = () => {
       const extra = state.roots.length - 1;
       const yolo = state.yolo ? ` · YOLO(${state.yolo.strength})` : "";
+      const sbMode = state.sandbox?.mode && state.sandbox.mode !== "off"
+        ? state.sandbox.mode === "readonly" ? " · sandbox(ro)" : " · sandbox"
+        : "";
       const waiting = gate.queue.size > 0 ? ` · ${gate.queue.size} waiting` : "";
-      const title = `Scope${yolo}`;
+      const title = `Scope${yolo}${sbMode}`;
       const rows = [`workspace${extra > 0 ? ` +${extra}` : ""}${waiting}`];
       if (offerSection(pi, { id: "scope", title, tone: state.yolo ? "warning" : "accent", rows, hint: "Alt+W → S · details" })) {
         ctx.ui.setWidget("scope", undefined);

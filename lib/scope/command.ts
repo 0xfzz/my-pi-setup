@@ -11,6 +11,19 @@ import type { ScopeAccess, ScopeDecision, ScopeRoot, ScopeState } from "./types.
 
 export type ScopeTarget = "session" | "project" | "global";
 
+export type ScopeSandboxAction =
+  | { kind: "status" }
+  | { kind: "on" }
+  | { kind: "off" }
+  | { kind: "mode"; mode: "workspace" | "readonly" | "off" }
+  | { kind: "backend"; backend: "auto" | "landlock" | "bwrap" | "seatbelt" | "none" }
+  | { kind: "ask"; ask: "refusal" | "preflight" | "both" }
+  | { kind: "retry"; retry: "model" | "auto" }
+  | { kind: "probe" }
+  | { kind: "allow"; path: string }
+  | { kind: "deny"; path: string }
+  | { kind: "test"; command: string };
+
 export type ScopeAction =
   | { kind: "status" }
   | { kind: "rules" }
@@ -22,15 +35,16 @@ export type ScopeAction =
   | { kind: "reset" }
   | { kind: "test"; path: string }
   | { kind: "yolo"; mode: "on" | "off" | "all" | "status"; persist: boolean }
+  | { kind: "sandbox"; action: ScopeSandboxAction }
   | { kind: "log"; limit: number; stats?: boolean }
   | { kind: "telemetry"; limit: number }
   | { kind: "usage"; detail: string };
 
 export const SCOPE_SUBCOMMANDS = [
-  "status", "allow", "deny", "remove", "reset", "rules", "test", "yolo", "log", "telemetry",
+  "status", "allow", "deny", "remove", "reset", "rules", "test", "yolo", "sandbox", "log", "telemetry",
 ] as const;
 
-const USAGE = "Usage: /scope [status|allow <path> [--ro|--rw] [--project|--global]|deny <path> [--project|--global]|remove [--rule] <path|action glob> [--project|--global]|reset|rules|test <path>|yolo [on|off|all|status] [--persist]|log [n] [--stats]|telemetry [n]]";
+const USAGE = "Usage: /scope [status|allow <path> [--ro|--rw] [--project|--global]|deny <path> [--project|--global]|remove [--rule] <path|action glob> [--project|--global]|reset|rules|test <path>|yolo [on|off|all|status] [--persist]|sandbox [status|on|off|mode <workspace|readonly|off>|backend <id>|ask <mode>|retry <mode>|probe|allow <path>|deny <path>|test '<cmd>']|log [n] [--stats]|telemetry [n]]";
 
 const EFFECTS: ReadonlySet<string> = new Set(["allow", "ask", "deny"]);
 
@@ -106,6 +120,62 @@ export function parseScopeCommand(input: string): ScopeAction {
     return { kind: "yolo", mode, persist: flags.includes("--persist") };
   }
 
+  if (command === "sandbox") {
+    const [sub, ...subRest] = rest;
+    if (!sub || sub === "status") {
+      return { kind: "sandbox", action: { kind: "status" } };
+    }
+    if (sub === "on") return { kind: "sandbox", action: { kind: "on" } };
+    if (sub === "off") return { kind: "sandbox", action: { kind: "off" } };
+    if (sub === "probe") return { kind: "sandbox", action: { kind: "probe" } };
+
+    if (sub === "mode") {
+      const mode = subRest[0];
+      if (mode !== "workspace" && mode !== "readonly" && mode !== "off") {
+        return { kind: "usage", detail: `Invalid sandbox mode "${mode}". Choose workspace, readonly, or off.` };
+      }
+      return { kind: "sandbox", action: { kind: "mode", mode } };
+    }
+
+    if (sub === "backend") {
+      const backend = subRest[0];
+      if (backend !== "auto" && backend !== "landlock" && backend !== "bwrap" && backend !== "seatbelt" && backend !== "none") {
+        return { kind: "usage", detail: `Invalid sandbox backend "${backend}". Choose auto, landlock, bwrap, seatbelt, or none.` };
+      }
+      return { kind: "sandbox", action: { kind: "backend", backend } };
+    }
+
+    if (sub === "ask") {
+      const ask = subRest[0];
+      if (ask !== "refusal" && ask !== "preflight" && ask !== "both") {
+        return { kind: "usage", detail: `Invalid sandbox ask mode "${ask}". Choose refusal, preflight, or both.` };
+      }
+      return { kind: "sandbox", action: { kind: "ask", ask } };
+    }
+
+    if (sub === "retry") {
+      const retry = subRest[0];
+      if (retry !== "model" && retry !== "auto") {
+        return { kind: "usage", detail: `Invalid sandbox retry mode "${retry}". Choose model or auto.` };
+      }
+      return { kind: "sandbox", action: { kind: "retry", retry } };
+    }
+
+    if (sub === "allow" || sub === "deny") {
+      const path = subRest.join(" ");
+      if (!path) return { kind: "usage", detail: `/scope sandbox ${sub} needs a path.` };
+      return { kind: "sandbox", action: { kind: sub, path } };
+    }
+
+    if (sub === "test") {
+      const cmd = subRest.join(" ");
+      if (!cmd) return { kind: "usage", detail: "/scope sandbox test needs a command to test." };
+      return { kind: "sandbox", action: { kind: "test", command: cmd } };
+    }
+
+    return { kind: "usage", detail: `Unknown sandbox subcommand "${sub}".` };
+  }
+
   return { kind: "usage", detail: `Unknown subcommand "${command}".` };
 }
 
@@ -118,6 +188,37 @@ export function scopeCompletions(prefix: string): Array<{ value: string; label: 
       .map(name => ({ value: name, label: name }));
   }
   const [command, ...rest] = value.split(/\s+/);
+  if (command === "sandbox") {
+    const subcommands = ["status", "on", "off", "mode", "backend", "ask", "retry", "probe", "allow", "deny", "test"];
+    if (rest.length <= 1 && !rest[0]?.includes(" ")) {
+      const current = rest[0] ?? "";
+      return subcommands
+        .filter(name => name.startsWith(current))
+        .map(name => ({ value: `sandbox ${name}`, label: name }));
+    }
+    const [sub, ...deeper] = rest;
+    if (sub === "mode") {
+      return ["workspace", "readonly", "off"]
+        .filter(m => m.startsWith(deeper[0] ?? ""))
+        .map(m => ({ value: `sandbox mode ${m}`, label: m }));
+    }
+    if (sub === "backend") {
+      return ["auto", "landlock", "bwrap", "seatbelt", "none"]
+        .filter(b => b.startsWith(deeper[0] ?? ""))
+        .map(b => ({ value: `sandbox backend ${b}`, label: b }));
+    }
+    if (sub === "ask") {
+      return ["refusal", "preflight", "both"]
+        .filter(a => a.startsWith(deeper[0] ?? ""))
+        .map(a => ({ value: `sandbox ask ${a}`, label: a }));
+    }
+    if (sub === "retry") {
+      return ["model", "auto"]
+        .filter(r => r.startsWith(deeper[0] ?? ""))
+        .map(r => ({ value: `sandbox retry ${r}`, label: r }));
+    }
+    return [];
+  }
   if (!["allow", "deny", "remove", "test"].includes(command ?? "")) return [];
   const seen = rest.join(" ");
   if (!seen.startsWith("--") && seen.length > 0) return [];
@@ -136,6 +237,13 @@ export function statusLines(state: ScopeState, cwd: string, sources: readonly st
   lines.push(`  defaults: write-outside=${state.defaults.external} read-outside=${state.defaults.readExternal}`);
   if (state.yolo) {
     lines.push(`  yolo: ${state.yolo.strength}${state.yolo.persist ? " (persisted)" : ""} — /scope yolo off to disarm`);
+  }
+  if (state.sandbox) {
+    const s = state.sandbox;
+    const parts = [s.mode, `backend=${s.backend}`, `ask=${s.ask}`];
+    if (s.allow.length > 0) parts.push(`allow=${s.allow.length}`);
+    if (s.deny.length > 0) parts.push(`deny=${s.deny.length}`);
+    lines.push(`  sandbox: ${parts.join(" · ")}`);
   }
   lines.push(`  rules: ${state.rules.length}`);
   if (sources.length) lines.push(`  config: ${sources.join(", ")}`);

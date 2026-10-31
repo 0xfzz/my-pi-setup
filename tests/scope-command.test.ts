@@ -72,6 +72,30 @@ test("yolo parses its modes and persistence flag", () => {
   assert.equal(parseScopeCommand("yolo maybe").kind, "usage");
 });
 
+test("sandbox subcommands parse correctly", () => {
+  assert.deepEqual(parseScopeCommand("sandbox"), { kind: "sandbox", action: { kind: "status" } });
+  assert.deepEqual(parseScopeCommand("sandbox status"), { kind: "sandbox", action: { kind: "status" } });
+  assert.deepEqual(parseScopeCommand("sandbox on"), { kind: "sandbox", action: { kind: "on" } });
+  assert.deepEqual(parseScopeCommand("sandbox off"), { kind: "sandbox", action: { kind: "off" } });
+  assert.deepEqual(parseScopeCommand("sandbox probe"), { kind: "sandbox", action: { kind: "probe" } });
+  assert.deepEqual(parseScopeCommand("sandbox mode workspace"), { kind: "sandbox", action: { kind: "mode", mode: "workspace" } });
+  assert.deepEqual(parseScopeCommand("sandbox mode readonly"), { kind: "sandbox", action: { kind: "mode", mode: "readonly" } });
+  assert.equal(parseScopeCommand("sandbox mode invalid").kind, "usage");
+  assert.deepEqual(parseScopeCommand("sandbox backend bwrap"), { kind: "sandbox", action: { kind: "backend", backend: "bwrap" } });
+  assert.equal(parseScopeCommand("sandbox backend unknown").kind, "usage");
+  assert.deepEqual(parseScopeCommand("sandbox ask both"), { kind: "sandbox", action: { kind: "ask", ask: "both" } });
+  assert.equal(parseScopeCommand("sandbox ask invalid").kind, "usage");
+  assert.deepEqual(parseScopeCommand("sandbox retry auto"), { kind: "sandbox", action: { kind: "retry", retry: "auto" } });
+  assert.equal(parseScopeCommand("sandbox retry invalid").kind, "usage");
+  assert.deepEqual(parseScopeCommand("sandbox allow /var/run/docker.sock"), { kind: "sandbox", action: { kind: "allow", path: "/var/run/docker.sock" } });
+  assert.equal(parseScopeCommand("sandbox allow").kind, "usage");
+  assert.deepEqual(parseScopeCommand("sandbox deny /srv/secret"), { kind: "sandbox", action: { kind: "deny", path: "/srv/secret" } });
+  assert.equal(parseScopeCommand("sandbox deny").kind, "usage");
+  assert.deepEqual(parseScopeCommand("sandbox test ls -la"), { kind: "sandbox", action: { kind: "test", command: "ls -la" } });
+  assert.equal(parseScopeCommand("sandbox test").kind, "usage");
+  assert.equal(parseScopeCommand("sandbox unknownSub").kind, "usage");
+});
+
 test("unknown input produces usage instead of a guessed action", () => {
   const action = parseScopeCommand("frobnicate");
   assert.equal(action.kind, "usage");
@@ -84,6 +108,15 @@ test("completions offer subcommands, then flags for the path commands", () => {
   assert.deepEqual(scopeCompletions("allow --").map(item => item.value), ["allow --ro", "allow --rw", "allow --project", "allow --global"]);
   assert.deepEqual(scopeCompletions("allow ../x"), [], "a typed path stops offering flags");
   assert.deepEqual(scopeCompletions("status "), []);
+  assert.deepEqual(
+    scopeCompletions("sandbox ").map(item => item.value),
+    [
+      "sandbox status", "sandbox on", "sandbox off", "sandbox mode", "sandbox backend",
+      "sandbox ask", "sandbox retry", "sandbox probe", "sandbox allow", "sandbox deny", "sandbox test",
+    ],
+  );
+  assert.deepEqual(scopeCompletions("sandbox mode ").map(item => item.value), ["sandbox mode workspace", "sandbox mode readonly", "sandbox mode off"]);
+  assert.deepEqual(scopeCompletions("sandbox backend ").map(item => item.value), ["sandbox backend auto", "sandbox backend landlock", "sandbox backend bwrap", "sandbox backend seatbelt", "sandbox backend none"]);
 });
 
 test("status lists every root with its access and provenance, plus both defaults", () => {
@@ -102,6 +135,24 @@ test("status names yolo and how to disarm it", () => {
   const armed = statusLines({ ...state, yolo: { strength: "ro", persist: false, since: 0 } }, "/work", []);
   assert.match(armed.join("\n"), /yolo: ro/);
   assert.match(armed.join("\n"), /\/scope yolo off/);
+
+  const withSandbox = statusLines(
+    {
+      ...state,
+      sandbox: {
+        mode: "workspace",
+        backend: "bwrap",
+        ask: "both",
+        retry: "model",
+        scratch: "session",
+        allow: ["/allow/1"],
+        deny: [],
+      },
+    },
+    "/work",
+    [],
+  );
+  assert.match(withSandbox.join("\n"), /sandbox: workspace · backend=bwrap · ask=both · allow=1/);
 });
 
 test("rules list shows effect and provenance, with an empty state", () => {

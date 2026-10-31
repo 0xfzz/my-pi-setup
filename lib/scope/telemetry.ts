@@ -96,6 +96,8 @@ export interface DecisionRecord {
   yolo?: string;
   /** A delegated child session: the question went up the ladder, not to a user. */
   child?: boolean;
+  /** Active sandbox status when the decision/call was made. */
+  sandbox?: { backend: string; mode: string; degraded?: boolean };
   /** The claim set could not be analysed (an opaque shell construct). */
   unknown?: boolean;
   /** The construct that made the claim opaque, e.g. `bash -c`. */
