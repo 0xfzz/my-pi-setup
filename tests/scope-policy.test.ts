@@ -199,3 +199,34 @@ test("a command rule is one grant per habit, and it beats the write default", ()
   );
   assert.equal(denied.effect, "deny");
 });
+
+test("with a sandbox armed, the gate's silences match what the kernel can write", () => {
+  // The regression: every temp path was "special" and allowed by the table, the
+  // kernel refused the write, and the refusal answer told the model to retry a
+  // command that was guaranteed to fail again.
+  const boundary = { writable: ["/dev/null", "/dev/zero"], deny: [] as string[] };
+  const write = (absolute: string, sandbox: typeof boundary | undefined = boundary) =>
+    evaluateClaim(
+      claim({ tool: "bash", action: "bash", write: true, absolute, resource: absolute, external: true }),
+      state(),
+      sandbox ? { sandbox } : {},
+    );
+  /** No boundary armed: the legacy device/temp silences decide on their own. */
+  const writeBare = (absolute: string) =>
+    evaluateClaim(
+      claim({ tool: "bash", action: "bash", write: true, absolute, resource: absolute, external: true }),
+      state(),
+    );
+
+  assert.equal(write("/dev/null").effect, "allow", "a pipeline device is never a question");
+  assert.equal(write("/tmp/out.txt").effect, "ask", "/tmp is not writable by the sandbox, so it asks");
+  assert.equal(write("/var/tmp/out.txt").effect, "ask");
+  assert.equal(write("/dev/shm/out.txt").effect, "ask", "/dev/shm is not in the device list");
+  assert.equal(writeBare("/tmp/out.txt").effect, "allow", "with no boundary armed the legacy temp silence stands");
+
+  const allowed = { writable: ["/dev/null", "/tmp"], deny: [] as string[] };
+  assert.equal(write("/tmp/out.txt", allowed).effect, "allow", "sandbox.allow re-silences the path");
+
+  const denied = { writable: ["/dev/null", "/tmp"], deny: ["/tmp/secret.txt"] };
+  assert.equal(write("/tmp/secret.txt", denied).effect, "deny", "sandbox.deny is a refusal, not a question");
+});

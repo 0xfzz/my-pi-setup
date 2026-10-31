@@ -126,3 +126,19 @@ test("buildSandboxEnv sets incidental-write mitigation variables and scratch cac
   assert.equal(env.PIP_CACHE_DIR, "/tmp/sandbox-scratch-789/pip");
   assert.equal(env.HOME, undefined, "HOME must not be redirected");
 });
+
+test("deriveSandboxPolicy applies a one-shot grant but never over a deny", () => {
+  const cwd = canonicalize("/work/repo");
+  const denied = canonicalize("/tmp/locked");
+  const state: ScopeState = {
+    roots: [{ path: cwd, access: "rw", source: "session" }],
+    rules: [],
+    defaults: { external: "ask", readExternal: "allow" },
+  };
+  const config: SandboxConfig = { ...DEFAULT_SANDBOX_CONFIG, mode: "workspace", deny: [denied] };
+
+  const policy = deriveSandboxPolicy(state, config, cwd, { extraWritable: ["/tmp", denied] });
+  assert.ok(policy.writable.includes(canonicalize("/tmp")), "the answered folder widens this wrap");
+  assert.ok(!policy.writable.includes(denied), "a deny configured by the user still wins");
+  assert.deepEqual(policy.deny, [denied]);
+});

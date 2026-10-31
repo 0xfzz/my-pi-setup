@@ -175,3 +175,38 @@ test("tool_result never misattributes a refusal when the probe failed", async ()
     await f.cleanup();
   }
 });
+
+test("a one-shot refusal answer widens exactly the next bash wrap", async () => {
+  // The regression: the trailer said "Retry the command" and the retry was
+  // refused identically, because an "allow once" answer never reached the
+  // sandbox policy. Nothing here executes bwrap; the assertion is the wrap.
+  clearProbeCache();
+  primeProbeCacheForTest("bwrap", { ok: true, backend: "bwrap", detail: "primed for the test" });
+  const f = await fixture({ mode: "rpc" });
+  const outside = await mkdtemp(join(tmpdir(), "scope-outside-"));
+  try {
+    const handler = f.commands.get("scope")?.handler;
+    await handler("sandbox backend bwrap", f.ctx);
+    await handler("sandbox on", f.ctx);
+
+    const target = join(outside, "out.txt");
+    const first = { toolName: "bash", input: { command: `echo hi > ${target}` } };
+    await f.emit("tool_call", first);
+
+    const result = { toolName: "bash", content: [{ type: "text", text: `sh: cannot create ${target}: Permission denied` }] };
+    await f.emit("tool_result", result);
+    assert.match(result.content[0]!.text, /Answer: allowed once\. Retry the command\./);
+
+    const retry = { toolName: "bash", input: { command: `echo hi > ${target}` } };
+    await f.emit("tool_call", retry);
+
+    // Payload only before the answer; payload plus the two --bind arguments after.
+    const occurrences = (command: string) => command.split(outside).length - 1;
+    assert.equal(occurrences(first.input.command), 1, "the first wrap cannot write there");
+    assert.equal(occurrences(retry.input.command), 3, "the retry is bound with the approved folder");
+  } finally {
+    clearProbeCache();
+    await rm(outside, { recursive: true, force: true });
+    await f.cleanup();
+  }
+});

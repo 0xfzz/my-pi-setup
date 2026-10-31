@@ -158,3 +158,51 @@ test("decision records carry no sandbox key when the sandbox is bare", async () 
   await h.gate.gate("bash", { command: "touch /srv/outside/x" });
   assert.equal(records.at(-1)!.sandbox, undefined);
 });
+
+// ---- the refusal answer must reach the kernel ------------------------------
+
+test("an armed boundary turns a temp refusal into a real question", async () => {
+  const h = harness([{ kind: "once" }], {}, { sandboxBoundary: () => ({ writable: [], deny: [] }) });
+  const outcome = await h.gate.handleRefusal("bash", "/tmp/agent-out.txt");
+
+  assert.equal(h.asked.length, 1, "/tmp asks once a kernel boundary is armed");
+  assert.equal(outcome.allowed, true);
+  assert.deepEqual(outcome.granted, ["/tmp"], "the parent directory is what the kernel needs to create the file");
+  assert.equal(outcome.retrySafe, true);
+});
+
+test("a rule the gate already trusts still widens the wrap so the retry can succeed", async () => {
+  const h = harness([], { rules: [{ action: "bash", resource: "/srv/data/*", effect: "allow" }] });
+  const outcome = await h.gate.handleRefusal("bash", "/srv/data/out.txt");
+
+  assert.equal(outcome.allowed, true);
+  assert.equal(h.asked.length, 0, "an allow rule still does not ask");
+  assert.deepEqual(outcome.granted, ["/srv/data"]);
+  assert.equal(outcome.retrySafe, true, "an approval the kernel never hears must not be sold as a retry");
+});
+
+test("a rule answer cannot widen the kernel, so it is not retry-safe", async () => {
+  const h = harness([{ kind: "rule", text: "bash /srv/data/* allow" }]);
+  const outcome = await h.gate.handleRefusal("bash", "/srv/data/out.txt");
+
+  assert.equal(outcome.allowed, true);
+  assert.deepEqual(outcome.granted, [], "a gate rule is not a sandbox grant");
+  assert.equal(outcome.retrySafe, false);
+});
+
+test("a deny answer is never retry-safe", async () => {
+  const h = harness([{ kind: "deny" }]);
+  const outcome = await h.gate.handleRefusal("bash", "/srv/data/out.txt");
+
+  assert.equal(outcome.allowed, false);
+  assert.equal(outcome.retrySafe, false);
+});
+
+test("a deny rule refuses the refusal lane with no dialog and no retry", async () => {
+  const h = harness([], { rules: [{ action: "bash", resource: "/srv/blocked/*", effect: "deny" }] });
+  const outcome = await h.gate.handleRefusal("bash", "/srv/blocked/x.txt");
+
+  assert.equal(outcome.allowed, false);
+  assert.equal(outcome.retrySafe, false);
+  assert.equal(h.asked.length, 0);
+});
