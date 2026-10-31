@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import scopeExtension from "../extensions/scope.ts";
-import { clearProbeCache } from "../lib/scope/sandbox/probe.ts";
+import { clearProbeCache, primeProbeCacheForTest, probeBackend } from "../lib/scope/sandbox/probe.ts";
 
 type Hook = (event: any, ctx: any) => unknown;
 
@@ -121,10 +121,19 @@ test("tool_call wraps bash when sandbox is armed", async () => {
 });
 
 test("tool_result appends trailer on permission refusal when sandbox is active", async () => {
+  clearProbeCache();
   const f = await fixture();
   try {
     const handler = f.commands.get("scope")?.handler;
     await handler("sandbox on", f.ctx);
+
+    // The trailer may only attach to a call this backend actually wrapped, so
+    // run the wrap first: on this machine the auto probe resolves to a
+    // working backend (landlock), or the command degrades and the next test
+    // owns the assertion.
+    const probe = await probeBackend("auto");
+    const wrapped: any = { toolName: "bash", input: { command: "echo probe" } };
+    await f.emit("tool_call", wrapped);
 
     const event = {
       toolName: "bash",
@@ -132,8 +141,37 @@ test("tool_result appends trailer on permission refusal when sandbox is active",
     };
 
     await f.emit("tool_result", event);
-    assert.ok(event.content[0]!.text.includes("[sandbox] blocked a write outside the workspace"));
+    if (probe.ok) {
+      assert.ok(event.content[0]!.text.includes("[sandbox] blocked a write outside the workspace"));
+    } else {
+      assert.ok(!event.content[0]!.text.includes("[sandbox]"), "degraded runs must not misattribute refusals");
+    }
   } finally {
+    await f.cleanup();
+  }
+});
+
+test("tool_result never misattributes a refusal when the probe failed", async () => {
+  clearProbeCache();
+  primeProbeCacheForTest("bwrap", { ok: false, backend: "bwrap", detail: "bwrap probe failed: primed for the test" });
+  const f = await fixture();
+  try {
+    const handler = f.commands.get("scope")?.handler;
+    await handler("sandbox backend bwrap", f.ctx);
+    await handler("sandbox on", f.ctx);
+
+    await f.emit("tool_call", { toolName: "bash", input: { command: "echo probe" } });
+
+    const event = {
+      toolName: "bash",
+      content: [{ type: "text", text: "grep: /etc/shadow: Permission denied" }],
+    };
+
+    await f.emit("tool_result", event);
+    assert.ok(f.notices.some(n => /Running unsandboxed/i.test(n)), "degradation was announced");
+    assert.ok(!event.content[0]!.text.includes("[sandbox]"), "a bare run's Permission denied is not a sandbox refusal");
+  } finally {
+    clearProbeCache();
     await f.cleanup();
   }
 });

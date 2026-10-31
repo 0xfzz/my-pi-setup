@@ -35,7 +35,7 @@ import {
 import { deriveSandboxPolicy } from "../lib/scope/sandbox/policy.ts";
 import { buildSandboxEnv } from "../lib/scope/sandbox/env.ts";
 import { wrapBashCommand } from "../lib/scope/sandbox/wrap.ts";
-import { probeBackend } from "../lib/scope/sandbox/probe.ts";
+import { probeBackend, type ProbeResult } from "../lib/scope/sandbox/probe.ts";
 import { RefusalDeduper, scanRefusals } from "../lib/scope/sandbox/refusal.ts";
 import { accessLabel, DEFAULT_LABELS, settingsRows, type SettingsAction, type SettingsTarget } from "../lib/scope/settings.ts";
 import {
@@ -75,6 +75,22 @@ export default function scopeExtension(pi: ExtensionAPI) {
   let sessionScratchDir: string | undefined;
   let sandboxDegradedWarned = false;
   const refusalDeduper = new RefusalDeduper();
+
+  /** The sandbox context of the bash call just wrapped: telemetry and the
+   *  refusal loop read this. `undefined` (or `degraded`) means bash ran bare,
+   *  so a Permission denied in its output is not a sandbox refusal. */
+  let lastSandboxMeta: { backend: string; mode: string; degraded?: boolean } | undefined;
+  /** The cached probe for the current backend, so `bashAskLane` can answer
+   *  synchronously without spawning on every call. */
+  let knownProbe: ProbeResult | undefined;
+
+  function bashAskRefusal(): boolean {
+    const cfg = state.sandbox ?? DEFAULT_SANDBOX_CONFIG;
+    if (cfg.ask !== "refusal") return false;
+    const planActive = planModeFromBranch(context?.sessionManager?.getBranch?.())?.enabled === true;
+    const effectiveMode = planActive ? "readonly" : cfg.mode;
+    return effectiveMode !== "off" && knownProbe?.ok === true;
+  }
 
   function getOrCreateScratchDir(): string | undefined {
     const cfg = state.sandbox ?? DEFAULT_SANDBOX_CONFIG;
@@ -156,6 +172,11 @@ export default function scopeExtension(pi: ExtensionAPI) {
       draw?.();
     },
     onDecision: record => telemetry.record(record),
+    // The refusal lane: with an armed backend, bash pre-flight asks are
+    // suppressed because the kernel is the one that asks — it refuses the
+    // outside write and the refusal opens the question afterwards.
+    bashAskLane: () => (bashAskRefusal() ? "refusal" : "ask"),
+    sandbox: () => lastSandboxMeta,
     onAutoApprove: (decision, claim) => {
       log.add({
         tool: claim?.tool ?? "unknown",
@@ -439,6 +460,14 @@ export default function scopeExtension(pi: ExtensionAPI) {
         return action.strength
           ? `yolo ${action.strength} armed for this branch; deny rules still win.`
           : "yolo disarmed; outside paths ask again.";
+      }
+      case "sandbox-mode": {
+        state = { ...state, sandbox: { ...(state.sandbox ?? DEFAULT_SANDBOX_CONFIG), mode: action.mode } };
+        persist();
+        draw?.();
+        refresh();
+        if (action.mode === "off") return "sandbox off; bash writes rely on parsing again.";
+        return `sandbox ${action.mode} armed; an outside write is refused by the kernel and asked afterwards.`;
       }
       case "add-grant": {
         if (action.target === "session") {
@@ -842,11 +871,24 @@ export default function scopeExtension(pi: ExtensionAPI) {
 
   // ---- wiring ----------------------------------------------------------------
 
+  /** Refresh the cached probe so `bashAskRefusal` can answer synchronously
+   *  before the first bash call probes on its own. Never awaited. */
+  function refreshKnownProbe(): void {
+    const cfg = state.sandbox ?? DEFAULT_SANDBOX_CONFIG;
+    void probeBackend(cfg.backend).then(result => {
+      knownProbe = result;
+    }).catch(() => {});
+  }
+
   pi.on("session_start", (_event, ctx) => {
     reload(ctx);
+    refreshKnownProbe();
     if (ctx.mode === "tui") installSidebar(ctx);
   });
-  pi.on("session_tree", (_event, ctx) => reload(ctx));
+  pi.on("session_tree", (_event, ctx) => {
+    reload(ctx);
+    refreshKnownProbe();
+  });
   pi.on("before_agent_start", (_event, ctx) => { context = ctx; });
 
   pi.on("tool_call", async (event, ctx) => {
@@ -863,9 +905,12 @@ export default function scopeExtension(pi: ExtensionAPI) {
       const planActive = planModeFromBranch(context?.sessionManager?.getBranch?.())?.enabled === true;
       const cfg = state.sandbox ?? DEFAULT_SANDBOX_CONFIG;
       const effectiveMode = planActive ? "readonly" : cfg.mode;
-      if (effectiveMode !== "off") {
+      if (effectiveMode === "off") {
+        lastSandboxMeta = undefined;
+      } else {
         const effectiveCfg = { ...cfg, mode: effectiveMode };
         const probe = await probeBackend(effectiveCfg.backend);
+        lastSandboxMeta = { backend: probe.backend, mode: effectiveMode, ...(probe.ok ? {} : { degraded: true }) };
         if (!probe.ok) {
           if (!sandboxDegradedWarned) {
             sandboxDegradedWarned = true;
@@ -904,10 +949,12 @@ export default function scopeExtension(pi: ExtensionAPI) {
 
   pi.on("tool_result", async (event, _ctx) => {
     if (event.toolName !== "bash") return;
-    const planActive = planModeFromBranch(context?.sessionManager?.getBranch?.())?.enabled === true;
-    const cfg = state.sandbox ?? DEFAULT_SANDBOX_CONFIG;
-    const effectiveMode = planActive ? "readonly" : cfg.mode;
-    if (effectiveMode === "off") return;
+    // Only a call this backend actually wrapped is a sandbox refusal; a plain
+    // Permission denied from an unwrapped run (degraded, or a previous
+    // non-sandbox state) must not be misreported as one.
+    const meta = lastSandboxMeta;
+    if (!meta || meta.degraded) return;
+    const effectiveMode = meta.mode;
 
     const text = event.content?.map(c => ("text" in c ? c.text : "")).join("\n") ?? "";
     const hits = scanRefusals(text);

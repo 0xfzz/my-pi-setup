@@ -159,6 +159,21 @@ export interface GateDeps {
    * deliberately cannot.
    */
   onEvaluate?: EvaluateHook;
+  /**
+   * Armed-sandbox context attached to every decision record, so telemetry can
+   * say under which frontend a verdict was made.
+   */
+  sandbox?: () => { backend: string; mode: string; degraded?: boolean } | undefined;
+  /**
+   * The bash ask lane, as the caller sees the sandbox.
+   *
+   * `"refusal"` means an armed backend is available, so bash pre-flight
+   * questions (path claims and the opaque-command ask) are suppressed: bash
+   * runs sandboxed, the kernel refuses the outside write, and the refusal
+   * becomes the question through `handleRefusal`. Never consulted for deny —
+   * deny is re-checked in every lane and always wins.
+   */
+  bashAskLane?: () => "ask" | "refusal";
 }
 
 /** One question at a time, FIFO. `size` is what the sidebar shows. */
@@ -200,6 +215,13 @@ export interface Gate {
 }
 
 const DENY_HINT = "Ask for a path inside the workspace, or run /scope allow <path> to grant it.";
+
+/**
+ * The recorded reason when an armed sandbox takes over the bash ask lane
+ * (`sandbox.ask: "refusal"`): the kernel refuses the write and the refusal
+ * becomes the question, so the pre-flight parser question is suppressed.
+ */
+const SANDBOX_REFUSAL_REASON = "sandbox refusal mode: bash runs kernel-sandboxed; an outside write will be refused and asked afterwards";
 /**
  * The hint on an opaque-command decision.
  *
@@ -432,13 +454,18 @@ export function createGate(deps: GateDeps): Gate {
     if (!hook) return;
     const { decision, claim, ...rest } = record;
     const state = deps.state();
+    const sandbox = deps.sandbox?.();
     const stored: DecisionRecord = {
       ...rest,
+      ...(sandbox ? { sandbox } : {}),
       // The gate is the producer of these records; `scope_answer` and `/scope`
       // commands set their own source at the call site.
       source: rest.source ?? "gate",
       cwd: deps.cwd(),
-      reason: decision?.reason ?? rest.reason,
+      // An explicitly-passed reason wins: callers that also pass a decision
+      // carry the same verdict text, but the sandbox refusal lane records a
+      // deliberate note instead of the ask decision's own question.
+      reason: rest.reason ?? decision?.reason,
       ...(claim ? { claim: claimSnapshot(claim) } : {}),
       ...(decision?.rule ? { rule: decision.rule } : {}),
       ...(decision?.root ? { root: decision.root } : {}),
@@ -477,6 +504,10 @@ export function createGate(deps: GateDeps): Gate {
         const auto = Boolean(deps.state().yolo && decision.reason.includes("(yolo"));
         if (auto) deps.onAutoApprove?.(decision, undefined);
         report({ tool, input: inputText, effect: "allow", asked: false, auto, unknown: true, ...(opaque ? { opaque } : {}), reason: decision.reason, decision });
+        return undefined;
+      }
+      if (tool === "bash" && deps.bashAskLane?.() === "refusal") {
+        report({ tool, input: inputText, effect: "allow", asked: false, unknown: true, ...(opaque ? { opaque } : {}), reason: SANDBOX_REFUSAL_REASON, decision });
         return undefined;
       }
       return queue.run(async () => {
@@ -568,6 +599,10 @@ export function createGate(deps: GateDeps): Gate {
         const auto = Boolean(deps.state().yolo && decision.reason.includes("(yolo"));
         if (auto) deps.onAutoApprove?.(decision, claim);
         report({ tool, input: inputText, effect: "allow", asked: false, auto, reason: decision.reason, decision, claim });
+        continue;
+      }
+      if (tool === "bash" && deps.bashAskLane?.() === "refusal") {
+        report({ tool, input: inputText, effect: "allow", asked: false, reason: SANDBOX_REFUSAL_REASON, decision, claim });
         continue;
       }
       const result = await queue.run(async (): Promise<GateResult | undefined> => {

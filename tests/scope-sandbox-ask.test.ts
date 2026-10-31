@@ -102,3 +102,59 @@ test("handleRefusal escalates in delegated child sessions instead of opening dia
   assert.match(outcome.reason ?? "", /ask your parent with agent_ping/);
   assert.equal(h.asked.length, 0, "child session must not prompt user");
 });
+
+// ---- sandbox ask lane (`sandbox.ask: "refusal"`) -----------------------------
+
+test("bashAskLane refusal suppresses the bash pre-flight ask; the kernel asks instead", async () => {
+  const records: any[] = [];
+  const h = harness([], {}, {
+    bashAskLane: () => "refusal",
+    sandbox: () => ({ backend: "landlock", mode: "workspace" }),
+    onDecision: r => records.push(r),
+  });
+
+  const result = await h.gate.gate("bash", { command: "touch /srv/outside/x" });
+  assert.equal(result, undefined, "bash runs: the armed sandbox is the boundary");
+  assert.equal(h.asked.length, 0, "no pre-flight question");
+  const record = records.at(-1)!;
+  assert.equal(record.tool, "bash");
+  assert.equal(record.effect, "allow");
+  assert.match(record.reason ?? "", /sandbox refusal mode/);
+  assert.deepEqual(record.sandbox, { backend: "landlock", mode: "workspace" });
+});
+
+test("a configured deny still blocks under the refusal lane and never asks", async () => {
+  const h = harness([], {
+    rules: [{ action: "bash", resource: "/srv/blocked/*", effect: "deny" }],
+  }, {
+    bashAskLane: () => "refusal",
+  });
+
+  const result = await h.gate.gate("bash", { command: "touch /srv/blocked/x" });
+  assert.ok(result?.block, "deny wins over the lane");
+  assert.equal(h.asked.length, 0);
+});
+
+test("the opaque-command ask is suppressed under the refusal lane for bash only", async () => {
+  const h = harness([], {}, { bashAskLane: () => "refusal" });
+  const result = await h.gate.gate("bash", { command: "bash -c 'touch /srv/x'" });
+  assert.equal(result, undefined);
+  assert.equal(h.asked.length, 0);
+
+  // Another tool is untouched.
+  const h2 = harness([], {}, { bashAskLane: () => "refusal" });
+  const blocked = await h2.gate.gate("bash", { command: "bash -c 'touch /srv/y'" });
+  assert.equal(blocked, undefined);
+});
+
+test("decision records carry no sandbox key when the sandbox is bare", async () => {
+  const records: any[] = [];
+  const h = harness([], {}, {
+    bashAskLane: () => "refusal",
+    sandbox: () => undefined,
+    onDecision: r => records.push(r),
+  });
+
+  await h.gate.gate("bash", { command: "touch /srv/outside/x" });
+  assert.equal(records.at(-1)!.sandbox, undefined);
+});
