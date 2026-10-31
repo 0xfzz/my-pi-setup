@@ -177,6 +177,15 @@ export interface GateDeps {
    */
   bashAskLane?: () => "ask" | "refusal";
   /**
+   * A path approved "for once" during a pre-flight question.
+   *
+   * The gate does not mutate state for a one-shot answer, so the caller is told
+   * which folder to add to the wrap it is about to build. Without this the
+   * pre-flight answer is invisible to the kernel: the command runs, the write is
+   * refused, and the user is asked the same question a second time.
+   */
+  onAllowOnce?: (absolute: string) => void;
+  /**
    * What the armed sandbox can actually write, consulted by every evaluation.
    *
    * Supplying it keeps the gate and the kernel answering the same question the
@@ -689,6 +698,7 @@ export function createGate(deps: GateDeps): Gate {
         }
         if (answer.kind === "once") {
           report({ tool, input: inputText, effect: "allow", asked: true, answer: "once", reason: again.reason, decision: again, claim: claimed });
+          deps.onAllowOnce?.(claimed.absolute);
           return undefined;
         }
         applyAnswer(answer, claimed);

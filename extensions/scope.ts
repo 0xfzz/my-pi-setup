@@ -97,6 +97,12 @@ export default function scopeExtension(pi: ExtensionAPI) {
     return live;
   }
 
+  /** Read the live grants without consuming them: the *question* needs them too. */
+  function peekSandboxGrants(): string[] {
+    const now = Date.now();
+    return pendingSandboxGrants.filter(grant => grant.expiresAt > now).map(grant => grant.path);
+  }
+
   function rememberSandboxGrants(paths: readonly string[]): void {
     const expiresAt = Date.now() + SANDBOX_GRANT_TTL_MS;
     for (const path of paths) {
@@ -110,6 +116,11 @@ export default function scopeExtension(pi: ExtensionAPI) {
   function sandboxAllowHint(path: string): string {
     const parent = dirname(path);
     return parent && parent !== "/" ? parent : path;
+  }
+
+  /** What the gate is told about the kernel's write boundary. */
+  function boundaryOf(policy: SandboxPolicy): SandboxBoundary {
+    return { writable: policy.writable, deny: policy.deny };
   }
 
   /** The sandbox context of the bash call just wrapped: telemetry and the
@@ -213,6 +224,10 @@ export default function scopeExtension(pi: ExtensionAPI) {
     // outside write and the refusal opens the question afterwards.
     bashAskLane: () => (bashAskRefusal() ? "refusal" : "ask"),
     sandboxBoundary: () => activeBoundary,
+    // A pre-flight "allow once" does not touch state, so the wrap this call is
+    // about to build has to be told about it — otherwise the command runs, the
+    // kernel refuses, and the same question is asked a second time.
+    onAllowOnce: absolute => rememberSandboxGrants([sandboxAllowHint(absolute)]),
     sandbox: () => lastSandboxMeta,
     onAutoApprove: (decision, claim) => {
       log.add({
@@ -938,15 +953,15 @@ export default function scopeExtension(pi: ExtensionAPI) {
     const effectiveMode = planActive ? "readonly" : cfg.mode;
     const effectiveCfg = { ...cfg, mode: effectiveMode };
 
-    // Derive the write boundary before the gate judges the call. The gate must not
-    // approve what the kernel is about to refuse, and a one-shot grant from the
-    // refusal lane has to be visible to both halves or the retry cannot work.
-    const grants = isBash ? takeSandboxGrants() : [];
+    // The boundary for the *question* carries the pending grants, so a retry is
+    // not asked again for something already answered. The wrap below re-derives
+    // with the grants taken after the question, which also covers an answer made
+    // during it.
+    const pending = isBash ? peekSandboxGrants() : [];
     const scratch = isBash && effectiveMode !== "off" ? getOrCreateScratchDir() : undefined;
-    const policy: SandboxPolicy | undefined = isBash && effectiveMode !== "off"
-      ? deriveSandboxPolicy(state, effectiveCfg, cwd, { scratchDir: scratch, extraWritable: grants })
+    activeBoundary = isBash && effectiveMode !== "off"
+      ? boundaryOf(deriveSandboxPolicy(state, effectiveCfg, cwd, { scratchDir: scratch, extraWritable: pending }))
       : undefined;
-    activeBoundary = policy ? { writable: policy.writable, deny: policy.deny } : undefined;
 
     const result = await gate.gate(event.toolName, input);
     if (result) {
@@ -957,6 +972,7 @@ export default function scopeExtension(pi: ExtensionAPI) {
     }
 
     if (isBash) {
+      const grants = [...new Set([...pending, ...takeSandboxGrants()])];
       if (effectiveMode === "off") {
         lastSandboxMeta = undefined;
       } else {
@@ -967,7 +983,8 @@ export default function scopeExtension(pi: ExtensionAPI) {
             sandboxDegradedWarned = true;
             ctx.ui.notify(`Scope: sandbox backend "${probe.backend}" is unavailable (${probe.detail}). Running unsandboxed.`, "warning");
           }
-        } else if (policy) {
+        } else {
+          const policy = deriveSandboxPolicy(state, effectiveCfg, cwd, { scratchDir: scratch, extraWritable: grants });
           const env = buildSandboxEnv({ scratchDir: scratch });
           const wrapped = wrapBashCommand(command, policy, probe.backend, env);
           if ("block" in wrapped) {

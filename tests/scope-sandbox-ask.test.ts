@@ -206,3 +206,16 @@ test("a deny rule refuses the refusal lane with no dialog and no retry", async (
   assert.equal(outcome.retrySafe, false);
   assert.equal(h.asked.length, 0);
 });
+
+test("a pre-flight once answer is handed to the caller so the wrap can include it", async () => {
+  const granted: string[] = [];
+  const h = harness([{ kind: "once" }], {}, {
+    sandboxBoundary: () => ({ writable: [], deny: [] }),
+    onAllowOnce: (absolute: string) => granted.push(absolute),
+  });
+
+  const result = await h.gate.gate("bash", { command: "echo x > /tmp/out.txt" });
+  assert.equal(result, undefined, "the call proceeds");
+  assert.equal(h.asked.length, 1, "/tmp is a question once a boundary is armed");
+  assert.deepEqual(granted, ["/tmp/out.txt"], "the caller is told what was approved, not the state mutated");
+});

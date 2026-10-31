@@ -182,11 +182,18 @@ test("a one-shot refusal answer widens exactly the next bash wrap", async () => 
   // sandbox policy. Nothing here executes bwrap; the assertion is the wrap.
   clearProbeCache();
   primeProbeCacheForTest("bwrap", { ok: true, backend: "bwrap", detail: "primed for the test" });
+  // `refreshKnownProbe` probes the configured backend, which is still "auto" at
+  // session_start; without this the refusal lane has no cached answer yet and
+  // falls back to the pre-flight question.
+  primeProbeCacheForTest("auto", { ok: true, backend: "bwrap", detail: "primed for the test" });
   const f = await fixture({ mode: "rpc" });
   const outside = await mkdtemp(join(tmpdir(), "scope-outside-"));
   try {
     const handler = f.commands.get("scope")?.handler;
     await handler("sandbox backend bwrap", f.ctx);
+    // The lane this test covers: pre-flight questions are suppressed, so the
+    // command really runs and the kernel refusal is the thing that asks.
+    await handler("sandbox ask refusal", f.ctx);
     await handler("sandbox on", f.ctx);
 
     const target = join(outside, "out.txt");
@@ -204,6 +211,34 @@ test("a one-shot refusal answer widens exactly the next bash wrap", async () => 
     const occurrences = (command: string) => command.split(outside).length - 1;
     assert.equal(occurrences(first.input.command), 1, "the first wrap cannot write there");
     assert.equal(occurrences(retry.input.command), 3, "the retry is bound with the approved folder");
+  } finally {
+    clearProbeCache();
+    await rm(outside, { recursive: true, force: true });
+    await f.cleanup();
+  }
+});
+
+test("a pre-flight allowance already widens the first wrap, so the call is not asked twice", async () => {
+  // The pre-flight question happens before the wrap is built. An "allow once"
+  // answer there does not touch state, so the caller has to carry it into the
+  // policy — otherwise the command runs, the kernel refuses, and the user is
+  // asked the same question again in the refusal lane.
+  clearProbeCache();
+  primeProbeCacheForTest("landlock", { ok: true, backend: "landlock", detail: "primed for the test" });
+  const f = await fixture({ mode: "rpc" });
+  const outside = await mkdtemp(join(tmpdir(), "scope-outside-"));
+  try {
+    const handler = f.commands.get("scope")?.handler;
+    await handler("sandbox backend landlock", f.ctx);
+    await handler("sandbox on", f.ctx);
+
+    const call = { toolName: "bash", input: { command: `echo hi > ${join(outside, "out.txt")}` } };
+    const results = await f.emit("tool_call", call);
+    assert.deepEqual(results, [], "the call is not blocked");
+
+    const occurrences = call.input.command.split(outside).length - 1;
+    assert.equal(occurrences, 2, "payload plus --rw: the answered folder is already in the first wrap");
+    assert.ok(call.input.command.includes("--rw"), "landlock is told about the folder");
   } finally {
     clearProbeCache();
     await rm(outside, { recursive: true, force: true });
