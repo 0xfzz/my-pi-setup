@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { PLAIN_THEME } from "../lib/popup.ts";
+import { initTheme } from "@earendil-works/pi-coding-agent";
+import { PLAIN_THEME, type PopupTheme } from "../lib/popup.ts";
 import { routerRows, type RouterAction, type RouterPopupResult, type RouterSettingsView } from "../lib/router-settings.ts";
 import type { SourcedRoute } from "../lib/router-config.ts";
 import { RouterSettingsPopup } from "../lib/ui/router-settings.ts";
@@ -367,4 +368,26 @@ test("a config error is shown without hiding the routes", () => {
   const text = plain(component.render(90));
   assert.match(text, /unexpected token/);
   assert.match(text, /router\/auto/);
+});
+
+// ── Real theme ───────────────────────────────────────────────────────────────
+
+test("the route list renders with Pi's own theme, where an unknown token throws", () => {
+  // Same regression as the provider editor: a bad token name compiled because
+  // PopupTheme accepted `string`, and only threw on the error path.
+  initTheme("dark");
+  const realTheme = (globalThis as unknown as Record<symbol, PopupTheme>)[
+    Symbol.for("@earendil-works/pi-coding-agent:theme")
+  ]!;
+  assert.ok(realTheme, "initTheme installs the theme Pi hands to extensions");
+
+  const component = new RouterSettingsPopup({
+    view: () => view(baseRows(), { errors: ["account-router.json is not strict JSON."] }),
+    apply: () => "saved",
+    theme: realTheme,
+    terminalRows: () => 40,
+    onDone: () => {},
+  });
+  component.focused = true;
+  assert.match(plain(component.render(90)), /account-router\.json is not strict JSON\./);
 });

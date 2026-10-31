@@ -102,6 +102,8 @@ export class ProviderSettingsPopup implements Component, Focusable {
   private stage: Stage = { kind: "list" };
   private selected = 0;
   private notice?: string;
+  /** A step's validation failure; painted separately so it cannot look like a hint. */
+  private problem?: string;
   /** Kept while the popup is open; a closed popup discards it with itself. */
   private pending?: { draft: ProviderDraft; locked: boolean };
   private closed = false;
@@ -211,14 +213,13 @@ export class ProviderSettingsPopup implements Component, Focusable {
       `${theme.fg("dim", "file     ")}  ${view.path}`,
       `${theme.fg("dim", "providers")}  ${rows.length} · ${models} configured model${models === 1 ? "" : "s"}`,
     ];
-    if (view.errors.length) header.push("", theme.fg("danger", view.errors[0]!));
-    if (this.notice) header.push("", theme.fg(this.noticeIsProblem() ? "danger" : "warning", this.notice));
+    if (view.errors.length) header.push("", theme.fg("error", view.errors[0]!));
+    // A rejected value is an error, not a hint: the two are separate lines so a
+    // red line always means "this will not be saved".
+    if (this.problem) header.push("", theme.fg("error", this.problem));
+    if (this.notice) header.push("", theme.fg("warning", this.notice));
     header.push("");
     return header;
-  }
-
-  private noticeIsProblem(): boolean {
-    return this.notice !== undefined && this.stage.kind === "wizard" && this.fieldInput() !== undefined;
   }
 
   private model(width: number): PopupShellModel {
@@ -518,12 +519,13 @@ export class ProviderSettingsPopup implements Component, Focusable {
     if (stage.kind !== "wizard" || !this.pending) return;
     const problem = stepProblem(step.key, value, this.context(step));
     if (problem) {
-      this.notice = problem;
+      this.problem = problem;
       return;
     }
     this.pending.draft[step.key] = value;
     // A provider named after its id is the common case; typing it twice is not.
     if (step.key === "id" && this.pending.draft.name.trim() === "") this.pending.draft.name = value.trim();
+    this.problem = undefined;
     this.notice = undefined;
     const next = stage.step + 1;
     if (next < this.steps().length) {

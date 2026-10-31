@@ -183,7 +183,7 @@ export class RouterSettingsPopup implements Component, Focusable {
       `${theme.fg("dim", "config   ")}  ${view.sources.length ? view.sources.join(", ") : "(none yet — saving creates one)"}`,
       `${theme.fg("dim", "pools    ")}  ${view.pools.length ? view.pools.join(", ") : "(none)"}`,
     ];
-    if (view.errors.length) header.push("", theme.fg("danger", view.errors[0]!));
+    if (view.errors.length) header.push("", theme.fg("error", view.errors[0]!));
     if (this.notice) header.push("", theme.fg("warning", this.notice));
     header.push("");
     return header;

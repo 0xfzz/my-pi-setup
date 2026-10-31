@@ -19,6 +19,7 @@
  * instead of drawing a corrupt box.
  */
 import { createRequire } from "node:module";
+import type { ThemeBg, ThemeColor } from "@earendil-works/pi-coding-agent";
 import {
   Markdown,
   matchesKey,
@@ -46,10 +47,12 @@ export const POPUP_MARGIN = 1;
 export type PopupRow = string | { wrap: string };
 
 export interface PopupTheme {
-  fg(color: string, text: string): string;
+  // Typed as Pi's tokens, not `string`: an unknown name is a compile error here
+  // instead of "Unknown theme color" at render time, in the middle of a session.
+  fg(color: ThemeColor, text: string): string;
   bold(text: string): string;
   /** Background painter; popups use it to paint over the transcript beneath. */
-  bg?(color: string, text: string): string;
+  bg?(color: ThemeBg, text: string): string;
 }
 
 export const PLAIN_THEME: PopupTheme = { fg: (_c, text) => text, bold: (text) => text };

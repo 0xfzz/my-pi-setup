@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { PLAIN_THEME } from "../lib/popup.ts";
+import { initTheme } from "@earendil-works/pi-coding-agent";
+import { PLAIN_THEME, type PopupTheme } from "../lib/popup.ts";
 import type { ProviderConfig } from "../lib/provider-config.ts";
 import type { ProviderPopupResult, ProviderSettingsView } from "../lib/ui/provider-settings.ts";
 import { ProviderSettingsPopup } from "../lib/ui/provider-settings.ts";
@@ -343,4 +344,34 @@ test("Esc from the list closes the popup with no action, which is how a draft is
   h.component.handleInput(escape); // list -> close
   assert.equal(h.closed, 1);
   assert.deepEqual(h.results, [{ kind: "close" }], "closing is not an implicit save");
+});
+
+// ── Real theme ───────────────────────────────────────────────────────────────
+
+test("the header renders with Pi's own theme, where an unknown token throws", () => {
+  // Regression: `fg("danger")` compiled (PopupTheme took `string`) and only
+  // threw at render time — when a config error was present, which the plain
+  // test theme never exercised. This uses the installed theme instead.
+  initTheme("dark");
+  const realTheme = (globalThis as unknown as Record<symbol, PopupTheme>)[
+    Symbol.for("@earendil-works/pi-coding-agent:theme")
+  ]!;
+  assert.ok(realTheme, "initTheme installs the theme Pi hands to extensions");
+
+  const component = new ProviderSettingsPopup({
+    view: () => ({
+      path: "/home/u/.pi/agent/models.json",
+      providers: base(),
+      errors: ["models.json is not strict JSON."],
+      known: ["acme"],
+    }),
+    theme: realTheme,
+    terminalRows: () => 40,
+    notice: "Removed acme from models.json.",
+    onDone: () => {},
+  });
+  component.focused = true;
+  const text = plain(component.render(90));
+  assert.match(text, /models\.json is not strict JSON\./);
+  assert.match(text, /Removed acme from models\.json\./);
 });
