@@ -426,6 +426,9 @@ export function createGate(deps: GateDeps): Gate {
     const state = deps.state();
     const stored: DecisionRecord = {
       ...rest,
+      // The gate is the producer of these records; `scope_answer` and `/scope`
+      // commands set their own source at the call site.
+      source: rest.source ?? "gate",
       cwd: deps.cwd(),
       reason: decision?.reason ?? rest.reason,
       ...(claim ? { claim: claimSnapshot(claim) } : {}),

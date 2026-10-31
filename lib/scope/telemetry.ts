@@ -199,6 +199,20 @@ export interface TelemetrySummary {
 }
 
 /**
+ * One-line key for a target, however long the command that produced it was.
+ *
+ * An opaque call has no claim, so falling back to `input` would group by a whole
+ * heredoc and print a multi-line "target" in the summary. The construct is the
+ * thing that repeats there, so that is the key.
+ */
+function targetKey(record: DecisionRecord): string {
+  if (record.claim?.absolute) return record.claim.absolute;
+  if (record.opaque) return `[opaque] ${record.opaque}`;
+  const oneLine = record.input.replace(/\s+/g, " ").trim();
+  return oneLine.length > 80 ? `${oneLine.slice(0, 79)}…` : oneLine || record.tool;
+}
+
+/**
  * Count the decisions into the questions a person actually asks of them.
  *
  * Three shapes matter: a target that keeps asking is either a missing grant or a
@@ -228,7 +242,7 @@ export function summarizeTelemetry(
     if (record.unknown) unknown++;
     if (record.asked) {
       asked++;
-      const key = record.claim?.absolute ?? record.input;
+      const key = targetKey(record);
       const row = byTarget.get(key) ?? { target: key, count: 0, once: 0, denied: 0 };
       row.count++;
       if (record.answer === "once") row.once++;

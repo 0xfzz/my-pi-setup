@@ -191,6 +191,7 @@ test("an internal allow is recorded, so the log is not only exceptions", async (
   assert.equal(entry?.effect, "allow");
   assert.equal(entry?.asked, false);
   assert.equal(entry?.input, "src/a.ts");
+  assert.equal(entry?.source, "gate");
   assert.equal(entry?.claim?.absolute, "/work/src/a.ts");
   assert.equal(entry?.state?.roots, 1);
 });
@@ -305,6 +306,16 @@ test("the summary renders empty and populated states", () => {
   assert.match(lines, /asked targets/);
   assert.match(lines, /repeated asks with no standing answer/);
   assert.match(lines, /\(2 answered once\)/);
+});
+
+test("an opaque call is summarized by its construct, not by the whole command", () => {
+  const rows: DecisionRecord[] = [
+    record({ tool: "bash", input: "bash -c 'cat /etc/passwd'", unknown: true, opaque: "bash -c", asked: true, answer: "deny", effect: "deny" }),
+    record({ tool: "bash", input: "python3 - <<'PY'\nprint(1)\nPY", unknown: true, opaque: "python3 reads a heredoc", asked: true, answer: "deny", effect: "deny" }),
+  ];
+  const summary = summarizeTelemetry(rows);
+  assert.deepEqual(summary.askedTargets.map(row => row.target), ["[opaque] bash -c", "[opaque] python3 reads a heredoc"]);
+  for (const line of formatTelemetrySummary(summary, "/tmp/t.jsonl")) assert.doesNotMatch(line, /\n/);
 });
 
 test("the command parses telemetry with a bounded limit", () => {
