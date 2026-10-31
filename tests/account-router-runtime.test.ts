@@ -16,11 +16,13 @@ function fakeProvider(id: string, modelIds: string[], seen: Seen[], options: {
   failWith?: (key: string) => string | undefined;
   inputTokens?: number;
   outputTokens?: number;
+  /** Catalog price per token; a route's `cheapest` method ranks targets by it. */
+  cost?: { input: number; output: number };
 } = {}) {
   const model = (modelId: string) => ({
     id: modelId, name: modelId, provider: id, api: "scripted", baseUrl: "http://127.0.0.1:1",
     reasoning: false, input: ["text"], contextWindow: 100_000, maxTokens: 2_000,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    cost: { input: options.cost?.input ?? 0, output: options.cost?.output ?? 0, cacheRead: 0, cacheWrite: 0 },
   });
   return {
     models: modelIds.map(model),
@@ -410,6 +412,82 @@ test("a continuation stays on the pooled model that answered", { timeout: 20000 
         ],
       }],
     },
+  }));
+});
+
+test("a cheapest route picks the lower-priced target even when it is listed second", { timeout: 20000 }, async () => {
+  await withSession(async ({ registry }) => {
+    const virtual = registry.getModel("router", "auto")!;
+    const resolved = await (registry as any).resolveModel(virtual, [
+      { role: "user", content: [{ type: "text", text: "route me" }] },
+    ], { reason: "user", thinkingLevel: "off" });
+    assert.equal(resolved.model.provider, "cheap", "declaration order is not the cheapest order");
+    assert.equal(resolved.model.id, "small");
+  }, (seen) => ({
+    providers: [
+      { name: "pricey", config: fakeProvider("pricey", ["frontier"], seen, { cost: { input: 15, output: 60 } }).config },
+      { name: "cheap", config: fakeProvider("cheap", ["small"], seen, { cost: { input: 1, output: 2 } }).config },
+    ],
+    config: { routes: [{ name: "auto", method: "cheapest", targets: ["pricey/frontier", "cheap/small"] }] },
+  }));
+});
+
+test("a round-robin route rotates the head on each user turn", { timeout: 20000 }, async () => {
+  await withSession(async ({ registry }) => {
+    const virtual = registry.getModel("router", "auto")!;
+    const messages = [{ role: "user", content: [{ type: "text", text: "route me" }] }];
+    const pick = async () => (await (registry as any).resolveModel(virtual, messages, { reason: "user", thinkingLevel: "off" })).model.provider;
+    assert.deepEqual([await pick(), await pick(), await pick()], ["primary", "secondary", "primary"]);
+  }, (seen) => ({
+    providers: [
+      { name: "primary", config: fakeProvider("primary", ["main-model"], seen).config },
+      { name: "secondary", config: fakeProvider("secondary", ["backup-model"], seen).config },
+    ],
+    config: { routes: [{ name: "auto", method: "round-robin", targets: ["primary/main-model", "secondary/backup-model"] }] },
+  }));
+});
+
+test("when:\"failure\" keeps the answering model on the next user turn", { timeout: 20000 }, async () => {
+  await withSession(async ({ registry }) => {
+    const virtual = registry.getModel("router", "auto")!;
+    const previous = {
+      api: "scripted", provider: "secondary", model: "backup-model",
+      content: [{ type: "text", text: "ok" }], timestamp: Date.now(), stopReason: "stop",
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2 },
+    };
+    const messages: any = [
+      { role: "user", content: [{ type: "text", text: "pick" }] },
+      { role: "assistant", ...previous },
+    ];
+    const kept = await (registry as any).resolveModel(virtual, messages, { reason: "user", thinkingLevel: "off" });
+    assert.equal(kept.model.provider, "secondary", "the turn stayed on the model that answered instead of the head");
+  }, (seen) => ({
+    providers: [
+      { name: "primary", config: fakeProvider("primary", ["main-model"], seen).config },
+      { name: "secondary", config: fakeProvider("secondary", ["backup-model"], seen).config },
+    ],
+    config: { routes: [{ name: "auto", when: "failure", targets: ["primary/main-model", "secondary/backup-model"] }] },
+  }));
+});
+
+test("reloading a config that dropped a route unregisters it from the catalog", { timeout: 20000 }, async () => {
+  await withSession(async ({ dir, session, registry }) => {
+    assert.ok(registry.getModel("router", "auto"), "the route starts registered");
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(join(dir, "account-router.json"), JSON.stringify({ routes: [] }));
+    const command = session.extensionRunner.getRegisteredCommands().find((c: any) => c.invocationName === "router");
+    const logs: string[] = [];
+    const original = console.log;
+    console.log = (line: string) => { logs.push(String(line)); };
+    try {
+      await command.handler("reload", { hasUI: false, cwd: dir, modelRegistry: registry } as any);
+    } finally {
+      console.log = original;
+    }
+    assert.equal(registry.getModel("router", "auto"), undefined, "a deleted route is no longer selectable");
+  }, (seen) => ({
+    providers: [{ name: "primary", config: fakeProvider("primary", ["main-model"], seen).config }],
+    config: { routes: [{ name: "auto", targets: ["primary/main-model"] }] },
   }));
 });
 

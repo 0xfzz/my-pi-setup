@@ -49,9 +49,20 @@ import {
   type SourceContext, type StoredAntigravityAccount,
 } from "../lib/account-sources.ts";
 import {
-  advanceChain, findRoute, mergeRouteTables, parseModelRef, readRouteTable, routeTargets,
-  targetPool, type RouteConfig, type RouteTable, type RouteTarget,
+  describeRoutePolicy, findRoute, mergeRouteTables, orderTargets, parseModelRef, readRouteTable,
+  routeDecision, routeMethod, routeTargets, targetPool,
+  type RouteConfig, type RouteFailureClass, type RouteTable, type RouteTarget,
 } from "../lib/model-routes.ts";
+import {
+  classifyFailure, mergeTargets, routerModelChoices, routerRows,
+  type RouterAction, type RouterDraft, type RouterPopupResult, type RouterSettingsView,
+} from "../lib/router-settings.ts";
+import {
+  readRouteDoc, removeRoute, routeSources, routerConfigPaths, saveRoute,
+} from "../lib/router-config.ts";
+import { RouterSettingsPopup } from "../lib/ui/router-settings.ts";
+import { popupOverlayOptions } from "../lib/popup.ts";
+import { providerModelPicker } from "../lib/provider-model-picker.ts";
 import { refreshAntigravityToken } from "../vendor/antigravity/auth/oauth.ts";
 import { getCurrentAntigravityCatalog } from "../vendor/antigravity/models/models.ts";
 import { ANTIGRAVITY_API } from "../vendor/antigravity/types/types.ts";
@@ -71,6 +82,24 @@ export function poolProviderId(poolName: string): string {
 /** The pool name behind a shadow provider id, if any. */
 export function poolNameFromProvider(providerId: string): string | undefined {
   return providerId.startsWith(POOL_PROVIDER_PREFIX) ? providerId.slice(POOL_PROVIDER_PREFIX.length) : undefined;
+}
+
+/**
+ * Key of a route's round-robin cursor in the router state.
+ *
+ * The state file already maps a pool name to the account that pool picked, so a
+ * route cursor lives in the same map behind a prefix that no pool name can
+ * collide with: route names may not contain a colon, pool names may.
+ */
+export function routeCursorKey(routeName: string): string {
+  return `route:${routeName}`;
+}
+
+/** Move the target a predicate matches to the end, keeping every other one. */
+function rotatePast(targets: readonly RouteTarget[], matches: (target: RouteTarget) => boolean): RouteTarget[] {
+  const index = targets.findIndex(matches);
+  if (index < 0) return targets.slice();
+  return [...targets.slice(0, index), ...targets.slice(index + 1), targets[index]!];
 }
 
 /** Providers a config references, for diagnostics and auth checks. */
@@ -676,37 +705,84 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     return [target];
   };
 
-  /** Ordered candidates for a request, accounting for stickiness and retries. */
+  /**
+   * Ordered candidates for a request.
+   *
+   * The trigger decides where the chain starts — the best candidate, the model
+   * that answered last, or the one that just failed — and the method decides
+   * the order inside it. Moving past a failed target happens after ordering, so
+   * a `cheapest` route cannot re-pick the model that just failed for being
+   * cheapest.
+   */
   const candidateChain = (
     ctx: ExtensionContext,
     route: RouteConfig,
-    reason: string,
+    request: { reason: "user" | "continuation" | "retry" | "direct"; failedClass?: RouteFailureClass },
     previous?: { provider: string; modelId: string },
     failed?: { provider: string; modelId: string },
   ): RouteTarget[] => {
     const expanded = routeTargets(route).flatMap((target) => expandTarget(ctx, route, target));
-    const base = reason === "retry" && failed
-      ? advanceChain(
-        { ...route, targets: expanded },
-        (target) => targetMatches(route, target, failed.provider, failed.modelId),
-      )
-      : expanded;
-    if (reason === "user" || !previous || route.sticky === false) return base;
-    const same = base.filter((target) => targetMatches(route, target, previous.provider, previous.modelId));
-    return same.length ? same : base;
+    const isFailed = failed
+      ? (target: RouteTarget) => targetMatches(route, target, failed.provider, failed.modelId)
+      : undefined;
+    let decision = routeDecision(route, request);
+    // `sticky: false` is the older opt-out of continuation stickiness and keeps
+    // working: it re-decides a continuation even under a keeping trigger.
+    if (route.sticky === false && decision.head === "previous" && request.reason === "continuation") {
+      decision = { head: "order", advance: false };
+    }
+    if (decision.head === "previous" && previous) {
+      const same = expanded.filter((target) => targetMatches(route, target, previous.provider, previous.modelId));
+      // The answering model may have left the chain; fall through to ordering
+      // rather than failing the request.
+      if (same.length) return same;
+    }
+    if (decision.head === "failed" && isFailed) {
+      const index = expanded.findIndex(isFailed);
+      if (index >= 0) return [expanded[index]!, ...expanded.slice(0, index), ...expanded.slice(index + 1)];
+      return expanded;
+    }
+    const ordered = orderTargets(
+      { ...route, targets: expanded },
+      (target) => targetFacts(ctx, route, target),
+      {
+        cursor: state.cursor[routeCursorKey(route.name)],
+        previous: previous ? `${previous.provider}/${previous.modelId}` : undefined,
+      },
+    );
+    return decision.advance && isFailed ? rotatePast(ordered, isFailed) : ordered;
+  };
+
+  /**
+   * Catalog facts for the cost-aware method.
+   *
+   * A target that cannot be resolved (unknown provider, no credentials) is not
+   * cheaper by virtue of being broken, so it sorts last like an unpriced model.
+   */
+  const targetFacts = (ctx: ExtensionContext, route: RouteConfig, target: RouteTarget) => {
+    const resolved = resolveTarget(ctx, route, target);
+    if ("error" in resolved) return undefined;
+    const cost = resolved.model.cost;
+    return { cost: { input: cost?.input ?? Number.POSITIVE_INFINITY, output: cost?.output ?? Number.POSITIVE_INFINITY } };
   };
 
   const choose = (
     ctx: ExtensionContext,
     route: RouteConfig,
-    reason: string,
+    request: { reason: "user" | "continuation" | "retry" | "direct"; failedClass?: RouteFailureClass },
     previous?: { provider: string; modelId: string },
     failed?: { provider: string; modelId: string },
   ): { model: Model<Api>; thinking?: string; via?: string } | { error: string } => {
     const problems: string[] = [];
-    for (const target of candidateChain(ctx, route, reason, previous, failed)) {
+    for (const target of candidateChain(ctx, route, request, previous, failed)) {
       const resolved = resolveTarget(ctx, route, target);
       if ("error" in resolved) { problems.push(resolved.error); continue; }
+      if (routeMethod(route) === "round-robin" && request.reason !== "continuation") {
+        // The cursor advances on the request that actually picked a target, so
+        // a user turn rotates the chain and a continuation does not.
+        state.cursor[routeCursorKey(route.name)] = target.model;
+        persistState();
+      }
       return { model: resolved.model, thinking: target.thinking, via: resolved.via };
     }
     return { error: problems[0] ?? `route "${route.name}" has no usable target` };
@@ -714,8 +790,12 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
 
   // ── Virtual models ─────────────────────────────────────────────────────────
 
+  /** Route names this extension has registered, so a removal can be undone. */
+  const registeredRoutes = new Set<string>();
+
   const registerRoutes = (): void => {
     for (const route of table.routes) {
+      // Registered inline so the host types the `route(request, ctx)` callback.
       pi.registerVirtualModel({
         provider: table.provider,
         id: route.name,
@@ -729,9 +809,12 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
           const failed = request.failed
             ? { provider: request.failed.model.provider, modelId: request.failed.model.id }
             : undefined;
-          // `direct` requests (compaction, extension calls) get the primary target.
-          const reason = request.reason === "direct" ? "user" : request.reason;
-          const picked = choose(ctx as unknown as ExtensionContext, route, reason, previous, failed);
+          const picked = choose(ctx as unknown as ExtensionContext, route, {
+            reason: request.reason,
+            // The trigger's quota/overflow conditions are judged from the failed
+            // request's own message, which is the only place the reason lives.
+            ...(request.failed ? { failedClass: classifyFailure(request.failed.message?.errorMessage) } : {}),
+          }, previous, failed);
           if ("error" in picked) {
             lastError = picked.error;
             throw new Error(picked.error);
@@ -742,7 +825,32 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
           };
         },
       });
+      registeredRoutes.add(route.name);
     }
+  };
+
+  /**
+   * Make the registered virtual models match the loaded route table.
+   *
+   * Registering again replaces an existing route, but nothing removed a route
+   * that had been deleted or renamed — it stayed in `/model` as a ghost that
+   * failed every request. The editor and `/router reload` both go through here.
+   */
+  const syncRoutes = (): void => {
+    const wanted = new Set(table.routes.map((route) => route.name));
+    const stale: string[] = [];
+    for (const name of registeredRoutes) if (!wanted.has(name)) stale.push(name);
+    for (const name of stale) {
+      try {
+        (pi as { unregisterVirtualModel?: (provider: string, id: string) => void }).unregisterVirtualModel?.(table.provider, name);
+      } catch {
+        // A host without the call keeps the stale model until restart; the
+        // route table below is still correct, so failing the reload would hide
+        // that the edit was saved.
+      }
+      registeredRoutes.delete(name);
+    }
+    registerRoutes();
   };
 
   // ── Early registration ────────────────────────────────────────────────────
@@ -885,7 +993,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     loadConfig(activeCwd);
     restore(ctx);
     registerPools(ctx);
-    registerRoutes();
+    syncRoutes();
     updateSidebar();
   });
 
@@ -936,7 +1044,9 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
             return `${target.model}${thinking}${poolName ? ` [${poolName}]` : ""}`;
           })
           .join(" → ");
-        lines.push(`  ${table.provider}/${route.name}: ${chain}`);
+        const cursor = routeMethod(route) === "round-robin" ? ` (cursor ${state.cursor[routeCursorKey(route.name)] ?? "start"})` : "";
+        lines.push(`  ${table.provider}/${route.name}: ${describeRoutePolicy(route)}${cursor}`);
+        lines.push(`    ${chain}`);
       }
     }
     const poolNames = Object.keys(config.pools);
@@ -978,6 +1088,142 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     return lines.join("\n");
   };
 
+  // ── Route editor (TUI) ─────────────────────────────────────────────────────
+
+  /** The two config files, resolved exactly the way `loadConfig` resolves them. */
+  const routePaths = () => routerConfigPaths(agentDir, activeCwd);
+
+  const pathForFile = (file: "project" | "global"): string => {
+    const paths = routePaths();
+    return file === "global" ? paths.global : paths.project;
+  };
+
+  /** What the editor renders: the effective table, its sources and its problems. */
+  const routerView = (): RouterSettingsView => {
+    const paths = routePaths();
+    const sources = routeSources(paths.global, paths.project);
+    const pools = Object.keys(config.pools);
+    return {
+      cwd: activeCwd,
+      provider: table.provider,
+      sources: [paths.project, paths.global].filter((file) => existsSync(file)),
+      rows: routerRows(sources.routes, table.provider, pools),
+      shadowed: routerRows(sources.shadowed, table.provider, pools),
+      pools,
+      errors: [...sources.errors, ...configErrors],
+    };
+  };
+
+  /** Re-read the files and make the registered virtual models match them. */
+  const reloadRoutes = (ctx: ExtensionContext): void => {
+    loadConfig(ctx.cwd ?? activeCwd);
+    syncRoutes();
+    updateSidebar();
+  };
+
+  /**
+   * Apply one editor action.
+   *
+   * The editor never touches disk: this is the single path from a keypress to a
+   * written route, and it is the same writer and reload `/router reload` uses.
+   */
+  const applyRouterAction = (action: RouterAction, ctx: ExtensionCommandContext): string => {
+    const paths = routePaths();
+    const file = pathForFile(action.file);
+    if (action.kind === "delete") {
+      if (!removeRoute(file, action.name)) throw new Error(`router/${action.name} is not in ${file}.`);
+      const revived = action.file === "project"
+        && readRouteDoc(paths.global, "global").routes.some((entry) => entry.route.name === action.name);
+      reloadRoutes(ctx);
+      return `Removed router/${action.name} from ${file}.${revived ? " The global route with that name is active again." : ""}`;
+    }
+    if (action.kind === "rename") {
+      saveRoute(file, action.route);
+      if (action.from !== action.route.name) removeRoute(file, action.from);
+      reloadRoutes(ctx);
+      return `Renamed router/${action.from} to router/${action.route.name}.`;
+    }
+    saveRoute(file, action.route);
+    reloadRoutes(ctx);
+    return `Saved router/${action.route.name} in ${file}.`;
+  };
+
+  /** Models a route may target, from the live registry rather than the config. */
+  const routeModelChoices = (ctx: ExtensionCommandContext) => {
+    const models = typeof ctx.modelRegistry?.getAll === "function" ? ctx.modelRegistry.getAll() : [];
+    return routerModelChoices(
+      models.map((model) => ({
+        provider: model.provider,
+        id: model.id,
+        ...(model.name ? { name: model.name } : {}),
+        ...(model.type ? { type: model.type } : {}),
+        ...(model.api ? { api: model.api } : {}),
+      })),
+      { excludeProviders: [table.provider] },
+    );
+  };
+
+  /**
+   * Pick models for a draft and write it.
+   *
+   * Returns false when the picker was cancelled or produced nothing usable, so
+   * the caller closes instead of reopening: a route with no targets is never
+   * written, which is what makes Escape safe at this point.
+   */
+  const pickModelsForDraft = async (draft: RouterDraft, ctx: ExtensionCommandContext): Promise<boolean> => {
+    let selection;
+    try {
+      selection = await providerModelPicker(ctx, routeModelChoices(ctx), draft.route.targets.map((target) => target.model));
+    } catch (error) {
+      emit(ctx, `Model picker failed: ${errorMessage(error)}`, "error");
+      return false;
+    }
+    if (!selection) return false;
+    let models = "ids" in selection ? selection.ids : [];
+    if ("manual" in selection && selection.manual) {
+      const typed = (await ctx.ui.input("Model id", "provider/model, for a model the catalog does not list yet")) ?? "";
+      const parsed = parseModelRef(typed.trim());
+      if (!parsed) {
+        emit(ctx, `"${typed.trim()}" is not provider/model; nothing was saved.`, "warning");
+        return false;
+      }
+      models = [`${parsed.provider}/${parsed.modelId}`];
+    }
+    const targets = mergeTargets(draft.route.targets, models);
+    if (!targets.length) {
+      emit(ctx, "No models chosen; nothing was saved.", "warning");
+      return false;
+    }
+    const route: RouteConfig = { ...draft.route, targets };
+    const file = pathForFile(draft.file);
+    saveRoute(file, route);
+    reloadRoutes(ctx);
+    emit(ctx, `Saved router/${route.name} with ${targets.length} model${targets.length === 1 ? "" : "s"} in ${file}.`);
+    return true;
+  };
+
+  /**
+   * The editor loop.
+   *
+   * The picker is its own overlay, so it cannot live inside the popup: an
+   * `add models` answer closes the editor, the picker runs, and the editor
+   * reopens on the re-read table. Cancelling the picker ends the loop with the
+   * config untouched.
+   */
+  const openRouterSettings = async (ctx: ExtensionCommandContext): Promise<void> => {
+    for (;;) {
+      const result = await ctx.ui.custom<RouterPopupResult>((tui, theme, _keys, done) => new RouterSettingsPopup({
+        view: routerView,
+        apply: (action) => applyRouterAction(action, ctx),
+        theme,
+        terminalRows: () => tui.terminal.rows,
+        onDone: done,
+      }), { overlay: true, overlayOptions: popupOverlayOptions("86%", 56, "90%") as never });
+      if (!result || result.kind !== "pick-models") return;
+      if (!await pickModelsForDraft(result.draft, ctx)) return;
+    }
+  };
+
   pi.registerCommand(COMMAND, {
     description: "Account router: status, accounts, use, reset, reload",
     handler: async (args, ctx) => {
@@ -986,6 +1232,14 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
       const arg = rest.join(" ");
       switch (verb) {
         case undefined:
+          // Bare `/router` in the TUI is the editor; the text report stays
+          // available as `status` for RPC, print mode and copy-paste.
+          if (ctx.mode === "tui" && typeof ctx.ui.custom === "function") {
+            await openRouterSettings(ctx);
+            return;
+          }
+          emit(ctx, formatStatus());
+          return;
         case "status":
           emit(ctx, formatStatus());
           return;
@@ -996,7 +1250,8 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
         case "help":
           emit(ctx, [
             "Account router:",
-            "  /router                    routes and pools",
+            "  /router                    edit routes (TUI), or the status report",
+            "  /router status             routes, policies and pools as text",
             "  /router accounts [pool]    per-account health",
             "  /router use <pool> <id>    pin a pool to one account",
             "  /router reset [pool]       clear health and pins",
@@ -1008,6 +1263,9 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
             '                      "strategy": "round-robin", "cooldownMs": 60000 } }',
             "",
             "Strategies: round-robin, least-recently-used, priority, sticky.",
+            "Route methods: priority (declaration order), round-robin, cheapest, last-good.",
+            "Route triggers: turn, failure, quota (only a 429 retry moves on), overflow.",
+            "A route target is any physical provider/model; pick one in /router or type it.",
             "Sources: antigravity-accounts (linked Google logins), static (per-account apiKey).",
             "Any provider works: pools front its models without provider-specific code.",
             "Quota failures skip an account until reset, then require a tiny recovery probe.",
@@ -1051,9 +1309,9 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
           return;
         }
         case "reload": {
-          loadConfig(ctx.cwd ?? process.cwd());
+          loadConfig(ctx.cwd ?? activeCwd);
           registerPools(ctx);
-          registerRoutes();
+          syncRoutes();
           updateSidebar();
           emit(ctx, configErrors.length
             ? `Reloaded with ${configErrors.length} warning(s):\n${configErrors.join("\n")}`
