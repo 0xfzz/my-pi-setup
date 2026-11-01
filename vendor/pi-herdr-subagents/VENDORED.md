@@ -25,8 +25,22 @@ machine.
 | `src/watcher.ts`, `src/messages.ts` | child outcome detection and the messages delivered to the orchestrator |
 | `src/agents.ts`, `src/settings.ts` | agent profiles (`tools:`, `model:`, `thinking:`) and subagent settings |
 | `src/session.ts`, `src/context-*.ts`, `src/runtime-state.ts`, `src/context-usage.ts`, `src/model-picker.ts` | transitive imports of the above |
-| `subagent-done.ts` | **required at runtime**: `launch.ts` passes `join(PACKAGE_ROOT, "subagent-done.ts")` as the child's `-e` control extension |
+| `orch-child.ts` (package root) | **required at runtime**: `launch.ts` passes `join(PACKAGE_ROOT, "orch-child.ts")` as each child's `-e` control extension |
 | `README.md` | upstream attribution and protocol documentation |
+
+### Why `orch-child.ts` sits at the package root, not in `src/`
+
+Every other source file is under `src/`, so the loose root file looks like an
+oversight. It is deliberate. `launch.ts` resolves the child's control extension as
+`join(PACKAGE_ROOT, "orch-child.ts")`, where `PACKAGE_ROOT` is `src/` one level up
+— i.e. the package root, not `src/`. Moving the file into `src/` would silently
+break every child launch, because `-e` would point at a path that does not exist.
+
+This snapshot also preserves upstream's own layout rather than re-organising it:
+a vendored tree should stay byte-close to the source it was taken from, so a
+future re-copy is a clean diff instead of a merge. Note the table above once
+referred to this file as `subagent-done.ts`, upstream's older name for the same
+child extension; the file is `orch-child.ts` in the snapshot commit.
 
 Deliberately **not** copied: upstream `test/`, `agents/`, `herdr-plugin/`, `index.ts`
 (the v1 `subagent` tool surface, which this repository does not load), `docs/`, and
