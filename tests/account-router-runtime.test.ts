@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import accountRouter, { poolProviderId } from "../extensions/account-router.ts";
-import { SECTION_EVENT, type SectionOffer } from "../lib/sidebar-channel.ts";
+import { SECTION_EVENT, type SectionOffer } from "../lib/sidebar/sidebar-channel.ts";
 
 // A provider with a cost-free scripted API so routing is observed end to end:
 // every request records which credential it was handed.

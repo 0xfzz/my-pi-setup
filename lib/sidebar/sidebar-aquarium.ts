@@ -18,7 +18,7 @@
  * Inspired by classic asciiquarium (Kirk Baucom / Joan Stark) & ascii.rest/aquarium.
  * Copyright (c) 2026 bas3line. MIT; see licenses/ascii-rest-MIT.txt.
  */
-import { renderWasmScene } from "./ascii-anim-engine.ts";
+import { renderWasmScene } from "../ascii-anim-engine.ts";
 
 export const AQUARIUM_FPS = 15;
 export const AQUARIUM_MIN_HEIGHT = 6;

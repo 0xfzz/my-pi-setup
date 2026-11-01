@@ -1,12 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, type TUI } from "@earendil-works/pi-tui";
-import { SECTION_EVENT, REFRESH_EVENT, type SectionOffer, type SidebarSection } from "../lib/sidebar-channel.ts";
-import { SIDEBAR_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_COLUMNS, SidebarMount, fit, sidebarWidth, wrapTodoRow } from "../lib/sidebar-layout.ts";
+import { SECTION_EVENT, REFRESH_EVENT, type SectionOffer, type SidebarSection } from "../lib/sidebar/sidebar-channel.ts";
+import { SIDEBAR_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_COLUMNS, SidebarMount, fit, sidebarWidth, wrapTodoRow } from "../lib/sidebar/sidebar-layout.ts";
 import { isSubagentChildSession } from "../lib/subagent-context.ts";
-import { SidebarResizer } from "../lib/sidebar-resize.ts";
+import { SidebarResizer } from "../lib/sidebar/sidebar-resize.ts";
 import { registerWorkflowActions } from "../lib/workflow-actions.ts";
-import { AnimationRegistry, SidebarAnimationPlayer, animationHeight, ANIMATION_REGISTER_EVENT, type AsciiAnimationPiece } from "../lib/sidebar-animation.ts";
-import { feedAquarium } from "../lib/sidebar-aquarium.ts";
+import { AnimationRegistry, SidebarAnimationPlayer, animationHeight, ANIMATION_REGISTER_EVENT, type AsciiAnimationPiece } from "../lib/sidebar/sidebar-animation.ts";
+import { feedAquarium } from "../lib/sidebar/sidebar-aquarium.ts";
 
 export default function sidebarExtension(pi: ExtensionAPI) {
   registerWorkflowActions(pi);

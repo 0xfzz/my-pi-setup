@@ -20,7 +20,7 @@ import {
   type ChildRecord, type Milestone,
 } from "../lib/subagent-state.ts";
 import { contextModeLabel } from "../lib/subagent-context.ts";
-import { offerSection } from "../lib/sidebar-channel.ts";
+import { offerSection } from "../lib/sidebar/sidebar-channel.ts";
 import { isTodoTool } from "../lib/todo-tools.ts";
 import { SUBAGENT_DETAILS_HINT } from "../lib/workflow-actions.ts";
 import { compileSubagentSession, recallSubagentHistory } from "../lib/vcc-subagent-adapter.ts";

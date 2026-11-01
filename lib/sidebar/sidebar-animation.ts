@@ -7,7 +7,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { createAquarium, feedAquarium, type AquariumTheme, type ThemeToken } from "./sidebar-aquarium.ts";
-import { renderWasmScene } from "./ascii-anim-engine.ts";
+import { renderWasmScene } from "../ascii-anim-engine.ts";
 import { catsPiece } from "./sidebar-cats.ts";
 
 export { catsPiece } from "./sidebar-cats.ts";

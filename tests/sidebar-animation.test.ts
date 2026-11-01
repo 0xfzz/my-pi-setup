@@ -14,7 +14,7 @@ import {
   catsPiece,
   randomPiece,
   type AsciiAnimationPiece,
-} from "../lib/sidebar-animation.ts";
+} from "../lib/sidebar/sidebar-animation.ts";
 
 test("animation registry registers, selects, lists, and falls back safely", () => {
   const registry = new AnimationRegistry();

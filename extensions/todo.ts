@@ -31,7 +31,7 @@ import {
   isPopupCloseKey,
   type PopupRow,
 } from "../lib/popup.ts";
-import { offerSection, REFRESH_EVENT } from "../lib/sidebar-channel.ts";
+import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
 import { TODO_DETAILS_HINT } from "../lib/workflow-actions.ts";
 import { planModeFromBranch } from "../lib/plan-mode.ts";
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";

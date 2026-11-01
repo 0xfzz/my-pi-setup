@@ -63,7 +63,7 @@ import {
 import { RouterSettingsPopup } from "../lib/ui/router-settings.ts";
 import { popupOverlayOptions } from "../lib/popup.ts";
 import { providerModelPicker } from "../lib/provider/provider-model-picker.ts";
-import { offerSection, REFRESH_EVENT } from "../lib/sidebar-channel.ts";
+import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
 
 const STATE_ENTRY = "account-router:v1";
 const DEFAULT_ROUTER_PROVIDER = "router";

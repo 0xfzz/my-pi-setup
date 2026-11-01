@@ -1,7 +1,7 @@
 import type { TUI } from "@earendil-works/pi-tui";
 import { sliceByColumn } from "@earendil-works/pi-tui";
-import { blockSelectionAt, extractBlockText, type BlockSelection } from "./selection/blocks.ts";
-import { resolveHyperlinkAt } from "./selection/osc8.ts";
+import { blockSelectionAt, extractBlockText, type BlockSelection } from "../selection/blocks.ts";
+import { resolveHyperlinkAt } from "../selection/osc8.ts";
 
 export type SelectionRegionType = "sidebar" | "conversation" | "prompt";
 

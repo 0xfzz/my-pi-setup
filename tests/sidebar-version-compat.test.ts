@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { atLeastVersion, parseVersion } from "../lib/sidebar-layout.ts";
+import { atLeastVersion, parseVersion } from "../lib/sidebar/sidebar-layout.ts";
 
 /**
  * The sidebar mounts by wrapping Pi's private fullscreen `layoutRoot`, so it must

@@ -9,7 +9,7 @@ import {
   AquariumSimulation,
   clearAquariumFood,
   getAquariumSimulation,
-} from "../lib/sidebar-aquarium.ts";
+} from "../lib/sidebar/sidebar-aquarium.ts";
 
 test("aquarium frames keep complete borders and exact terminal dimensions at every sidebar size", () => {
   for (const width of [12, 18, 20, 22, 30, 36, 44, 58, 60, 120]) {

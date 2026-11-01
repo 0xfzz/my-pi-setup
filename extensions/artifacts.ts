@@ -10,7 +10,7 @@ import {
   MarkdownPopup, popupOverlayOptions, PLAIN_THEME, type PopupTheme,
 } from "../lib/popup.ts";
 import { PopupList } from "../lib/ui/shell.ts";
-import { offerSection, REFRESH_EVENT } from "../lib/sidebar-channel.ts";
+import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
 import { createArtifactAutocompleteProvider, expandArtifactMentions } from "../lib/artifact-mentions.ts";
 import {
   ARTIFACT_TYPE, ARTIFACT_CONTEXT_TYPE, ARTIFACT_SIDECAR_PREFIX, ARTIFACT_SIDECAR_SUFFIX,

@@ -1,6 +1,6 @@
 import { Text, TuiAltScreen, VStack, isViewportTUI, ScrollView } from "@earendil-works/pi-tui";
 import { VERSION } from "@earendil-works/pi-coding-agent";
-import { SidebarMount } from "../../lib/sidebar-layout.ts";
+import { SidebarMount } from "../../lib/sidebar/sidebar-layout.ts";
 
 /**
  * Mount the sidebar against whichever Pi release the test runner resolved.

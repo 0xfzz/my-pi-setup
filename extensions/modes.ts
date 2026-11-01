@@ -1,7 +1,7 @@
 import { createLocalBashOperations, CustomEditor, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import { ModeRegistry, MODE_SWITCH_KEY, MODE_SWITCH_LABEL, routeSubmissions } from "../lib/modes.ts";
-import { offerSection, REFRESH_EVENT } from "../lib/sidebar-channel.ts";
+import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
 import { recordsFromBranch as childRecords } from "../lib/subagent-state.ts";
 import { childContextState, isSubagentChildSession, ownEntries } from "../lib/subagent-context.ts";
 import { readOnlyShellCommand } from "../lib/plan-shell.ts";
