@@ -45,7 +45,7 @@ export default function sidebarExtension(pi: ExtensionAPI) {
   function sectionRowCount(): number {
     const limit = (tui?.terminal.rows ?? 0) < 18 ? 1 : 3;
     let rows = 0;
-    for (const id of ["mode", "scope", "account", "todo", "subagents", "artifacts"] as const) {
+    for (const id of ["mode", "account", "todo", "subagents", "artifacts"] as const) {
       const section = sections.get(id);
       if (!section || (!section.rows.length && (id === "subagents" || id === "account"))) continue;
       rows += (rows ? 1 : 0) + 1 + 1;
@@ -116,7 +116,7 @@ export default function sidebarExtension(pi: ExtensionAPI) {
           const lines: string[] = [];
           const limit = renderer.terminal.rows < 18 ? 1 : 3;
           sectionBounds.clear();
-          for (const id of ["mode", "scope", "account", "todo", "subagents", "artifacts"] as const) {
+          for (const id of ["mode", "account", "todo", "subagents", "artifacts"] as const) {
             const section = sections.get(id);
             if (!section || (!section.rows.length && (id === "subagents" || id === "account"))) continue;
             if (lines.length) lines.push("");

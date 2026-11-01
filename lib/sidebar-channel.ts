@@ -3,7 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 export const SECTION_EVENT = "workflow-ui:section";
 export const REFRESH_EVENT = "workflow-ui:refresh";
 export interface SidebarSection {
-  id: "todo" | "artifacts" | "mode" | "subagents" | "account" | "scope";
+  id: "todo" | "artifacts" | "mode" | "subagents" | "account";
   title: string;
   tone?: "accent" | "warning" | "success";
   rows: string[];
