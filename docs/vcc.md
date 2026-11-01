@@ -202,8 +202,15 @@ It mirrors `vcc/auto-compact.ts` → `<agent>/extensions/auto-compact.ts` and
 it to `package.json` → `pi.extensions`; the sync script refuses to run if a
 duplicate entry exists. Reload Pi after syncing.
 
-The pre-redesign controller is archived at
-`docs/patches/vcc-auto-compact-legacy.ts` for diffing.
+The pre-redesign controller is not kept in the tree: it is a superseded copy of
+this one, and keeping code under `docs/` meant nothing compiled or linted it.
+Diff against it from history instead:
+
+```sh
+# the archived pre-redesign controller
+git show 3090557:docs/patches/vcc-auto-compact-legacy.ts > /tmp/legacy.ts
+diff -u /tmp/legacy.ts vcc/auto-compact.ts
+```
 
 ## Small-model caveat: core compaction settings
 
