@@ -47,6 +47,15 @@ export interface ResultDisposition {
   summary: string;
   evidence: string[];
   integration: string;
+  /**
+   * What was wrong, in the handoff's own terms.
+   *
+   * Required for `changes-requested`: a rework is spawned against the frozen
+   * original handoff plus this list, so "it did not match" has to name which
+   * criterion and how. Empty here would make the rework a fresh spawn that
+   * forgot the first brief, which is the failure this field exists to prevent.
+   */
+  defects?: string[];
   at: string;
 }
 
@@ -58,6 +67,14 @@ export interface ChildAccountability {
   reviewPlan: string;
   resultRevision: number;
   disposition: "pending" | ResultDisposition["disposition"];
+  /**
+   * How many reworks this work unit has cost, starting at 0.
+   *
+   * A rework is the same work unit, not a new one, so the count lives here and
+   * the ceiling is enforced at spawn time: past the cap the decision belongs to
+   * the user, not to another round of the same loop.
+   */
+  reworkRound?: number;
   reviews: ResultDisposition[];
   /** Prior attempts survive resume, including the decisions made on them. */
   attempts: Array<{ id: string; resultRevision: number; reviews: ResultDisposition[] }>;
@@ -635,6 +652,14 @@ export class ScopeRegistry {
     if (decision.resultRevision !== child.accountability.resultRevision) throw new Error("Stale result revision.");
     if (!decision.summary.trim() || !decision.integration.trim()) throw new Error("Summary and integration/cleanup notes are required.");
     if (decision.disposition === "accepted" && !decision.evidence.length) throw new Error("Acceptance requires checked evidence.");
+    // A change request IS the brief for the next round. Without the defect list
+    // the rework would be a fresh spawn that never saw the first handoff.
+    if (decision.disposition === "changes-requested" && !(decision.defects ?? []).length) {
+      throw new Error(
+        "changes-requested requires at least one defect: name the acceptance criterion that was not met and what you observed. "
+        + "That list is what the rework is spawned against.",
+      );
+    }
     const previous = child.accountability.reviews.at(-1);
     if (previous && JSON.stringify({ ...previous, at: undefined }) === JSON.stringify({ ...decision, at: undefined })) return child;
     if (child.accountability.disposition === "accepted" || child.accountability.disposition === "abandoned") {

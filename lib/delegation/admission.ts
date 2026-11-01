@@ -37,6 +37,15 @@
 /** Sanity cap on the cumulative per-batch budget a user may configure. */
 export const MAX_LAUNCHES_PER_BATCH_LIMIT = 50;
 
+/**
+ * How many times ONE work unit may be re-spawned against its frozen handoff.
+ *
+ * A rework exists because a child missed the handoff. Two rounds is enough to
+ * tell "the child got it wrong" from "the handoff, the lane or the goal is
+ * wrong" -- and the second is a decision for the user, not for a third launch.
+ */
+export const MAX_REWORK_ROUNDS = 2;
+
 export interface SpawnBudgets {
   concurrent: number;
   launchesPerBatch: number;

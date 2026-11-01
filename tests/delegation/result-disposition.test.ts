@@ -149,10 +149,37 @@ test("changes-requested keeps the slot occupied by the same work unit", async ()
     resultRevision: 1,
     summary: "Criteria 2 and 3 failed: flaky on collision",
     integration: "will steer the same child",
+    defects: [
+      "Criterion 'no collision on retry' is unmet: two workers still both win a slot.",
+      "src/unit-a/queue.ts:88 sleeps instead of backing off.",
+    ],
   });
-  assert.match(String(result.content?.[0]?.text), /steer or resume the SAME child/);
+  assert.match(String(result.content?.[0]?.text), /2 defect\(s\) recorded/);
+  assert.match(String(result.content?.[0]?.text), /agent_spawn\(\{ reworkOf: "rework-1" \}\)/,
+    "a change request names the rework route, not only steer/resume");
   assert.equal(registry.getOccupiedChildren("sess-owner").length, 1, "still owned");
   assert.equal(registry.getPendingResults("sess-owner").length, 0, "no longer pending-review");
+  const recorded = registry.getChildById("rework-1")!.accountability!.reviews.at(-1)!;
+  assert.equal(recorded.defects!.length, 2, "the defect list is the brief for the next round");
+});
+
+test("a change request without a defect list is refused: there is nothing to rework against", async () => {
+  registry.resetForTests();
+  const { run } = harness();
+  registry.registerChild(ownedChild("rework-bare", "running"));
+  registry.updateStatus("/tmp/disposition-tests/rework-bare.jsonl", "completed");
+
+  const result = await run({
+    childId: "rework-bare",
+    disposition: "changes-requested",
+    resultRevision: 1,
+    summary: "did not match",
+    integration: "n/a",
+  });
+  assert.equal(result.details.error, "invalid-disposition");
+  assert.match(String(result.content?.[0]?.text), /requires at least one defect/);
+  assert.equal(registry.getChildById("rework-bare")!.accountability!.disposition, "pending",
+    "a refused verdict leaves the result unreviewed rather than half-settled");
 });
 
 test("an abandoned result is recorded as wasted work, not success, with cleanup notes", async () => {

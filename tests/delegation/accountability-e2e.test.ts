@@ -114,8 +114,11 @@ test("a launched child stays the parent's work until an evidence-backed verdict"
       resultRevision: 1,
       summary: "criterion 2 unverified: no test output shown",
       integration: "steer the same child with the exact gap",
+      // A change request IS the brief for the next round, so it must name the
+      // defect in the handoff's own terms.
+      defects: ["Criterion 2 is unverified: no test output was shown for it."],
     });
-    assert.match(String(rework.content?.[0]?.text), /steer or resume the SAME child/);
+    assert.match(String(rework.content?.[0]?.text), /reworkOf: "rework-attempt"|reworkOf:/);
     assert.equal(registry.getOccupiedChildren("sess-owner").length, 1, "rework keeps the unit");
 
     // 5 · Rework through the SAME work unit (resume supersedes the attempt).

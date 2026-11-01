@@ -41,6 +41,7 @@ import { chmodSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } fro
 import { dirname, join, relative } from "node:path";
 
 import { sanitizeScope } from "../lib/delegation/handoff.ts";
+import { MAX_REWORK_ROUNDS } from "../lib/delegation/admission.ts";
 import {
   buildHandoffTicket,
   handoffArtifactId,
@@ -1479,6 +1480,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       workUnitKey: Type.Optional(Type.String({ description: "Stable work-unit key for this batch (default: the scope). A duplicate occupied key is refused: steer or resume that child, settle its result, or pass `replaces`." })),
       reviewPlan: Type.Optional(Type.String({ description: "How THIS parent will verify the result before accepting (default: inspect the final report, lane edits and acceptance criteria)." })),
       replaces: Type.Optional(Type.String({ description: "Child id this spawn replaces, only when its work unit is occupied. The replaced child keeps its review obligation until you disposition it." })),
+      reworkOf: Type.Optional(Type.String({ description: "Child id whose result you sent back with 'changes-requested'. Re-spawns the SAME work unit against the SAME frozen handoff plus that defect list. The handoff is never edited, so what you judged stays what the new child is judged by." })),
       role: Type.Optional(
         Type.Union([Type.Literal("planner"), Type.Literal("worker"), Type.Literal("research")], {
           description: "planner = read-only research and planning agent; worker = read-and-write implementation agent (research is accepted as a legacy alias for planner).",
@@ -1544,6 +1546,56 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       const occupied = registry.getOccupiedChildren(ownerSessionId);
       const occupiedKeys = occupied.map((child) => child.accountability?.workUnitKey ?? child.scope);
       const replacesId = typeof params.replaces === "string" && params.replaces.trim() ? params.replaces.trim() : "";
+
+      // ── rework: re-spawn the SAME work unit against the SAME handoff ──────
+      // The user's rule: if a child did not do what the handoff said, the parent
+      // spawns again with a prompt to fix the part that does not match the FIRST
+      // handoff. So a rework never edits or replaces the handoff; it quotes it
+      // and adds the defect list. The original stays the contract.
+      const reworkOfId = typeof params.reworkOf === "string" && params.reworkOf.trim() ? params.reworkOf.trim() : "";
+      let reworkSource: ScopedChild | undefined;
+      let reworkDefects: string[] = [];
+      if (reworkOfId) {
+        const source = registry.getChildById(reworkOfId);
+        const accountabilityOf = source?.accountability;
+        if (!source || !accountabilityOf || accountabilityOf.ownerSessionId !== ownerSessionId) {
+          return text(
+            `Refused: reworkOf "${reworkOfId}" is not a child of this session. A rework re-opens work you already judged, `
+              + `so it must name a child you dispositioned. Occupied: ${occupied.map((c) => `${c.name} [${c.id}]`).join(", ") || "none"}.`,
+            { error: "rework-unknown-child", reworkOf: reworkOfId },
+          );
+        }
+        const lastReview = accountabilityOf.reviews.at(-1);
+        if (accountabilityOf.disposition !== "changes-requested") {
+          return text(
+            `Refused: reworkOf "${reworkOfId}" was dispositioned "${accountabilityOf.disposition}", not "changes-requested". `
+              + `A rework answers a recorded defect list; without one it would be a fresh spawn that never saw the first handoff. `
+              + `Record the verdict with agent_accept_result first.`,
+            { error: "rework-not-requested", reworkOf: reworkOfId, disposition: accountabilityOf.disposition },
+          );
+        }
+        reworkDefects = [...(lastReview?.defects ?? [])].map((defect) => defect.trim()).filter(Boolean);
+        if (!reworkDefects.length) {
+          return text(
+            `Refused: reworkOf "${reworkOfId}" has no recorded defects. Re-record the verdict with a defect list, `
+              + `or steer/resume the child instead.`,
+            { error: "rework-handoff-missing", reworkOf: reworkOfId },
+          );
+        }
+        // Two rounds is the ceiling. A third round is not more evidence that
+        // another child will succeed: it is evidence the handoff, the lane or the
+        // user's goal is wrong, and that decision belongs to the user.
+        const alreadyReworked = accountabilityOf.reworkRound ?? 0;
+        if (alreadyReworked >= MAX_REWORK_ROUNDS) {
+          return text(
+            `Refused: work unit "${source.scope}" has already been reworked ${alreadyReworked} time(s) (cap ${MAX_REWORK_ROUNDS}). `
+              + `Another round would spend tokens on the same disagreement. Ask the user to decide: revise the handoff, `
+              + `change the acceptance criteria, or accept the result as-is with agent_accept_result.`,
+            { error: "rework-rounds-exhausted", reworkOf: reworkOfId, rounds: alreadyReworked },
+          );
+        }
+        reworkSource = source;
+      }
       if (replacesId && !occupied.some((child) => child.id === replacesId)) {
         return text(
           `Refused: replaces "${replacesId}" does not name an occupied child. Steer or resume the existing child instead, `
@@ -1694,7 +1746,11 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       // failure to write it leaves no pane behind. A planner/plan-step child
       // keeps its own ticket shape: those are generated from a plan artifact
       // that already is the document.
-      const handoffRound = 1;
+      // A rework is the same work unit one round older. The ORIGINAL handoff id
+      // is what the child's defect list points at, and the original is never
+      // rewritten -- that is the whole point of re-spawning instead of re-editing.
+      const handoffRound = reworkSource ? (reworkSource.accountability?.reworkRound ?? 0) + 2 : 1;
+      const originalHandoffId = reworkSource?.handoffId ?? (reworkSource ? handoffArtifactId(scope, 1) : undefined);
       const handoffId = handoffArtifactId(scope, handoffRound);
       const usesPlanTicket = Boolean(
         (role === "planner" && plannerPlanId) || (parsedPlan && planStep && params.planId),
@@ -1704,7 +1760,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         const now = new Date().toISOString();
         handoffDoc = {
           id: handoffId,
-          title: `Handoff: ${scope}`,
+          title: reworkSource ? `Rework: ${scope} (round ${handoffRound})` : `Handoff: ${scope}`,
           type: "spec",
           content: renderHandoffDocument({
             scope,
@@ -1715,12 +1771,21 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
             role: purpose === "research" ? "research" : "worker",
             budgetMinutes: params.budgetMinutes,
             guidance: typeof (params as any).guidance === "string" ? (params as any).guidance : undefined,
+            ...(reworkSource
+              ? {
+                  rework: {
+                    originalHandoffId: originalHandoffId ?? handoffArtifactId(scope, 1),
+                    originalVersion: reworkSource.handoffRevision ?? 1,
+                    defects: reworkDefects,
+                  },
+                }
+              : {}),
           }),
           version: 1,
           createdBy: `parent:${ownerSessionId}`,
           createdAt: now,
           updatedAt: now,
-          tags: ["handoff", scope],
+          tags: reworkSource ? ["handoff", "rework", scope] : ["handoff", scope],
           scope,
         };
       }
@@ -1736,6 +1801,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
             role: purpose === "research" ? "research" : "worker",
             laneFiles,
             acceptanceCriteria,
+            ...(reworkSource ? { defects: reworkDefects } : {}),
           });
 
       let plan: LaunchPlan;
@@ -1824,6 +1890,8 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         disposition: "pending",
         reviews: [],
         attempts: [],
+        // A rework continues its unit's count; a fresh spawn starts at 0.
+        reworkRound: reworkSource ? (reworkSource.accountability?.reworkRound ?? 0) + 1 : 0,
       };
 
       armWatcher(
@@ -1854,6 +1922,12 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           `Pane: ${started.paneId}`,
           `Lane: ${laneFiles.join(", ") || "not declared"}`,
           `Work unit: ${workUnitKey} — ${delegationReason}`,
+          ...(reworkSource
+            ? [
+                `Rework round ${handoffRound - 1} of work unit "${reworkSource.scope}" against the SAME frozen handoff `
+                + `(${originalHandoffId ?? handoffArtifactId(scope, 1)}). ${reworkDefects.length} defect(s) restated in the brief; the original was not edited.`,
+              ]
+            : []),
           `Review duty: when it finishes, the result waits for YOUR verification (plan: ${accountability.reviewPlan}) — accept, request changes or abandon it with agent_accept_result; the slot stays occupied until then.`,
           `Check agent_running for the row's resultRevision before judging: a verdict on a superseded result is refused.`,
           `Rework: steer or resume THIS child instead of spawning a replacement; a replacement needs \`replaces\` plus capacity.`,
@@ -2647,6 +2721,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         description: "Required for 'accepted': concrete checked references (files inspected, commands run, artifact versions). Claims must be verified, not quoted from the child.",
       })),
       integration: Type.String({ description: "How the result is integrated or used; for 'abandoned', what was left behind and what cleanup remains." }),
+      defects: Type.Optional(Type.Array(Type.String(), {
+        description: "Required for 'changes-requested': name the acceptance criterion that was not met and what you observed. This list is what agent_spawn({ reworkOf }) hands the next child, so an empty one makes the rework a fresh spawn that never saw the first handoff.",
+      })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       // The owner is resolved from the request's context first — same authority
@@ -2675,13 +2752,19 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           summary: params.summary.trim(),
           evidence: (params.evidence ?? []).map((e) => e.trim()).filter(Boolean),
           integration: params.integration.trim(),
+          ...(params.defects?.length
+            ? { defects: params.defects.map((defect) => String(defect).trim()).filter(Boolean) }
+            : {}),
         });
         publishDashboard();
         persistState();
         const occupied = registry.getOccupiedChildren(owner);
         const batch = registry.getBatch(owner);
         const follow = params.disposition === "changes-requested"
-          ? "The slot stays occupied by this work unit: steer or resume the SAME child with the defects; do not spawn a replacement."
+          ? `${(params.defects ?? []).length} defect(s) recorded. Two ways forward, both on the SAME work unit: `
+            + `\`agent_steer\`/\`agent_resume\` this child, or \`agent_spawn({ reworkOf: "${child.id}" })\` to spawn again `
+            + `against the SAME frozen handoff plus that defect list. The handoff is never edited, so what you judged stays what the new child is judged by.`
+          
           : params.disposition === "abandoned"
             ? "Recorded as wasted work. Its cleanup obligations are in the audit; side effects remain YOUR responsibility."
             : `Result accepted. Occupied slots: ${occupied.length}, launches used this batch: ${batch.launches}. `
