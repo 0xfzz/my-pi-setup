@@ -873,65 +873,148 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
   };
 
   const updateSidebar = (): void => {
-    const active = resolveActivePool();
-    if (!active) {
+    const poolNames = Object.keys(config.pools);
+    if (!poolNames.length) {
       offerSection(pi, { id: "account", title: "Account", rows: [], hint: "/router" });
       return;
     }
 
-    const { poolName, pool } = active;
-    const accounts = accountsOf(pool);
-    if (!accounts.length) {
+    if (poolNames.length === 1) {
+      const poolName = poolNames[0]!;
+      const pool = config.pools[poolName]!;
+      const accounts = accountsOf(pool);
+      if (!accounts.length) {
+        offerSection(pi, {
+          id: "account",
+          title: `Account (${poolName})`,
+          tone: "warning",
+          rows: ["No accounts configured"],
+          hint: "/router",
+        });
+        return;
+      }
+
+      let currentAccountId: string | undefined = inFlight?.pool === poolName ? inFlight.accountId : undefined;
+      if (!currentAccountId) {
+        const last = state.cursor[poolName];
+        if (last && accounts.some((a) => a.id === last)) {
+          currentAccountId = last;
+        } else {
+          currentAccountId = accounts[0]!.id;
+        }
+      }
+
+      const account = accounts.find((a) => a.id === currentAccountId) ?? accounts[0]!;
+      const index = accounts.findIndex((a) => a.id === account.id);
+      const counter = index >= 0 ? `(${index + 1}/${accounts.length})` : `(${accounts.length})`;
+      const label = account.label ?? account.id;
+
+      const health = healthFor(state, poolName, account.id);
+      const now = Date.now();
+      const isCooling = health.cooldownUntil !== undefined && health.cooldownUntil > now;
+
+      const rows: string[] = [];
+      rows.push(`● ${label} ${counter}`);
+
+      if (isCooling) {
+        const remSec = Math.ceil((health.cooldownUntil! - now) / 1000);
+        rows.push(remSec >= 3600 ? `cooling down (${Math.round(remSec / 3600)}h)` : `cooling down (${remSec}s)`);
+      } else if (health.authFailed) {
+        rows.push("auth failed (401)");
+      } else if (health.needsProbe) {
+        rows.push(probing.has(`${poolName}/${account.id}`) ? "checking recovery…" : "awaiting recovery probe");
+      } else if (inFlight) {
+        rows.push(`active · ${pool.strategy}`);
+      } else {
+        rows.push(`${pool.strategy} · ${accounts.length} accts`);
+      }
+
       offerSection(pi, {
         id: "account",
         title: `Account (${poolName})`,
-        tone: "warning",
-        rows: ["No accounts configured"],
-        hint: "/router",
+        tone: (isCooling || health.authFailed) ? "warning" : inFlight ? "accent" : undefined,
+        rows,
+        hint: "/router · cycle on request",
       });
       return;
     }
 
-    // Determine the current account:
-    // If in flight, that account is currently answering.
-    // Otherwise, the last selected account (or the first account if none selected yet).
-    let currentAccountId: string | undefined = inFlight?.pool === poolName ? inFlight.accountId : undefined;
-    if (!currentAccountId) {
-      const last = state.cursor[poolName];
-      if (last && accounts.some((a) => a.id === last)) {
-        currentAccountId = last;
-      } else {
-        currentAccountId = accounts[0]!.id;
-      }
-    }
-
-    const account = accounts.find((a) => a.id === currentAccountId) ?? accounts[0]!;
-    const index = accounts.findIndex((a) => a.id === account.id);
-    const counter = index >= 0 ? `(${index + 1}/${accounts.length})` : `(${accounts.length})`;
-    const label = account.label ?? account.id;
-
-    const health = healthFor(state, poolName, account.id);
+    // Multiple pools configured: display all router pools in the sidebar
+    const active = resolveActivePool();
+    const activeName = active?.poolName;
     const now = Date.now();
-    const isCooling = health.cooldownUntil !== undefined && health.cooldownUntil > now;
 
+    // Prioritize active pool first, then pools with warnings/cooling, then remaining
+    const sortedPools = [...poolNames].sort((a, b) => {
+      if (a === activeName) return -1;
+      if (b === activeName) return 1;
+      const aAccounts = accountsOf(config.pools[a]!);
+      const bAccounts = accountsOf(config.pools[b]!);
+      const aCursor = state.cursor[a] ?? aAccounts[0]?.id;
+      const bCursor = state.cursor[b] ?? bAccounts[0]?.id;
+      const aHealth = aCursor ? healthFor(state, a, aCursor) : undefined;
+      const bHealth = bCursor ? healthFor(state, b, bCursor) : undefined;
+      const aWarn = aHealth?.authFailed || (aHealth?.cooldownUntil !== undefined && aHealth.cooldownUntil > now);
+      const bWarn = bHealth?.authFailed || (bHealth?.cooldownUntil !== undefined && bHealth.cooldownUntil > now);
+      if (aWarn && !bWarn) return -1;
+      if (bWarn && !aWarn) return 1;
+      return a.localeCompare(b);
+    });
+
+    let hasWarning = false;
+    let hasActive = false;
     const rows: string[] = [];
-    rows.push(`● ${label} ${counter}`);
 
-    if (isCooling) {
-      const remSec = Math.ceil((health.cooldownUntil! - now) / 1000);
-      rows.push(`cooling down (${remSec}s)`);
-    } else if (health.needsProbe) {
-      rows.push(probing.has(`${poolName}/${account.id}`) ? "checking recovery…" : "awaiting recovery probe");
-    } else if (inFlight) {
-      rows.push(`active · ${pool.strategy}`);
-    } else {
-      rows.push(`${pool.strategy} · ${accounts.length} accts`);
+    for (const poolName of sortedPools) {
+      const pool = config.pools[poolName]!;
+      const accounts = accountsOf(pool);
+      if (!accounts.length) {
+        rows.push(`● ${poolName}: (no accounts)`);
+        hasWarning = true;
+        continue;
+      }
+      const isPoolActive = inFlight?.pool === poolName;
+      if (isPoolActive) hasActive = true;
+      let currentAccountId: string | undefined = isPoolActive && inFlight ? inFlight.accountId : undefined;
+      if (!currentAccountId) {
+        const last = state.cursor[poolName];
+        if (last && accounts.some((a) => a.id === last)) {
+          currentAccountId = last;
+        } else {
+          currentAccountId = accounts[0]!.id;
+        }
+      }
+      const account = accounts.find((a) => a.id === currentAccountId) ?? accounts[0]!;
+      const index = accounts.findIndex((a) => a.id === account.id);
+      const counter = index >= 0 ? `${index + 1}/${accounts.length}` : `${accounts.length}`;
+      const label = account.label ?? account.id;
+
+      const health = healthFor(state, poolName, account.id);
+      const isCooling = health.cooldownUntil !== undefined && health.cooldownUntil > now;
+
+      let status = "";
+      if (isCooling) {
+        hasWarning = true;
+        const remSec = Math.ceil((health.cooldownUntil! - now) / 1000);
+        status = remSec >= 3600 ? `cooling ${Math.round(remSec / 3600)}h` : `cooling ${remSec}s`;
+      } else if (health.authFailed) {
+        hasWarning = true;
+        status = "auth failed";
+      } else if (health.needsProbe) {
+        status = probing.has(`${poolName}/${account.id}`) ? "probing" : "needs probe";
+      } else if (isPoolActive) {
+        status = "active";
+      }
+
+      const marker = isPoolActive ? "●" : (poolName === activeName ? "●" : "○");
+      const statusText = status ? ` · ${status}` : "";
+      rows.push(`${marker} ${poolName}: ${label} (${counter})${statusText}`);
     }
 
     offerSection(pi, {
       id: "account",
-      title: `Account (${poolName})`,
-      tone: isCooling ? "warning" : "accent",
+      title: `Router Pools (${poolNames.length})`,
+      tone: hasWarning ? "warning" : hasActive ? "accent" : undefined,
       rows,
       hint: "/router · cycle on request",
     });

@@ -650,3 +650,35 @@ test("pools automatically discover accounts from models.json and rotate across t
   }));
 });
 
+test("the sidebar displays all configured pools when multiple pools exist", { timeout: 20000 }, async () => {
+  const accountOffers: any[] = [];
+  await withSession(async ({ eventBus }) => {
+    eventBus.on(SECTION_EVENT, (offer: SectionOffer) => {
+      if (offer.section.id === "account") {
+        accountOffers.push(structuredClone(offer.section));
+        offer.handled = true;
+      }
+    });
+
+    eventBus.emit("workflow-ui:refresh", undefined);
+    assert.ok(accountOffers.length > 0);
+    const offer = accountOffers[accountOffers.length - 1];
+    assert.equal(offer.title, "Router Pools (2)");
+    assert.equal(offer.rows.length, 2);
+    assert.match(offer.rows.find((r: string) => r.includes("p1"))!, /p1: acc-a \(1\/2\)/);
+    assert.match(offer.rows.find((r: string) => r.includes("p2"))!, /p2: acc-c \(1\/1\)/);
+  }, (seen) => ({
+    providers: [
+      { name: "b1", config: fakeProvider("b1", ["chat"], seen).config },
+      { name: "b2", config: fakeProvider("b2", ["chat"], seen).config },
+    ],
+    config: {
+      pools: {
+        p1: { provider: "b1", strategy: "round-robin", accounts: [{ id: "acc-a" }, { id: "acc-b" }] },
+        p2: { provider: "b2", strategy: "priority", accounts: [{ id: "acc-c" }] },
+      },
+    },
+  }));
+});
+
+
