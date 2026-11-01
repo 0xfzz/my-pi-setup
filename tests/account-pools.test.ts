@@ -241,6 +241,7 @@ test("quota reset durations override short cooldowns and require recovery probes
   assert.equal(quotaRetryMs("HTTP 429 retry after 2 hours 3 minutes 4 seconds"), 7_384_000);
   assert.equal(quotaRetryMs("quota reached, retry in 1.5s"), 1500);
   assert.equal(quotaRetryMs("quota reached, retry in 100ms"), 100);
+  assert.equal(quotaRetryMs("You've used today's Free usage. It resets in 22h 21m. Add a usage pack to keep going"), (22 * 3600 + 21 * 60) * 1000);
   assert.equal(quotaRetryMs("quota reached, please wait for reset"), undefined);
   assert.equal(quotaRetryMs("network error, retry in 2s"), undefined);
   const p = pool({ accounts: [{ id: "a" }], maxConsecutiveFailures: 1 });
@@ -258,6 +259,32 @@ test("quota reset durations override short cooldowns and require recovery probes
   recordSuccess(state, "antigravity", "a", 3000 + delay);
   assert.equal(health.needsProbe, undefined);
   assert.equal(health.cooldownUntil, undefined);
+});
+
+test("401 auth errors immediately retire an account from pool selection", () => {
+  const state = emptyState();
+  const p = pool({ accounts: [{ id: "acc-1" }, { id: "acc-2" }], maxConsecutiveFailures: 3 });
+  assert.equal(selectAccount(p, state)?.account.id, "acc-1");
+
+  recordFailure(state, "p", "acc-1", 'Error: 401: {"message":"Request failed.","type":"auth_error"}');
+  assert.equal(healthFor(state, "p", "acc-1").authFailed, true);
+  assert.equal(describeHealth(healthFor(state, "p", "acc-1")), "auth failed");
+
+  // acc-1 is immediately skipped even though failures (1) < maxConsecutiveFailures (3)
+  assert.equal(selectAccount(p, state, { poolName: "p" })?.account.id, "acc-2");
+});
+
+test("402 budget exceeded errors trigger quota cooldown and probe", () => {
+  const state = emptyState();
+  const p = pool({ accounts: [{ id: "acc-1" }], cooldownMs: 1000 });
+  const error402 = 'Error: 402: {"message":"You\'ve used today\'s Free usage. It resets in 2h.","type":"budget_exceeded"}';
+  assert.equal(isQuotaError(error402), true);
+
+  recordFailure(state, "p", "acc-1", error402, { now: 1000, cooldownMs: 5000 });
+  const health = healthFor(state, "p", "acc-1");
+  assert.equal(health.needsProbe, true);
+  assert.equal(health.cooldownUntil, 1000 + 2 * 3600 * 1000);
+  assert.equal(selectAccount(p, state, { now: 1000 + 2 * 3600 * 1000 - 1 }), undefined, "account is in cooldown");
 });
 
 test("legacy persisted quota failures require a probe when their cooldown ends", () => {

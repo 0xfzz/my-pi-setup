@@ -143,6 +143,8 @@ test("a failure is classified for the quota and overflow triggers", () => {
   assert.equal(classifyFailure("429 Too Many Requests"), "quota");
   assert.equal(classifyFailure("Quota reached. Please wait 54h10m43s."), "quota");
   assert.equal(classifyFailure("resource_exhausted: rate limit"), "quota");
+  assert.equal(classifyFailure("402 budget_exceeded: You've used today's Free usage"), "quota");
+  assert.equal(classifyFailure("out of credits, please top up billing"), "quota");
   assert.equal(classifyFailure("This model's maximum context length is 200000 tokens"), "overflow");
   assert.equal(classifyFailure("prompt is too long"), "overflow");
   assert.equal(classifyFailure("401 invalid token"), "other");

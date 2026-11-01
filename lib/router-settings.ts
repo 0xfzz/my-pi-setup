@@ -314,6 +314,8 @@ export function classifyFailure(error: string | undefined): RouteFailureClass {
   if (/context[_ ]?(length|window)|maximum context|too many tokens|prompt is too long|input is too long|context overflow/.test(text)) {
     return "overflow";
   }
-  if (/\b429\b|rate.?limit|quota|resource.?exhausted|too many requests|insufficient.?quota/.test(text)) return "quota";
+  if (/\b429\b|\b402\b|rate.?limit|quota|resource.?exhausted|too many requests|insufficient.?quota|budget_exceeded|free usage|out of credits|credit balance|billing/.test(text)) {
+    return "quota";
+  }
   return "other";
 }

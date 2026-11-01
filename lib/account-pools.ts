@@ -45,6 +45,8 @@ export type AccountHealth = {
   cooldownUntil?: number;
   /** Quota recovery must pass a small request before normal traffic resumes. */
   needsProbe?: boolean;
+  /** Auth failure (e.g. 401 invalid token); skipped until reset or updated. */
+  authFailed?: boolean;
   lastUsedAt?: number;
   lastError?: string;
   /** Epoch ms of the last successful request. */
@@ -223,6 +225,7 @@ export function healthFor(state: RouterState, pool: string, account: string): Ac
 
 function usable(pool: PoolConfig, health: AccountHealth, now: number): boolean {
   if (health.cooldownUntil !== undefined && health.cooldownUntil > now) return false;
+  if (health.authFailed) return false;
   // A quota wall is recoverable even if repeated probes used up the failure budget.
   if (health.needsProbe) return true;
   const maxFailures = pool.maxConsecutiveFailures ?? DEFAULT_MAX_CONSECUTIVE_FAILURES;
@@ -300,6 +303,7 @@ export function recordSuccess(state: RouterState, poolName: string, accountId: s
   const health = healthFor(state, poolName, accountId);
   health.failures = 0;
   delete health.needsProbe;
+  delete health.authFailed;
   delete health.cooldownUntil;
   delete health.lastError;
   health.lastUsedAt = now;
@@ -328,6 +332,7 @@ export function recordFailure(
   health.failures += 1;
   health.lastUsedAt = now;
   if (error) health.lastError = error.slice(0, 300);
+  if (isAuthError(error)) health.authFailed = true;
   if (isQuotaError(error)) health.needsProbe = true;
   if (health.needsProbe) {
     // Honor a provider's long reset window, not just the pool's short default.
@@ -338,10 +343,10 @@ export function recordFailure(
   }
 }
 
-/** Parse provider reset delays such as "Please wait 54h10m43s". */
+/** Parse provider reset delays such as "Please wait 54h10m43s" or "resets in 22h 21m". */
 export function quotaRetryMs(error: string | undefined): number | undefined {
   if (!error || !isQuotaError(error)) return undefined;
-  const duration = error.match(/(?:please\s+wait|retry\s+(?:in|after)|try\s+again\s+(?:in|after))\s+((?:\d+(?:\.\d+)?\s*(?:milliseconds?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)\s*)+)/i)?.[1];
+  const duration = error.match(/(?:please\s+wait|retry\s+(?:in|after)|try\s+again\s+(?:in|after)|resets?\s+(?:in|after))\s+((?:\d+(?:\.\d+)?\s*(?:milliseconds?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)\s*)+)/i)?.[1];
   if (!duration) return undefined;
   let total = 0;
   // Unit table is a closed whitelist: ms < s < m(=minutes) < h < d. Anchored
@@ -361,7 +366,7 @@ export function quotaRetryMs(error: string | undefined): number | undefined {
 export function isQuotaError(error: string | undefined): boolean {
   if (!error) return false;
   if (/model_concurrency|model is at concurrency capacity|not (?:necessarily )?an? account quota wall/i.test(error)) return false;
-  return /\b429\b|rate.?limit|quota|resource.?exhausted|too many requests|402\b|insufficient.?quota|exceeded your current quota/i.test(error);
+  return /\b429\b|rate.?limit|quota|resource.?exhausted|too many requests|\b402\b|budget_exceeded|free usage|out of credits|insufficient.?quota|exceeded your current quota|credit balance|billing/i.test(error);
 }
 
 /** Detect model-level concurrency capacity limits (cluster-wide, not per-account). */
@@ -373,7 +378,7 @@ export function isModelConcurrencyError(error: string | undefined): boolean {
 /** Detect auth failures that mean this account needs a new login, not a retry. */
 export function isAuthError(error: string | undefined): boolean {
   if (!error) return false;
-  return /\b401\b|invalid_grant|invalid.?token|unauthorized|re-?authenticate|token (?:has )?expired/i.test(error);
+  return /\b401\b|invalid_grant|invalid.?token|unauthorized|re-?authenticate|token (?:has )?expired|auth_error/i.test(error);
 }
 
 /** Human-readable account label: `label (id)` when both exist. */
@@ -384,8 +389,11 @@ export function accountLabel(account: AccountConfig): string {
 /** Short status line for one account. */
 export function describeHealth(health: AccountHealth, now = Date.now()): string {
   if (health.cooldownUntil !== undefined && health.cooldownUntil > now) {
-    return `cooling down ${Math.ceil((health.cooldownUntil - now) / 1000)}s`;
+    const remSec = Math.ceil((health.cooldownUntil - now) / 1000);
+    if (remSec >= 3600) return `cooling down ${Math.round(remSec / 3600)}h`;
+    return `cooling down ${remSec}s`;
   }
+  if (health.authFailed) return "auth failed";
   if (health.needsProbe) return "awaiting recovery probe";
   if (health.failures > 0) return `${health.failures} consecutive failure(s)`;
   if (health.lastOkAt) return "ok";

@@ -1277,6 +1277,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
           health.failures = 0;
           delete health.cooldownUntil;
           delete health.needsProbe;
+          delete health.authFailed;
           delete health.lastError;
           persist(ctx);
           emit(ctx, `Pool ${poolName} pinned to ${match.id}.`);
