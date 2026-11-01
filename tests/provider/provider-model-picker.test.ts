@@ -5,7 +5,7 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { CURSOR_MARKER, visibleWidth, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import {
   ProviderModelPicker, providerModelPicker, type ModelChoice, type ModelSelection,
-} from "../lib/provider/provider-model-picker.ts";
+} from "../../lib/provider/provider-model-picker.ts";
 
 const key = {
   up: "\x1b[A", down: "\x1b[B", pageUp: "\x1b[5~", pageDown: "\x1b[6~",

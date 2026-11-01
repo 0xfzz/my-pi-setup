@@ -40,8 +40,8 @@
     ]
   },
   "scripts": {
-    "test": "node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/*.test.ts tests/orchestrator/*.test.ts",
-    "test:core": "node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/*.test.ts",
+    "test": "node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/*.test.ts tests/provider/*.test.ts tests/sidebar/*.test.ts tests/orchestrator/*.test.ts",
+    "test:core": "node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/*.test.ts tests/provider/*.test.ts tests/sidebar/*.test.ts",
     "test:orchestrator": "node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/orchestrator/*.test.ts",
     "typecheck": "tsc --noEmit",
     "build:dashboard": "node scripts/build-dashboard.mjs",

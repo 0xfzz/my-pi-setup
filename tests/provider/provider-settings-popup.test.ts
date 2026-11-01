@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { PLAIN_THEME, type PopupTheme } from "../lib/popup/frame.ts";
-import type { ProviderConfig } from "../lib/provider/provider-config.ts";
-import type { ProviderPopupResult, ProviderSettingsView } from "../lib/ui/provider-settings.ts";
-import { ProviderSettingsPopup } from "../lib/ui/provider-settings.ts";
+import { PLAIN_THEME, type PopupTheme } from "../../lib/popup/frame.ts";
+import type { ProviderConfig } from "../../lib/provider/provider-config.ts";
+import type { ProviderPopupResult, ProviderSettingsView } from "../../lib/ui/provider-settings.ts";
+import { ProviderSettingsPopup } from "../../lib/ui/provider-settings.ts";
 
 const acme: ProviderConfig = {
   name: "Acme Cloud",

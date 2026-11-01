@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   readRouteDoc, removeRoute, routeSources, routerConfigPaths, ROUTE_FILE, saveRoute,
-} from "../lib/provider/router-config.ts";
-import type { RouteConfig } from "../lib/provider/model-routes.ts";
+} from "../../lib/provider/router-config.ts";
+import type { RouteConfig } from "../../lib/provider/model-routes.ts";
 
 async function fixture(run: (dir: string) => Promise<void>) {
   const dir = await mkdtemp(join(tmpdir(), "pi-router-config-"));

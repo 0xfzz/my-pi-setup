@@ -6,7 +6,7 @@ import {
   Container, CURSOR_MARKER, Text, TuiAltScreen, TuiMainScreen, sliceByColumn, visibleWidth,
   type Component, type Terminal,
 } from "@earendil-works/pi-tui";
-import { ProviderModelPicker, providerModelPicker, type ModelSelection } from "../lib/provider/provider-model-picker.ts";
+import { ProviderModelPicker, providerModelPicker, type ModelSelection } from "../../lib/provider/provider-model-picker.ts";
 
 // Exercise the installed host's native transcript/input-dock allocation, not a
 // simulated height subtraction. This helper is internal (not a package export).
