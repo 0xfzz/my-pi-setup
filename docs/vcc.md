@@ -185,7 +185,7 @@ lib/vcc/summary-budget.ts  team token-budgeted summary packing
 lib/vcc/plan.ts            budgeted + legacy cut planning
 lib/vcc/telemetry.ts       JSONL records
 lib/vcc/controller.ts      turn_end controller and /vcc-budget
-vcc/auto-compact.ts        deployed entry point (imports pi-vcc)
+lib/vcc/auto-compact-entry.ts  deployed entry point (imports pi-vcc)
 ```
 
 Deploy (this is what `~/.pi/agent/extensions/auto-compact.ts` runs):
@@ -195,8 +195,9 @@ node scripts/sync-vcc-auto-compact.mjs          # copy
 node scripts/sync-vcc-auto-compact.mjs --check  # fail on drift
 ```
 
-It mirrors `vcc/auto-compact.ts` → `<agent>/extensions/auto-compact.ts` and
-`lib/vcc/*.ts` → `<agent>/extensions/lib/vcc/*.ts`.
+It mirrors `lib/vcc/auto-compact-entry.ts` → `<agent>/extensions/auto-compact.ts`
+(the entry is renamed on deploy, since Pi discovers it as `auto-compact.ts`) and
+the other `lib/vcc/*.ts` → `<agent>/extensions/lib/vcc/*.ts`.
 
 **Single instance.** The deployed file is the only live controller. Do not add
 it to `package.json` → `pi.extensions`; the sync script refuses to run if a
@@ -209,7 +210,7 @@ Diff against it from history instead:
 ```sh
 # the archived pre-redesign controller
 git show 3090557:docs/patches/vcc-auto-compact-legacy.ts > /tmp/legacy.ts
-diff -u /tmp/legacy.ts vcc/auto-compact.ts
+diff -u /tmp/legacy.ts lib/vcc/auto-compact-entry.ts
 ```
 
 ## Small-model caveat: core compaction settings

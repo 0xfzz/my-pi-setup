@@ -3,8 +3,12 @@
  * Mirror the canonical VCC auto-compaction source into the Pi agent directory.
  *
  * Layout (repo -> agent):
- *   vcc/auto-compact.ts      -> <agent>/extensions/auto-compact.ts
- *   lib/vcc/*.ts             -> <agent>/extensions/lib/vcc/*.ts
+ *   lib/vcc/auto-compact-entry.ts -> <agent>/extensions/auto-compact.ts
+ *   lib/vcc/*.ts (all others)     -> <agent>/extensions/lib/vcc/*.ts
+ *
+ * The entry point is renamed on the way out: Pi discovers it as
+ * `auto-compact.ts`, while in the repository it sits beside the policy it wires
+ * up instead of in a separate single-file directory.
  *
  * The deployed copy is the single live instance. Adding this extension to the
  * package's `pi.extensions` would register a second controller, so the script
@@ -34,10 +38,15 @@ const dryRun = args.has("--dry-run");
 /** Collect `source -> destination` pairs. */
 async function plan() {
   const pairs = [];
-  pairs.push([join(root, "vcc", "auto-compact.ts"), join(extensionsDir, "auto-compact.ts")]);
+  pairs.push([
+    join(root, "lib", "vcc", "auto-compact-entry.ts"),
+    join(extensionsDir, "auto-compact.ts"),
+  ]);
   const libSrc = join(root, "lib", "vcc");
   for (const file of await readdir(libSrc)) {
     if (!file.endsWith(".ts")) continue;
+    // The entry point is deployed under a different name above.
+    if (file === "auto-compact-entry.ts") continue;
     pairs.push([join(libSrc, file), join(libDest, file)]);
   }
   return pairs;
