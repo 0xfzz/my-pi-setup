@@ -4,8 +4,8 @@ import {
   PROVIDER_APIS, accountPlan, apiKeyFromInput, apiLabel, describeAuth, draftProblem, draftSteps,
   draftToProvider, modelRows, providerRows, providerToDraft, stepProblem, withAccount, withoutModel,
   type ProviderDraft,
-} from "../lib/provider-settings.ts";
-import type { ProviderConfig } from "../lib/provider-config.ts";
+} from "../lib/provider/provider-settings.ts";
+import type { ProviderConfig } from "../lib/provider/provider-config.ts";
 
 const draft = (extra: Partial<ProviderDraft> = {}): ProviderDraft => ({
   id: "acme",

@@ -4,8 +4,8 @@ import {
   classifyFailure, cycleMethod, cycleValue, cycleWhen, describeChain, describeModelFacts, describeTarget,
   fileChoiceOf, formatTokens, mergeTargets, moveTarget, replaceTarget, routeIssues, routeNameProblem,
   routerModelChoices, routerRows, suggestRouteName, whenOf, withPolicy,
-} from "../lib/router-settings.ts";
-import type { SourcedRoute } from "../lib/router-config.ts";
+} from "../lib/provider/router-settings.ts";
+import type { SourcedRoute } from "../lib/provider/router-config.ts";
 
 const sourced = (name: string, targets: string[], extra: Partial<SourcedRoute["route"]> = {}): SourcedRoute => ({
   route: { name, targets: targets.map((model) => ({ model })), ...extra },

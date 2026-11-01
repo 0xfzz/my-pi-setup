@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { ProviderConfig } from "../lib/provider-config.ts";
-import { DiscoveryError, discoveryValue, discoveryAuth, modelsEndpoint, discoverModels, discoverModelDetails, type DiscoveredModel } from "../lib/provider-discovery.ts";
+import type { ProviderConfig } from "../lib/provider/provider-config.ts";
+import { DiscoveryError, discoveryValue, discoveryAuth, modelsEndpoint, discoverModels, discoverModelDetails, type DiscoveredModel } from "../lib/provider/provider-discovery.ts";
 
 const config = (api = "openai-completions", baseUrl = "https://discovery.invalid/v1"): ProviderConfig => ({ api, baseUrl });
 const json = (payload: unknown) => new Response(JSON.stringify(payload), { headers: { "Content-Type": "application/json" } });

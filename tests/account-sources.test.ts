@@ -7,8 +7,8 @@ import {
   ANTIGRAVITY_SOURCE, accountIsFresh, antigravityAccountsPath, maskAccountLabel, poolAccounts,
   readAntigravityAccounts, resolveAccountCredential, resolveStaticKey, STATIC_SOURCE,
   type SourceContext, type StoredAntigravityAccount,
-} from "../lib/account-sources.ts";
-import type { PoolConfig } from "../lib/account-pools.ts";
+} from "../lib/provider/account-sources.ts";
+import type { PoolConfig } from "../lib/provider/account-pools.ts";
 
 async function fixture(run: (dir: string) => Promise<void>) {
   const dir = await mkdtemp(join(tmpdir(), "pi-account-sources-"));

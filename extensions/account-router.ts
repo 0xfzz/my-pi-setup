@@ -43,26 +43,26 @@ import {
   readRouterConfig, readRouterState, recordFailure, recordSuccess, selectAccount,
   writeRouterState,
   type AccountConfig, type PoolConfig, type RouterConfig, type RouterState,
-} from "../lib/account-pools.ts";
+} from "../lib/provider/account-pools.ts";
 import {
   poolAccounts, resolveAccountCredential, sourceDefaultAgentDir,
   type SourceContext,
-} from "../lib/account-sources.ts";
+} from "../lib/provider/account-sources.ts";
 import {
   describeRoutePolicy, findRoute, mergeRouteTables, orderTargets, parseModelRef, readRouteTable,
   routeDecision, routeMethod, routeTargets, targetPool,
   type RouteConfig, type RouteFailureClass, type RouteTable, type RouteTarget,
-} from "../lib/model-routes.ts";
+} from "../lib/provider/model-routes.ts";
 import {
   classifyFailure, mergeTargets, routerModelChoices, routerRows,
   type RouterAction, type RouterDraft, type RouterPopupResult, type RouterSettingsView,
-} from "../lib/router-settings.ts";
+} from "../lib/provider/router-settings.ts";
 import {
   readRouteDoc, removeRoute, routeSources, routerConfigPaths, saveRoute,
-} from "../lib/router-config.ts";
+} from "../lib/provider/router-config.ts";
 import { RouterSettingsPopup } from "../lib/ui/router-settings.ts";
 import { popupOverlayOptions } from "../lib/popup.ts";
-import { providerModelPicker } from "../lib/provider-model-picker.ts";
+import { providerModelPicker } from "../lib/provider/provider-model-picker.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar-channel.ts";
 
 const STATE_ENTRY = "account-router:v1";

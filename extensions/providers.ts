@@ -4,12 +4,12 @@ import {
   endpoint, environmentKey, findProviderAccounts, listProviderFamilies, nextProviderSlot, parseProviderSlot,
   positiveInteger, providerId, putModel, readConfig, saveConfig,
   type ConfigSnapshot, type JsonObject, type ModelsConfig, type ProviderConfig,
-} from "../lib/provider-config.ts";
+} from "../lib/provider/provider-config.ts";
 
-import { discoverModelDetails, discoveryAuth, DiscoveryError, modelsEndpoint, type DiscoveredModel } from "../lib/provider-discovery.ts";
-import { providerKeyInput } from "../lib/provider-key-input.ts";
-import { providerModelPicker } from "../lib/provider-model-picker.ts";
-import { accountPlan, apiKeyFromInput, draftToProvider, withAccount, withoutModel } from "../lib/provider-settings.ts";
+import { discoverModelDetails, discoveryAuth, DiscoveryError, modelsEndpoint, type DiscoveredModel } from "../lib/provider/provider-discovery.ts";
+import { providerKeyInput } from "../lib/provider/provider-key-input.ts";
+import { providerModelPicker } from "../lib/provider/provider-model-picker.ts";
+import { accountPlan, apiKeyFromInput, draftToProvider, withAccount, withoutModel } from "../lib/provider/provider-settings.ts";
 import { popupOverlayOptions } from "../lib/popup.ts";
 import { isSubagentChildSession } from "../lib/subagent-context.ts";
 import {

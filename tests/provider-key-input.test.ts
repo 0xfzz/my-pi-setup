@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { stripVTControlCharacters } from "node:util";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { CURSOR_MARKER, Input, renderFakeCursor, visibleWidth } from "@earendil-works/pi-tui";
-import { ProviderKeyInput, providerKeyInput } from "../lib/provider-key-input.ts";
+import { ProviderKeyInput, providerKeyInput } from "../lib/provider/provider-key-input.ts";
 
 const widths = [0, 1, 2, 3, 5, 8, 15, 40, 80, 200];
 const title = "Provider key";

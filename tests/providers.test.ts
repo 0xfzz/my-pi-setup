@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getAgentDir, ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import providers from "../extensions/providers.ts";
-import { ProviderModelPicker } from "../lib/provider-model-picker.ts";
-import { endpoint, environmentKey, positiveInteger, providerId, putModel, readConfig, saveConfig } from "../lib/provider-config.ts";
+import { ProviderModelPicker } from "../lib/provider/provider-model-picker.ts";
+import { endpoint, environmentKey, positiveInteger, providerId, putModel, readConfig, saveConfig } from "../lib/provider/provider-config.ts";
 
 // Default discovery to unavailable. Wizard tests must never contact real providers.
 const realFetch = globalThis.fetch;

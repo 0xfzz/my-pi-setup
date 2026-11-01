@@ -81,7 +81,7 @@ import { CHECKPOINT_TYPE } from "../lib/subagent-state.ts";
 import { planModeFromBranch } from "../lib/plan-mode.ts";
 import { readOnlyShellCommand } from "../lib/plan-shell.ts";
 import { ensureRolePrompts, loadRolePrompt, renderRolePromptReport } from "../lib/orchestrator/role-prompts.ts";
-import { providerModelPicker } from "../lib/provider-model-picker.ts";
+import { providerModelPicker } from "../lib/provider/provider-model-picker.ts";
 import {
   ORCH_ROLES,
   isOrchRole,

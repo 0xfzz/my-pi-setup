@@ -3,7 +3,7 @@ import { test } from "node:test";
 import {
   describeRoutePolicy, orderTargets, parseRouteTable, routeDecision, routeMethod, routeTargets, routeWhen,
   type RouteConfig, type RouteTarget, type TargetFacts,
-} from "../lib/model-routes.ts";
+} from "../lib/provider/model-routes.ts";
 
 const target = (model: string): RouteTarget => ({ model });
 

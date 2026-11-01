@@ -22,13 +22,13 @@ import { PLAIN_THEME, isPopupCloseKey, type PopupRow, type PopupTheme } from "..
 import {
   METHOD_HINTS, METHOD_LABELS, WHEN_HINTS, WHEN_LABELS, ROUTE_METHODS, ROUTE_WHENS,
   type RouteMethod, type RouteTarget, type RouteWhen,
-} from "../model-routes.ts";
+} from "../provider/model-routes.ts";
 import {
   TARGET_THINKING, cycleValue, describeTarget, fileChoiceOf, methodOf, moveTarget, replaceTarget,
   routeNameProblem, suggestRouteName, whenOf, withPolicy,
   type RouterAction, type RouterDraft, type RouterPopupResult, type RouterRow,
   type RouterSettingsView,
-} from "../router-settings.ts";
+} from "../provider/router-settings.ts";
 import { PopupShell, type PopupShellModel } from "./shell.ts";
 
 export interface RouterSettingsPopupOptions {

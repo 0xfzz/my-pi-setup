@@ -3,8 +3,8 @@ import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { PLAIN_THEME, type PopupTheme } from "../lib/popup.ts";
-import { routerRows, type RouterAction, type RouterPopupResult, type RouterSettingsView } from "../lib/router-settings.ts";
-import type { SourcedRoute } from "../lib/router-config.ts";
+import { routerRows, type RouterAction, type RouterPopupResult, type RouterSettingsView } from "../lib/provider/router-settings.ts";
+import type { SourcedRoute } from "../lib/provider/router-config.ts";
 import { RouterSettingsPopup } from "../lib/ui/router-settings.ts";
 
 const route = (name: string, targets: string[], extra: Partial<SourcedRoute["route"]> = {}, source: SourcedRoute["source"] = "project"): SourcedRoute => ({

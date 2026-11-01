@@ -8,8 +8,8 @@ import {
   isAuthError, isQuotaError, mergeConfigs, normalizeState, parseRouterConfig, quotaRetryMs, readRouterConfig,
   readRouterState, recordFailure, recordSuccess, selectAccount, writeRouterState,
   type PoolConfig,
-} from "../lib/account-pools.ts";
-import { advanceChain, mergeRouteTables, parseModelRef, parseRouteTable, targetPool } from "../lib/model-routes.ts";
+} from "../lib/provider/account-pools.ts";
+import { advanceChain, mergeRouteTables, parseModelRef, parseRouteTable, targetPool } from "../lib/provider/model-routes.ts";
 
 async function fixture(run: (dir: string) => Promise<void>) {
   const dir = await mkdtemp(join(tmpdir(), "pi-account-router-"));

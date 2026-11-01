@@ -24,7 +24,7 @@ import {
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 import { PLAIN_THEME, isPopupCloseKey, type PopupRow, type PopupTheme } from "../popup.ts";
-import type { ProviderConfig } from "../provider-config.ts";
+import type { ProviderConfig } from "../provider/provider-config.ts";
 import {
   accountPlan,
   apiLabel,
@@ -38,7 +38,7 @@ import {
   type ModelRow,
   type ProviderDraft,
   type ProviderRow,
-} from "../provider-settings.ts";
+} from "../provider/provider-settings.ts";
 import { PopupShell, type PopupShellModel } from "./shell.ts";
 
 export interface ProviderSettingsView {
