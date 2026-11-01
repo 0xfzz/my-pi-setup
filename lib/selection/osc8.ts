@@ -97,11 +97,6 @@ export function resolveHyperlinkAt(
   return carried;
 }
 
-/** Visible column ranges of every hyperlink on one line. */
-export function hyperlinkSpans(line: string): Osc8Span[] {
-  return scanOsc8(line).spans;
-}
-
 /**
  * Re-open a link that wrapped onto a continuation line, and close it again at
  * the end of that line. This keeps terminals that require a per-line sequence

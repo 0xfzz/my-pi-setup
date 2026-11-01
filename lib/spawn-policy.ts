@@ -17,25 +17,6 @@
 
 import { MAX_DELEGATION_DEPTH, type SpawnPurpose } from "./delegation-tools.ts";
 
-export type SpawnMode = "normal" | "plan";
-
-/**
- * Collapse an unknown/absent mode id onto the two modes this package defines.
- *
- * Delegation is not a mode: every mode reaches the same `agent_spawn`. The old
- * "supervise"/"orchestrator" ids are gone, and an unknown id is Normal — the
- * safest reading, since Normal is the least restricted and Plan is enforced
- * separately from the branch.
- */
-export function normalizeSpawnMode(modeId: string | undefined): SpawnMode {
-  return modeId === "plan" ? "plan" : "normal";
-}
-
-/** The honest default when the caller did not name a purpose. */
-export function defaultSpawnPurpose(modeId: string | undefined): SpawnPurpose {
-  return normalizeSpawnMode(modeId) === "plan" ? "research" : "adhoc";
-}
-
 /**
  * Purposes this mode admits.
  *
@@ -108,12 +89,6 @@ export function readerPurpose(purpose: SpawnPurpose): "research" | "review" | un
 /** The value stored on the registry row. `spec` is implemented by a worker. */
 export function registryPurpose(purpose: SpawnPurpose): "implementation" | "review" | "research" | "adhoc" {
   return purpose === "spec" ? "implementation" : purpose;
-}
-
-/** What `agent_brief` and `agent_check` should say when no lane was declared. */
-export function laneDeclaration(purpose: SpawnPurpose, laneFiles: readonly string[]): "declared" | "not-declared" {
-  if (laneFiles.length > 0) return "declared";
-  return purpose === "research" || purpose === "adhoc" ? "not-declared" : "declared";
 }
 
 type Env = Readonly<Record<string, string | undefined>>;
