@@ -233,8 +233,6 @@ export const BUBBLY_INDICATOR_OPTIONS: WorkingIndicatorOptions = {
   intervalMs: BUBBLY_INTERVAL_MS,
 };
 
-export const DEFAULT_CYCLE_INTERVAL_MS = 2800;
-
 // ============================================================================
 // Bubbly Text Wave Effect (Bubbling -> bUbbling -> BuBbling -> ...)
 // ============================================================================

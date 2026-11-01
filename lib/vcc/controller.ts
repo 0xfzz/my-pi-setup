@@ -21,7 +21,6 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import {
-  describeBudget,
   resolveBudget,
   type ContextBudget,
 } from "./budget.ts";
@@ -42,12 +41,9 @@ import {
   type MessageEstimator,
 } from "./plan.ts";
 import { packSummary, SUMMARY_SEPARATOR } from "./summary-budget.ts";
-import { appendTelemetry, readTelemetry, TELEMETRY_VERSION, type CompactionTelemetryRecord } from "./telemetry.ts";
+import { appendTelemetry, TELEMETRY_VERSION, type CompactionTelemetryRecord } from "./telemetry.ts";
 
 export type { AutoCompactConfig } from "./config.ts";
-export { describeBudget, resolveBudget } from "./budget.ts";
-export { hasCompleteToolPairs } from "./plan.ts";
-
 export interface CompileSummaryInput {
   messages: unknown[];
   previousSummary?: string;
@@ -420,77 +416,5 @@ export function registerAutoCompact(pi: ExtensionAPI, options: RegisterOptions) 
       busy = false;
       if (ctx.hasUI) ctx.ui.setStatus("auto-compact", undefined);
     }
-  });
-}
-
-/**
- * `/vcc-budget` — show the resolved budget for the current model and the most
- * recent compaction telemetry. Registered defensively: minimal test doubles for
- * `ExtensionAPI` may not implement commands.
- */
-export function registerBudgetCommand(
-  pi: ExtensionAPI,
-  options: { readConfig?: () => AutoCompactConfig; telemetryPath?: string } = {},
-) {
-  const register = (pi as { registerCommand?: (name: string, definition: unknown) => void })
-    .registerCommand;
-  if (typeof register !== "function") return;
-  const readConfig = options.readConfig ?? loadConfig;
-
-  register.call(pi, "vcc-budget", {
-    description: "Show the active VCC compaction budget and recent telemetry",
-    handler: async (_args: string, ctx: ExtensionContext) => {
-      const config = readConfig();
-      const mode = resolvePolicyMode(config);
-      const model = ctx.model as { provider?: string; id?: string; maxTokens?: number } | undefined;
-      const usage = ctx.getContextUsage();
-      const lines: string[] = [
-        `model: ${model ? `${model.provider ?? "?"}/${model.id ?? "?"}` : "(none)"}`,
-        `mode: ${mode}${config.shadow ? " · shadow (no commits)" : ""}`,
-        `telemetry: ${config.telemetry?.enabled === false ? "off" : telemetryPathFor(config, options.telemetryPath)}`,
-      ];
-
-      if (mode === "legacy") {
-        lines.push(`legacy trigger: ${config.maxPercent ?? 20}% of the context window`);
-      } else if (usage) {
-        const profile = resolveProfile(config, model?.provider, model?.id);
-        const budget = resolveBudget({
-          contextWindow: usage.contextWindow,
-          modelMaxOutputTokens: model?.maxTokens,
-          profile: profile.profile,
-          defaults: config.defaults,
-        });
-        if (budget) {
-          lines.push(describeBudget(budget));
-          lines.push(
-            `profile: ${profile.key ?? "(defaults)"} · ${budget.calibrated ? `calibrated (${budget.profileKey ?? "no source"})` : "uncalibrated fallback"}`,
-          );
-          lines.push(
-            `now: ${usage.tokens === null ? "unknown" : `${k(usage.tokens)} tok`} · ` +
-              `remaining to trigger: ${usage.tokens === null ? "?" : k(Math.max(0, budget.qualityTarget - usage.tokens))}`,
-          );
-        }
-      } else {
-        lines.push("context usage unavailable");
-      }
-
-      const recent = await readTelemetry(telemetryPathFor(config, options.telemetryPath), 5);
-      if (recent.length === 0) {
-        lines.push("recent: none");
-      } else {
-        lines.push("recent:");
-        for (const entry of recent) {
-          const when = entry.ts.slice(11, 19);
-          const after = entry.afterTokens ? `→ ${k(entry.afterTokens)}` : "";
-          const head = entry.headroomSatisfied === false ? " (no-headroom)" : "";
-          lines.push(
-            `  ${when} ${entry.outcome}${head} ${entry.calibrated ? "cal" : "est"} ` +
-              `${entry.usageTokens ? k(entry.usageTokens) : "?"} ${after} ${entry.reason ?? ""}`.trimEnd(),
-          );
-        }
-      }
-
-      ctx.ui.notify(lines.join("\n"), "info");
-    },
   });
 }

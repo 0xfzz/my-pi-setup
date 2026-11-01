@@ -66,7 +66,6 @@ import type {
   DashboardSnapshot,
 } from "./protocol.ts";
 import {
-  MAX_ARTIFACT_BYTES,
   MAX_SNAPSHOT_BYTES,
   ValidationError,
   projectArtifacts,
@@ -88,7 +87,6 @@ export const MAX_TOMBSTONES = 2048;
 
 export const METADATA_FILE = "server.json";
 export const PRODUCER_TOKEN_FILE = "producer-token";
-export const STALE_LOCK_MS = 5_000;
 /** Exit code used when another server already owns this runtime directory. */
 export const SINGLETON_EXIT_CODE = 3;
 
@@ -105,7 +103,6 @@ interface SingletonHandle {
 }
 
 const COOKIE_NAME = "pi_dashboard";
-const JSON_BODY_LIMIT_DEFAULT = MAX_SNAPSHOT_BYTES;
 
 /** Content types the server is willing to serve. Anything else is a 404, not a download. */
 const CONTENT_TYPES: Record<string, string> = {
@@ -1447,10 +1444,3 @@ export async function startDashboardServer(options: DashboardServerOptions): Pro
   const runtime = new DashboardRuntime(resolveOptions(options));
   return runtime.start();
 }
-
-/** Convenience for tests and diagnostics: the dashboard web root for this checkout. */
-export function defaultDashboardWebRoot(): string {
-  return defaultWebRoot();
-}
-
-export { MAX_ARTIFACT_BYTES, JSON_BODY_LIMIT_DEFAULT };

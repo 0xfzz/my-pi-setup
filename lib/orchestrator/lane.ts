@@ -60,10 +60,6 @@ export function laneCoversPath(lane: string, candidate: string): boolean {
   return new RegExp(`^${pattern}$`).test(c) || new RegExp(`^${pattern}/`).test(c);
 }
 
-export function pathMatchesAnyLane(laneFiles: readonly string[], candidate: string): boolean {
-  return laneFiles.some((lane) => laneCoversPath(lane, candidate));
-}
-
 /**
  * Do two lanes claim any of the same files?
  *

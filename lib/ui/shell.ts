@@ -15,9 +15,6 @@ import {
 } from "@earendil-works/pi-tui";
 import {
   PLAIN_THEME,
-  POPUP_FRAME_ROWS,
-  POPUP_MARGIN,
-  POPUP_MIN_FRAMED_WIDTH,
   flattenPopupRows,
   isPopupCloseKey,
   popupFrame,
@@ -374,18 +371,3 @@ export class PopupList<T> implements Component, Focusable {
     return true;
   }
 }
-
-/** Paint a full-width row with the popup background token. */
-export function paintPopupRow(theme: PopupTheme, row: string, width: number): string {
-  const safeWidth = Math.max(0, width);
-  const fitted = visibleWidth(row) > safeWidth ? row.slice(0, safeWidth) : row + " ".repeat(Math.max(0, safeWidth - visibleWidth(row)));
-  return theme.bg ? theme.bg("userMessageBg", fitted) : fitted;
-}
-
-/** Width checks used by tests and callers that need an inline sub-frame. */
-export function popupMinWidthFits(width: number): boolean {
-  return width >= POPUP_MIN_FRAMED_WIDTH;
-}
-
-/** Rows occupied by frame chrome, exported so callers can budget detail views. */
-export const POPUP_CHROME_ROWS = POPUP_FRAME_ROWS + 2 * POPUP_MARGIN;

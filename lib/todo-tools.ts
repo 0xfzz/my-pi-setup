@@ -15,7 +15,3 @@ export const LEGACY_TOOL = "workflow_todo";
 export const TODO_TOOL_NAMES: readonly string[] = [PLAN_TOOL, ACT_TOOL, NEXT_TOOL, LEGACY_TOOL];
 
 export const isTodoTool = (name: string): boolean => TODO_TOOL_NAMES.includes(name);
-
-/** True when the call can change the graph; `todo_next` only reads it. */
-export const isTodoWriteTool = (name: string): boolean =>
-  name === PLAN_TOOL || name === ACT_TOOL || name === LEGACY_TOOL;

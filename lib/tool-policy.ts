@@ -11,26 +11,12 @@
  * such below.
  */
 
-import { delegationTool } from "./delegation-tools.ts";
-
 /** Minimal shape the policy needs; satisfied by Pi's registered tool objects. */
 export interface PolicyTool {
   name: string;
   exposure?: string;
   reachesTools?: unknown;
   annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
-}
-
-/**
- * Any MCP-provided tool.
- *
- * Covers all three shipping shapes: a bare server proxy (`mcp__github`), a
- * namespaced tool (`mcp__github__create_issue`), and the singular gateway
- * (`mcp`). These are user-configured capabilities: the user deliberately
- * connected the server, so blocking them is never the harness's call.
- */
-export function isMcpTool(name: string): boolean {
-  return name === "mcp" || name.startsWith("mcp__") || name.startsWith("mcp_");
 }
 
 /**
@@ -64,53 +50,3 @@ export function isDispatcherTool(tool: PolicyTool | undefined): boolean {
  * refuse a report while todos are unresolved. Exempting it would make that guard
  * unreachable, because an exempt tool returns before the guard runs.
  */
-const WORK_DELEGATION_VERBS: ReadonlySet<string> = new Set(["spawn", "resume", "done"]);
-
-function isWorkDelegation(name: string): boolean {
-  const tool = delegationTool(name);
-  return tool ? WORK_DELEGATION_VERBS.has(tool.verb) : false;
-}
-
-/**
- * A tool that is callable but is NOT itself work: it clarifies, discovers, monitors,
- * or steers.
- *
- * Matched by SHAPE from the capability table, so a new lifecycle tool is
- * classified without a code change. The work verbs are named explicitly.
- */
-export function isAdminTool(name: string): boolean {
-  if (isWorkDelegation(name)) return false;
-  if (delegationTool(name)) return true; // agent_* coordination and reporting verbs
-  return /^(ask_user|tool_search|mcpScript)$/.test(name);
-}
-
-/**
- * Should this tool bypass the "assess before working" gate?
- *
- * Yes for anything that cannot make progress on its own — clarification, discovery,
- * lifecycle control, a gateway, or a user-configured MCP tool. No for real work,
- * which is the whole point of asking the model to assess first.
- */
-export function isGateExempt(tool: PolicyTool | undefined): boolean {
-  if (!tool) return false;
-  return isAdminTool(tool.name) || isMcpTool(tool.name) || isDispatcherTool(tool);
-}
-
-/**
- * Read-only verdict for Plan mode, honouring explicit deny signals.
- *
- * `destructiveHint` outranks `readOnlyHint` because a tool that claims both is
- * either misconfigured or lying, and the safe reading of an ambiguous write is a
- * write. Unannotated and opaque tools are refused: this is the same reason the
- * plan policy blocks gateways, since their behaviour cannot be enforced.
- */
-export function isReadOnlyTool(tool: PolicyTool | undefined): boolean {
-  if (!tool) return false;
-  if (tool.annotations?.destructiveHint === true) return false;
-  return tool.annotations?.readOnlyHint === true;
-}
-
-/** Resolve `name` against a registry list, for callers holding only the name. */
-export function findTool(tools: readonly PolicyTool[], name: string): PolicyTool | undefined {
-  return tools.find(tool => tool.name === name);
-}

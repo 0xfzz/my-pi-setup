@@ -12,7 +12,7 @@
  * caller falls back to Pi's line selection.
  */
 import { sliceByColumn, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { hyperlinkSpans, resolveHyperlinkAt } from "./osc8.ts";
+import { resolveHyperlinkAt } from "./osc8.ts";
 
 export type BlockKind =
   | "table-cell"
@@ -404,12 +404,4 @@ export function extractBlockText(lines: readonly string[], selection: BlockSelec
   while (out.length && out[0]!.trim().length === 0) out.shift();
   while (out.length && out[out.length - 1]!.trim().length === 0) out.pop();
   return out.join("\n");
-}
-
-/** True when the hyperlink at a point spans more than one visual line. */
-export function wrappedLinkAt(lines: readonly string[], row: number, col: number): boolean {
-  const url = resolveHyperlinkAt(lines, row, col);
-  if (!url) return false;
-  const spans = hyperlinkSpans(lines[row] ?? "");
-  return spans.length > 0 && (row > 0 || row < lines.length - 1) && !spans.some(span => span.start === 0 && span.end === widthOf(lines[row] ?? ""));
 }

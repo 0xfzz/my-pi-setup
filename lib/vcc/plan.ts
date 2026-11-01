@@ -13,7 +13,7 @@
  */
 
 import type { ContextBudget } from "./budget.ts";
-import { DEFAULT_CHARS_PER_TOKEN, estimateMessageTokens } from "./estimate.ts";
+import { estimateMessageTokens } from "./estimate.ts";
 
 export interface ProjectedEntryLike {
   sourceEntry: { id: string; type: string };
@@ -294,5 +294,3 @@ export function planLegacyCompaction(input: LegacyPlanInput): LegacyPlan | undef
     tailBudget: keepBudget,
   };
 }
-
-export const DEFAULT_ESTIMATE_CHARS_PER_TOKEN = DEFAULT_CHARS_PER_TOKEN;

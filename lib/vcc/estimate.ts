@@ -138,15 +138,6 @@ export function estimateMessageTokens(
   return estimateContentTokens(msg.content, charsPerToken);
 }
 
-export function estimateMessagesTokens(
-  messages: readonly unknown[],
-  charsPerToken: number = DEFAULT_CHARS_PER_TOKEN,
-): number {
-  let total = 0;
-  for (const message of messages) total += estimateMessageTokens(message, charsPerToken);
-  return total;
-}
-
 function safeStringify(value: unknown): string {
   if (value == null) return "";
   if (typeof value === "string") return value;
@@ -155,12 +146,4 @@ function safeStringify(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-/** Tokens for a text block that will be appended verbatim to a prompt. */
-export function estimateSectionTokens(
-  text: string,
-  charsPerToken: number = DEFAULT_CHARS_PER_TOKEN,
-): number {
-  return estimateTextTokens(text, charsPerToken);
 }

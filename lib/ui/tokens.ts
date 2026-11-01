@@ -28,15 +28,3 @@ export const KEY_HINT = {
   next: "n/N next/prev",
   editor: "o nvim",
 } as const;
-
-export const POPUP_WIDTH = {
-  min: 28,
-  max: 120,
-  /** Percentage first, then an absolute maximum for very wide terminals. */
-  default: "84%",
-} as const;
-
-/** One decimal place, used for compact metadata labels. */
-export function percent(value: number): string {
-  return `${Math.round(value * 1000) / 10}%`;
-}

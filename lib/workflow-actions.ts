@@ -5,7 +5,6 @@ import { PopupPanel, popupOverlayOptions, isPopupCloseKey } from "./popup.ts";
 export const WORKFLOW_PREFIX = "alt+w";
 export const TODO_DETAILS_HINT = "Alt+W → T · details";
 export const SUBAGENT_DETAILS_HINT = "Alt+W → S · details";
-export const ARTIFACT_DETAILS_HINT = "Alt+W → E · details";
 
 type Action = "todos" | "subagents" | "artifacts";
 

@@ -50,7 +50,6 @@ const REFRESH_SKEW_MS = 5 * 60 * 1000;
 
 export const ANTIGRAVITY_SOURCE = "antigravity-accounts";
 export const STATIC_SOURCE = "static";
-export const MODELS_JSON_SOURCE = "models-json";
 
 function defaultAgentDir(): string {
   return process.env.PI_CODING_AGENT_DIR || join(process.env.HOME || "", ".pi", "agent");

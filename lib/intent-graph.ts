@@ -181,9 +181,6 @@ export const isReady = (plan: Plan, task: Task, now: number): boolean =>
 export const isBlocked = (plan: Plan, task: Task): boolean =>
   task.status === "open" && !depsSatisfied(plan, task);
 
-/** Held by someone else. Computed from the lease, never declared. */
-export const isWaiting = (_plan: Plan, task: Task, now: number): boolean => isLiveClaim(task, now);
-
 export const frontier = (plan: Plan, now: number): Task[] =>
   plan.tasks.filter(task => isReady(plan, task, now));
 

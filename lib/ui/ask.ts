@@ -304,8 +304,3 @@ export class AskUserPopup implements Component, Focusable {
     this.options.onDone(answer);
   }
 }
-
-/** Render tick used by tests to assert resize/reflow recomputes the body. */
-export function askPopupRenderTick(popup: AskUserPopup): number {
-  return (popup as unknown as { renderTick: number }).renderTick;
-}

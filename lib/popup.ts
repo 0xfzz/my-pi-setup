@@ -661,10 +661,5 @@ const plainMarkdownTheme: MarkdownTheme = {
   underline: (t) => t,
 };
 
-/** Test seam: forget the resolved markdown theme. */
-export function resetMarkdownTheme(): void {
-  cachedMarkdownTheme = undefined;
-}
-
 /** Exported for callers that only need the frame at a width (status bars, etc.). */
 export type { Component };

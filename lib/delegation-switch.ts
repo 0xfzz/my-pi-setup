@@ -68,12 +68,6 @@ export function reconcileLoadout(baseline: Iterable<string>, disabled: Iterable<
   return out;
 }
 
-/** Names that are switched off AND registered — i.e. actually unavailable. */
-export function effectiveDisabled(disabled: Iterable<string>, registered: Iterable<string>): string[] {
-  const registeredSet = new Set(registered);
-  return [...disabled].filter(name => registeredSet.has(name)).sort();
-}
-
 export interface DelegationStatus {
   enabled: boolean;
   activeTools: string[];
