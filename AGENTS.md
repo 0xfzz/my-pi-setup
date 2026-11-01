@@ -30,9 +30,19 @@ covered by that safety net.
 ## Verification gate
 
 ```sh
+npm run tidy      # typecheck + lint + tests, the whole gate in one command
+```
+
+The gate is the three checks that must all pass:
+
+```sh
 npm run typecheck
+npm run lint:smell
 npm test
 ```
+
+`npm run tidy` runs exactly those three in that order. Use it before a commit
+rather than remembering the list.
 
 The only accepted baseline failures are the two `native regular/fullscreen inline
 custom UI reproduces clipping…` tests. Anything else is a new failure and must be

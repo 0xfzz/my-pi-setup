@@ -51,7 +51,8 @@
     "lint:dead": "knip",
     "lint:dup": "jscpd extensions lib tests --threshold 12 --min-lines 12 --min-tokens 80",
     "smell": "npm run lint:dead && npm run lint:dup",
-    "prepare": "simple-git-hooks"
+    "prepare": "simple-git-hooks",
+    "tidy": "npm run typecheck && npm run lint:smell && npm test"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
