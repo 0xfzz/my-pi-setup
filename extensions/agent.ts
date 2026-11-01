@@ -42,6 +42,7 @@ import { dirname, join, relative } from "node:path";
 
 import { sanitizeScope } from "../lib/delegation/handoff.ts";
 import { MAX_REWORK_ROUNDS } from "../lib/delegation/admission.ts";
+import { isWaitGuardTool, waitCommandProblem } from "../lib/delegation/wait-guard.ts";
 import {
   buildHandoffTicket,
   handoffArtifactId,
@@ -1384,6 +1385,19 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     }
 
     if (!isChildSession) {
+      // ── the parent never waits ─────────────────────────────────────────
+      // `RETRIGGER_CONTRACT` asked for this in prose on every result and a
+      // parent spent six minutes in `bash sleep` anyway. A child's completion,
+      // question and watchdog all arrive as messages that re-trigger the
+      // session, so a blocking wait is a request to poll a push channel. Refuse
+      // the wait, not the long command: `npm test` may run for a minute.
+      if (isWaitGuardTool(event.toolName)) {
+        // `input` is a discriminated union across every registered tool, so the
+        // command is read through a narrow structural view rather than asserted
+        // onto the union member this guard happens to name.
+        const waitProblem = waitCommandProblem((event.input as { command?: unknown } | undefined)?.command);
+        if (waitProblem) return { block: true, reason: waitProblem };
+      }
       // Independence is a fact about who touched the lane, so the parent's own
       // writes are recorded as they happen.
       if (AUTHOR_WRITE_TOOLS.has(event.toolName)) {
