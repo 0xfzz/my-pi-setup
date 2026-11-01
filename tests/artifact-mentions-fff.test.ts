@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { CombinedAutocompleteProvider, type AutocompleteProvider } from "@earendil-works/pi-tui";
 import { ARTIFACT_TYPE } from "../lib/artifact-state.ts";
-import { PLAN_MODE_TYPE } from "../lib/plan-mode.ts";
+import { PLAN_MODE_TYPE } from "../lib/plan/plan-mode.ts";
 
 // Opt in to the real installed native FFF extension without adding it as a project dependency.
 const fffPath = process.env.PI_FFF_EXTENSION_PATH;

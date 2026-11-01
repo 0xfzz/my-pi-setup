@@ -4,8 +4,8 @@ import { ModeRegistry, MODE_SWITCH_KEY, MODE_SWITCH_LABEL, routeSubmissions } fr
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
 import { recordsFromBranch as childRecords } from "../lib/subagent-state.ts";
 import { childContextState, isSubagentChildSession, ownEntries } from "../lib/subagent-context.ts";
-import { readOnlyShellCommand } from "../lib/plan-shell.ts";
-import { INPUT_MODE_CONTEXT_TYPE, inputModeGuidance, isPlanTool, missingPlanTools, pendingPlanDeferredTools, pendingPlanExitTools, PLAN_MODE_GUIDANCE, PLAN_MODE_TYPE, planModeFromBranch } from "../lib/plan-mode.ts";
+import { readOnlyShellCommand } from "../lib/plan/plan-shell.ts";
+import { INPUT_MODE_CONTEXT_TYPE, inputModeGuidance, isPlanTool, missingPlanTools, pendingPlanDeferredTools, pendingPlanExitTools, PLAN_MODE_GUIDANCE, PLAN_MODE_TYPE, planModeFromBranch } from "../lib/plan/plan-mode.ts";
 import { reconcileLoadout, switchStateFromBranch } from "../lib/delegation-switch.ts";
 import { describeRetiredTools, isRetiredDelegationTool, stripRetiredTools } from "../lib/delegation-tools.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardMode } from "../lib/dashboard/integration.ts";

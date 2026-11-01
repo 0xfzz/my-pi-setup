@@ -12,7 +12,7 @@
  * cannot; `git checkout`, `rm`, `>` and `$(…)` are refused by construction.
  */
 import { pathPolicyProblem } from "./review-policy.ts";
-import { readOnlyShellCommand } from "../plan-shell.ts";
+import { readOnlyShellCommand } from "../plan/plan-shell.ts";
 
 export interface ShellReadOptions {
   cwd: string;

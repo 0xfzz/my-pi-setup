@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import modes from "../extensions/modes.ts";
-import { planModeFromBranch } from "../lib/plan-mode.ts";
+import { planModeFromBranch } from "../lib/plan/plan-mode.ts";
 
 for (const cancel of [false, true]) {
   test(`real native shell blocks Plan through command and Alt+M until ${cancel ? "cancellation" : "completion"}`, async () => {

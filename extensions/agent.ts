@@ -78,8 +78,8 @@ import { loadSubagentSettings, saveSubagentSettings } from "../vendor/pi-herdr-s
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";
 import { isDelegationTool, isRetiredDelegationTool, mayUseDelegationTool } from "../lib/delegation-tools.ts";
 import { CHECKPOINT_TYPE } from "../lib/subagent-state.ts";
-import { planModeFromBranch } from "../lib/plan-mode.ts";
-import { readOnlyShellCommand } from "../lib/plan-shell.ts";
+import { planModeFromBranch } from "../lib/plan/plan-mode.ts";
+import { readOnlyShellCommand } from "../lib/plan/plan-shell.ts";
 import { ensureRolePrompts, loadRolePrompt, renderRolePromptReport } from "../lib/orchestrator/role-prompts.ts";
 import { providerModelPicker } from "../lib/provider/provider-model-picker.ts";
 import {

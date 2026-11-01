@@ -11,7 +11,7 @@ import modes from "../extensions/modes.ts";
 import artifacts from "../extensions/artifacts.ts";
 import todo from "../extensions/todo.ts";
 import { ARTIFACT_TYPE, recordsFromBranch } from "../lib/artifact-state.ts";
-import { isPlanTool as planToolPolicy, planModeFromBranch } from "../lib/plan-mode.ts";
+import { isPlanTool as planToolPolicy, planModeFromBranch } from "../lib/plan/plan-mode.ts";
 
 const isPlanTool = (name: string) => planToolPolicy(name) || name === "readonly_io";
 for (const reactivate of [false, true]) {

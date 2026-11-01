@@ -10,7 +10,7 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import modes from "../extensions/modes.ts";
 import todo from "../extensions/todo.ts";
 import checkpoints from "../extensions/subagent-checkpoints.ts";
-import { PLAN_MODE_TYPE, planModeFromBranch } from "../lib/plan-mode.ts";
+import { PLAN_MODE_TYPE, planModeFromBranch } from "../lib/plan/plan-mode.ts";
 import { SUBAGENT_CONTEXT_TYPE, childContextState, ownEntries } from "../lib/subagent-context.ts";
 import { CHECKPOINT_TYPE } from "../lib/subagent-state.ts";
 

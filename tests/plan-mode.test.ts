@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import modes from "../extensions/modes.ts";
 import artifacts from "../extensions/artifacts.ts";
 import { ARTIFACT_TYPE } from "../lib/artifact-state.ts";
-import { INPUT_MODE_CONTEXT_TYPE, PLAN_MODE_GUIDANCE, PLAN_MODE_TYPE, inputModeGuidance, isPlanTool as planToolPolicy, planModeFromBranch } from "../lib/plan-mode.ts";
+import { INPUT_MODE_CONTEXT_TYPE, PLAN_MODE_GUIDANCE, PLAN_MODE_TYPE, inputModeGuidance, isPlanTool as planToolPolicy, planModeFromBranch } from "../lib/plan/plan-mode.ts";
 import { createArtifactAutocompleteProvider } from "../lib/artifact-mentions.ts";
 
 const isPlanTool = (name: string) => planToolPolicy(name);

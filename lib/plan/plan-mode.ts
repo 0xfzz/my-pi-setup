@@ -1,6 +1,6 @@
 /** Branch-local plan mode policy shared by modes, artifact storage, and autocomplete. */
-import { isDispatcherTool } from "./tool-policy.ts";
-import { PLAN_SAFE_DELEGATION_TOOLS } from "./delegation-tools.ts";
+import { isDispatcherTool } from "../tool-policy.ts";
+import { PLAN_SAFE_DELEGATION_TOOLS } from "../delegation-tools.ts";
 
 export const PLAN_MODE_TYPE = "input-plan-mode:v1";
 /** Request-local briefing, not persisted policy or conversation history. */

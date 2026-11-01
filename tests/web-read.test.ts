@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test, after } from "node:test";
 import { findChromiumExecutable, getPlaywrightCore, closeSharedBrowser, readWebPage } from "../lib/web-read.ts";
 import webReadExtension from "../extensions/web-read.ts";
-import { PLAN_TOOLS } from "../lib/plan-mode.ts";
+import { PLAN_TOOLS } from "../lib/plan/plan-mode.ts";
 
 after(async () => {
   await closeSharedBrowser();

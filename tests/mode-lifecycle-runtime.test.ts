@@ -9,7 +9,7 @@ import {
 import { createAssistantMessageEventStream, getCurrentSystemMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import modes from "../extensions/modes.ts";
-import { planModeFromBranch } from "../lib/plan-mode.ts";
+import { planModeFromBranch } from "../lib/plan/plan-mode.ts";
 
 /** No artifact extension, external provider, timers, or native terminal is involved. */
 async function fixture(before: ExtensionFactory[] = []) {

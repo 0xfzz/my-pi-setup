@@ -4,8 +4,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { readOnlyShellCommand } from "../lib/plan-shell.ts";
-import { EXPECTED_PLAN_TOOLS, PLAN_TOOLS, isPlanTool, missingPlanTools } from "../lib/plan-mode.ts";
+import { readOnlyShellCommand } from "../lib/plan/plan-shell.ts";
+import { EXPECTED_PLAN_TOOLS, PLAN_TOOLS, isPlanTool, missingPlanTools } from "../lib/plan/plan-mode.ts";
 
 const allowed = [
   "pwd", "ls -la /tmp", "cat /etc/hosts", "head -n 10 '../a b.txt' | wc -l",

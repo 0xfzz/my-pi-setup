@@ -33,7 +33,7 @@ import {
 } from "../lib/popup.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
 import { TODO_DETAILS_HINT } from "../lib/workflow-actions.ts";
-import { planModeFromBranch } from "../lib/plan-mode.ts";
+import { planModeFromBranch } from "../lib/plan/plan-mode.ts";
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";
 import * as G from "../lib/intent-graph.ts";
 
