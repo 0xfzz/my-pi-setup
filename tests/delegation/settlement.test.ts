@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import agentExtension, { registry } from "../../extensions/agent.ts";
-import type { ScopedChild } from "../../lib/orchestrator/scope-registry.ts";
+import type { ScopedChild } from "../../lib/delegation/scope-registry.ts";
 
 // Host config must not leak ceilings or role bindings into these tests.
 process.env.PI_CODING_AGENT_DIR = join(tmpdir(), "settlement-agent-config");

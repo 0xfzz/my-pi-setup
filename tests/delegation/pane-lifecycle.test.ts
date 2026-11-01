@@ -14,7 +14,7 @@ import agentExtension, {
 // The lane check is computed from git in production. These cases are about
 // lifecycle, so they supply an empty change list instead of depending on the
 // repository the suite happens to run in.
-import type { ScopedChild } from "../../lib/orchestrator/scope-registry.ts";
+import type { ScopedChild } from "../../lib/delegation/scope-registry.ts";
 
 interface Harness {
   tools: Map<string, any>;

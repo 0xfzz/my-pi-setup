@@ -7,7 +7,7 @@ import {
   consumeBudget,
   createBudget,
   remainingBudget,
-} from "../../lib/orchestrator/research-budget.ts";
+} from "../../lib/delegation/research-budget.ts";
 
 test("the caps are the documented ones", () => {
   assert.equal(RESEARCH_LIMITS.web_research, 6);

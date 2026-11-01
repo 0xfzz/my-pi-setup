@@ -9,8 +9,8 @@ import {
   pageCacheRelativePath,
   readPageCache,
   writePageCache,
-} from "../../lib/orchestrator/page-cache.ts";
-import { SCRATCH_CACHE_TTL_MS } from "../../lib/orchestrator/scratch.ts";
+} from "../../lib/delegation/page-cache.ts";
+import { SCRATCH_CACHE_TTL_MS } from "../../lib/delegation/scratch.ts";
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "orch-page-cache-"));

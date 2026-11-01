@@ -28,19 +28,19 @@ import { Type } from "typebox";
 import { chmodSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 
-import { buildAdhocTicket, sanitizeScope } from "../lib/orchestrator/handoff.ts";
+import { buildAdhocTicket, sanitizeScope } from "../lib/delegation/handoff.ts";
 import {
   ScopeRegistry,
   type ChildAccountability,
   type CloseReason,
   type ScopedChild,
   type SteerRecord,
-} from "../lib/orchestrator/scope-registry.ts";
+} from "../lib/delegation/scope-registry.ts";
 import {
   loadRegistrySnapshot,
   saveRegistrySnapshot,
   type PersistedState,
-} from "../lib/orchestrator/registry-persistence.ts";
+} from "../lib/delegation/registry-persistence.ts";
 import {
   buildPlanStepTicket,
   buildPlannerTicket,
@@ -48,18 +48,18 @@ import {
   stripRecallFrame,
   type Plan,
   type PlanStep,
-} from "../lib/orchestrator/roles.ts";
+} from "../lib/delegation/roles.ts";
 import {
   ESCALATION_TYPE,
   EscalationError,
   EscalationLedger,
-} from "../lib/orchestrator/escalation.ts";
+} from "../lib/delegation/escalation.ts";
 import {
   deliverSteer,
   INTERRUPT_KEY,
   routeUpdate,
   type SteerResolution,
-} from "../lib/orchestrator/steer-router.ts";
+} from "../lib/delegation/steer-router.ts";
 import {
   buildLaunchPlan,
   buildResumeLaunchPlan,
@@ -80,7 +80,7 @@ import { isDelegationTool, isRetiredDelegationTool, mayUseDelegationTool } from 
 import { CHECKPOINT_TYPE } from "../lib/subagent-state.ts";
 import { planModeFromBranch } from "../lib/plan/plan-mode.ts";
 import { readOnlyShellCommand } from "../lib/plan/plan-shell.ts";
-import { ensureRolePrompts, loadRolePrompt, renderRolePromptReport } from "../lib/orchestrator/role-prompts.ts";
+import { ensureRolePrompts, loadRolePrompt, renderRolePromptReport } from "../lib/delegation/role-prompts.ts";
 import { providerModelPicker } from "../lib/provider/provider-model-picker.ts";
 import {
   ORCH_ROLES,
@@ -97,21 +97,21 @@ import {
   type OrchRole,
   type ResolvedRoleModel,
   type RoleBinding,
-} from "../lib/orchestrator/role-models.ts";
-import { parseMaxDelegates, resolveMaxDelegates } from "../lib/orchestrator/delegate-cap.ts";
+} from "../lib/delegation/role-models.ts";
+import { parseMaxDelegates, resolveMaxDelegates } from "../lib/delegation/delegate-cap.ts";
 import {
   admissionProblem,
   outstandingLaunchSlots,
   releaseLaunchSlot,
   reserveLaunchSlot,
   resolveBudgets,
-} from "../lib/orchestrator/admission.ts";
-import { createExecRunner } from "../lib/orchestrator/exec-runner.ts";
-import { shellReadCommand } from "../lib/orchestrator/shell-read.ts";
-import { webResearch, type WebFetchPort, type WebSearchPort } from "../lib/orchestrator/web-research.ts";
-import { ensureScratch, resolveScratchRoot } from "../lib/orchestrator/scratch.ts";
-import { readPageCache, writePageCache } from "../lib/orchestrator/page-cache.ts";
-import { consumeBudget, createBudget } from "../lib/orchestrator/research-budget.ts";
+} from "../lib/delegation/admission.ts";
+import { createExecRunner } from "../lib/delegation/exec-runner.ts";
+import { shellReadCommand } from "../lib/delegation/shell-read.ts";
+import { webResearch, type WebFetchPort, type WebSearchPort } from "../lib/delegation/web-research.ts";
+import { ensureScratch, resolveScratchRoot } from "../lib/delegation/scratch.ts";
+import { readPageCache, writePageCache } from "../lib/delegation/page-cache.ts";
+import { consumeBudget, createBudget } from "../lib/delegation/research-budget.ts";
 import {
   childToolsForPurpose,
   currentSpawnDepth,

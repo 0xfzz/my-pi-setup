@@ -4,7 +4,7 @@
  *
  * Rules this file exists to enforce:
  *
- * 1. Notifications, not direct calls. modes/orchestrator/artifacts publish on the
+ * 1. Notifications, not direct calls. modes/delegation/artifacts publish on the
  *    existing `pi.events` bus, so the dashboard extension can load before or
  *    after them without either side importing the other.
  * 2. Observation is cheap and idempotent. Anything arriving before the producer

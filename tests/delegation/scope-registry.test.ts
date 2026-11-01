@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { ScopeRegistry, type ScopedChild, type SteerRecord } from "../../lib/orchestrator/scope-registry.ts";
+import { ScopeRegistry, type ScopedChild, type SteerRecord } from "../../lib/delegation/scope-registry.ts";
 
 describe("ScopeRegistry", () => {
   it("registers and queries child by id, session, and scope", () => {

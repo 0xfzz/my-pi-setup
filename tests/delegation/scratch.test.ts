@@ -16,7 +16,7 @@ import {
   resolveScratchRoot,
   sanitizeRunId,
   scratchPathProblem,
-} from "../../lib/orchestrator/scratch.ts";
+} from "../../lib/delegation/scratch.ts";
 
 async function fixture(gitignore?: string) {
   const root = await mkdtemp(join(tmpdir(), "orch-scratch-"));

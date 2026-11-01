@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createExecRunner, DEFAULT_TIMEOUT_MS } from "../../lib/orchestrator/exec-runner.ts";
+import { createExecRunner, DEFAULT_TIMEOUT_MS } from "../../lib/delegation/exec-runner.ts";
 
 test("createExecRunner executes binaries with argv arguments without shell interpretation", async () => {
   const runner = createExecRunner();
@@ -26,7 +26,7 @@ test("createExecRunner handles timeout cleanly", async () => {
 });
 
 test("exec-runner never walks the tree in JavaScript", () => {
-  const source = readFileSync(join(import.meta.dirname, "../../lib/orchestrator/exec-runner.ts"), "utf8");
+  const source = readFileSync(join(import.meta.dirname, "../../lib/delegation/exec-runner.ts"), "utf8");
   assert.doesNotMatch(source, /\breaddir(Sync)?\b|\bopendir(Sync)?\b/);
   assert.equal(DEFAULT_TIMEOUT_MS, 10_000);
 });

@@ -9,7 +9,7 @@ import {
   webResearch,
   type WebFetchPort,
   type WebSearchPort,
-} from "../../lib/orchestrator/web-research.ts";
+} from "../../lib/delegation/web-research.ts";
 
 const html = `<!doctype html><html><head><style>body{color:red}</style>
 <script>evil()</script></head><body><h1>Retry policy</h1>
@@ -107,6 +107,6 @@ test("readable text keeps content and drops markup", () => {
 });
 
 test("the web module imports no filesystem module (scratch is the caller's job)", () => {
-  const source = readFileSync(join(import.meta.dirname, "../../lib/orchestrator/web-research.ts"), "utf8");
+  const source = readFileSync(join(import.meta.dirname, "../../lib/delegation/web-research.ts"), "utf8");
   assert.doesNotMatch(source, /from "node:fs/);
 });

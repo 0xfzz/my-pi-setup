@@ -5,7 +5,7 @@ import {
   EscalationError,
   EscalationLedger,
   type Escalation,
-} from "../../lib/orchestrator/escalation.ts";
+} from "../../lib/delegation/escalation.ts";
 
 const open = (ledger: EscalationLedger, over: Partial<Parameters<EscalationLedger["open"]>[0]> = {}) =>
   ledger.open({

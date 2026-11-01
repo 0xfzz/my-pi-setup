@@ -9,7 +9,7 @@ export interface SubagentSettings {
    *
    * Shape: `{ "devil-advocate": "inherit", "worker": [{ provider, model }, …] }`.
    * Kept as unknown here so an older build never rewrites a newer file's shape;
-   * `lib/orchestrator/role-models.ts` validates and normalises on read.
+   * `lib/delegation/role-models.ts` validates and normalises on read.
    */
   roleModels?: Record<string, unknown>;
   /** Friendly names for awkward provider/model ids, resolved before validation. */

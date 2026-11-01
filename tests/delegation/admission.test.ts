@@ -13,7 +13,7 @@ import {
   reserveLaunchSlot,
   resetLaunchReservations,
   resolveBudgets,
-} from "../../lib/orchestrator/admission.ts";
+} from "../../lib/delegation/admission.ts";
 import agentExtension, { registry } from "../../extensions/agent.ts";
 
 // resolveBudgets honours operator environment sources so a migrated setup keeps

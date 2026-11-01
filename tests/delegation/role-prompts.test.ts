@@ -14,8 +14,8 @@ import {
   loadRolePrompt,
   projectRolePromptDir,
   renderRolePromptReport,
-} from "../../lib/orchestrator/role-prompts.ts";
-import { ORCH_ROLES } from "../../lib/orchestrator/role-models.ts";
+} from "../../lib/delegation/role-prompts.ts";
+import { ORCH_ROLES } from "../../lib/delegation/role-models.ts";
 
 test("ORCH_ROLES contains exactly planner and worker primitives", () => {
   assert.deepEqual(ORCH_ROLES, ["planner", "worker"]);

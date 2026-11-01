@@ -119,6 +119,6 @@ export function depthProblem(
 }
 
 // The former breadth guard (maxChildren/capacityProblem) was absorbed by the
-// occupancy-aware admission in lib/orchestrator/admission.ts: one occupancy
+// occupancy-aware admission in lib/delegation/admission.ts: one occupancy
 // count (running + blocked + results awaiting parent review) against one set
 // of configured ceilings, instead of three overlapping caps.

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildPlanStepTicket, buildPlannerTicket, parsePlan, stripRecallFrame } from "../../lib/orchestrator/roles.ts";
+import { buildPlanStepTicket, buildPlannerTicket, parsePlan, stripRecallFrame } from "../../lib/delegation/roles.ts";
 
 const PLAN = "# Plan\n\n```json\n" + JSON.stringify({
   summary: "Two independent steps.",

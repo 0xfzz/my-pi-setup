@@ -1,8 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { ScopeRegistry, type ScopedChild } from "../../lib/orchestrator/scope-registry.ts";
-import { matchOwner, extractPotentialPaths, routeUpdate } from "../../lib/orchestrator/steer-router.ts";
+import { ScopeRegistry, type ScopedChild } from "../../lib/delegation/scope-registry.ts";
+import { matchOwner, extractPotentialPaths, routeUpdate } from "../../lib/delegation/steer-router.ts";
 
 function createChild(overrides: Partial<ScopedChild> = {}): ScopedChild {
   // One session file = one child. A shared default path silently made every

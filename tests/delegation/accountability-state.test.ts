@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ScopeRegistry, type ScopedChild } from "../../lib/orchestrator/scope-registry.ts";
+import { ScopeRegistry, type ScopedChild } from "../../lib/delegation/scope-registry.ts";
 
 function child(id = "first"): ScopedChild {
   return {

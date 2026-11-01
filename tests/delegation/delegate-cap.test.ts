@@ -7,7 +7,7 @@ import {
   delegateCapRefusal,
   parseMaxDelegates,
   resolveMaxDelegates,
-} from "../../lib/orchestrator/delegate-cap.ts";
+} from "../../lib/delegation/delegate-cap.ts";
 
 test("the default cap is 5 and invalid settings fall back to it", () => {
   for (const settings of [undefined, {}, { maxDelegates: "nope" }, { maxDelegates: 0 }, { maxDelegates: 1.5 }]) {
