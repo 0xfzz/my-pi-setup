@@ -41,16 +41,11 @@ const ENTRY = "workflow-todo:v2";
 export const WORKFLOW_TODO_ENTRY = ENTRY;
 const LEGACY_ENTRY = "workflow-todo:v1";
 
-export const PLAN_TOOL = "todo_plan";
-export const ACT_TOOL = "todo_act";
-export const NEXT_TOOL = "todo_next";
-export const LEGACY_TOOL = "workflow_todo";
-
-/** Every tool name that mutates or reads the intent graph, including the v1 shim. */
-export const TODO_TOOL_NAMES: readonly string[] = [PLAN_TOOL, ACT_TOOL, NEXT_TOOL, LEGACY_TOOL];
-
-/** Used by other extensions (checkpoints, dynamic prompt, mode allowlists) instead of a literal. */
-export const isTodoTool = (name: string): boolean => TODO_TOOL_NAMES.includes(name);
+// The tool names live in lib/todo-tools.ts so policy modules can classify a todo
+// call without importing this extension. Imported for local use and re-exported
+// because the extension is the public surface its tests drive.
+import { PLAN_TOOL, ACT_TOOL, NEXT_TOOL, LEGACY_TOOL, TODO_TOOL_NAMES, isTodoTool } from "../lib/todo-tools.ts";
+export { PLAN_TOOL, ACT_TOOL, NEXT_TOOL, LEGACY_TOOL, TODO_TOOL_NAMES, isTodoTool };
 
 export type WorkflowMode = "normal" | "plan";
 
