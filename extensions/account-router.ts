@@ -21,12 +21,12 @@
 //
 // Shape:
 //   {
-//     "routes": [{ "name": "auto", "targets": ["antigravity/gemini-3-pro", "openai/gpt-5"] }],
-//     "pools":  { "ag": { "provider": "antigravity", "source": "antigravity-accounts",
-//                         "strategy": "round-robin" } }
+//     "routes": [{ "name": "auto", "targets": ["openrouter/meta/llama-3", "openai/gpt-5"] }],
+//     "pools":  { "or": { "provider": "openrouter", "strategy": "round-robin",
+//                         "accounts": [{ "id": "acc-1", "apiKey": "$KEY_1" }] } }
 //   }
 //
-// A target may name a pool: `"targets": [{ "model": "antigravity/gemini-3-pro", "pool": "ag" }]`.
+// A target may name a pool: `"targets": [{ "model": "openrouter/meta/llama-3", "pool": "or" }]`.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -46,7 +46,7 @@ import {
 } from "../lib/account-pools.ts";
 import {
   poolAccounts, resolveAccountCredential, sourceDefaultAgentDir,
-  type SourceContext, type StoredAntigravityAccount,
+  type SourceContext,
 } from "../lib/account-sources.ts";
 import {
   describeRoutePolicy, findRoute, mergeRouteTables, orderTargets, parseModelRef, readRouteTable,
@@ -63,9 +63,6 @@ import {
 import { RouterSettingsPopup } from "../lib/ui/router-settings.ts";
 import { popupOverlayOptions } from "../lib/popup.ts";
 import { providerModelPicker } from "../lib/provider-model-picker.ts";
-import { refreshAntigravityToken } from "../vendor/antigravity/auth/oauth.ts";
-import { getCurrentAntigravityCatalog } from "../vendor/antigravity/models/models.ts";
-import { ANTIGRAVITY_API } from "../vendor/antigravity/types/types.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar-channel.ts";
 
 const STATE_ENTRY = "account-router:v1";
@@ -152,10 +149,6 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
 
   const sourceContext = (): SourceContext => ({
     agentDir,
-    // Refresh through the vendored implementation, so token rotation stays in
-    // one place and the router has no npm dependency on pi-antigravity.
-    refresh: async (account: StoredAntigravityAccount) =>
-      await refreshAntigravityToken(account as never) as StoredAntigravityAccount,
   });
 
   const persistState = (): void => { writeRouterState(statePath, state); };
@@ -435,14 +428,6 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     poolName: string,
     pool: PoolConfig,
   ): { name?: string; models: Model<Api>[] } | undefined => {
-    if (providerId === "antigravity" || pool.source === "antigravity-accounts") {
-      const catalog = getCurrentAntigravityCatalog();
-      return {
-        name: "Antigravity",
-        models: catalog.models as Model<Api>[],
-      };
-    }
-
     for (const p of [
       join(activeCwd, ".pi", "models.json"),
       join(activeCwd, "models.json"),
@@ -532,23 +517,14 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
 
       if (!chatModels.length) {
         if (ctx) {
-          configErrors.push(
-            `pool "${poolName}": provider "${pool.provider}" is not registered` +
-            (pool.provider === "antigravity"
-              ? '; with per-account providers, use "antigravity" only if accounts are linked (/antigravity), or target antigravity-N directly'
-              : ""),
-          );
+          configErrors.push(`pool "${poolName}": provider "${pool.provider}" is not registered`);
         }
         continue;
       }
 
       const byApi = new Map<string, typeof chatModels>();
       for (const model of chatModels) {
-        const effectiveApi = model.api ?? (
-          pool.provider === "antigravity" || pool.source === "antigravity-accounts"
-            ? ANTIGRAVITY_API
-            : "openai-completions"
-        );
+        const effectiveApi = model.api ?? "openai-completions";
         const group = byApi.get(effectiveApi) ?? [];
         group.push({ ...model, api: effectiveApi as Api });
         byApi.set(effectiveApi, group);
@@ -558,11 +534,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
         const providerId = byApi.size === 1
           ? poolProviderId(poolName)
           : `${poolProviderId(poolName)}#${api}`;
-        const baseUrl = models.find((m) => m.baseUrl)?.baseUrl ?? (
-          pool.provider === "antigravity" || pool.source === "antigravity-accounts"
-            ? "https://cloudcode-pa.googleapis.com"
-            : "http://127.0.0.1:1/v1"
-        );
+        const baseUrl = models.find((m) => m.baseUrl)?.baseUrl ?? "http://127.0.0.1:1/v1";
         try {
           pi.registerProvider(providerId, {
             name: `${sourceName} (${poolName}${byApi.size === 1 ? "" : ` ${api}`})`,
@@ -915,7 +887,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
         title: `Account (${poolName})`,
         tone: "warning",
         rows: ["No accounts configured"],
-        hint: pool.source === "antigravity-accounts" ? "/antigravity login" : "/router",
+        hint: "/router",
       });
       return;
     }
@@ -1272,15 +1244,15 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
             "  /router reload             re-read config files",
             "",
             "Config (global ~/.pi/agent/account-router.json or project .pi/account-router.json):",
-            '  "routes": [{ "name": "auto", "targets": ["antigravity/gemini-3-pro", "openai/gpt-5"] }]',
-            '  "pools":  { "ag": { "provider": "antigravity", "source": "antigravity-accounts",',
-            '                      "strategy": "round-robin", "cooldownMs": 60000 } }',
+            '  "routes": [{ "name": "auto", "targets": ["openrouter/meta/llama-3", "openai/gpt-5"] }]',
+            '  "pools":  { "or": { "provider": "openrouter", "strategy": "round-robin",',
+            '                      "accounts": [{ "id": "acc-1", "apiKey": "$KEY_1" }] } }',
             "",
             "Strategies: round-robin, least-recently-used, priority, sticky.",
             "Route methods: priority (declaration order), round-robin, cheapest, last-good.",
             "Route triggers: turn, failure, quota (only a 429 retry moves on), overflow.",
             "A route target is any physical provider/model; pick one in /router or type it.",
-            "Sources: antigravity-accounts (linked Google logins), static (per-account apiKey).",
+            "Sources: static (per-account apiKey in config or models.json).",
             "Any provider works: pools front its models without provider-specific code.",
             "Quota failures skip an account until reset, then require a tiny recovery probe.",
             "Failed probes wait for the next cooldown; healthy accounts are never probed.",

@@ -8,7 +8,6 @@ import {
   type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 import accountRouter from "../extensions/account-router.ts";
-import antigravityAccounts from "../extensions/antigravity-accounts.ts";
 
 const model = (id: string, api = "openai-completions") => ({
   id, name: id, api, baseUrl: "http://127.0.0.1:1/v1", reasoning: false,
@@ -82,14 +81,12 @@ test("startup uses the loader project cwd, not the process cwd, for pool overrid
   await startup(dir, [accountRouter], ["pool:shared/chat"], cwd);
 }));
 
-test("Antigravity account-family pools are selectable in saved startup scopes", async () => fixture(async dir => {
-  await writeFile(join(dir, "antigravity-accounts.json"), JSON.stringify({ version: 1, accounts: {
-    "one@example.test": { accountId: "one@example.test", access: "test-token", refresh: "test-refresh",
-      expires: Date.now() + 3_600_000, projectId: "test-project" },
+test("account-family pools are selectable in saved startup scopes", async () => fixture(async dir => {
+  await writeFile(join(dir, "models.json"), JSON.stringify({ providers: {
+    "family-1": { apiKey: "test-key", models: [model("chat")] },
   } }));
   await writeFile(join(dir, "account-router.json"), JSON.stringify({ pools: {
-    ag: { provider: "antigravity", source: "antigravity-accounts" },
+    fam: { provider: "family", strategy: "round-robin" },
   } }));
-  const id = "gemini-3.8-flash";
-  await startup(dir, [antigravityAccounts, accountRouter], [`pool:ag/${id}`, `antigravity-1/${id}`]);
+  await startup(dir, [accountRouter], ["pool:fam/chat", "family-1/chat"]);
 }));
