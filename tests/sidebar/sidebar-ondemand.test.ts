@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Container, Text, ScrollView, type Component } from "@earendil-works/pi-tui";
-import { OnDemandContainer } from "../lib/sidebar/sidebar-ondemand.ts";
+import { OnDemandContainer } from "../../lib/sidebar/sidebar-ondemand.ts";
 
 test("on-demand container delegates to native render when below threshold", () => {
   const container = new Container();

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { TuiAltScreen } from "@earendil-works/pi-tui";
-import { SelectionBoundaryController } from "../lib/sidebar/sidebar-selection.ts";
+import { SelectionBoundaryController } from "../../lib/sidebar/sidebar-selection.ts";
 
 function createMockTui(columns = 120, rows = 34) {
   const terminal = {

@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { atLeastVersion, parseVersion } from "../lib/sidebar/sidebar-layout.ts";
+import { atLeastVersion, parseVersion } from "../../lib/sidebar/sidebar-layout.ts";
 
 /**
  * The sidebar mounts by wrapping Pi's private fullscreen `layoutRoot`, so it must
@@ -95,7 +95,7 @@ test("the sidebar mounts on the installed Pi release, in fullscreen", async () =
     },
   });
 
-  const probe = await jiti.import("./fixtures/sidebar-mount-probe.ts");
+  const probe = await jiti.import("../fixtures/sidebar-mount-probe.ts");
   const result = await probe.probeFullscreenMount(release.version);
 
   assert.equal(result.seenVersion, release.version, "the probe must see the installed release, not a peer copy");

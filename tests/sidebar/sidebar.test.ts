@@ -2,12 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { Container, Text, TuiAltScreen, TuiMainScreen, ScrollView, VStack, visibleWidth, CURSOR_MARKER } from "@earendil-works/pi-tui";
-import sidebar from "../extensions/sidebar.ts";
-import todo from "../extensions/todo.ts";
-import artifacts from "../extensions/artifacts.ts";
-import modes from "../extensions/modes.ts";
-import { SidebarMount, SidebarSplit, plain } from "../lib/sidebar/sidebar-layout.ts";
-import { getAquariumSimulation, clearAquariumFood } from "../lib/sidebar/sidebar-aquarium.ts";
+import sidebar from "../../extensions/sidebar.ts";
+import todo from "../../extensions/todo.ts";
+import artifacts from "../../extensions/artifacts.ts";
+import modes from "../../extensions/modes.ts";
+import { SidebarMount, SidebarSplit, plain } from "../../lib/sidebar/sidebar-layout.ts";
+import { getAquariumSimulation, clearAquariumFood } from "../../lib/sidebar/sidebar-aquarium.ts";
 
 const terminal = () => ({ columns: 120, rows: 24, write() {}, start() {}, stop() {},
   showCursor() {}, hideCursor() {}, moveBy() {}, clearLine() {}, clearFromCursor() {}, clearScreen() {},

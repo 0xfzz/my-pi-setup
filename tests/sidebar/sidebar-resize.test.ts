@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Container, Text, TuiAltScreen, type TuiMouseEvent, visibleWidth } from "@earendil-works/pi-tui";
-import { SidebarMount, SidebarSplit } from "../lib/sidebar/sidebar-layout.ts";
-import { SidebarResizer } from "../lib/sidebar/sidebar-resize.ts";
+import { SidebarMount, SidebarSplit } from "../../lib/sidebar/sidebar-layout.ts";
+import { SidebarResizer } from "../../lib/sidebar/sidebar-resize.ts";
 
 const terminal = () => ({ columns: 120, rows: 24, write() {} }) as any;
 const mouse = (type: TuiMouseEvent["type"], screenX: number, overrides = {}): TuiMouseEvent => ({
