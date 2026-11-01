@@ -28,7 +28,7 @@ async function fixture(gitignore?: string) {
   return { root, cwd, tmpRoot, detach: () => rm(root, { recursive: true, force: true }) };
 }
 
-test("scratch lives under .pi/orch-research when .pi/ is gitignored", async () => {
+test("scratch lives under .pi/delegation-research when .pi/ is gitignored", async () => {
   const h = await fixture(".pi/\nnode_modules/\n");
   try {
     assert.equal(piDirIgnored(h.cwd), true);
@@ -36,8 +36,8 @@ test("scratch lives under .pi/orch-research when .pi/ is gitignored", async () =
     assert.equal(resolved.ok, true);
     const ok = resolved as { root: string; source: string; base: string };
     assert.equal(ok.source, "project");
-    assert.equal(ok.base, join(h.cwd, ".pi", "orch-research"));
-    assert.equal(ok.root, join(h.cwd, ".pi", "orch-research", "run-1"));
+    assert.equal(ok.base, join(h.cwd, ".pi", "delegation-research"));
+    assert.equal(ok.root, join(h.cwd, ".pi", "delegation-research", "run-1"));
   } finally {
     await h.detach();
   }
@@ -51,7 +51,7 @@ test("scratch falls back to the temp root when .pi/ is not ignored", async () =>
     assert.equal(resolved.ok, true);
     const ok = resolved as { root: string; source: string };
     assert.equal(ok.source, "tmp");
-    assert.equal(ok.root, join(h.tmpRoot, "orch-research", "run-2"));
+    assert.equal(ok.root, join(h.tmpRoot, "delegation-research", "run-2"));
   } finally {
     await h.detach();
   }
@@ -69,7 +69,7 @@ test("a directory that is not a repository never gets a .pi/ write", async () =>
   }
 });
 
-test("PI_ORCH_SCRATCH overrides the location, but not into the work tree", async () => {
+test("PI_DELEGATION_SCRATCH overrides the location, but not into the work tree", async () => {
   const h = await fixture(".pi/\n");
   try {
     const outside = join(h.root, "outside");
@@ -103,7 +103,7 @@ test("PI_ORCH_SCRATCH overrides the location, but not into the work tree", async
 
     const insideAllowed = resolveScratchRoot({
       cwd: h.cwd,
-      env: { [SCRATCH_ENV]: join(h.cwd, ".pi", "orch-research", "custom") },
+      env: { [SCRATCH_ENV]: join(h.cwd, ".pi", "delegation-research", "custom") },
       tmpRoot: h.tmpRoot,
     });
     assert.equal(insideAllowed.ok, true);
@@ -116,7 +116,7 @@ test("PI_ORCH_SCRATCH overrides the location, but not into the work tree", async
 test("the scratch layout is private and complete", async () => {
   const h = await fixture(".pi/\n");
   try {
-    const layout = ensureScratch(join(h.cwd, ".pi", "orch-research", "run-5"));
+    const layout = ensureScratch(join(h.cwd, ".pi", "delegation-research", "run-5"));
     for (const dir of [layout.root, layout.cache, layout.webCache, layout.codeCache, layout.searchCache, layout.tmp, layout.stage]) {
       assert.equal(existsSync(dir), true, dir);
       assert.equal(statSync(dir).mode & 0o777, 0o700, `${dir} must be private`);
@@ -129,7 +129,7 @@ test("the scratch layout is private and complete", async () => {
 test("a path outside the root, or through a symlink, is refused", async () => {
   const h = await fixture(".pi/\n");
   try {
-    const layout = ensureScratch(join(h.cwd, ".pi", "orch-research", "run-6"));
+    const layout = ensureScratch(join(h.cwd, ".pi", "delegation-research", "run-6"));
     assert.equal(scratchPathProblem("cache/web/page.txt", layout.root), undefined);
 
     assert.match(String(scratchPathProblem("../escape.txt", layout.root)), /outside the scratch root/);
@@ -147,7 +147,7 @@ test("a path outside the root, or through a symlink, is refused", async () => {
 test("caps drop oversized files and evict oldest first", async () => {
   const h = await fixture(".pi/\n");
   try {
-    const layout = ensureScratch(join(h.cwd, ".pi", "orch-research", "run-7"));
+    const layout = ensureScratch(join(h.cwd, ".pi", "delegation-research", "run-7"));
     const huge = join(layout.webCache, "huge.bin");
     await writeFile(huge, Buffer.alloc(64));
     const oldest = join(layout.webCache, "oldest.txt");
@@ -169,7 +169,7 @@ test("caps drop oversized files and evict oldest first", async () => {
 test("cache TTL prunes old entries and keeps fresh ones", async () => {
   const h = await fixture(".pi/\n");
   try {
-    const layout = ensureScratch(join(h.cwd, ".pi", "orch-research", "run-8"));
+    const layout = ensureScratch(join(h.cwd, ".pi", "delegation-research", "run-8"));
     const old = join(layout.webCache, "old.txt");
     const fresh = join(layout.webCache, "fresh.txt");
     await writeFile(old, "old");
@@ -188,7 +188,7 @@ test("cache TTL prunes old entries and keeps fresh ones", async () => {
 test("cleanup removes one run and garbage-collects stale runs only", async () => {
   const h = await fixture(".pi/\n");
   try {
-    const base = join(h.cwd, ".pi", "orch-research");
+    const base = join(h.cwd, ".pi", "delegation-research");
     const current = ensureScratch(join(base, "run-current"));
     const stale = ensureScratch(join(base, "run-stale"));
     const now = Date.now();

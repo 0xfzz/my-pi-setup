@@ -3,9 +3,9 @@
  *
  * The research surface must never touch the work tree, but a page cache or a code
  * index still needs somewhere to live. That somewhere is exactly one root: the
- * project's `.pi/orch-research/<run>/` when `.pi/` is gitignored, otherwise a
- * temp directory. An explicit `PI_ORCH_SCRATCH` may replace it, but never with a
- * path inside the repository that git actually tracks.
+ * project's `.pi/delegation-research/<run>/` when `.pi/` is gitignored, otherwise
+ * a temp directory. An explicit `PI_DELEGATION_SCRATCH` may replace it, but never
+ * with a path inside the repository that git actually tracks.
  *
  * Everything here is either a pure resolution decision or an explicit cap/cleanup
  * action. Nothing is created until `ensureScratch` is called, so importing the
@@ -23,8 +23,13 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-export const SCRATCH_ENV = "PI_ORCH_SCRATCH";
-export const SCRATCH_DIR = join(".pi", "orch-research");
+/** Current override variable. `PI_ORCH_SCRATCH` is still read, and never written. */
+export const SCRATCH_ENV = "PI_DELEGATION_SCRATCH";
+/** The pre-rename variable. Honoured so an exported environment keeps working. */
+export const LEGACY_SCRATCH_ENV = "PI_ORCH_SCRATCH";
+export const SCRATCH_DIR = join(".pi", "delegation-research");
+/** The pre-rename directory. Read and cleaned up; never created any more. */
+export const LEGACY_SCRATCH_DIR = join(".pi", "orch-research");
 export const SCRATCH_MAX_BYTES = 50 * 1024 * 1024;
 export const SCRATCH_MAX_FILE_BYTES = 5 * 1024 * 1024;
 /** A whole run directory older than this is garbage collected. */
@@ -84,6 +89,12 @@ export function sanitizeRunId(raw: unknown): string {
   return cleaned || "scratch";
 }
 
+/** Which variable supplied the override, so a refusal names the one the user set. */
+function declaredScratchEnv(env: Env): string {
+  if (env[SCRATCH_ENV] !== undefined && String(env[SCRATCH_ENV]).trim() !== "") return SCRATCH_ENV;
+  return LEGACY_SCRATCH_ENV;
+}
+
 function runIdFor(env: Env): string {
   return sanitizeRunId(env.PI_SUBAGENT_REVIEW_RUN ?? env.PI_SUBAGENT_ID ?? env.PI_SUBAGENT_SCOPE ?? "scratch");
 }
@@ -91,10 +102,11 @@ function runIdFor(env: Env): string {
 /**
  * Resolve where scratch lives for this run.
  *
- * Order: explicit `PI_ORCH_SCRATCH` → project `.pi/orch-research/<run>` when
- * `.pi/` is ignored → temp directory. A repo-relative override is refused unless
- * it is under `.pi/orch-research`, because anything else would be a write into
- * the work tree by another name.
+ * Order: explicit `PI_DELEGATION_SCRATCH` (or the legacy `PI_ORCH_SCRATCH`) →
+ * project `.pi/delegation-research/<run>` when `.pi/` is ignored → temp
+ * directory. A repo-relative override is refused unless it is under a scratch
+ * directory, because anything else would be a write into the work tree by
+ * another name.
  */
 export function resolveScratchRoot(options: {
   cwd: string;
@@ -105,22 +117,24 @@ export function resolveScratchRoot(options: {
   const env = options.env ?? process.env;
   const runId = options.runId ? sanitizeRunId(options.runId) : runIdFor(env);
   const repoRoot = findRepoRoot(options.cwd);
-  const tmpBase = join(options.tmpRoot ?? tmpdir(), "orch-research");
-  const declared = env[SCRATCH_ENV];
+  const tmpBase = join(options.tmpRoot ?? tmpdir(), "delegation-research");
+  const envName = declaredScratchEnv(env);
+  const declared = env[SCRATCH_ENV] ?? env[LEGACY_SCRATCH_ENV];
 
   if (declared !== undefined && String(declared).trim() !== "") {
     const raw = String(declared).trim();
     if (!isAbsolute(raw)) {
-      return { ok: false, problems: [`${SCRATCH_ENV} must be an absolute path (got "${raw}")`] };
+      return { ok: false, problems: [`${envName} must be an absolute path (got "${raw}")`] };
     }
     const root = resolve(raw);
     if (repoRoot && isInside(repoRoot, root)) {
       const allowed = join(repoRoot, SCRATCH_DIR);
-      if (!isInside(allowed, root)) {
+      const legacyAllowed = join(repoRoot, LEGACY_SCRATCH_DIR);
+      if (!isInside(allowed, root) && !isInside(legacyAllowed, root)) {
         return {
           ok: false,
           problems: [
-            `${SCRATCH_ENV} points inside the repository (${root}); only ${allowed} is writable, `
+            `${envName} points inside the repository (${root}); only ${allowed} is writable, `
               + "because anything else would be a work-tree write",
           ],
         };

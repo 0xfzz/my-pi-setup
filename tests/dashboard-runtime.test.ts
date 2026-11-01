@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { DASHBOARD_PROTOCOL } from "../lib/dashboard/protocol.ts";
 import type { DashboardSnapshot } from "../lib/dashboard/protocol.ts";
 import {
   ensureDashboard,
@@ -974,7 +975,7 @@ function mockTransport(responder: (request: { url: string; body: any }, index: n
     runtimeDir: "/tmp/mock-dashboard",
     instanceId: "m".repeat(32),
     producerToken: "b".repeat(64),
-    protocol: 1,
+    protocol: DASHBOARD_PROTOCOL,
     owned: true,
   };
   const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {

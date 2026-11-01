@@ -1,5 +1,14 @@
 /** Shared wire/view contract. Never include transcripts, terminal tails, or producer secrets. */
-export const DASHBOARD_PROTOCOL = 1 as const;
+/**
+ * Wire version.
+ *
+ * 2 — the delegation collections moved from `snapshot.orchestrator` to
+ *     `snapshot.delegation`, and escalation stages/actors read `parent` instead
+ *     of `orchestrator`. Bumped so an already-open tab built against v1 is
+ *     rejected loudly at handshake instead of rendering an empty graph from a
+ *     field that no longer exists.
+ */
+export const DASHBOARD_PROTOCOL = 2 as const;
 export const DASHBOARD_MODE_EVENT = "dashboard:mode";
 export const DASHBOARD_STATE_EVENT = "dashboard:state";
 export const DASHBOARD_ARTIFACTS_EVENT = "dashboard:artifacts";
