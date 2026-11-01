@@ -1,18 +1,18 @@
-# Input modes: Normal / Plan / Orchestrator
+# Input modes: Normal / Plan / Main agent
 
 > Part of [pi-workflow-extensions](../README.md). What each mode allows, how switching works, and what a refusal means.
 
 **Alt+M** cycles modes. The sidebar shows a bold, theme-colored mode label with a distinct single-column icon, a concise description, and a dimmed switching hint. **◇ Normal** uses the accent color and **≡ Plan** the success color. These are standard text glyphs, not emoji or Nerd Font icons; labels remain readable without color. Without the sidebar, a compact bar above the editor uses the same icons and highlights the active mode:
 
 ```text
-[ ◇ Normal ]   ≡ Plan     Supervise     ⌁ Orchestrator    Alt+M to switch
+[ ◇ Normal ]   ≡ Plan     Supervise     ⌁ Main agent    Alt+M to switch
 Chat with AI
 ```
 
 - **Normal**: Pi's regular AI input, tools, commands, and shortcuts. Shell commands still run through Pi's native `!`/`!!` prefix.
 - **Plan**: brainstorming and grilling, not implementation. `/plan mode` (also `/plan` or `/plan on`) enters; `/plan off` returns to Normal and restores the previous tool loadout. `/plan status` reports the policy. `/mode plan` selects the same mode.
-- **Orchestrator** (also spelled **Supervise**): delegation without implementation. `/mode orchestrator` (or `/supervise on`) enters; `/mode normal` exits and restores the previous tool loadout. Direct edits, browser tools and write/edit tools are blocked; bash/python/node are read-only inspection (the same closed command grammar Plan uses), so a mode that promises not to implement cannot write through a shell. `agent_handoff → agent_spawn → agent_review → agent_escalate` stay available. See [orchestrator](orchestrator.md) for the loop and its gates.
-- `/mode` and Alt+M cycle **Normal → Plan → Orchestrator → Normal**; `Supervise` is the same policy as Orchestrator and is reachable explicitly with `/mode supervise` but is skipped by the cycle. `/mode normal`, `/mode plan` and `/mode orchestrator` select explicitly (with completions). `/mode`, `/plan`, `/sidebar`, `/reload`, and `/quit` remain available in every mode; switch to Normal for other Pi slash commands.
+- **Main agent** (also spelled **Supervise**): delegation without implementation. `/mode main-agent` (or `/supervise on`) enters; `/mode normal` exits and restores the previous tool loadout. Direct edits, browser tools and write/edit tools are blocked; bash/python/node are read-only inspection (the same closed command grammar Plan uses), so a mode that promises not to implement cannot write through a shell. `agent_handoff → agent_spawn → agent_review → agent_escalate` stay available. See [main agent](main-agent.md) for the loop and its gates.
+- `/mode` and Alt+M cycle **Normal → Plan → Main agent → Normal**; `Supervise` is the same policy as Main agent and is reachable explicitly with `/mode supervise` but is skipped by the cycle. `/mode normal`, `/mode plan` and `/mode main-agent` select explicitly (with completions). `/mode`, `/plan`, `/sidebar`, `/reload`, and `/quit` remain available in every mode; switch to Normal for other Pi slash commands.
 - **A switch is a transition, not a cursor move.** Entering or leaving a restricted mode is refused while a turn or native shell command is running (or while unverified children hold permissions in Plan); a refused switch leaves both the tab and the policy unchanged, so repeating the keypress is never skipped. The transcript is the source of truth: the selected tab, the enforced allowlist and the request's mode reminder are all derived from the same branch entry.
 - Switching preserves the current draft. Normal remains local input routing; **Plan policy is branch-local session state** and survives reload/resume/fork, follows tree navigation, and restores the original tools on exit. `/plan` also works through RPC/print prompts. It does not change global agent configuration.
 - **Alt+M** is unbound in pi, so it shadows no built-in. `Shift+Tab` keeps its stock job (cycling the thinking level); ordinary keys still go through `CustomEditor`. No global keybindings file is modified. Another extension replacing the editor can still conflict — `prompt-ui` composes over the installed editor for exactly that reason, and `tests/mode-editor-compose.test.ts` plus `tests/prompt-ui.test.ts` pin both orders.

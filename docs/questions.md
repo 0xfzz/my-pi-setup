@@ -1,4 +1,4 @@
-# Questions: ask the user, or ask the orchestrator
+# Questions: ask the user, or ask the main agent
 
 > Part of [pi-workflow-extensions](../README.md). When the agent must ask, how a child routes a question, and what is never consent.
 

@@ -1,12 +1,12 @@
-# Orchestrator: delegated work
+# Main agent: delegated work
 
 > Part of [pi-workflow-extensions](../README.md). The author → spawn → check → review loop, its gates, and the escalation ladder.
 
-Mode: **Orchestrator** (`/mode orchestrator`). The supervisor decomposes a large request into work units, delegates each to a cheap-model child with a handoff spec, runs them in parallel, reviews the results with evidence, and escalates only what it cannot decide.
+Mode: **Main agent** (`/mode main-agent`; `/mode orchestrator` still works as a deprecated alias). The main agent decomposes a large request into work units, delegates each to a cheap-model child with a handoff spec, runs them in parallel, reviews the results with evidence, and escalates only what it cannot decide.
 
 ## Lifecycle: product manager → workers → QA
 
-The orchestrator is a product manager, not a reviewer career. Three phases, then it
+The main agent is a product manager, not a reviewer career. Three phases, then it
 waits:
 
 1. **Spec — author the wave, review it in chunks, fix what is real.** Investigate
@@ -26,7 +26,7 @@ waits:
    (`agent_spawn({ purpose: "review", qaFor: "<scope>" })`), or the whole wave is
    fanned out at once with `agent_qa({ scopes: [...] })` — at most 3 reviewers,
    3 units each (see [waves](#waves-worker-and-qa-concurrency)). A defect pings the
-   orchestrator at once; the orchestrator opens a ticket on the todo ledger
+   main agent at once; the main agent opens a ticket on the todo ledger
    (`todo_plan`, resource = the defective file), claims it, spawns a defect-scoped
    fix unit, and resumes the QA. QA pass → `todo_act done` with evidence; still
    failing → `todo_act failed` (reopen; twice → the user). Other results keep being
@@ -45,7 +45,7 @@ call with no new event is answered with one line. Idle is the normal state.
 1. **Author** — `agent_handoff` writes one spec per work unit (scope slug, goal, acceptance criteria, lane files, out-of-lane files, interfaces, guidance) and publishes it as a **scoped artifact**. A child recalls its spec by id and sees nothing else: no sibling scope, no sibling path.
 2. **Delegate** — `agent_spawn` takes a `handoffId` (spec work), or runs an **ad-hoc** child with `purpose`, optional `laneFiles`/`acceptanceCriteria`, and `budgetMinutes` (default 30). The child runs in its own Herdr pane; workers with disjoint lanes run in parallel. Purpose is resolved before any pane exists, so a refused spawn leaves no trace.
 3. **Steer** — `agent_steer` (Esc→settle→type→observe delivery, confirmed by echo), `agent_route` (deterministic owner resolution), `agent_interrupt`/`agent_resume`. `agent_running` reports every child with scope, lane, and pending escalations.
-4. **Review** — `agent_review` records each criterion against evidence the orchestrator gathered itself; an approved verdict with a failing criterion or an out-of-lane diff is refused in code. Two consecutive `revise` rounds stop the loop and move the decision to the user.
+4. **Review** — `agent_review` records each criterion against evidence the main agent gathered itself; an approved verdict with a failing criterion or an out-of-lane diff is refused in code. Two consecutive `revise` rounds stop the loop and move the decision to the user.
 5. **Escalate** — `agent_escalate` is the ladder: `answer` / `to-user` (through the ask-user extension — a cancelled dialog is unanswered, never consent) / `relay-user` / `cancel`.
 
 ### The flow
@@ -57,15 +57,15 @@ registry row, no pane, no ticket.
 flowchart TD
     req(["Request"]) --> author["1 · agent_handoff<br/>scope · criteria · lane · dependsOn"]
     author --> design{"ready spec review?"}
-    design -->|"no designRef in Orchestrator/Supervise"| refuseA(["refused — nothing written"])
+    design -->|"no designRef in Main agent/Supervise"| refuseA(["refused — nothing written"])
     design -->|"ready, or not required"| deps{"dependsOn approved?"}
     deps -->|"no"| refuseB(["refused — dependency-unapproved"])
     deps -->|"yes"| spawn["2 · agent_spawn<br/>purpose · budgetMinutes"]
     spawn --> admit{"admission"}
-    admit -->|"depth · breadth · scope busy · orchestrator paused"| refuseC(["refused — no row, no pane, no ticket"])
+    admit -->|"depth · breadth · scope busy · main agent paused"| refuseC(["refused — no row, no pane, no ticket"])
     admit -->|"admitted"| work["3 · worker in its own pane<br/>its handoff artifact is its only spec"]
     work -->|"agent_ping"| ladder{"4 · escalation ladder"}
-    ladder -->|"orchestrator knows"| answer["agent_escalate answer"]
+    ladder -->|"main agent knows"| answer["agent_escalate answer"]
     ladder -->|"does not know"| user{"ask the user"}
     user -->|"answered"| answer
     user -->|"cancelled is not consent"| blocker(["child reports the blocker"])
@@ -140,7 +140,7 @@ would still judge its diff against criteria it never saw. Two structural rules c
 2. **The spec is frozen.** A child may read a `handoff-*` artifact but `artifact_save`/`artifact_edit`
    targeting it is refused. The document is pinned by content hash for review and re-read before every
    spawn; letting the worker rewrite it would re-point an approval at text nobody reviewed. If it is
-   wrong, the child escalates and the **orchestrator** revises it with `agent_handoff`.
+   wrong, the child escalates and the **main agent** revises it with `agent_handoff`.
 
 The receipt carries the artifact version the child actually read, so a spec re-authored afterwards is
 visible as drift rather than silently re-attributed.
@@ -231,7 +231,7 @@ Candidates come from the live model registry, so a provider added in pi appears 
 
 ### Research surface (read-only)
 
-The orchestrator and the devil's advocate can research the web and learn the codebase without a
+The main agent and the devil's advocate can research the web and learn the codebase without a
 writer. The tool surface is deliberately narrow on the write side and wide on the read side:
 
 | Concern | Tools | Guarantee |
@@ -278,7 +278,7 @@ agent_spec_review({ action: "collect", runId })
   → reads one version-2 report per chunk; every member needs a block and coverage
 
 agent_spec_review({ action: "fix", runId, findingId, memberId, patch, rationale })
-  → applies the orchestrator's own edit, records beforeHash → afterHash, keeps the approval
+  → applies the main agent's own edit, records beforeHash → afterHash, keeps the approval
 
 agent_spec_review({ action: "resolve", runId, dispositions: [...] })
   → records accepted/contested; a blocker needs the user's confirmation
@@ -388,7 +388,7 @@ Tests: `node --test tests/orchestrator/*.test.ts`.
 
 | Role | Context | May change | Purpose |
 | --- | --- | --- | --- |
-| Elephant (Orchestrator parent) | full session, artifacts, repository | specs and control plane; no product code in Supervise | decompose, delegate, verify |
+| Elephant (Main agent parent) | full session, artifacts, repository | specs and control plane; no product code in Supervise | decompose, delegate, verify |
 | Goldfish (spec reviewer) | pinned snapshot, permitted paths, read-only web/code research | its report and scoped evidence artifacts | independent judgement |
 | Worker | exactly one handoff/ticket | its lane | implement and verify |
 | QA reviewer | completed units, frozen criteria, read-only research | verdicts and scoped evidence artifacts | judge the result, not the spec |
@@ -443,7 +443,7 @@ All audit targets below are implemented and covered by regression tests:
 - Refuse generic reviewer resume/author-answer routes before side effects; fresh
   isolated review attempts are the recovery path.
 - Block readiness on blocked/incomplete reports and unresolved missing context.
-- Require ready matching spec reviews for Orchestrator implementation admission,
+- Require ready matching spec reviews for Main agent implementation admission,
   including resume; Normal delegation is unchanged.
 - Inspect real reviewer context and filesystem search boundaries; no parent
   pointer, no checkpoint injection, no broad search, no control-plane reads.

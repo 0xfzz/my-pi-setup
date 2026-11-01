@@ -30,7 +30,7 @@ Pi supplies them at runtime; `npm install` fetches them locally so the tests can
 
 ## Tests
 
-- `npm test` runs both suites (core + orchestrator). Prefer `npm run test:core` or
+- `npm test` runs both suites (core + main agent). Prefer `npm run test:core` or
   `npm run test:orchestrator` while iterating.
 - Tests must not need credentials, network, inference, or a live Pi session. Use the
   in-process scripted provider pattern already present in the suites.
