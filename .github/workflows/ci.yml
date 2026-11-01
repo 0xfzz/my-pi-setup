@@ -29,3 +29,21 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # Dead-code and duplication reporting is advisory, not blocking.
+      #
+      # knip still reports a handful of unused exports and dependencies whose
+      # reachability it cannot follow (runtime-loaded dashboard assets, the
+      # pi-ai/jiti peer packages). Making this step fail today would reject every
+      # PR for findings that predate it. Report, keep the log visible, and flip
+      # this to blocking once `npm run lint:dead` exits 0 locally — see
+      # docs/smell-baseline.md for the current numbers.
+      - name: Dead code and duplication (advisory)
+        continue-on-error: true
+        run: |
+          echo "::group::knip (unused files, dependencies, exports)"
+          npm run lint:dead || true
+          echo "::endgroup::"
+          echo "::group::jscpd (duplicated blocks)"
+          npm run lint:dup || true
+          echo "::endgroup::"
