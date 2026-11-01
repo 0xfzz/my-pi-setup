@@ -27,13 +27,13 @@ import type {
   DashboardChild,
   DashboardEscalation,
   DashboardHandoff,
-  DashboardMainAgent,
+  DashboardOrchestrator,
   DashboardReview,
   DashboardSessionInfo,
   DashboardSnapshot,
   DashboardSpecReview,
 } from "./protocol.ts";
-import { emptyMainAgent } from "./protocol.ts";
+import { emptyOrchestrator } from "./protocol.ts";
 
 /** Hard ceiling for one producer publish body. Matches the server read cap. */
 export const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
@@ -247,8 +247,8 @@ function sanitizeSpecReview(value: unknown): DashboardSpecReview | null {
   };
 }
 
-function sanitizeMainAgent(value: unknown): DashboardMainAgent {
-  if (!isDict(value)) return emptyMainAgent();
+function sanitizeOrchestrator(value: unknown): DashboardOrchestrator {
+  if (!isDict(value)) return emptyOrchestrator();
   return {
     children: arrayOf(value.children, MAX_CHILD_LIST, sanitizeChild),
     handoffs: arrayOf(value.handoffs, MAX_HANDOFF_LIST, sanitizeHandoff),
@@ -300,7 +300,7 @@ export function sanitizeSnapshot(value: unknown): DashboardSnapshot {
   const session = sanitizeSession(value.session);
   return {
     session,
-    orchestrator: sanitizeMainAgent(value.orchestrator),
+    orchestrator: sanitizeOrchestrator(value.orchestrator),
     artifacts: arrayOf(value.artifacts, MAX_ARTIFACT_LIST, sanitizeArtifact),
   };
 }

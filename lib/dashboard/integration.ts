@@ -20,8 +20,8 @@ import {
   DASHBOARD_ARTIFACTS_EVENT,
   DASHBOARD_MODE_EVENT,
   DASHBOARD_STATE_EVENT,
-  emptyMainAgent,
-  type DashboardMainAgent,
+  emptyOrchestrator,
+  type DashboardOrchestrator,
   type DashboardSessionInfo,
   type DashboardSnapshot,
 } from "./protocol.ts";
@@ -43,7 +43,7 @@ export interface DashboardModeNotice {
 }
 
 export interface DashboardStateNotice {
-  orchestrator: DashboardMainAgent;
+  orchestrator: DashboardOrchestrator;
   /** Explicit session-file → child-id provenance from the registry rows. */
   childSessions?: ReadonlyMap<string, string>;
   at: number;
@@ -157,7 +157,7 @@ export class DashboardBridge {
   private readonly options: DashboardBridgeOptions;
   private session: DashboardSessionInfo | undefined;
   private mode = "normal";
-  private orchestrator: DashboardMainAgent | undefined;
+  private orchestrator: DashboardOrchestrator | undefined;
   private childSessions: ReadonlyMap<string, string> | undefined;
   private artifactRecords: DashboardArtifactRecord[] = [];
   private producer: DashboardProducerLike | undefined;
@@ -191,8 +191,8 @@ export class DashboardBridge {
     if (this.producer) this.schedule();
   }
 
-  observeMainAgent(
-    orchestrator: DashboardMainAgent | undefined,
+  observeOrchestrator(
+    orchestrator: DashboardOrchestrator | undefined,
     childSessions?: ReadonlyMap<string, string>,
   ): void {
     this.orchestrator = orchestrator;
@@ -315,7 +315,7 @@ export class DashboardBridge {
     const session: DashboardSessionInfo = { ...this.session, mode: this.mode || this.session.mode };
     return projectSnapshot({
       session,
-      orchestrator: this.orchestrator ?? emptyMainAgent(),
+      orchestrator: this.orchestrator ?? emptyOrchestrator(),
       artifacts: projectArtifacts(this.artifactRecords, { childBySession: this.childSessions }),
     });
   }

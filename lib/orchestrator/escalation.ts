@@ -123,7 +123,7 @@ export class EscalationLedger {
   }
 
   /** Waiting on the orchestrator. */
-  forMainAgent(): Escalation[] {
+  forOrchestrator(): Escalation[] {
     return this.all().filter((e) => e.stage === "orchestrator");
   }
 
@@ -149,7 +149,7 @@ export class EscalationLedger {
    * that was escalated precisely because the orchestrator was not competent to
    * make it.
    */
-  answerAsMainAgent(id: string, answer: string, now = new Date()): Escalation {
+  answerAsOrchestrator(id: string, answer: string, now = new Date()): Escalation {
     const escalation = this.requireOpen(id);
     if (escalation.stage !== "orchestrator") {
       throw new EscalationError(

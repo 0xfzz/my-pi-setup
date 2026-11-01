@@ -15,12 +15,12 @@
 import { basename } from "node:path";
 import { resolveGoalTitle } from "./goal-title.ts";
 import {
-  emptyMainAgent,
+  emptyOrchestrator,
   type DashboardArtifact,
   type DashboardChild,
   type DashboardEscalation,
   type DashboardHandoff,
-  type DashboardMainAgent,
+  type DashboardOrchestrator,
   type DashboardReview,
   type DashboardSessionInfo,
   type DashboardSnapshot,
@@ -43,7 +43,7 @@ export interface DashboardArtifactRecord extends DashboardArtifact {
   sourceSession?: string;
 }
 
-export interface MainAgentProjectionInput {
+export interface OrchestratorProjectionInput {
   children?: readonly any[] | null;
   handoffs?: readonly any[] | Map<string, { record?: any }> | null;
   reviews?: readonly any[] | null;
@@ -211,7 +211,7 @@ function projectSpecReview(raw: any): DashboardSpecReview | undefined {
 }
 
 /** Project the orchestrator collections, keeping the newest rows when capped. */
-export function projectMainAgent(input: MainAgentProjectionInput): DashboardMainAgent {
+export function projectOrchestrator(input: OrchestratorProjectionInput): DashboardOrchestrator {
   const children = (input.children ?? [])
     .map(projectChild)
     .filter((child): child is DashboardChild => Boolean(child))
@@ -233,7 +233,7 @@ export function projectMainAgent(input: MainAgentProjectionInput): DashboardMain
     .filter((review): review is DashboardSpecReview => Boolean(review))
     .slice(-DASHBOARD_LIMITS.specReviews);
   return {
-    ...emptyMainAgent(),
+    ...emptyOrchestrator(),
     children,
     handoffs: handoffRecords,
     reviews,
@@ -329,7 +329,7 @@ export function projectSession(context: any, mode: string, fallbackId = "unknown
 /** Final assembly. Inputs are already projected; this only copies them into one snapshot. */
 export function projectSnapshot(input: {
   session: DashboardSessionInfo;
-  orchestrator?: DashboardMainAgent;
+  orchestrator?: DashboardOrchestrator;
   artifacts?: readonly DashboardArtifact[];
 }): DashboardSnapshot {
   return {
@@ -341,7 +341,7 @@ export function projectSnapshot(input: {
       escalations: input.orchestrator.escalations.map(escalation => ({ ...escalation })),
       specReviews: input.orchestrator.specReviews.map(review => ({ ...review })),
       paused: input.orchestrator.paused === true,
-    } : emptyMainAgent(),
+    } : emptyOrchestrator(),
     artifacts: (input.artifacts ?? []).map(artifact => ({ ...artifact })),
   };
 }

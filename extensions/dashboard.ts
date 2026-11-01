@@ -199,7 +199,7 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
     if (!verifiedParent) return;
     const notice = data as Partial<DashboardStateNotice> | undefined;
     if (!notice?.orchestrator) return;
-    bridge.observeMainAgent(notice.orchestrator, notice.childSessions);
+    bridge.observeOrchestrator(notice.orchestrator, notice.childSessions);
     // The first child is the signal, not the mode. A Normal-mode spawn is still
     // delegated work and must appear in the graph; a second publish reuses the
     // lease rather than creating another producer.
