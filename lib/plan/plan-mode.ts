@@ -62,10 +62,10 @@ export function pendingPlanDeferredTools(branch: readonly any[]): string[] {
  * absence really is a bug.
  */
 export const PLAN_TOOLS: ReadonlySet<string> = new Set([
-  // Delegation is read-only for the PARENT when it is research/review/spec work;
-  // the child's purpose decides its tools, not the parent's mode. Taking this
-  // from the capability table means a new plan-safe parent tool cannot be
-  // forgotten here.
+  // The delegation surface is not a write by itself: `agent_spawn` starts a
+  // child, and the child's purpose decides its tools, not the parent's mode.
+  // Taking this from the capability table means a new plan-safe parent tool
+  // cannot be forgotten here.
   ...PLAN_SAFE_DELEGATION_TOOLS,
   // `artifact_edit` is listed for the same reason as `artifact_save`: the sanctioned
   // write in Plan mode is editing workspace artifacts, and a partial edit is

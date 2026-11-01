@@ -11,6 +11,22 @@ test("ad-hoc and research are admitted in Normal and Plan", () => {
   }
 });
 
+test("the mode cannot change what a child is allowed to exist for", () => {
+  // The invariant the docs and the guidance kept contradicting: a mode narrows
+  // the PARENT's tools, never the child's purpose. Compared across every mode
+  // spelling, including one this build does not know, so a future mode cannot
+  // silently reintroduce a mode-dependent spawn table.
+  const baseline = allowedSpawnPurposes("normal");
+  for (const mode of ["plan", "supervise", "orchestrator", undefined, ""]) {
+    assert.deepEqual(allowedSpawnPurposes(mode), baseline, `mode ${String(mode)} changed the admitted purposes`);
+    assert.equal(spawnRefusal(mode, "adhoc"), undefined);
+    assert.equal(spawnRefusal(mode, "research"), undefined);
+    for (const removed of ["spec", "implementation", "review"] as const) {
+      assert.match(spawnRefusal(mode, removed)!, /ad-hoc only/, `mode ${String(mode)} admitted ${removed}`);
+    }
+  }
+});
+
 test("the removed pipeline purposes are refused with a clear reason", () => {
   for (const purpose of ["spec", "implementation", "review"] as const) {
     assert.match(spawnRefusal("normal", purpose)!, /ad-hoc only/);
