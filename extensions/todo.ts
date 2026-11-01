@@ -47,6 +47,22 @@ const LEGACY_ENTRY = "workflow-todo:v1";
 import { PLAN_TOOL, ACT_TOOL, NEXT_TOOL, LEGACY_TOOL, TODO_TOOL_NAMES, isTodoTool } from "../lib/todo-tools.ts";
 export { PLAN_TOOL, ACT_TOOL, NEXT_TOOL, LEGACY_TOOL, TODO_TOOL_NAMES, isTodoTool };
 
+/**
+ * One v2 entry, or undefined if it is a different entry, a different state
+ * version, or another session's record in a child session.
+ *
+ * Both branch scans need this exact rule; keeping it in one place stops the
+ * version and ownership guards from drifting apart between the replay path and
+ * the restore path.
+ */
+function readV2Entry(entry: any, isolate: boolean, ownerSessionId: string | undefined): G.Entry | undefined {
+  if (entry?.type !== "custom" || entry.customType !== ENTRY) return undefined;
+  const data = entry.data as G.Entry & { ownerSessionId?: string };
+  if (!data || data.v !== G.STATE_VERSION) return undefined;
+  if (isolate && data.ownerSessionId && data.ownerSessionId !== ownerSessionId) return undefined;
+  return data;
+}
+
 export type WorkflowMode = "normal" | "plan";
 
 // ── Guidance ────────────────────────────────────────────────────────────────
@@ -221,13 +237,8 @@ export default function todoExtension(pi: ExtensionAPI) {
     const header = ctx.sessionManager.getHeader?.();
     const isolate = childOwned;
     for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type !== "custom") continue;
-      if (entry.customType === ENTRY) {
-        const data = entry.data as G.Entry & { ownerSessionId?: string };
-        if (!data || data.v !== G.STATE_VERSION) continue;
-        if (isolate && data.ownerSessionId && data.ownerSessionId !== header?.id) continue;
-        out.push(data);
-      }
+      const data = readV2Entry(entry, isolate, header?.id);
+      if (data) out.push(data);
     }
     return out;
   };
@@ -244,20 +255,18 @@ export default function todoExtension(pi: ExtensionAPI) {
     const entries: G.Entry[] = [];
     let legacy: G.Plan | undefined;
     for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type !== "custom") continue;
-      const data = entry.data as any;
-      if (entry.customType === ENTRY) {
-        if (!data || data.v !== G.STATE_VERSION) continue;
-        if (isolate && data.ownerSessionId && data.ownerSessionId !== header?.id) continue;
-        entries.push(data as G.Entry);
+      const checked = readV2Entry(entry, isolate, header?.id);
+      if (checked) {
+        entries.push(checked);
         continue;
       }
       // A v1 snapshot is read once, on upgrade, and never written again.
-      if (entry.customType === LEGACY_ENTRY && data?.version === 1) {
-        if (isolate && data.ownerSessionId && data.ownerSessionId !== header?.id) continue;
-        const migrated = G.fromLegacyState(data, header?.id ?? "session", Date.parse(String(entry.timestamp)) || Date.now());
-        if (migrated) legacy = migrated;
-      }
+      if (entry.type !== "custom" || entry.customType !== LEGACY_ENTRY) continue;
+      const data = entry.data as any;
+      if (data?.version !== 1) continue;
+      if (isolate && data.ownerSessionId && data.ownerSessionId !== header?.id) continue;
+      const migrated = G.fromLegacyState(data, header?.id ?? "session", Date.parse(String(entry.timestamp)) || Date.now());
+      if (migrated) legacy = migrated;
     }
     plan = G.replay(entries) ?? legacy;
     draw(ctx);
