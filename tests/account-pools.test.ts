@@ -284,7 +284,7 @@ test("402 budget exceeded errors trigger quota cooldown and probe", () => {
   const health = healthFor(state, "p", "acc-1");
   assert.equal(health.needsProbe, true);
   assert.equal(health.cooldownUntil, 1000 + 2 * 3600 * 1000);
-  assert.equal(selectAccount(p, state, { now: 1000 + 2 * 3600 * 1000 - 1 }), undefined, "account is in cooldown");
+  assert.equal(selectAccount(p, state, { poolName: "p", now: 1000 + 2 * 3600 * 1000 - 1 }), undefined, "account is in cooldown");
 });
 
 test("legacy persisted quota failures require a probe when their cooldown ends", () => {
