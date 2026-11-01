@@ -485,11 +485,11 @@ test("a handoff spec is frozen for a child: it can read the document but not rew
     // Rewriting it is refused, and nothing is staged by the refusal.
     await assert.rejects(
       () => child.call("artifact_save", { id: "handoff-core-abc", title: "Handoff", type: "spec", content: "# replaced" }),
-      /read-only for a worker/,
+      /read-only/,
     );
     await assert.rejects(
       () => child.call("artifact_edit", { id: "handoff-core-abc", mode: "append", content: "\nmore" }),
-      /read-only for a worker/,
+      /read-only/,
     );
     assert.equal(
       await readSidecarArtifact(`${childSession}.artifact.handoff-core-abc.json`),

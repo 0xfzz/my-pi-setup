@@ -21,6 +21,7 @@ import {
   applyArtifactEdit, artifactLineCount, renderArtifactSlice, searchArtifactText, sliceArtifactContent,
 } from "../lib/artifact-state.ts";
 import { isSubagentChildProcess } from "../lib/subagent-context.ts";
+import { isChildReadOnlyArtifact } from "../lib/delegation/handoff-artifact.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardArtifacts } from "../lib/dashboard/integration.ts";
 import { toArtifactRecord, type DashboardArtifactRecord } from "../lib/dashboard/projection.ts";
 
@@ -939,14 +940,15 @@ export default function artifactsExtension(pi: ExtensionAPI) {
       const catalog = resolveCatalog(context);
 
       if (isChild) {
-        // A handoff spec is frozen for the child. It is the document an
-        // independent review pinned by content hash and that the parent
-        // re-reads before every spawn; letting the worker rewrite it would
-        // re-point the approval at text nobody reviewed.
-        if (artId.startsWith("handoff-")) {
+        // The handoff is FROZEN for the child. It is the document the parent
+        // judges the result against, and a rework re-reads it as the contract
+        // that did not change; letting the child rewrite it would let it move
+        // the target it is measured by. The refusal lives here, in the artifact
+        // layer, because a prompt is a request and this must be a rule.
+        if (isChildReadOnlyArtifact(artId)) {
           throw new Error(
-            `Refused: [${artId}] is a handoff spec and is read-only for a worker. `
-            + `If it is wrong, report that with agent_ping and let the parent revise it.`,
+            `Refused: [${artId}] is the handoff you were given and it is read-only. `
+            + `If it is wrong, report that with agent_ping and let the parent re-author it.`,
           );
         }
         const existing = catalog.get(artId);
@@ -1198,10 +1200,10 @@ export default function artifactsExtension(pi: ExtensionAPI) {
         const available = [...catalog.keys()].join(", ") || "none";
         throw new Error(`Artifact [${input.id}] not found. Available artifacts: ${available}`);
       }
-      if (isChild && art.id.startsWith("handoff-")) {
+      if (isChild && isChildReadOnlyArtifact(art.id)) {
         throw new Error(
-          `Refused: [${art.id}] is a handoff spec and is read-only for a worker. `
-          + `If it is wrong, report that with agent_ping and let the parent revise it.`,
+          `Refused: [${art.id}] is the handoff you were given and it is read-only. `
+          + `If it is wrong, report that with agent_ping and let the parent re-author it.`,
         );
       }
 

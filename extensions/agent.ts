@@ -40,7 +40,15 @@ import { Type } from "typebox";
 import { chmodSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 
-import { buildAdhocTicket, sanitizeScope } from "../lib/delegation/handoff.ts";
+import { sanitizeScope } from "../lib/delegation/handoff.ts";
+import {
+  buildHandoffTicket,
+  handoffArtifactId,
+  renderHandoffDocument,
+  reportArtifactId,
+} from "../lib/delegation/handoff-artifact.ts";
+import { artifactSidecarPath, type Artifact } from "../lib/artifact-state.ts";
+import { writeSidecarArtifact } from "./artifacts.ts";
 import {
   ScopeRegistry,
   type ChildAccountability,
@@ -1680,17 +1688,55 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       const rolePrompt = loadRolePrompt(spawnRole, ctx.cwd);
       const childArtifactSessionId = `${ownerSessionId}-adhoc-${scope}`;
 
-      const ticket = role === "planner" && plannerPlanId
-        ? buildPlannerTicket({ scope, planId: plannerPlanId, task: params.task })
-        : parsedPlan && planStep && params.planId
-          ? buildPlanStepTicket({ scope, planId: params.planId, plan: parsedPlan, step: planStep, task: params.task })
-          : buildAdhocTicket({
-              scope,
-              purpose: purpose === "research" ? "research" : "adhoc",
-              task: params.task,
-              laneFiles,
-              acceptanceCriteria,
-            });
+      // ── the handoff is a document, not an inlined prompt ────────────────
+      // Write the frozen handoff artifact BEFORE the pane exists, so the child
+      // starts from a brief it can cite and the parent can judge, and so a
+      // failure to write it leaves no pane behind. A planner/plan-step child
+      // keeps its own ticket shape: those are generated from a plan artifact
+      // that already is the document.
+      const handoffRound = 1;
+      const handoffId = handoffArtifactId(scope, handoffRound);
+      const usesPlanTicket = Boolean(
+        (role === "planner" && plannerPlanId) || (parsedPlan && planStep && params.planId),
+      );
+      let handoffDoc: Artifact | undefined;
+      if (!usesPlanTicket) {
+        const now = new Date().toISOString();
+        handoffDoc = {
+          id: handoffId,
+          title: `Handoff: ${scope}`,
+          type: "spec",
+          content: renderHandoffDocument({
+            scope,
+            round: handoffRound,
+            assignment: params.task,
+            laneFiles,
+            acceptanceCriteria,
+            role: purpose === "research" ? "research" : "worker",
+            budgetMinutes: params.budgetMinutes,
+            guidance: typeof (params as any).guidance === "string" ? (params as any).guidance : undefined,
+          }),
+          version: 1,
+          createdBy: `parent:${ownerSessionId}`,
+          createdAt: now,
+          updatedAt: now,
+          tags: ["handoff", scope],
+          scope,
+        };
+      }
+
+      const ticket = usesPlanTicket
+        ? role === "planner" && plannerPlanId
+          ? buildPlannerTicket({ scope, planId: plannerPlanId, task: params.task })
+          : buildPlanStepTicket({ scope, planId: params.planId!, plan: parsedPlan!, step: planStep!, task: params.task })
+        : buildHandoffTicket({
+            scope,
+            round: handoffRound,
+            handoffId,
+            role: purpose === "research" ? "research" : "worker",
+            laneFiles,
+            acceptanceCriteria,
+          });
 
       let plan: LaunchPlan;
       try {
@@ -1722,6 +1768,25 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
 
       materializePlan(plan);
       chmodPrivate(join(artifactsBase(ctx), childArtifactSessionId));
+
+      // The handoff sidecar is named from the child's session file, which only
+      // exists once the launch plan does. The child's catalog reads sidecars from
+      // this directory, so writing it here is what makes the handoff reachable by
+      // `artifact_recall` inside the child.
+      if (handoffDoc) {
+        try {
+          await writeSidecarArtifact(artifactSidecarPath(plan.sessionFile, handoffDoc.id), handoffDoc);
+        } catch (error: any) {
+          // A spawn whose handoff could not be written must not start: the child
+          // would work from a ticket it cannot re-read, and the parent could not
+          // cite the brief it judges. Close nothing yet -- no pane exists.
+          return text(
+            `Refused: the handoff artifact \`${handoffId}\` could not be written (${error?.message ?? error}). `
+              + `No pane was opened. The handoff is the document the child works from and the parent judges against, so a spawn without it is untraceable.`,
+            { error: "handoff-write-failed", handoffId, reason: String(error?.message ?? error) },
+          );
+        }
+      }
 
       let started;
       try {
@@ -1765,7 +1830,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         running,
         scope,
         laneFiles,
-        undefined,
+        // The handoff id is durable row state: the receipt gate re-reads it to
+        // prove the child actually opened the document it was given.
+        handoffDoc ? handoffId : undefined,
         params.budgetMinutes ? params.budgetMinutes * 60_000 : undefined,
         { criteria: acceptanceCriteria, revision: 1 },
         { purpose: registryPurpose(purpose), accountability },
@@ -1778,6 +1845,12 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       return text(
         [
           `Subagent "${displayName}" launched (scope: ${scope}, ad-hoc).`,
+          ...(handoffDoc
+            ? [
+                `Handoff: \`${handoffId}\` (frozen; the child reads it with artifact_recall and cannot rewrite it).`,
+                `Report: the child writes \`${reportArtifactId(scope, handoffRound)}\` — read it before accepting.`,
+              ]
+            : []),
           `Pane: ${started.paneId}`,
           `Lane: ${laneFiles.join(", ") || "not declared"}`,
           `Work unit: ${workUnitKey} — ${delegationReason}`,
