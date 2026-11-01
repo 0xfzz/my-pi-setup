@@ -55,7 +55,7 @@ directory below answers "what lives here?" without needing an explanation.
 | --- | --- |
 | `extensions/` | The installable extensions listed in `package.json` → `pi.extensions`. Nothing else: helpers belong in `lib/`. |
 | `lib/` | Shared implementation, not loaded as extensions. Subdivided by concept — see below. |
-| `tests/` | `node:test` suites, mirroring the source tree: `tests/*.test.ts`, `tests/provider/`, `tests/sidebar/`, `tests/orchestrator/`. Add a group to `package.json` → `test` when you add a directory. |
+| `tests/` | `node:test` suites, mirroring the source tree: `tests/*.test.ts`, `tests/provider/`, `tests/sidebar/`, `tests/delegation/`. Add a group to `package.json` → `test` when you add a directory. |
 | `scripts/` | Repo tooling: the dashboard build, the WASM build, the VCC mirror, and the dashboard dev preview server. |
 | `web/` | The browser dashboard's static sources and build output (see its `README.md`). |
 | `vendor/` | Third-party code kept in-tree: `pi-herdr-subagents` (see its `VENDORED.md`) and `antigravity`. A source snapshot — read `VENDORED.md` before touching it. |

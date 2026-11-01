@@ -13,7 +13,7 @@
     "pi-extension",
     "herdr",
     "subagents",
-    "orchestrator"
+    "delegation"
   ],
   "pi": {
     "extensions": [

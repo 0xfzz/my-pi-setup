@@ -31,7 +31,7 @@ Pi supplies them at runtime; `npm install` fetches them locally so the tests can
 ## Tests
 
 - `npm test` runs both suites (core + main agent). Prefer `npm run test:core` or
-  `npm run test:orchestrator` while iterating.
+  `npm run test:delegation` while iterating.
 - Tests must not need credentials, network, inference, or a live Pi session. Use the
   in-process scripted provider pattern already present in the suites.
 - A bug fix lands with a regression test that fails without the fix. Name the failure

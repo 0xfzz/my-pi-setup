@@ -31,7 +31,7 @@ A non-zero `knip` count here is not automatically a bug:
 
 - **Unused exports** are the real target. `lib/` is not loaded by Pi, so an export
   nothing imports is genuinely dead, and the 41 are spread across
-  `lib/orchestrator/`, `lib/vcc/` and `lib/ui/`. They should be removed file by
+  `lib/delegation/`, `lib/vcc/` and `lib/ui/`. They should be removed file by
   file, not in one sweep.
 - **Unused dependencies** need a decision, not a reflex. `highlight.js`,
   `tree-sitter` and `tree-sitter-bash` back features the dashboard or code views
@@ -41,7 +41,7 @@ A non-zero `knip` count here is not automatically a bug:
   in `package.json`.
 - **Unused files** includes two `tests/fixtures/` modules that a browser or mount
   probe loads dynamically, so type-based reachability misses them.
-- **Duplication** is 0.57% and mostly `tests/orchestrator/` setup scaffolding. The
+- **Duplication** is 0.57% and mostly `tests/delegation/` setup scaffolding. The
   `--threshold 12` setting already tolerates it, so this is informational.
 
 ## Configuration hints

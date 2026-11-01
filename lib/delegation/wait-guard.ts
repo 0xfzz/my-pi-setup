@@ -25,8 +25,6 @@
  * is the difference between a guard and an obstacle.
  */
 
-export const WAIT_GUARD_SETTING = "delegation.suppressWaitGuard";
-
 /** The sentence the parent gets instead of the wait. Kept here so tests pin it. */
 export const WAIT_GUARD_REASON =
   "Refused: the parent must not wait. A child's completion, its question and its budget/stall all arrive as "
