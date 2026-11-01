@@ -1,27 +1,39 @@
 /**
- * agent — ad-hoc delegation parent.
+ * agent — the parent side of delegation.
  *
- * Three rules shape this extension, and they are enforced structurally rather
+ * Vocabulary, because the codebase used to blur it: the PARENT AGENT is the
+ * session that spawns, a CHILD AGENT (or subagent) is one it spawned, and a
+ * HANDOFF is the document they exchange.
+ *
+ * Four rules shape this extension, and they are enforced structurally rather
  * than asked for in a prompt:
  *
- * 1. THE ORCHESTRATOR ONLY HANDS OFF AND REVIEWS.
- *    Its product is a handoff spec (agent_handoff), and its second act is a verdict
- *    (agent_review). It has no edit/write tool. A parent that implements
- *    produces diffs nobody owns and a review that is not independent of the work.
+ * 1. EVERY MODE MAY SPAWN; THE MODE NARROWS THE PARENT, NOT THE CHILD.
+ *    Normal and Plan reach the same `agent_spawn`. What a mode restricts is the
+ *    parent's own tools, never the child's purpose -- see lib/spawn-policy.ts.
  *
- * 2. A CHILD RECEIVES ITS OWN HANDOFF AND NOTHING ELSE.
- *    The spec is *inlined* into the child's ticket. No sibling scope name, no
- *    sibling path, no directory a child could enumerate. `PI_SUBAGENT_SPEC` used
- *    to be exported into every child's environment while nothing ever read it, so
- *    specs were silently never delivered and children guessed their lane. Handing
- *    over a *path* would only trade that bug for a worse one: all children share a
- *    UID, so a path given to one child is a path the others can open by guessing.
- *    Non-disclosure is the only boundary that actually holds.
+ * 2. THE PARENT OWNS EVERY RESULT IT CAUSED TO EXIST.
+ *    A finished child is not an accepted result. Its work-unit slot stays
+ *    occupied until the parent records a verdict with `agent_accept_result`
+ *    (accepted needs checked evidence), and a missed acceptance criterion is
+ *    answered by re-spawning the work against the SAME frozen handoff with the
+ *    defect list -- never by editing the handoff. See lib/delegation/admission.ts
+ *    and lib/delegation/scope-registry.ts.
  *
- * 3. UNCERTAINTY ESCALATES: child → parent → user.
- *    A child that does not know pings the parent. A parent that does
- *    not know asks the user. A cancelled dialog is never consent, and a settled
- *    decision is not renegotiated. See lib/escalation.ts.
+ * 3. A CHILD CANNOT MODIFY ITS OWN HANDOFF.
+ *    The handoff is a scoped artifact the child may recall but never rewrite; a
+ *    wrong handoff is escalated, not corrected in place. No sibling scope name,
+ *    no sibling path, no directory a child could enumerate: all children share a
+ *    UID, so a path given to one child is a path its siblings can open by
+ *    guessing. Non-disclosure is the only boundary that actually holds.
+ *
+ * 4. UNCERTAINTY ESCALATES: child → parent → user.
+ *    A child that does not know pings the parent. A parent that does not know
+ *    asks the user. A cancelled dialog is never consent, and a settled decision
+ *    is not renegotiated. See lib/delegation/escalation.ts.
+ *
+ * The parent is event-driven: a child's completion, question or watchdog
+ * interrupt re-triggers it. It never sleeps or polls (RETRIGGER_CONTRACT).
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -1413,7 +1425,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
    * A scope for a spawn with no handoff to name it.
    *
    * Deterministic from the name or the first words of the task, so `agent_running`,
-   * `agent_steer` and `agent_check` all address the same unit. `sanitizeScope` is
+   * `agent_steer` and `agent_accept_result` all address the same unit. `sanitizeScope` is
    * allowed to reject the slug ("global" is reserved), in which case the neutral
    * fallback is still a valid scope rather than a crash after the pane started.
    */
@@ -1466,7 +1478,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       ),
       planId: Type.Optional(Type.String({ description: "Worker steps: plan artifact id from a planner child. Its step supplies the lane and criteria." })),
       stepId: Type.Optional(Type.String({ description: "Worker steps: which plan step to execute. Required when the plan has more than one step." })),
-      handoffId: Type.Optional(Type.String({ description: "Handoff id returned by agent_handoff (its scope is accepted too). Omit it for an ad-hoc spawn." })),
+      handoffId: Type.Optional(Type.String({ description: "Removed: every spawn is ad-hoc. Describe the work in `task` and state a delegationReason. Passing an id is refused explicitly rather than silently reinterpreted." })),
       purpose: Type.Optional(
         Type.Union(
           [
@@ -1484,7 +1496,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       ),
       laneFiles: Type.Optional(
         Type.Array(Type.String(), {
-          description: "Ad-hoc only: files this child owns. Omit it and agent_check reports lane: not-declared instead of inventing a lane.",
+          description: "Ad-hoc only: files this child owns. Omit it and the result carries no lane instead of an invented one; acceptance still gates on the criteria you state.",
         }),
       ),
       acceptanceCriteria: Type.Optional(
@@ -1823,8 +1835,8 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
   function reviewerContactRefusal(child: ScopedChild | undefined): string | undefined {
     if (!isSpecReviewer(child)) return undefined;
     return `"${child!.name}" is an independent specification reviewer (run ${child!.reviewRunId ?? "unknown"}). `
-      + `Author instructions or answers would contaminate the review. Start a fresh review of the pinned revision with `
-      + `agent_spec_review({ action: "start", ... }); this session stays recorded for audit.`;
+      + `Author instructions or answers would contaminate the review. Spawn a fresh reviewer instead; `
+      + `this session stays recorded for audit.`;
   }
 
   /**
@@ -1861,7 +1873,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     if (!existsSync(params.sessionPath)) {
       return text(
         `Refused to resume: session file ${params.sessionPath} does not exist. ` +
-          `Check agent_running for what is actually active; if the scope was cancelled, close it out with agent_review instead of resuming it.`,
+          `Check agent_running for what is actually active; if the scope was cancelled, close it out with agent_close instead of resuming it.`,
         { error: "session-not-found", sessionPath: params.sessionPath },
       );
     }

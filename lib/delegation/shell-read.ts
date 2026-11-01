@@ -1,17 +1,17 @@
 /**
  * shell-read.ts — repository history for a reader, without a general shell.
  *
- * The grammar is `readOnlyShellCommand` from `lib/plan-shell.ts`: the same closed
- * language the Plan mode and the supervisor already rely on. It re-quotes every
- * argument, so the sanitized string contains no expansion, redirection, heredoc
- * or executable pipeline. This module adds the second half a reviewer needs: the
- * *paths* inside the command are checked against the reviewer's roots before
- * anything runs.
+ * The grammar is `readOnlyShellCommand` from `lib/plan/plan-shell.ts`: the same
+ * closed language Plan mode relies on. It re-quotes every argument, so the
+ * sanitized string contains no expansion, redirection, heredoc or executable
+ * pipeline. This module adds the second half a reader needs: the *paths* inside
+ * the command are checked against the child agent's roots (and the parent's
+ * control-plane directories) before anything runs.
  *
  * `git log`, `git diff`, `rg`, `find`, `cat` answer questions a plain `read`
  * cannot; `git checkout`, `rm`, `>` and `$(…)` are refused by construction.
  */
-import { pathPolicyProblem } from "./review-policy.ts";
+import { pathPolicyProblem } from "./path-policy.ts";
 import { readOnlyShellCommand } from "../plan/plan-shell.ts";
 
 export interface ShellReadOptions {

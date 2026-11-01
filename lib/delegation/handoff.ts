@@ -38,13 +38,6 @@
  * and is never handed to the child.
  */
 
-/** What a reviewed design pinned: the run, its target hash, and an optional member. */
-export interface DesignRef {
-  runId: string;
-  targetHash: string;
-  memberId?: string;
-}
-
 export class HandoffError extends Error {}
 
 /** A scope is a work-unit slug. It is the isolation key, so it must be exact. */
@@ -64,54 +57,6 @@ export function sanitizeScope(scope: string): string {
     );
   }
   return cleaned;
-}
-
-export interface HandoffSpec {
-  /** Work-unit slug. Unique per concurrent child. */
-  scope: string;
-  /** Human-readable one-line goal. */
-  goal: string;
-  /** What "done" means. Each must be evidenced in the child's report. */
-  acceptanceCriteria: string[];
-  /** Files this child owns. The review gate checks the diff against this. */
-  laneFiles: string[];
-  /** Files this child must not touch, even if it believes it should. */
-  outOfLaneFiles?: string[];
-  /**
-   * Scopes this work unit depends on.
-   *
-   * `agent_spawn` refuses a dependent until each one has an `approved` review, so a
-   * child cannot build against an interface nobody has agreed to yet. The graph is
-   * data rather than prose because "B waits for A" written in `guidance` is a
-   * sentence, and a sentence cannot refuse a spawn.
-   */
-  dependsOn?: string[];
-  /** What the report must contain beyond a prose summary. */
-  reportShape?: string;
-  /**
-   * The command that decides the review (`agent_check` runs it).
-   *
-   * Declared at authoring time rather than chosen at review time: a verification
-   * command picked after seeing the diff can be picked to pass. It is restricted
-   * to test/typecheck runners by `verifyCommandProblem` in `brief.ts`.
-   */
-  verifyCommand?: string;
-  /** Parent notes: conventions, interfaces, prior decisions. */
-  guidance?: string;
-  /** Interfaces this scope must conform to (consumed by other scopes). */
-  interfaces?: string[];
-  /** Global vision this scope refines. Never contradicts it. */
-  vision?: string;
-  /**
-   * The independent specification review backing this work unit.
-   *
-   * Optional on purpose: existing handoffs must keep working. When present,
-   * `agent_spawn` refuses a run that is not ready or whose target has changed, so
-   * a worker cannot be started against an approval that no longer describes the
-   * document. Presence never authorises implementation by itself — it only binds
-   * the work unit to a reviewed revision.
-   */
-  designRef?: DesignRef;
 }
 
 /**

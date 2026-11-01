@@ -1,37 +1,34 @@
 /**
- * spawn-policy.ts — which spawn shapes a mode admits, and what a child gets.
+ * spawn-policy.ts — which spawn shapes every mode admits, and what a child gets.
  *
- * Delegation is not a mode. Every mode reaches the same `agent_spawn`, so
- * "may this spawn happen?" is answered from (mode, purpose) rather than from
- * which tool name happens to be registered.
- * Keeping the table here means a mode cannot drift from the spawn tool: both
- * read one function.
+ * Delegation is not a mode. Normal and Plan both reach the same `agent_spawn`,
+ * so "may this spawn happen?" is a property of the (purpose, depth) pair and of
+ * the admission ledger — never of which tool name happens to be registered, and
+ * never of the parent's mode. A mode narrows the PARENT's own tools; it does not
+ * quietly narrow what a child is allowed to exist for. Before this rule, Plan
+ * refused ad-hoc spawns in prose while the code admitted them, and the parent
+ * could not tell which of the two was true.
  *
  * Two invariants:
  *
  *   1. Purpose is resolved BEFORE any registry row or pane exists, so a refused
  *      spawn leaves no trace.
- *   2. Plan mode is read-only for the PARENT. Delegating research or review is
- *      not implementation; delegating work that writes files is.
+ *   2. A refused purpose names its successor value. A caller that reaches for a
+ *      removed pipeline shape is told what to use instead of having its argument
+ *      silently reinterpreted.
  */
 
 import { MAX_DELEGATION_DEPTH, type SpawnPurpose } from "./delegation-tools.ts";
 
 /**
- * Purposes this mode admits.
+ * Purposes every mode admits, in both Normal and Plan.
  *
- * - Normal: everything, including an ad-hoc child with no handoff.
- * - Plan: research, review and spec work. Implementation and ad-hoc spawns are
- *   refused because the parent is read-only; an explicit execution approval
- *   lifts that for this call.
- * - The parent role: handoff-backed implementation plus the two reader
- *   shapes the mode itself needs. `research` is how the parent investigates
- *   without its own shell; `review` is the QA child that judges a worker's
- *   result. Both are read-only, so admitting them cannot produce a diff nobody
- *   owns. An ad-hoc child still has no lane and stays refused.
- *   `implementation` is the same spawn shape as `spec` when a handoff backs it:
- *   `registryPurpose` already stores both as "implementation", so refusing the
- *   explicit spelling only taught callers to omit a correct argument.
+ * - `adhoc`   — a worker that may write inside its declared lane.
+ * - `research` — a read-only reader: no write/edit/patch, no parent surface.
+ *
+ * The mode argument is kept in the signature because callers pass it and a
+ * future mode may narrow the PARENT; it is deliberately unused for the child's
+ * purpose, so the two cannot drift apart again.
  */
 export function allowedSpawnPurposes(
   _modeId: string | undefined,
@@ -49,7 +46,8 @@ export function spawnRefusal(
   _hasHandoff = false,
 ): string | undefined {
   if (purpose === "adhoc" || purpose === "research") return undefined;
-  return `Spawn purpose "${purpose}" was removed: delegation is ad-hoc only (adhoc or research).`;
+  return `Spawn purpose "${purpose}" was removed: delegation is ad-hoc only. `
+    + `Use "adhoc" for a worker (it writes inside its lane) or "research" for a read-only reader.`;
 }
 
 /**
