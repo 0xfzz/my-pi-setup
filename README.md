@@ -47,14 +47,35 @@ diff record, not documentation.
 
 ## Repository layout
 
+Every top-level directory holds a class of thing, not a single file (`vcc/`, which held
+one, is gone — its entry point lives in `lib/vcc/` with the policy it wires up). Every
+directory below answers "what lives here?" without needing an explanation.
+
 | Path | What lives there |
 | --- | --- |
-| `extensions/` | The installable extensions listed in `package.json` → `pi.extensions`. |
-| `lib/` | Shared implementation (todo state machine, artifacts, orchestrator registry, VCC adapter). Not loaded as extensions. |
-| `tests/` | `node:test` suites: `tests/*.test.ts` plus the orchestrator suite in `tests/orchestrator/`. |
-| `vendor/` | Third-party code kept in-tree: `pi-herdr-subagents` (see its `VENDORED.md`) and `antigravity`. |
-| `docs/` | One document per part of the surface, indexed above; `docs/patches/` holds the diffs applied to installed packages. |
-| `crates/` | Optional Rust/WASM ascii animation engine (`npm run build:wasm`). |
+| `extensions/` | The installable extensions listed in `package.json` → `pi.extensions`. Nothing else: helpers belong in `lib/`. |
+| `lib/` | Shared implementation, not loaded as extensions. Subdivided by concept — see below. |
+| `tests/` | `node:test` suites, mirroring the source tree: `tests/*.test.ts`, `tests/provider/`, `tests/sidebar/`, `tests/orchestrator/`. Add a group to `package.json` → `test` when you add a directory. |
+| `scripts/` | Repo tooling: the dashboard build, the WASM build, the VCC mirror, and the dashboard dev preview server. |
+| `web/` | The browser dashboard's static sources and build output (see its `README.md`). |
+| `vendor/` | Third-party code kept in-tree: `pi-herdr-subagents` (see its `VENDORED.md`) and `antigravity`. A source snapshot — read `VENDORED.md` before touching it. |
+| `docs/` | One document per part of the surface, indexed above, each following [`docs/TEMPLATE.md`](docs/TEMPLATE.md); `docs/patches/` holds the diffs applied to installed packages. |
+| `crates/` | Optional Rust/WASM helpers (`npm run build:wasm`, `npm run build:nowrite`). |
+
+Inside `lib/`, each directory is one concept; loose files at the root are the ones that
+truly cut across all of them (tool policy, naming, clipboard, the intent graph):
+
+| `lib/` subdirectory | Holds |
+| --- | --- |
+| `provider/` | Providers, their models, accounts, and the router that chooses between them. |
+| `sidebar/` | The right rail: layout, resize, channel, selection, animation, on-demand rendering. |
+| `plan/` | Plan mode's branch-local policy and the closed shell grammar it enforces. |
+| `popup/` | The shared popup frame and the editor composition layer that drives it. |
+| `ui/` | The specific dialogs built on that frame (ask, provider settings, router settings). |
+| `orchestrator/` | Delegated-work machinery: admission, handoff, review policy, escalation, the registry. |
+| `vcc/` | Compaction policy, budget, telemetry, and the deployed entry point. |
+| `dashboard/` | Dashboard protocol, projection, server and lifecycle. |
+| `selection/` | Terminal text selection and OSC 8 hyperlink handling. |
 
 ## Verification
 
