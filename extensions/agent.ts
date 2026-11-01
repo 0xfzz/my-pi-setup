@@ -368,11 +368,24 @@ export default function agentExtension(pi: ExtensionAPI, deps?: MainAgentDeps): 
    * Registry sidecar, keyed by session id.
    *
    * The session directory is shared by every session — and every child — started in
-   * the same cwd, so a bare `orchestrator-registry.json` was one file for all of them
+   * the same cwd, so a bare `main-agent-registry.json` was one file for all of them
    * and each writer raced every other. A child gets no path at all: it owns no
    * children, no handoffs and no escalations.
    */
   function registryPath(): string | null {
+    if (isChildSession || !sessionDir || !ownerSessionId) return null;
+    return join(sessionDir, `main-agent-registry-${ownerSessionId}.json`);
+  }
+
+  /**
+   * The retired filename for the same keyed sidecar.
+   *
+   * A session started before the rename left its registry under the old name.
+   * Reading it once on restore keeps its running children, pending escalations and
+   * spec reviews instead of silently forgetting them; the next write lands under
+   * the new name, and the old file is left in place as history.
+   */
+  function legacyRegistryPath(): string | null {
     if (isChildSession || !sessionDir || !ownerSessionId) return null;
     return join(sessionDir, `orchestrator-registry-${ownerSessionId}.json`);
   }
@@ -438,9 +451,11 @@ export default function agentExtension(pi: ExtensionAPI, deps?: MainAgentDeps): 
   const settledNotified = new Set<string>();
 
   function restorePersistedState(): void {
+    // Prefer the current name; fall back to the pre-rename file for one release so
+    // an in-flight session is not silently forgotten on upgrade.
     const path = registryPath();
     if (!path) return;
-    const snapshot = loadRegistrySnapshot(path);
+    const snapshot = loadRegistrySnapshot(path) ?? loadRegistrySnapshot(legacyRegistryPath()!);
     if (!snapshot) return;
     registry.loadSnapshot(snapshot);
     for (const esc of snapshot.escalations ?? []) {

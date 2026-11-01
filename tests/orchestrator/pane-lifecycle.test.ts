@@ -419,7 +419,7 @@ describe("orphan sweep is attributed, never guessed", () => {
     const dir = await mkdtemp(join(tmpdir(), "orch-sweep-"));
     try {
       await writeFile(
-        join(dir, "orchestrator-registry-parent-sweep.json"),
+        join(dir, "main-agent-registry-parent-sweep.json"),
         JSON.stringify({
           version: 1,
           savedAt: new Date(0).toISOString(),
