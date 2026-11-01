@@ -6,14 +6,14 @@
  * harness exists so the UI can be exercised without a live Pi session. It has
  * no authentication and must never be exposed beyond localhost.
  *
- *   node web/dashboard/dev-server.mjs [--port 4789]
+ *   node scripts/dev-dashboard.mjs [--port 4789]
  */
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const here = resolve(fileURLToPath(new URL(".", import.meta.url)));
+const here = resolve(fileURLToPath(new URL("../web/dashboard/", import.meta.url)));
 const dashboardDir = here;
 const portArgIndex = process.argv.indexOf("--port");
 const port = Number(portArgIndex > 0 ? process.argv[portArgIndex + 1] : process.env.PORT || 4789);
@@ -148,7 +148,7 @@ const artifacts = {
       "",
       "```bash",
       "npm run build:dashboard",
-      "node web/dashboard/dev-server.mjs --port 4789",
+      "node scripts/dev-dashboard.mjs --port 4789",
       "```",
       "",
       "## Open question",
@@ -217,8 +217,8 @@ const sessions = {
           purpose: "implementation",
           task: "Refresh the preview fixtures so every drawer state is reachable.",
           handoffId: "h-fixture",
-          laneFiles: ["web/dashboard/dev-server.mjs"],
-          lastMilestoneFiles: ["web/dashboard/dev-server.mjs", "web/dashboard/README.md"],
+          laneFiles: ["scripts/dev-dashboard.mjs"],
+          lastMilestoneFiles: ["scripts/dev-dashboard.mjs", "web/dashboard/README.md"],
           artifactIds: ["preview-fixtures"],
           startedAt: ago(96),
           updatedAt: stamp(14),
@@ -378,7 +378,7 @@ function summaryOf(view) {
 function viewOf(view) {
   return {
     ...view,
-    artifacts: Object.values(view.artifacts).map(({ content, ...summary }) => summary),
+    artifacts: Object.values(view.artifacts).map(({ content: _content, ...summary }) => summary),
   };
 }
 

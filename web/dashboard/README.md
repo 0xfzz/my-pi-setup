@@ -203,7 +203,7 @@ and API error mapping.
 
 ```bash
 npm run build:dashboard
-node web/dashboard/dev-server.mjs --port 4789
+node scripts/dev-dashboard.mjs --port 4789
 ```
 
 The preview server has a mock API and no authentication; keep it on localhost.
