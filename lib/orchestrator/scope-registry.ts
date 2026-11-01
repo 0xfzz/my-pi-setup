@@ -16,7 +16,7 @@ export type CloseReason =
   | "auto-close-terminal"
   | "resume-superseded"
   | "scope-cancelled"
-  /** Closed by /agent-pause, intact for /agent-resume to redeploy. */
+  /** Closed while suspended, intact so its run can be redeployed later. */
   | "paused"
   /** Paused, but its session file is gone: nothing left to redeploy. */
   | "paused-missing";
@@ -230,10 +230,8 @@ export interface RegistrySnapshot {
   reviews: ReviewRecord[];
   /** Every pane this orchestrator ever opened, so orphans stay attributable. */
   panes?: string[];
-  /**
-   * Set by /agent-pause, cleared by /agent-resume. A paused orchestrator refuses
-   * new spawns — "paused" that still accepts work is not a pause.
-   */
+  /** Retained for sidecar compatibility with sessions written before the
+   *  pause commands were removed; nothing sets it any more. */
   paused?: boolean;
   /** Writes the orchestrator made itself, used to compute review independence. */
   authorWrites?: AuthorWrite[];
@@ -364,25 +362,6 @@ export class ScopeRegistry {
   /** Shell invocations at or after `sinceIso` (inclusive). */
   public getAuthorShells(sinceIso?: string): string[] {
     return this.authorShells.filter((at) => !sinceIso || at >= sinceIso);
-  }
-
-  public setPaused(paused: boolean): void {
-    this.paused = paused;
-  }
-
-  public isPaused(): boolean {
-    return this.paused;
-  }
-
-  /**
-   * Children /agent-pause closed and /agent-resume can redeploy.
-   *
-   * Deliberately keyed on the close reason, not on a separate list: a resume
-   * supersedes the row it came from, so a failed redeploy leaves the marker in
-   * place and a later attempt is still possible.
-   */
-  public getPausedChildren(): ScopedChild[] {
-    return this.getAllChildren().filter((child) => child.status === "closed" && child.closeReason === "paused");
   }
 
   public getScopeForSession(sessionFile: string): string | undefined {

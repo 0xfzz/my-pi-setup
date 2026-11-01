@@ -1,9 +1,9 @@
 /**
  * spawn-policy.ts — which spawn shapes a mode admits, and what a child gets.
  *
- * Delegation is not a mode. Normal, Plan, Supervise and Orchestrator all reach
- * the same `agent_spawn`, so "may this spawn happen?" has to be answered from
- * (mode, purpose) rather than from which tool name happens to be registered.
+ * Delegation is not a mode. Every mode reaches the same `agent_spawn`, so
+ * "may this spawn happen?" is answered from (mode, purpose) rather than from
+ * which tool name happens to be registered.
  * Keeping the table here means a mode cannot drift from the spawn tool: both
  * read one function.
  *
@@ -17,14 +17,18 @@
 
 import { MAX_DELEGATION_DEPTH, type SpawnPurpose } from "./delegation-tools.ts";
 
-export type SpawnMode = "normal" | "plan" | "supervise" | "orchestrator";
+export type SpawnMode = "normal" | "plan";
 
-/** Collapse an unknown/absent mode id onto the four shapes this table knows. */
+/**
+ * Collapse an unknown/absent mode id onto the two modes this package defines.
+ *
+ * Delegation is not a mode: every mode reaches the same `agent_spawn`. The old
+ * "supervise"/"orchestrator" ids are gone, and an unknown id is Normal — the
+ * safest reading, since Normal is the least restricted and Plan is enforced
+ * separately from the branch.
+ */
 export function normalizeSpawnMode(modeId: string | undefined): SpawnMode {
-  if (modeId === "plan") return "plan";
-  if (modeId === "supervise") return "supervise";
-  if (modeId === "orchestrator") return "orchestrator";
-  return "normal";
+  return modeId === "plan" ? "plan" : "normal";
 }
 
 /** The honest default when the caller did not name a purpose. */
@@ -104,18 +108,6 @@ export function readerPurpose(purpose: SpawnPurpose): "research" | "review" | un
 /** The value stored on the registry row. `spec` is implemented by a worker. */
 export function registryPurpose(purpose: SpawnPurpose): "implementation" | "review" | "research" | "adhoc" {
   return purpose === "spec" ? "implementation" : purpose;
-}
-
-/**
- * Orchestrator/Supervise implementation is spec-driven.
- *
- * Normal and Plan keep their existing delegation policy. In the two supervisor
- * modes a worker may only be admitted or resumed when its handoff carries a
- * ready, unchanged independent specification review.
- */
-export function requiresReviewedSpec(modeId: string | undefined): boolean {
-  const mode = normalizeSpawnMode(modeId);
-  return mode === "orchestrator" || mode === "supervise";
 }
 
 /** What `agent_brief` and `agent_check` should say when no lane was declared. */

@@ -425,7 +425,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
           reviews: registry.getReviews(),
           escalations: escalations.all(),
           specReviews: [],
-          paused: registry.isPaused(),
+          paused: false,
         }),
         childSessions: projectChildProvenance(children),
       });
@@ -1491,15 +1491,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       budgetMinutes: Type.Optional(Type.Number({ description: "Wall-clock budget in minutes. The watchdog interrupts the child at the budget and asks the parent to decide. Default 30." })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      if (registry.isPaused()) {
-        // A pause that still accepts work is not a pause. Checked before the
-        // handoff lookup so a refused spawn writes nothing at all.
-        return text(
-          `The orchestrator is paused (/agent-pause): no child was spawned and nothing was written. `
-            + `${registry.getPausedChildren().length} paused child(ren) are waiting for /agent-resume.`,
-          { error: "orchestrator-paused", paused: registry.getPausedChildren().map((c) => c.id) },
-        );
-      }
       // ── depth and breadth are hard stops ─────────────────────────────────
       // Checked before the mode/purpose gate, so a nested or over-capacity call
       // cannot leave a row, a pane, a watcher or a ticket behind.
@@ -2964,154 +2955,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
   }
 
   // ── Commands ──────────────────────────────────────────────────────────────
-  // ── /agent-pause · /agent-resume ─────────────────────────────────────────────
-  /**
-   * Pausing is a lifecycle operation, not a mode.
-   *
-   * It closes every child, refuses new spawns, and keeps each row — with its
-   * session file, task, lane, handoff and agent — so the same run can be put
-   * back. Resume therefore replays what was actually paused instead of guessing
-   * a fresh plan; each child comes back on the conversation it already had.
-   */
-  function orchestratorMode(_ctx: ExtensionContext): { ok: true; mode: string } | { ok: false; reason: string } {
-    if (isChildSession) return { ok: false, reason: "a delegated child owns no orchestrator to pause" };
-    return { ok: true, mode: "normal" };
-  }
-
-  /**
-   * `/agent-resume` also works outside orchestrator mode, but only to resolve a
-   * pause this session already owns. Otherwise a user who switched to normal to
-   * fix something would have to switch back just to bring the run up.
-   */
-  function resumable(ctx: ExtensionContext): { ok: true; mode: string | null } | { ok: false; reason: string } {
-    const status = orchestratorMode(ctx);
-    if (status.ok) return status;
-    if (registry.isPaused() || registry.getPausedChildren().length > 0) return { ok: true, mode: null };
-    return status;
-  }
-
-  function pauseSummary(
-    closed: string[],
-    stillLive: Array<{ name: string; reason: string }>,
-    mode: string,
-    cancelledReviewers: string[],
-  ): string {
-    return [
-      `Orchestrator paused (${mode}). New spawns are refused until /agent-resume.`,
-      closed.length ? `Closed ${closed.length} child(ren):\n${closed.join("\n")}` : "No running children were open.",
-      stillLive.length
-        ? `Still live — close failed, so the watchdog keeps retrying (these are NOT paused):\n${stillLive.map((c) => `${c.name} — ${c.reason}`).join("\n")}`
-        : "",
-      cancelledReviewers.length
-        ? `Independent reviewers were closed and cannot resume (resuming would attach author context). Restart them with agent_spec_review:\n${cancelledReviewers.join("\n")}`
-        : "",
-      closed.length > cancelledReviewers.length
-        ? "Every paused worker keeps its session file, so /agent-resume continues the same conversation."
-        : "",
-    ].filter(Boolean).join("\n\n");
-  }
-
-  async function pauseOrchestrator(ctx: ExtensionContext): Promise<void> {
-    const status = orchestratorMode(ctx);
-    if (!status.ok) {
-      ctx.ui.notify(`/agent-pause needs orchestrator mode (/mode orchestrator): ${status.reason}. Nothing was closed.`, "error");
-      return;
-    }
-
-    const active = registry.getAllChildren().filter((c) => c.status === "running" || c.status === "blocked");
-    const closed: string[] = [];
-    const cancelledReviewers: string[] = [];
-    const stillLive: Array<{ name: string; reason: string }> = [];
-    for (const child of active) {
-      // Graceful first: stop the current turn before its pane disappears, so the
-      // child is not killed mid-write. Best effort — the close is what ends it.
-      await interruptPane(child);
-      // A reviewer cannot be resumed by design. Keeping it in the paused set would
-      // advertise a resume that must always be refused, so it is cancelled
-      // honestly and the run record stays for audit.
-      const reviewer = isSpecReviewer(child);
-      const settled = await settleChild(child, reviewer ? "scope-cancelled" : "paused");
-      if (settled.ok) {
-        closed.push(`${child.name} [${child.id}] scope=${child.scope}`);
-        if (reviewer) cancelledReviewers.push(`${child.name} [${child.id}] run=${child.reviewRunId ?? "unknown"}`);
-      } else {
-        stillLive.push({ name: `${child.name} [${child.id}]`, reason: settled.reason });
-      }
-    }
-
-    // Even with nothing open, the pause is the point: no new work starts while
-    // the user is away. A failed close is not paused — it stays ticked.
-    registry.setPaused(true);
-    persistState();
-    ctx.ui.notify(pauseSummary(closed, stillLive, status.mode, cancelledReviewers), stillLive.length ? "warning" : "info");
-  }
-
-  function resumeNotice(child: ScopedChild): string {
-    return [
-      "The orchestrator paused this run with /agent-pause and has just resumed it with /agent-resume.",
-      child.task ? `Your assignment (unchanged):\n${child.task}` : "",
-      "Continue from where you stopped — same session, same lane. Do not redo finished work. "
-        + "Report what is done, what remains, and the evidence for each.",
-    ].filter(Boolean).join("\n\n");
-  }
-
-  async function resumeOrchestrator(ctx: ExtensionContext): Promise<void> {
-    const status = resumable(ctx);
-    if (!status.ok) {
-      ctx.ui.notify(`/agent-resume needs orchestrator mode (/mode orchestrator): ${status.reason}. Nothing was started.`, "error");
-      return;
-    }
-
-    const paused = registry.getPausedChildren()
-      .slice()
-      // Oldest first: the run should come back in the order it went down.
-      .sort((a, b) => (a.closedAt ?? "").localeCompare(b.closedAt ?? ""));
-    if (!paused.length) {
-      registry.setPaused(false);
-      persistState();
-      ctx.ui.notify("Nothing to resume: no child in this session was closed by /agent-pause.", "info");
-      return;
-    }
-
-    const resumed: string[] = [];
-    const gone: string[] = [];
-    const failed: Array<{ name: string; reason: string }> = [];
-    for (const child of paused) {
-      if (!existsSync(child.sessionFile)) {
-        // A paused row with no conversation cannot continue; marking it keeps
-        // every later /agent-resume from reporting the same phantom.
-        registry.markPausedMissing(child.sessionFile);
-        gone.push(`${child.name} [${child.id}] — ${child.sessionFile}`);
-        continue;
-      }
-      const result = await startResume(ctx, {
-        sessionPath: child.sessionFile,
-        name: child.name,
-        autoExit: child.autoExit,
-        message: resumeNotice(child),
-      });
-      const details = (result.details ?? {}) as any;
-      if (details.error) {
-        // The paused row is untouched, so a retry after fixing the cause is safe.
-        failed.push({
-          name: `${child.name} [${child.id}]`,
-          reason: `${details.error}${details.reason ? ` (${details.reason})` : ""}`,
-        });
-      } else {
-        resumed.push(`${child.name} [${child.id}] → pane ${details.paneId} (same session file)`);
-      }
-    }
-
-    registry.setPaused(false);
-    persistState();
-    const lines = [
-      resumed.length ? `Redeployed ${resumed.length} child(ren) on their previous sessions:\n${resumed.join("\n")}` : "No child was redeployed.",
-      gone.length ? `Session file missing — not resumable, marked paused-missing:\n${gone.join("\n")}` : "",
-      failed.length ? `Resume failed (the paused row is kept, so retrying is safe):\n${failed.map((c) => `${c.name} — ${c.reason}`).join("\n")}` : "",
-      resumed.length ? "Orchestrator is live again: spawns are allowed." : "",
-    ].filter(Boolean);
-    ctx.ui.notify(lines.join("\n\n"), failed.length || gone.length ? "warning" : "info");
-  }
 
   pi.registerCommand("agent", {
     description: "agent status | list | escalations | max [n] | batch",
@@ -3200,9 +3043,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
             ? `Results awaiting YOUR review: ${pendingResults.map((c) => `${c.name} [${c.id}]`).join(", ")} — a finished child is not an accepted result`
             : `No results awaiting review`,
           `Legacy delegate cap: ${delegateCap} (/agent max <n>)`,
-          registry.isPaused()
-            ? `Paused: yes — ${registry.getPausedChildren().length} child(ren) await /agent-resume`
-            : `Paused: no`,
           `Escalations: ${escalations.forOrchestrator().length} waiting on you, ${escalations.forUser().length} waiting on the user`,
           `Usage: /agent status | list | escalations | max [n] | batch`,
         ].join("\n"),
@@ -3422,20 +3262,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       }
 
       ctx.ui.notify(renderRolePromptReport(cwd).join("\n"), "info");
-    },
-  });
-
-  pi.registerCommand("agent-pause", {
-    description: "Pause the orchestrator: close every child, keep the run, refuse new spawns until /agent-resume",
-    handler: async (_arg, ctx) => {
-      await pauseOrchestrator(ctx);
-    },
-  });
-
-  pi.registerCommand("agent-resume", {
-    description: "Resume a paused orchestrator: redeploy every paused child on its previous session",
-    handler: async (_arg, ctx) => {
-      await resumeOrchestrator(ctx);
     },
   });
 
