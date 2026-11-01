@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import {
   MarkdownPopup, popupOverlayOptions, PLAIN_THEME, type PopupTheme,
-} from "../lib/popup.ts";
+} from "../lib/popup/frame.ts";
 import { PopupList } from "../lib/ui/shell.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
 import { createArtifactAutocompleteProvider, expandArtifactMentions } from "../lib/artifact-mentions.ts";

@@ -10,7 +10,7 @@ import { discoverModelDetails, discoveryAuth, DiscoveryError, modelsEndpoint, ty
 import { providerKeyInput } from "../lib/provider/provider-key-input.ts";
 import { providerModelPicker } from "../lib/provider/provider-model-picker.ts";
 import { accountPlan, apiKeyFromInput, draftToProvider, withAccount, withoutModel } from "../lib/provider/provider-settings.ts";
-import { popupOverlayOptions } from "../lib/popup.ts";
+import { popupOverlayOptions } from "../lib/popup/frame.ts";
 import { isSubagentChildSession } from "../lib/subagent-context.ts";
 import {
   ProviderSettingsPopup,

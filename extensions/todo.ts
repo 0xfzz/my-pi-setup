@@ -30,7 +30,7 @@ import {
   popupOverlayOptions,
   isPopupCloseKey,
   type PopupRow,
-} from "../lib/popup.ts";
+} from "../lib/popup/frame.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
 import { TODO_DETAILS_HINT } from "../lib/workflow-actions.ts";
 import { planModeFromBranch } from "../lib/plan/plan-mode.ts";

@@ -8,7 +8,7 @@ import {
   popupHeight,
   isPopupCloseKey,
   type PopupRow,
-} from "../lib/popup.ts";
+} from "../lib/popup/frame.ts";
 import { PopupList } from "../lib/ui/shell.ts";
 import { watch, readFileSync, existsSync, statSync, type FSWatcher } from "node:fs";
 import { open, rename, writeFile, rm } from "node:fs/promises";

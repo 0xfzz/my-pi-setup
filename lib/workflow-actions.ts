@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { matchesKey } from "@earendil-works/pi-tui";
-import { PopupPanel, popupOverlayOptions, isPopupCloseKey } from "./popup.ts";
+import { PopupPanel, popupOverlayOptions, isPopupCloseKey } from "./popup/frame.ts";
 
 export const WORKFLOW_PREFIX = "alt+w";
 export const TODO_DETAILS_HINT = "Alt+W → T · details";

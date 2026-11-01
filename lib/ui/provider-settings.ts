@@ -23,7 +23,7 @@ import {
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
-import { PLAIN_THEME, isPopupCloseKey, type PopupRow, type PopupTheme } from "../popup.ts";
+import { PLAIN_THEME, isPopupCloseKey, type PopupRow, type PopupTheme } from "../popup/frame.ts";
 import type { ProviderConfig } from "../provider/provider-config.ts";
 import {
   accountPlan,

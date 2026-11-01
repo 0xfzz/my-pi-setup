@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { visibleWidth, stripTerminalSequences } from "@earendil-works/pi-tui";
 import { PopupList, PopupShell } from "../lib/ui/shell.ts";
-import { PLAIN_THEME } from "../lib/popup.ts";
+import { PLAIN_THEME } from "../lib/popup/frame.ts";
 
 const plain = (lines: string[]) => lines.map(line => stripTerminalSequences(line));
 

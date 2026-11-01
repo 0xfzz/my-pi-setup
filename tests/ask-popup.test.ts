@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { AskUserPopup, type AskAnswer } from "../lib/ui/ask.ts";
-import { PLAIN_THEME } from "../lib/popup.ts";
+import { PLAIN_THEME } from "../lib/popup/frame.ts";
 
 const text = (lines: string[]) => lines.map(line => stripTerminalSequences(line)).join("\n");
 

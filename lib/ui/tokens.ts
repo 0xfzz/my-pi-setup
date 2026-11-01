@@ -5,7 +5,7 @@
  * `rows: 20` clips on a short terminal, and a popup that paints its own colors
  * drifts from the rest of the UI.
  */
-import { POPUP_FRAME_ROWS, POPUP_MARGIN } from "../popup.ts";
+import { POPUP_FRAME_ROWS, POPUP_MARGIN } from "../popup/frame.ts";
 
 /** Rows available inside the frame at a given terminal height. */
 export function popupBodyRows(terminalRows: number, desired?: number): number {

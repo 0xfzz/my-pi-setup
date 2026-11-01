@@ -61,7 +61,7 @@ import {
   readRouteDoc, removeRoute, routeSources, routerConfigPaths, saveRoute,
 } from "../lib/provider/router-config.ts";
 import { RouterSettingsPopup } from "../lib/ui/router-settings.ts";
-import { popupOverlayOptions } from "../lib/popup.ts";
+import { popupOverlayOptions } from "../lib/popup/frame.ts";
 import { providerModelPicker } from "../lib/provider/provider-model-picker.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
 

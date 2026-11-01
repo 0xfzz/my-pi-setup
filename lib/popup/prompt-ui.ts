@@ -19,7 +19,7 @@ import {
   type ReadonlyFooterDataProvider,
   type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { isSubagentChildSession } from "./subagent-context.ts";
+import { isSubagentChildSession } from "../subagent-context.ts";
 
 /** Derive from the UI contract so this does not depend on a re-exported alias. */
 type EditorFactory = NonNullable<ReturnType<ExtensionContext["ui"]["getEditorComponent"]>>;

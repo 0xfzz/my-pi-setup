@@ -18,7 +18,7 @@ import {
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
-import { PLAIN_THEME, isPopupCloseKey, type PopupRow, type PopupTheme } from "../popup.ts";
+import { PLAIN_THEME, isPopupCloseKey, type PopupRow, type PopupTheme } from "../popup/frame.ts";
 import {
   METHOD_HINTS, METHOD_LABELS, WHEN_HINTS, WHEN_LABELS, ROUTE_METHODS, ROUTE_WHENS,
   type RouteMethod, type RouteTarget, type RouteWhen,

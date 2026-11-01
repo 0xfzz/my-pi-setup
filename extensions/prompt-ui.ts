@@ -1,3 +1,3 @@
-import promptUi from "../lib/prompt-ui.ts";
+import promptUi from "../lib/popup/prompt-ui.ts";
 
 export default promptUi;

@@ -10,7 +10,7 @@ import promptUi, {
   formatTokens,
   modelLabel,
   renderModelTopBorder,
-} from "../lib/prompt-ui.ts";
+} from "../lib/popup/prompt-ui.ts";
 
 const theme = {
   fg: (_token: string, text: string) => text,

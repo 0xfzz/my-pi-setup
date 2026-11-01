@@ -20,7 +20,7 @@ import {
   popupFrame,
   type PopupRow,
   type PopupTheme,
-} from "../popup.ts";
+} from "../popup/frame.ts";
 import { popupBodyRows } from "./tokens.ts";
 
 export interface PopupShellModel {

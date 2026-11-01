@@ -7,7 +7,7 @@ import artifactsExtension, {
   formatArtifactMarkdown,
   formatAge, artifactTypeIcon,
 } from "../extensions/artifacts.ts";
-import { MarkdownPopup, PopupPanel, PLAIN_THEME } from "../lib/popup.ts";
+import { MarkdownPopup, PopupPanel, PLAIN_THEME } from "../lib/popup/frame.ts";
 import { PopupList } from "../lib/ui/shell.ts";
 import { ARTIFACT_TYPE, type Artifact } from "../lib/artifact-state.ts";
 

@@ -14,7 +14,7 @@ import {
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
-import { PLAIN_THEME, isPopupCloseKey, wrapRowWithHangingIndent, type PopupRow, type PopupTheme } from "../popup.ts";
+import { PLAIN_THEME, isPopupCloseKey, wrapRowWithHangingIndent, type PopupRow, type PopupTheme } from "../popup/frame.ts";
 import { PopupShell, type PopupShellModel } from "./shell.ts";
 import { KEY_HINT } from "./tokens.ts";
 

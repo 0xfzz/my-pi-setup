@@ -33,7 +33,7 @@ import {
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
-import { repairOsc8Wrapping } from "./selection/osc8.ts";
+import { repairOsc8Wrapping } from "../selection/osc8.ts";
 
 export const POPUP_MIN_FRAMED_WIDTH = 26;
 export const POPUP_PADDING_X = 1;

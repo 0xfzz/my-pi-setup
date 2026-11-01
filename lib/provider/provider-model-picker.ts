@@ -8,7 +8,7 @@ import {
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
-import { PLAIN_THEME, POPUP_FRAME_ROWS, POPUP_MARGIN, type PopupRow, type PopupTheme } from "../popup.ts";
+import { PLAIN_THEME, POPUP_FRAME_ROWS, POPUP_MARGIN, type PopupRow, type PopupTheme } from "../popup/frame.ts";
 import { PopupShell, type PopupShellModel } from "../ui/shell.ts";
 import { popupBodyRows } from "../ui/tokens.ts";
 
