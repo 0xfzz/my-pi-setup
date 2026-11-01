@@ -122,7 +122,7 @@ import {
 } from "../lib/spawn-policy.ts";
 import type { SpawnPurpose } from "../lib/delegation-tools.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardState } from "../lib/dashboard/integration.ts";
-import { projectChildProvenance, projectOrchestrator } from "../lib/dashboard/projection.ts";
+import { projectChildProvenance, projectMainAgent } from "../lib/dashboard/projection.ts";
 import { displayName as namingDisplayName, givenNameFor, givenNamePart, isHumanName } from "../lib/naming.ts";
 
 /** Shared handles. Exported so tests can assert on real state, not a mock. */
@@ -191,7 +191,7 @@ export function resetPollFingerprints(): void {
   lastPollFingerprints.clear();
 }
 
-export interface OrchestratorDeps {
+export interface MainAgentDeps {
   client?: HerdrClient;
   stream?: any;
   /** Clock seam: the watchdog's budget maths must be testable without waiting. */
@@ -312,7 +312,7 @@ export function stallNotice(params: {
     + `Inspect its pane, then agent_resume with direction, or agent_close to end it.`;
 }
 
-export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps): void {
+export default function agentExtension(pi: ExtensionAPI, deps?: MainAgentDeps): void {
   const client: HerdrClient = deps?.client || createHerdrClient();
   const moduleController = new AbortController();
   /**
@@ -406,7 +406,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
     try {
       const children = registry.getAllChildren();
       publishDashboardState(pi, {
-        orchestrator: projectOrchestrator({
+        orchestrator: projectMainAgent({
           children,
           handoffs: [],
           reviews: registry.getReviews(),
@@ -2455,7 +2455,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       const budgets = resolveBudgets(loadSubagentSettings((ctx as any)?.cwd ?? process.cwd()));
       const running = registry.getRunningChildren();
       const filtered = params.scope ? running.filter((c) => c.scope === params.scope) : running;
-      const pending = escalations.forOrchestrator();
+      const pending = escalations.forMainAgent();
 
       // A poll that changed nothing is not information. Answer once, then refuse
       // the repeat: the parent has triggers, not a timer.
@@ -2682,7 +2682,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       const escalation = escalations.get(params.id);
       if (!escalation) {
         return text(
-          `No escalation "${params.id}". Open ones: ${escalations.forOrchestrator().map((e) => e.id).join(", ") || "(none)"}.`,
+          `No escalation "${params.id}". Open ones: ${escalations.forMainAgent().map((e) => e.id).join(", ") || "(none)"}.`,
           { error: "unknown-escalation" },
         );
       }
@@ -2718,7 +2718,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
           return deliverAnswer(ctx, cancelled.id);
         }
 
-        const resolved = escalations.answerAsOrchestrator(params.id, params.answer ?? "");
+        const resolved = escalations.answerAsMainAgent(params.id, params.answer ?? "");
         pi.appendEntry(ESCALATION_TYPE, { id: resolved.id, childId: resolved.childId, stage: resolved.stage });
         return deliverAnswer(ctx, resolved.id);
       } catch (error: any) {
@@ -2958,7 +2958,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
    * back. Resume therefore replays what was actually paused instead of guessing
    * a fresh plan; each child comes back on the conversation it already had.
    */
-  function orchestratorMode(_ctx: ExtensionContext): { ok: true; mode: string } | { ok: false; reason: string } {
+  function mainAgentMode(_ctx: ExtensionContext): { ok: true; mode: string } | { ok: false; reason: string } {
     if (isChildSession) return { ok: false, reason: "a delegated child owns no orchestrator to pause" };
     return { ok: true, mode: "normal" };
   }
@@ -2969,7 +2969,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
    * fix something would have to switch back just to bring the run up.
    */
   function resumable(ctx: ExtensionContext): { ok: true; mode: string | null } | { ok: false; reason: string } {
-    const status = orchestratorMode(ctx);
+    const status = mainAgentMode(ctx);
     if (status.ok) return status;
     if (registry.isPaused() || registry.getPausedChildren().length > 0) return { ok: true, mode: null };
     return status;
@@ -2996,8 +2996,8 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
     ].filter(Boolean).join("\n\n");
   }
 
-  async function pauseOrchestrator(ctx: ExtensionContext): Promise<void> {
-    const status = orchestratorMode(ctx);
+  async function pauseMainAgent(ctx: ExtensionContext): Promise<void> {
+    const status = mainAgentMode(ctx);
     if (!status.ok) {
       ctx.ui.notify(`/agent-pause needs orchestrator mode (/mode orchestrator): ${status.reason}. Nothing was closed.`, "error");
       return;
@@ -3040,7 +3040,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
     ].filter(Boolean).join("\n\n");
   }
 
-  async function resumeOrchestrator(ctx: ExtensionContext): Promise<void> {
+  async function resumeMainAgent(ctx: ExtensionContext): Promise<void> {
     const status = resumable(ctx);
     if (!status.ok) {
       ctx.ui.notify(`/agent-resume needs orchestrator mode (/mode orchestrator): ${status.reason}. Nothing was started.`, "error");
@@ -3160,7 +3160,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
         return;
       }
       if (sub === "escalations") {
-        const pending = escalations.forOrchestrator();
+        const pending = escalations.forMainAgent();
         const forUser = escalations.forUser();
         ctx.ui.notify(
           [
@@ -3188,7 +3188,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
           registry.isPaused()
             ? `Paused: yes — ${registry.getPausedChildren().length} child(ren) await /agent-resume`
             : `Paused: no`,
-          `Escalations: ${escalations.forOrchestrator().length} waiting on you, ${escalations.forUser().length} waiting on the user`,
+          `Escalations: ${escalations.forMainAgent().length} waiting on you, ${escalations.forUser().length} waiting on the user`,
           `Usage: /agent status | list | escalations | max [n] | batch`,
         ].join("\n"),
         "info",
@@ -3413,14 +3413,14 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
   pi.registerCommand("agent-pause", {
     description: "Pause the orchestrator: close every child, keep the run, refuse new spawns until /agent-resume",
     handler: async (_arg, ctx) => {
-      await pauseOrchestrator(ctx);
+      await pauseMainAgent(ctx);
     },
   });
 
   pi.registerCommand("agent-resume", {
     description: "Resume a paused orchestrator: redeploy every paused child on its previous session",
     handler: async (_arg, ctx) => {
-      await resumeOrchestrator(ctx);
+      await resumeMainAgent(ctx);
     },
   });
 

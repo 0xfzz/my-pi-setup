@@ -25,7 +25,7 @@ describe("escalation ladder", () => {
 
     assert.equal(escalation.stage, "orchestrator");
     assert.equal(escalation.answeredBy, undefined);
-    assert.deepEqual(ledger.forOrchestrator().map((e) => e.id), ["esc-1"]);
+    assert.deepEqual(ledger.forMainAgent().map((e) => e.id), ["esc-1"]);
     assert.deepEqual(ledger.forUser(), []);
     assert.deepEqual(ledger.settled(), []);
   });
@@ -40,11 +40,11 @@ describe("escalation ladder", () => {
     const ledger = new EscalationLedger();
     open(ledger);
 
-    const answered = ledger.answerAsOrchestrator("esc-1", "Cap at 60s.");
+    const answered = ledger.answerAsMainAgent("esc-1", "Cap at 60s.");
     assert.equal(answered.stage, "answered");
     assert.equal(answered.answeredBy, "orchestrator");
     assert.equal(answered.answer, "Cap at 60s.");
-    assert.deepEqual(ledger.forOrchestrator(), []);
+    assert.deepEqual(ledger.forMainAgent(), []);
 
     const message = ledger.resumeMessage("esc-1");
     assert.match(message, /decided by the orchestrator/);
@@ -61,7 +61,7 @@ describe("escalation ladder", () => {
     assert.equal(escalated.stage, "user");
     assert.match(escalated.history.at(-1)!.note!, /Both caps are defensible/);
     assert.deepEqual(ledger.forUser().map((e) => e.id), ["esc-1"]);
-    assert.deepEqual(ledger.forOrchestrator(), []);
+    assert.deepEqual(ledger.forMainAgent(), []);
 
     const answered = ledger.answerAsUser("esc-1", "60s.");
     assert.equal(answered.stage, "answered");
@@ -83,7 +83,7 @@ describe("escalation ladder", () => {
     open(ledger);
     ledger.escalateToUser("esc-1", "Not my call.");
 
-    assert.throws(() => ledger.answerAsOrchestrator("esc-1", "Actually 30s."), /cannot answer a question it already escalated/);
+    assert.throws(() => ledger.answerAsMainAgent("esc-1", "Actually 30s."), /cannot answer a question it already escalated/);
     assert.equal(ledger.get("esc-1")!.stage, "user");
   });
 
@@ -108,7 +108,7 @@ describe("escalation ladder", () => {
   it("an empty orchestrator answer is also treated as unanswered", () => {
     const ledger = new EscalationLedger();
     open(ledger);
-    assert.equal(ledger.answerAsOrchestrator("esc-1", "   ").stage, "cancelled");
+    assert.equal(ledger.answerAsMainAgent("esc-1", "   ").stage, "cancelled");
   });
 
   it("explicit cancel records that it is not consent", () => {
@@ -124,9 +124,9 @@ describe("escalation ladder", () => {
   it("an answered escalation cannot be answered or cancelled again", () => {
     const ledger = new EscalationLedger();
     open(ledger);
-    ledger.answerAsOrchestrator("esc-1", "60s.");
+    ledger.answerAsMainAgent("esc-1", "60s.");
 
-    assert.throws(() => ledger.answerAsOrchestrator("esc-1", "30s."), /already answered/);
+    assert.throws(() => ledger.answerAsMainAgent("esc-1", "30s."), /already answered/);
     assert.throws(() => ledger.answerAsUser("esc-1", "30s."), /already answered/);
     assert.throws(() => ledger.cancel("esc-1", "changed my mind"), /already answered/);
     assert.equal(ledger.get("esc-1")!.answer, "60s.");
@@ -145,7 +145,7 @@ describe("escalation ladder", () => {
 
   it("an unknown escalation id is refused everywhere", () => {
     const ledger = new EscalationLedger();
-    assert.throws(() => ledger.answerAsOrchestrator("nope", "x"), EscalationError);
+    assert.throws(() => ledger.answerAsMainAgent("nope", "x"), EscalationError);
     assert.throws(() => ledger.resumeMessage("nope"), /No escalation/);
     assert.equal(ledger.get("nope"), undefined);
   });
@@ -166,10 +166,10 @@ describe("escalation ladder", () => {
     const ledger = new EscalationLedger();
     open(ledger, { id: "esc-a" });
     open(ledger, { id: "esc-b", scope: "db-pool" });
-    ledger.answerAsOrchestrator("esc-a", "60s.");
+    ledger.answerAsMainAgent("esc-a", "60s.");
     ledger.escalateToUser("esc-b", "Product decision.");
 
-    assert.deepEqual(ledger.forOrchestrator(), []);
+    assert.deepEqual(ledger.forMainAgent(), []);
     assert.deepEqual(ledger.forUser().map((e: Escalation) => e.id), ["esc-b"]);
     assert.deepEqual(ledger.settled().map((e: Escalation) => e.id), ["esc-a"]);
   });
