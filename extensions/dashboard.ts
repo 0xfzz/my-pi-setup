@@ -188,9 +188,10 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
     mode = next;
     bridge.observeMode(next);
     if (!verifiedParent) return;
-    // Only a successful Orchestrator entry/restore starts registration. A child
-    // never reaches here with verifiedParent true.
-    if (next === "orchestrator") void bridge.start();
+    // Only a successful Main agent entry/restore starts registration. A child
+    // never reaches here with verifiedParent true. The retired "orchestrator"
+    // spelling is still accepted so a session saved under the old id reconnects.
+    if (next === "main-agent" || next === "orchestrator") void bridge.start();
     else bridge.schedule();
   }
 
@@ -221,7 +222,7 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
     // the initial snapshot because the request is answered now.
     if (ctx) refreshTitle(ctx, true);
     requestDashboardSync(pi);
-    if (mode === "orchestrator") void bridge.start();
+    if (mode === "main-agent" || mode === "orchestrator") void bridge.start();
     else bridge.flush();
   }
 
@@ -234,7 +235,7 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
     bind(context);
     if (!verifiedParent) return;
     requestDashboardSync(pi);
-    if (mode === "orchestrator") void bridge.start();
+    if (mode === "main-agent" || mode === "orchestrator") void bridge.start();
   });
 
   // A branch/session move can change the session id, leaf, or restored mode. The
@@ -244,7 +245,7 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
     bind(context);
     if (!verifiedParent) return;
     requestDashboardSync(pi);
-    if (mode === "orchestrator") void bridge.start();
+    if (mode === "main-agent" || mode === "orchestrator") void bridge.start();
     else bridge.flush();
   });
 
