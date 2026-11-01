@@ -17,15 +17,13 @@
 
 import { MAX_DELEGATION_DEPTH, type SpawnPurpose } from "./delegation-tools.ts";
 
-export type SpawnMode = "normal" | "plan" | "supervise" | "main-agent";
+export type SpawnMode = "normal" | "plan" | "supervise" | "orchestrator";
 
 /** Collapse an unknown/absent mode id onto the four shapes this table knows. */
 export function normalizeSpawnMode(modeId: string | undefined): SpawnMode {
   if (modeId === "plan") return "plan";
   if (modeId === "supervise") return "supervise";
-  // The role is the main agent now; "orchestrator" is the retired spelling and
-  // still resolves so a session saved under the old id keeps its policy.
-  if (modeId === "main-agent" || modeId === "orchestrator") return "main-agent";
+  if (modeId === "orchestrator") return "orchestrator";
   return "normal";
 }
 
@@ -109,7 +107,7 @@ export function registryPurpose(purpose: SpawnPurpose): "implementation" | "revi
 }
 
 /**
- * Main agent/Supervise implementation is spec-driven.
+ * Orchestrator/Supervise implementation is spec-driven.
  *
  * Normal and Plan keep their existing delegation policy. In the two supervisor
  * modes a worker may only be admitted or resumed when its handoff carries a
@@ -117,7 +115,7 @@ export function registryPurpose(purpose: SpawnPurpose): "implementation" | "revi
  */
 export function requiresReviewedSpec(modeId: string | undefined): boolean {
   const mode = normalizeSpawnMode(modeId);
-  return mode === "main-agent" || mode === "supervise";
+  return mode === "orchestrator" || mode === "supervise";
 }
 
 /** What `agent_brief` and `agent_check` should say when no lane was declared. */
