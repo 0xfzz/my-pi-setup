@@ -3,17 +3,17 @@
  *
  * This extension is the one place that decides whether a session is allowed to
  * appear as a top-level dashboard session, and when. It listens to notifications
- * from the mode, orchestrator, and artifact publishers; it never reaches into
+ * from the mode, delegation, and artifact publishers; it never reaches into
  * their modules.
  *
  * Registration is deliberately late and narrow:
  * - loading the extension creates no server, socket, or timer;
  * - a refused mode switch publishes nothing, so it cannot start one;
  * - a verified child (or a seeded/forked child) never registers top-level state;
- * - the producer starts on a successful Orchestrator entry or a branch restore
- *   that lands in Orchestrator mode, and re-entry reuses the same lease.
+ * - the producer starts on the first delegated child or a branch restore
+ *   that has live children, and re-entry reuses the same lease.
  *
- * Leaving Orchestrator mode keeps the lease and publishes the new mode, so a
+ * Changing mode keeps the lease and publishes the new mode, so a
  * browser watcher sees the transition without losing the observed work.
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -75,7 +75,7 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
   /**
    * One-way latch: delegated work exists, so the graph must exist too.
    *
-   * A Normal-mode `agent_spawn` never passes through an Orchestrator transition,
+   * A Normal-mode `agent_spawn` never passes through a mode transition,
    * which used to be the only thing that started the producer. The latch is not
    * reset when the mode changes: leaving the mode keeps the lease and publishes
    * `mode: "normal"`, because the children are still running.
@@ -188,7 +188,7 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
     mode = next;
     bridge.observeMode(next);
     if (!verifiedParent) return;
-    // Only a successful Orchestrator entry/restore starts registration. A child
+    // Only a live child or a branch restore starts registration. A child
     // never reaches here with verifiedParent true.
     if (next === "orchestrator") void bridge.start();
     else bridge.schedule();
@@ -197,12 +197,12 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
   function onState(data: unknown): void {
     if (!verifiedParent) return;
     const notice = data as Partial<DashboardStateNotice> | undefined;
-    if (!notice?.orchestrator) return;
-    bridge.observeOrchestrator(notice.orchestrator, notice.childSessions);
+    if (!notice?.delegation) return;
+    bridge.observeDelegation(notice.delegation, notice.childSessions);
     // The first child is the signal, not the mode. A Normal-mode spawn is still
     // delegated work and must appear in the graph; a second publish reuses the
     // lease rather than creating another producer.
-    if (!registeredForWork && notice.orchestrator.children.length > 0) {
+    if (!registeredForWork && (notice.delegation?.children.length ?? 0) > 0) {
       registeredForWork = true;
       void bridge.start();
     }

@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import orchestrator from "../../extensions/agent.ts";
+import agentParent from "../../extensions/agent.ts";
 
 interface Call {
   title: string;
@@ -46,7 +46,7 @@ async function harness() {
     appendEntry() {},
     sendMessage() {},
   };
-  orchestrator(pi, { client: {} as any, stream: { watch: () => () => {}, onReconcile: () => () => {} } });
+  agentParent(pi, { client: {} as any, stream: { watch: () => () => {}, onReconcile: () => () => {} } });
 
   const notices: { text: string; level: string }[] = [];
   const calls: Call[] = [];

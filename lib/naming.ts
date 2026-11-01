@@ -1,5 +1,5 @@
 /**
- * Human naming for dashboard and orchestrator entities — the Node/TS authority.
+ * Human naming for dashboard and parent-session entities — the Node/TS authority.
  *
  * The browser dashboard has its own copy at `web/dashboard/src/naming.mjs`.
  * Pi's extension loader cannot reliably import that ESM file: it hands back a
@@ -16,7 +16,7 @@
  *  - ids are processed in sorted order, so the same set of children always
  *    produces the same assignment;
  *  - an explicit, human-looking author name always wins;
- *  - the orchestrator reads `{Project} Manager`, never a dictionary name.
+ *  - the parent session reads `{Project} Manager`, never a dictionary name.
  */
 
 const JAVANESE_GIVEN_NAMES: readonly string[] = Object.freeze([
@@ -211,7 +211,7 @@ export function meaningfulSessionTitle(
   return clampLabel(label, 200);
 }
 
-/** Session identity and orchestrator identity deliberately have different labels. */
+/** Session identity and parent identity deliberately have different labels. */
 export function sessionTitle({
   project,
   sessionName,

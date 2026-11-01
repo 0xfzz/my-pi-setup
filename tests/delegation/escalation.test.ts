@@ -19,13 +19,13 @@ const open = (ledger: EscalationLedger, over: Partial<Parameters<EscalationLedge
   });
 
 describe("escalation ladder", () => {
-  it("a child's question starts addressed to the orchestrator", () => {
+  it("a child's question starts addressed to the parent", () => {
     const ledger = new EscalationLedger();
     const escalation = open(ledger);
 
-    assert.equal(escalation.stage, "orchestrator");
+    assert.equal(escalation.stage, "parent");
     assert.equal(escalation.answeredBy, undefined);
-    assert.deepEqual(ledger.forOrchestrator().map((e) => e.id), ["esc-1"]);
+    assert.deepEqual(ledger.forParent().map((e) => e.id), ["esc-1"]);
     assert.deepEqual(ledger.forUser(), []);
     assert.deepEqual(ledger.settled(), []);
   });
@@ -35,25 +35,25 @@ describe("escalation ladder", () => {
     assert.throws(() => open(ledger, { question: "   " }), /needs a question/);
   });
 
-  // Rule 3, first rung: the orchestrator knows, so it answers and the child resumes.
-  it("the orchestrator answers from its own context", () => {
+  // Rule 3, first rung: the parent knows, so it answers and the child resumes.
+  it("the parent answers from its own context", () => {
     const ledger = new EscalationLedger();
     open(ledger);
 
-    const answered = ledger.answerAsOrchestrator("esc-1", "Cap at 60s.");
+    const answered = ledger.answerAsParent("esc-1", "Cap at 60s.");
     assert.equal(answered.stage, "answered");
-    assert.equal(answered.answeredBy, "orchestrator");
+    assert.equal(answered.answeredBy, "parent");
     assert.equal(answered.answer, "Cap at 60s.");
-    assert.deepEqual(ledger.forOrchestrator(), []);
+    assert.deepEqual(ledger.forParent(), []);
 
     const message = ledger.resumeMessage("esc-1");
-    assert.match(message, /decided by the orchestrator/);
+    assert.match(message, /decided by the parent/);
     assert.match(message, /Cap at 60s\./);
     assert.match(message, /Apply this decision and continue/);
   });
 
-  // Rule 3, second rung: the orchestrator does not know, so the user decides.
-  it("the orchestrator escalates to the user, who answers", () => {
+  // Rule 3, second rung: the parent does not know, so the user decides.
+  it("the parent escalates to the user, who answers", () => {
     const ledger = new EscalationLedger();
     open(ledger);
 
@@ -61,7 +61,7 @@ describe("escalation ladder", () => {
     assert.equal(escalated.stage, "user");
     assert.match(escalated.history.at(-1)!.note!, /Both caps are defensible/);
     assert.deepEqual(ledger.forUser().map((e) => e.id), ["esc-1"]);
-    assert.deepEqual(ledger.forOrchestrator(), []);
+    assert.deepEqual(ledger.forParent(), []);
 
     const answered = ledger.answerAsUser("esc-1", "60s.");
     assert.equal(answered.stage, "answered");
@@ -73,17 +73,17 @@ describe("escalation ladder", () => {
     const ledger = new EscalationLedger();
     open(ledger);
     assert.throws(() => ledger.escalateToUser("esc-1", "  "), /needs a reason/);
-    assert.equal(ledger.get("esc-1")!.stage, "orchestrator");
+    assert.equal(ledger.get("esc-1")!.stage, "parent");
   });
 
-  // The authority rule: a question escalated BECAUSE the orchestrator was not
-  // competent must not be answered by the orchestrator afterwards.
-  it("the orchestrator cannot answer a question it already escalated", () => {
+  // The authority rule: a question escalated BECAUSE the parent was not
+  // competent must not be answered by the parent afterwards.
+  it("the parent cannot answer a question it already escalated", () => {
     const ledger = new EscalationLedger();
     open(ledger);
     ledger.escalateToUser("esc-1", "Not my call.");
 
-    assert.throws(() => ledger.answerAsOrchestrator("esc-1", "Actually 30s."), /cannot answer a question it already escalated/);
+    assert.throws(() => ledger.answerAsParent("esc-1", "Actually 30s."), /cannot answer a question it already escalated/);
     assert.equal(ledger.get("esc-1")!.stage, "user");
   });
 
@@ -105,10 +105,10 @@ describe("escalation ladder", () => {
     assert.match(message, /Do not pick an interpretation and continue/);
   });
 
-  it("an empty orchestrator answer is also treated as unanswered", () => {
+  it("an empty parent answer is also treated as unanswered", () => {
     const ledger = new EscalationLedger();
     open(ledger);
-    assert.equal(ledger.answerAsOrchestrator("esc-1", "   ").stage, "cancelled");
+    assert.equal(ledger.answerAsParent("esc-1", "   ").stage, "cancelled");
   });
 
   it("explicit cancel records that it is not consent", () => {
@@ -124,9 +124,9 @@ describe("escalation ladder", () => {
   it("an answered escalation cannot be answered or cancelled again", () => {
     const ledger = new EscalationLedger();
     open(ledger);
-    ledger.answerAsOrchestrator("esc-1", "60s.");
+    ledger.answerAsParent("esc-1", "60s.");
 
-    assert.throws(() => ledger.answerAsOrchestrator("esc-1", "30s."), /already answered/);
+    assert.throws(() => ledger.answerAsParent("esc-1", "30s."), /already answered/);
     assert.throws(() => ledger.answerAsUser("esc-1", "30s."), /already answered/);
     assert.throws(() => ledger.cancel("esc-1", "changed my mind"), /already answered/);
     assert.equal(ledger.get("esc-1")!.answer, "60s.");
@@ -137,7 +137,7 @@ describe("escalation ladder", () => {
   it("resuming an unresolved escalation throws instead of sending nothing", () => {
     const ledger = new EscalationLedger();
     open(ledger);
-    assert.throws(() => ledger.resumeMessage("esc-1"), /still orchestrator/);
+    assert.throws(() => ledger.resumeMessage("esc-1"), /still parent/);
 
     ledger.escalateToUser("esc-1", "Needs a human.");
     assert.throws(() => ledger.resumeMessage("esc-1"), /still user/);
@@ -145,7 +145,7 @@ describe("escalation ladder", () => {
 
   it("an unknown escalation id is refused everywhere", () => {
     const ledger = new EscalationLedger();
-    assert.throws(() => ledger.answerAsOrchestrator("nope", "x"), EscalationError);
+    assert.throws(() => ledger.answerAsParent("nope", "x"), EscalationError);
     assert.throws(() => ledger.resumeMessage("nope"), /No escalation/);
     assert.equal(ledger.get("nope"), undefined);
   });
@@ -157,24 +157,24 @@ describe("escalation ladder", () => {
     ledger.answerAsUser("esc-1", "60s.");
 
     const stages = ledger.get("esc-1")!.history.map((h) => h.stage);
-    assert.deepEqual(stages, ["orchestrator", "user", "answered"]);
+    assert.deepEqual(stages, ["parent", "user", "answered"]);
     const actors = ledger.get("esc-1")!.history.map((h) => h.actor);
-    assert.deepEqual(actors, ["child", "orchestrator", "user"]);
+    assert.deepEqual(actors, ["child", "parent", "user"]);
   });
 
   it("queues are disjoint: a settled question is on neither waiting list", () => {
     const ledger = new EscalationLedger();
     open(ledger, { id: "esc-a" });
     open(ledger, { id: "esc-b", scope: "db-pool" });
-    ledger.answerAsOrchestrator("esc-a", "60s.");
+    ledger.answerAsParent("esc-a", "60s.");
     ledger.escalateToUser("esc-b", "Product decision.");
 
-    assert.deepEqual(ledger.forOrchestrator(), []);
+    assert.deepEqual(ledger.forParent(), []);
     assert.deepEqual(ledger.forUser().map((e: Escalation) => e.id), ["esc-b"]);
     assert.deepEqual(ledger.settled().map((e: Escalation) => e.id), ["esc-a"]);
   });
 
-  it("filters by child so a multi-child orchestrator can report per work unit", () => {
+  it("filters by child so a multi-child parent can report per work unit", () => {
     const ledger = new EscalationLedger();
     open(ledger, { id: "esc-a", childId: "child-1" });
     open(ledger, { id: "esc-b", childId: "child-2" });

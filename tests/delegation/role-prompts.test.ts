@@ -15,10 +15,10 @@ import {
   projectRolePromptDir,
   renderRolePromptReport,
 } from "../../lib/delegation/role-prompts.ts";
-import { ORCH_ROLES } from "../../lib/delegation/role-models.ts";
+import { CHILD_ROLES } from "../../lib/delegation/role-models.ts";
 
-test("ORCH_ROLES contains exactly planner and worker primitives", () => {
-  assert.deepEqual(ORCH_ROLES, ["planner", "worker"]);
+test("CHILD_ROLES contains exactly planner and worker primitives", () => {
+  assert.deepEqual(CHILD_ROLES, ["planner", "worker"]);
   assert.equal(ROLE_PROMPT_FILES.planner.canonical, "planner.md");
   assert.equal(ROLE_PROMPT_FILES.worker.canonical, "worker.md");
   assert.equal(ROLE_PROMPT_DIR, join(".pi", "agents", "system-prompts"));
@@ -30,7 +30,7 @@ test("globalRolePromptDir resolves default global agents directory", () => {
 });
 
 test("builtin defaults are general-purpose, non-empty, and role-differentiated", () => {
-  for (const role of ORCH_ROLES) {
+  for (const role of CHILD_ROLES) {
     const text = DEFAULT_ROLE_PROMPTS[role];
     assert.ok(text.length > 50, `${role} default prompt must be substantial`);
     assert.match(text, new RegExp(`# Role: ${role}`));
@@ -49,7 +49,7 @@ test("builtin defaults are general-purpose, non-empty, and role-differentiated",
 test("loadRolePrompt falls back to builtin when no file exists", async () => {
   const dir = await mkdtemp(join(tmpdir(), "role-prompts-test-"));
   try {
-    for (const role of ORCH_ROLES) {
+    for (const role of CHILD_ROLES) {
       const prompt = loadRolePrompt(role, dir);
       assert.equal(prompt.role, role);
       assert.equal(prompt.source, "builtin");

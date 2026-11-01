@@ -2,10 +2,10 @@
  * producer.ts — the Pi-side client for the shared dashboard server.
  *
  * A producer is a *coalescing* publisher: `publish()` never awaits, never blocks
- * the orchestrator, and never queues snapshots. It stores the latest snapshot
+ * the parent session, and never queues snapshots. It stores the latest snapshot
  * and schedules one flush; while a flush is in flight, further publishes only
  * replace the pending snapshot. A slow or dead server therefore costs the
- * orchestrator nothing beyond replacing an object reference — dashboard failure
+ * parent nothing beyond replacing an object reference — dashboard failure
  * cannot stall orchestration.
  *
  * ── Ordering and replacement ───────────────────────────────────────────────
@@ -134,7 +134,7 @@ export class DashboardProducer {
   /**
    * Publish the latest snapshot. Synchronous and non-throwing: validation
    * failures and transport failures are reported through `onError` and never
-   * propagate into the orchestrator.
+   * propagate into the parent.
    */
   publish(snapshot: DashboardSnapshot): void {
     if (this.#closed || this.#superseded) return;

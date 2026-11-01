@@ -1,7 +1,7 @@
 /**
  * role-prompts.ts — the default system prompt each child role runs under.
  *
- * A role prompt is workspace state, not package state: the same orchestrator in
+ * A role prompt is workspace state, not package state: the same parent in
  * two repositories should be able to brief its workers differently. The file is
  * the source of truth, so a team can review prompt changes in git and a project
  * can override a global default without forking the extension.
@@ -15,12 +15,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 
-import { ORCH_ROLES, type OrchRole } from "./role-models.ts";
+import { CHILD_ROLES, type ChildRole } from "./role-models.ts";
 
 /**
  * Canonical file names for the two subagent primitives: planner and worker.
  */
-export const ROLE_PROMPT_FILES: Record<OrchRole, { canonical: string; aliases: string[] }> = {
+export const ROLE_PROMPT_FILES: Record<ChildRole, { canonical: string; aliases: string[] }> = {
   planner: { canonical: "planner.md", aliases: ["plan.md"] },
   worker: { canonical: "worker.md", aliases: [] },
 };
@@ -33,7 +33,7 @@ export const ROLE_PROMPT_DIR = join(".pi", "agents", "system-prompts");
  * prompt, defining each role's authority boundary, core operating loop,
  * tool discipline, and expected report structure.
  */
-export const DEFAULT_ROLE_PROMPTS: Record<OrchRole, string> = {
+export const DEFAULT_ROLE_PROMPTS: Record<ChildRole, string> = {
   planner: [
     "# Role: planner",
     "",
@@ -84,7 +84,7 @@ export const DEFAULT_ROLE_PROMPTS: Record<OrchRole, string> = {
 };
 
 export interface RolePrompt {
-  role: OrchRole;
+  role: ChildRole;
   text: string;
   source: "project" | "global" | "builtin";
   /** Absolute path when the text came from a file. */
@@ -105,12 +105,12 @@ export function globalRolePromptDir(): string {
 }
 
 /** Canonical name first, then aliases: the first existing file wins. */
-export function rolePromptFileNames(role: OrchRole): string[] {
+export function rolePromptFileNames(role: ChildRole): string[] {
   const entry = ROLE_PROMPT_FILES[role];
   return [entry.canonical, ...entry.aliases];
 }
 
-function readFirstFile(dir: string, role: OrchRole): { text: string; path: string } | undefined {
+function readFirstFile(dir: string, role: ChildRole): { text: string; path: string } | undefined {
   for (const name of rolePromptFileNames(role)) {
     const path = join(dir, name);
     if (!existsSync(path)) continue;
@@ -133,7 +133,7 @@ function readFirstFile(dir: string, role: OrchRole): { text: string; path: strin
  * before the global one. An empty file falls through to the next source instead
  * of silencing the role prompt entirely.
  */
-export function loadRolePrompt(role: OrchRole, cwd: string, options: RolePromptOptions = {}): RolePrompt {
+export function loadRolePrompt(role: ChildRole, cwd: string, options: RolePromptOptions = {}): RolePrompt {
   const project = readFirstFile(projectRolePromptDir(cwd), role);
   if (project) return { role, text: project.text, source: "project", path: project.path };
 
@@ -158,7 +158,7 @@ export function ensureRolePrompts(
   mkdirSync(dir, { recursive: true });
   const created: string[] = [];
   const skipped: string[] = [];
-  for (const role of ORCH_ROLES) {
+  for (const role of CHILD_ROLES) {
     const path = join(dir, ROLE_PROMPT_FILES[role].canonical);
     if (existsSync(path) && !options.force) {
       skipped.push(path);
@@ -172,7 +172,7 @@ export function ensureRolePrompts(
 
 /** Human-readable rows for `/agent-prompts`. */
 export function renderRolePromptReport(cwd: string, options: RolePromptOptions = {}): string[] {
-  return ORCH_ROLES.map((role) => {
+  return CHILD_ROLES.map((role) => {
     const prompt = loadRolePrompt(role, cwd, options);
     const where = prompt.source === "builtin"
       ? "builtin default (not saved)"

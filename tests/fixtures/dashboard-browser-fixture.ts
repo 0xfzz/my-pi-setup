@@ -7,7 +7,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { watch } from "node:fs";
 import { join } from "node:path";
 import { DashboardProducer } from "../../lib/dashboard/producer.ts";
-import { emptyOrchestrator, type DashboardSnapshot } from "../../lib/dashboard/protocol.ts";
+import { emptyDelegation, type DashboardSnapshot } from "../../lib/dashboard/protocol.ts";
 
 const directory = process.argv[2];
 if (!directory) throw new Error("Provide a private temporary fixture directory");
@@ -16,8 +16,8 @@ const runtimeDir = join(directory, "runtime");
 const timestamp = new Date().toISOString();
 const first: DashboardSnapshot = {
   session: { id: "browser-fixture-a", name: "Dashboard verification", project: "Project Atlas", mode: "orchestrator", branchId: "branch-a" },
-  orchestrator: {
-    ...emptyOrchestrator(),
+  delegation: {
+    ...emptyDelegation(),
     children: [
       { id: "worker-api", name: "API worker", scope: "api", status: "running", purpose: "implementation", task: "Implement the API contract", handoffId: "handoff-api", laneFiles: ["src/api.ts"], lastMilestoneFiles: ["tests/api.test.ts"], artifactIds: ["api-contract"], startedAt: Date.now(), budgetMs: 1800000 },
       { id: "worker-ui", name: "UI worker", scope: "ui", status: "blocked", purpose: "implementation", task: "Build the web interface", laneFiles: ["src/ui.ts"], lastMilestoneFiles: [], pendingPing: true },
@@ -34,7 +34,7 @@ const first: DashboardSnapshot = {
 };
 const second: DashboardSnapshot = {
   session: { id: "browser-fixture-b", name: "Independent orchestration", project: "Project Beacon", mode: "orchestrator", branchId: "branch-b" },
-  orchestrator: { ...emptyOrchestrator(), children: [{ id: "worker-docs", name: "Documentation worker", scope: "docs", status: "completed", task: "Document the independent project", laneFiles: ["README.md"], lastMilestoneFiles: ["README.md"] }] },
+  delegation: { ...emptyDelegation(), children: [{ id: "worker-docs", name: "Documentation worker", scope: "docs", status: "completed", task: "Document the independent project", laneFiles: ["README.md"], lastMilestoneFiles: ["README.md"] }] },
   artifacts: [{ id: "independent-note", title: "Beacon notes", type: "plan", content: "# Independent session\n\nThis artifact belongs only to **Project Beacon**.\n", version: 1, createdBy: "main", createdAt: timestamp, updatedAt: timestamp, tags: [] }],
 };
 let written = false;
@@ -67,8 +67,8 @@ async function command() {
     first.session.name = title.trim();
     a.publish(structuredClone(first));
   } else if (action === "complete-worker") {
-    first.orchestrator.children[0].status = "completed";
-    first.orchestrator.reviews = [{ id: "review-api", scope: "api", verdict: "approved", summary: "Contract tests passed", timestamp: new Date().toISOString() }];
+    first.delegation.children[0].status = "completed";
+    first.delegation.reviews = [{ id: "review-api", scope: "api", verdict: "approved", summary: "Contract tests passed", timestamp: new Date().toISOString() }];
     a.publish(structuredClone(first));
   } else if (action === "update-artifact") {
     first.artifacts[0].version++;

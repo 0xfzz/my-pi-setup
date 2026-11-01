@@ -24,7 +24,7 @@ import { MAX_DELEGATION_DEPTH, type SpawnPurpose } from "./delegation-tools.ts";
  * - Plan: research, review and spec work. Implementation and ad-hoc spawns are
  *   refused because the parent is read-only; an explicit execution approval
  *   lifts that for this call.
- * - Supervise/Orchestrator: handoff-backed implementation plus the two reader
+ * - The parent role: handoff-backed implementation plus the two reader
  *   shapes the mode itself needs. `research` is how the parent investigates
  *   without its own shell; `review` is the QA child that judges a worker's
  *   result. Both are read-only, so admitting them cannot produce a diff nobody

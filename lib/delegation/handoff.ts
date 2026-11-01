@@ -1,9 +1,9 @@
 /**
- * handoff.ts — the orchestrator's only product, and the child's only input.
+ * handoff.ts — the handoff is the parent's only product and the child's only input.
  *
  * The design rule this module enforces:
  *
- *   The orchestrator authors ONE handoff spec per work unit and saves it as a
+ *   The parent authors ONE handoff spec per work unit and saves it as a
  *   SCOPED ARTIFACT. The child recalls that artifact by id and sees nothing
  *   else: no sibling scope name, no sibling path, no directory it could
  *   enumerate.
@@ -34,7 +34,7 @@
  * blocker to escalate, never something to infer.
  *
  * A per-handoff copy is still written to disk under a private directory so a human
- * can audit it and the review can cite it. That copy is orchestrator-side evidence
+ * can audit it and the review can cite it. That copy is parent-side evidence
  * and is never handed to the child.
  */
 
@@ -96,7 +96,7 @@ export interface HandoffSpec {
    * to test/typecheck runners by `verifyCommandProblem` in `brief.ts`.
    */
   verifyCommand?: string;
-  /** Orchestrator notes: conventions, interfaces, prior decisions. */
+  /** Parent notes: conventions, interfaces, prior decisions. */
   guidance?: string;
   /** Interfaces this scope must conform to (consumed by other scopes). */
   interfaces?: string[];
@@ -156,8 +156,8 @@ ${criteria}
 
 ## If you are unsure — escalate, never guess
 Use \`agent_ping\` with the question, what you already checked, and the options you see.
-This pauses your session; the orchestrator resumes you with an answer. If the
-orchestrator cannot answer, it escalates to the user. Never resolve an ambiguity
+This pauses your session; the parent resumes you with an answer. If the
+parent cannot answer, it escalates to the user. Never resolve an ambiguity
 by picking the interpretation that lets you proceed.
 
 ## What to report back

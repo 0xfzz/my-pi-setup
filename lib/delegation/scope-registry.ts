@@ -96,7 +96,7 @@ export interface ScopedChild {
   /** Absent on legacy rows: legacy/unreviewed, never implicitly accepted. */
   accountability?: ChildAccountability;
   status: "running" | "completed" | "blocked" | "failed" | "closed";
-  /** Audit copy of the handoff spec. Orchestrator-side evidence, never handed to the child. */
+  /** Audit copy of the handoff spec. Parent-side evidence, never handed to the child. */
   specPath?: string;
   /** Deterministic handoff id, so a respawn of the same scope is recognisable. */
   handoffId?: string;
@@ -152,7 +152,7 @@ export interface ScopedChild {
 }
 
 /**
- * A write the orchestrator itself made through `write`/`edit`.
+ * A write the parent itself made through `write`/`edit`.
  *
  * Independence is a fact about who touched the lane, so it is recorded rather
  * than asserted. `bash` is not recorded here on purpose: a shell command can
@@ -170,7 +170,7 @@ export interface SteerRecord {
   id: string;
   childId: string;
   scope: string;
-  origin: "user" | "orchestrator";
+  origin: "user" | "parent";
   mode: "interrupt" | "queue";
   message: string;
   timestamp: string;
@@ -192,7 +192,7 @@ export interface ReviewRecord {
   /**
    * Whether this answer can be trusted as an independent read of the work.
    *
-   * `shell-unverified` is the honest third state: the orchestrator may run bash,
+   * `shell-unverified` is the honest third state: the parent may run bash,
    * and a shell can write anywhere, so a scope reviewed after shell activity has
    * no provable independence claim even when no write/edit tool was used.
    */
@@ -228,14 +228,14 @@ export interface RegistrySnapshot {
   children: ScopedChild[];
   steers: SteerRecord[];
   reviews: ReviewRecord[];
-  /** Every pane this orchestrator ever opened, so orphans stay attributable. */
+  /** Every pane this parent ever opened, so orphans stay attributable. */
   panes?: string[];
   /** Retained for sidecar compatibility with sessions written before the
    *  pause commands were removed; nothing sets it any more. */
   paused?: boolean;
-  /** Writes the orchestrator made itself, used to compute review independence. */
+  /** Writes the parent made itself, used to compute review independence. */
   authorWrites?: AuthorWrite[];
-  /** Shell invocations by the orchestrator, which can write without naming a path. */
+  /** Shell invocations by the parent, which can write without naming a path. */
   authorShells?: string[];
 }
 
@@ -253,7 +253,7 @@ export class ScopeRegistry {
   private paused = false;
   /** Bounded: independence only needs the recent history of a live scope. */
   private readonly authorWrites: AuthorWrite[] = [];
-  /** Timestamps of orchestrator shell calls: a shell can write without naming a path. */
+  /** Timestamps of parent shell calls: a shell can write without naming a path. */
   private readonly authorShells: string[] = [];
 
   /**
@@ -348,7 +348,7 @@ export class ScopeRegistry {
   }
 
   /**
-   * Record that the orchestrator ran a shell command.
+   * Record that the parent ran a shell command.
    *
    * No path is recorded because a shell does not have to name one: that is the
    * point. The fact is enough to deny a "clean" independence claim, which is

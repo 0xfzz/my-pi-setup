@@ -57,7 +57,7 @@ export function pathPolicyProblem(
     const boundary = resolve(denied);
     const rel = relative(boundary, path);
     if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
-      return `${candidate} is inside orchestrator control-plane state and is not readable by a reviewer`;
+      return `${candidate} is inside parent control-plane state and is not readable by a reviewer`;
     }
   }
   const roots = (options.roots ?? []).map((root) => resolve(root));

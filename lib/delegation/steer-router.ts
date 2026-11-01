@@ -30,7 +30,7 @@ export interface MatchOwnerOptions {
   id?: string;
   name?: string;
   scope?: string;
-  origin: "user" | "orchestrator";
+  origin: "user" | "parent";
   queue?: boolean;
 }
 
@@ -274,14 +274,14 @@ export function matchOwner(
   // Exactly 1 candidate
   const target = candidates[0];
 
-  // Authority check (D6): Orchestrator cannot change target's scope
-  if (options.origin === "orchestrator" && options.scope && options.scope !== target.scope) {
+  // Authority check (D6): the parent cannot change the target's scope
+  if (options.origin === "parent" && options.scope && options.scope !== target.scope) {
     return {
       outcome: "unauthorized",
       target,
       candidates,
       evidence,
-      reason: `Orchestrator cannot redirect subagent across scopes (${target.scope} -> ${options.scope}). Escalate to user.`,
+      reason: `The parent cannot redirect a subagent across scopes (${target.scope} -> ${options.scope}). Escalate to the user.`,
       suggestedAction: "Escalate scope modification to user.",
       inventory,
     };
@@ -313,9 +313,9 @@ export function matchOwner(
   }
 
   // Running target:
-  // D7: User-origin defaults to "interrupt", orchestrator defaults to "queue"
+  // D7: user-origin defaults to "interrupt", parent-origin defaults to "queue"
   let outcome: SteerOutcome = "interrupt";
-  if (options.origin === "orchestrator") {
+  if (options.origin === "parent") {
     outcome = "queue";
   } else if (options.queue) {
     outcome = "queue";

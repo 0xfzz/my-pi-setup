@@ -38,7 +38,7 @@ export interface DashboardHandoff { id: string; scope: string; goal: string; acc
 export interface DashboardReview { id: string; scope: string; verdict: string; summary: string; timestamp?: string }
 export interface DashboardEscalation { id: string; childId?: string; scope?: string; question: string; stage: string }
 export interface DashboardSpecReview { id: string; title: string; status: string; reviewerIds: string[] }
-export interface DashboardOrchestrator {
+export interface DashboardDelegation {
   children: DashboardChild[];
   handoffs: DashboardHandoff[];
   reviews: DashboardReview[];
@@ -63,7 +63,7 @@ export interface DashboardArtifact {
 export type DashboardArtifactSummary = Omit<DashboardArtifact, "content">;
 export interface DashboardSnapshot {
   session: DashboardSessionInfo;
-  orchestrator: DashboardOrchestrator;
+  delegation: DashboardDelegation;
   artifacts: DashboardArtifact[];
 }
 export interface DashboardSessionView extends Omit<DashboardSnapshot, "artifacts"> {
@@ -78,7 +78,7 @@ export interface DashboardSessionSummary extends DashboardSessionInfo {
   revision: number;
   workers: { running: number; total: number };
 }
-export function emptyOrchestrator(): DashboardOrchestrator {
+export function emptyDelegation(): DashboardDelegation {
   return { children: [], handoffs: [], reviews: [], escalations: [], specReviews: [], paused: false };
 }
 

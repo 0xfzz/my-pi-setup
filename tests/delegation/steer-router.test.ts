@@ -153,16 +153,16 @@ describe("steer-router outcome resolution matrix", () => {
     assert.equal(res.outcome, "queue");
   });
 
-  it("orchestrator origin defaults to queue (D6)", () => {
+  it("parent origin defaults to queue (D6)", () => {
     const registry = new ScopeRegistry();
     const c1 = createChild({ id: "w1", scope: "net-layer", laneFiles: ["src/net/"] });
     registry.registerChild(c1);
 
-    const res = matchOwner("src/net/retry.ts soft reminder", registry, { origin: "orchestrator" });
+    const res = matchOwner("src/net/retry.ts soft reminder", registry, { origin: "parent" });
     assert.equal(res.outcome, "queue");
   });
 
-  it("orchestrator attempting to redirect across scopes is unauthorized (D6)", () => {
+  it("the parent attempting to redirect across scopes is unauthorized (D6)", () => {
     const registry = new ScopeRegistry();
     const c1 = createChild({ id: "w1", scope: "net-layer", laneFiles: ["src/net/"] });
     registry.registerChild(c1);
@@ -170,7 +170,7 @@ describe("steer-router outcome resolution matrix", () => {
     const res = matchOwner("change scope to db-layer", registry, {
       id: "w1",
       scope: "db-layer",
-      origin: "orchestrator",
+      origin: "parent",
     });
     assert.equal(res.outcome, "unauthorized");
   });

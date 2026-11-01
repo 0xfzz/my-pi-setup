@@ -50,6 +50,6 @@ test("the real loader loads the naming authority and the extensions that use it"
   const dashboard: any = await jiti.import("../extensions/dashboard.ts");
   assert.equal(typeof dashboard.default, "function", "dashboard must export an extension factory under jiti");
 
-  const orchestrator: any = await jiti.import("../extensions/agent.ts");
-  assert.equal(typeof orchestrator.default, "function", "orchestrator must export an extension factory under jiti");
+  const agentParent: any = await jiti.import("../extensions/agent.ts");
+  assert.equal(typeof agentParent.default, "function", "the agent extension must export a factory under jiti");
 });

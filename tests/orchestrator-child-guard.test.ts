@@ -3,13 +3,13 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import orchestrator, { budgetNotice, registry, stallNotice } from "../extensions/agent.ts";
+import agentParent, { budgetNotice, registry, stallNotice } from "../extensions/agent.ts";
 import { SUBAGENT_CONTEXT_TYPE } from "../lib/subagent-context.ts";
 
 /**
  * Regression cover for two defects observed in the ruumi QA orchestration run.
  *
- * 1. `session_start` restored the orchestrator registry and armed the watchdog in
+ * 1. `session_start` restored the parent registry and armed the watchdog in
  *    EVERY session. Children share the parent's session directory, so three
  *    children restored the parent's running-children list, watched their siblings,
  *    pressed Escape in their panes, and steered themselves with notices meant for
@@ -69,7 +69,7 @@ function fixture(opts: { tail?: string } = {}) {
     paneSendKeys: async (paneId: string) => { interrupts.push(paneId); },
     paneStart: async () => ({ paneId: "pane-new" }),
   };
-  orchestrator(pi, { client });
+  agentParent(pi, { client });
   const emit = async (name: string, event: any, ctx: any) => {
     const results: any[] = [];
     for (const hook of hooks.get(name) ?? []) results.push(await hook(event, ctx));
@@ -124,11 +124,11 @@ const snapshot = (children: any[]) => ({
   escalations: [],
 });
 
-test("a delegated child never restores, watches, or writes the orchestrator registry", async () => {
+test("a delegated child never restores, watches, or writes the parent registry", async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-orch-child-guard-"));
   try {
     // A sidecar the parent wrote before the child started.
-    await writeFile(join(dir, "main-agent-registry-parent-1.json"), JSON.stringify(snapshot([
+    await writeFile(join(dir, "delegation-registry-parent-1.json"), JSON.stringify(snapshot([
       child({ id: "sib", name: "sibling", scope: "sibling-only", sessionFile: join(dir, "sib.jsonl"), paneId: "pane-sib" }),
     ])));
 
@@ -141,10 +141,10 @@ test("a delegated child never restores, watches, or writes the orchestrator regi
       "a child must not adopt the parent's running children");
     assert.equal(f.paneGets.length, 0, "a child must not probe sibling panes at startup");
     assert.equal(f.paneReads.length, 0, "a child must not read sibling panes at startup");
-    assert.ok(!notices.some(text => text.includes("orchestrator active")),
-      "a child must not be told it is the orchestrator");
+    assert.ok(!notices.some(text => text.includes("delegation active")),
+      "a child must not be told it is the parent");
 
-    // The orchestrator surface is parent-only: refuse it rather than spawn work the
+    // The delegation surface is parent-only: refuse it rather than spawn work the
     // parent cannot see, review, or stop.
     const blocked = await f.emit("tool_call", { toolName: "agent_spawn" }, ctx);
     assert.equal(blocked.length, 1);
@@ -160,12 +160,12 @@ test("a delegated child never restores, watches, or writes the orchestrator regi
       "ordinary tools stay untouched in a child");
 
     // Shutdown must not create a sidecar for the child, and must not touch the parent's.
-    const before = JSON.parse(await readFile(join(dir, "main-agent-registry-parent-1.json"), "utf8"));
+    const before = JSON.parse(await readFile(join(dir, "delegation-registry-parent-1.json"), "utf8"));
     await f.emit("session_shutdown", {}, ctx);
     const files = await readdir(dir);
-    assert.ok(!files.includes("main-agent-registry-child-9.json"),
+    assert.ok(!files.includes("delegation-registry-child-9.json"),
       `child wrote its own sidecar: ${files.join(", ")}`);
-    const after = JSON.parse(await readFile(join(dir, "main-agent-registry-parent-1.json"), "utf8"));
+    const after = JSON.parse(await readFile(join(dir, "delegation-registry-parent-1.json"), "utf8"));
     assert.deepEqual(after, before, "a child must never rewrite the parent's sidecar");
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -177,11 +177,11 @@ test("only the owning session restores and writes its own registry sidecar", asy
   try {
     // Legacy, unkeyed file. It is shared by every session in this cwd, which is
     // exactly why it must not be adopted.
-    await writeFile(join(dir, "orchestrator-registry.json"), JSON.stringify(snapshot([
+    await writeFile(join(dir, "delegation-registry.json"), JSON.stringify(snapshot([
       child({ id: "legacy", name: "legacy", scope: "legacy-only", sessionFile: join(dir, "legacy.jsonl"), paneId: "pane-legacy" }),
     ])));
     // This session's own keyed file.
-    await writeFile(join(dir, "main-agent-registry-parent-2.json"), JSON.stringify(snapshot([
+    await writeFile(join(dir, "delegation-registry-parent-2.json"), JSON.stringify(snapshot([
       child({ id: "own", name: "owner-child", scope: "owner-only", sessionFile: join(dir, "own.jsonl"), paneId: "pane-own" }),
     ])));
 
@@ -192,17 +192,17 @@ test("only the owning session restores and writes its own registry sidecar", asy
     assert.equal(registry.getChildrenInScope("owner-only").length, 1, "own sidecar restores");
     assert.equal(registry.getChildrenInScope("legacy-only").length, 0,
       "another session's unkeyed sidecar is not adopted");
-    assert.ok(notices.some(text => text.includes("orchestrator active")));
+    assert.ok(notices.some(text => text.includes("delegation active")));
     assert.deepEqual(f.paneGets, ["pane-own"], "reconciliation only touches its own children");
     assert.deepEqual(f.paneReads, ["pane-own"], "reconciliation only touches its own children");
 
     await f.emit("session_shutdown", {}, ctx);
-    assert.ok((await readdir(dir)).includes("main-agent-registry-parent-2.json"));
+    assert.ok((await readdir(dir)).includes("delegation-registry-parent-2.json"));
 
-    const legacy = JSON.parse(await readFile(join(dir, "orchestrator-registry.json"), "utf8"));
+    const legacy = JSON.parse(await readFile(join(dir, "delegation-registry.json"), "utf8"));
     assert.deepEqual(legacy.children.map((entry: any) => entry.scope), ["legacy-only"],
       "the owner never writes the shared, unkeyed sidecar");
-    const own = JSON.parse(await readFile(join(dir, "main-agent-registry-parent-2.json"), "utf8"));
+    const own = JSON.parse(await readFile(join(dir, "delegation-registry-parent-2.json"), "utf8"));
     assert.equal(own.children.filter((entry: any) => entry.scope === "owner-only").length, 1);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -212,7 +212,7 @@ test("only the owning session restores and writes its own registry sidecar", asy
 test("a new session in the same process does not inherit the replaced session's children", async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-orch-session-switch-"));
   try {
-    await writeFile(join(dir, "main-agent-registry-session-a.json"), JSON.stringify(snapshot([
+    await writeFile(join(dir, "delegation-registry-session-a.json"), JSON.stringify(snapshot([
       child({
         id: "old-a", name: "old-child", scope: "old-scope",
         sessionFile: join(dir, "old.jsonl"), paneId: "pane-old", status: "completed",
@@ -234,7 +234,7 @@ test("a new session in the same process does not inherit the replaced session's 
       "the new session inherited the replaced session's child");
 
     await f.emit("session_shutdown", { type: "session_shutdown", reason: "quit" }, ctxB);
-    const own = JSON.parse(await readFile(join(dir, "main-agent-registry-session-b.json"), "utf8"));
+    const own = JSON.parse(await readFile(join(dir, "delegation-registry-session-b.json"), "utf8"));
     assert.deepEqual(own.children, [], "the new session's sidecar contains only its own work");
   } finally {
     registry.resetForTests();

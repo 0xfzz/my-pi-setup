@@ -940,13 +940,13 @@ export default function artifactsExtension(pi: ExtensionAPI) {
 
       if (isChild) {
         // A handoff spec is frozen for the child. It is the document an
-        // independent review pinned by content hash and that the orchestrator
+        // independent review pinned by content hash and that the parent
         // re-reads before every spawn; letting the worker rewrite it would
         // re-point the approval at text nobody reviewed.
         if (artId.startsWith("handoff-")) {
           throw new Error(
             `Refused: [${artId}] is a handoff spec and is read-only for a worker. `
-            + `If it is wrong, report that with agent_ping and let the orchestrator revise it with agent_handoff.`,
+            + `If it is wrong, report that with agent_ping and let the parent revise it.`,
           );
         }
         const existing = catalog.get(artId);
@@ -1201,7 +1201,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
       if (isChild && art.id.startsWith("handoff-")) {
         throw new Error(
           `Refused: [${art.id}] is a handoff spec and is read-only for a worker. `
-          + `If it is wrong, report that with agent_ping and let the orchestrator revise it with agent_handoff.`,
+          + `If it is wrong, report that with agent_ping and let the parent revise it.`,
         );
       }
 

@@ -156,13 +156,13 @@ export default function modesExtension(pi: ExtensionAPI) {
     }
     // Compare against the transcript, not the cursor. Cycling used to move the
     // cursor before the policy was written, so this equality test saw the cycle
-    // as already applied and skipped the transition — Plan → Orchestrator showed
+    // as already applied and skipped the transition — a plan-to-work transition showed
     // the right tab while the tools stayed in Plan's loadout.
     const currentId = policyModeId(ctx);
     registry.select(currentId);
     // Compare against the transcript, not the cursor: a cycle moves the cursor
     // before the policy is written, so an equality test on the cursor would read
-    // the transition as already applied and skip it (Plan → Orchestrator used to
+    // the transition as already applied and skip it (a mode switch used to
     // show the right tab while the tools stayed in Plan's loadout).
     if (currentId === id) return true;
     const enteringPlan = id === "plan";
@@ -230,7 +230,7 @@ export default function modesExtension(pi: ExtensionAPI) {
     draw?.();
     refresh?.();
     // Restore is also the resume/reload path: publish the mode the transcript
-    // actually resolved to, so a resumed Orchestrator session reconnects.
+    // actually resolved to, so a resumed session reconnects.
     publishDashboardMode(pi, registry.current.id);
   }
 
@@ -428,7 +428,7 @@ export default function modesExtension(pi: ExtensionAPI) {
         ctx.ui.notify("Input modes are available in the terminal UI only; use /plan mode or /plan off elsewhere.", "warning");
         return;
       }
-      // There is exactly one orchestrator policy now; `full` was removed because
+      // There is exactly one delegation policy now; `full` was removed because
       // a widened allowlist bought implementation quality the parent should have
       // delegated, and cost independence, tokens and lane ownership in exchange.
       if (flags.length) {

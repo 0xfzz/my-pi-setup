@@ -4,7 +4,7 @@
  * The dashboard is an observer. Everything it can display is chosen here, by
  * naming the fields that may cross the boundary, never by stripping a copy of an
  * internal record. Registry rows carry session file paths, terminal tails and
- * watchdog bookkeeping; those are diagnostics for the orchestrator, not dashboard
+ * watchdog bookkeeping; those are diagnostics for the parent, not dashboard
  * data, and an allowlist is the only shape that keeps a future field from leaking
  * by default.
  *
@@ -15,12 +15,12 @@
 import { basename } from "node:path";
 import { resolveGoalTitle } from "./goal-title.ts";
 import {
-  emptyOrchestrator,
+  emptyDelegation,
   type DashboardArtifact,
   type DashboardChild,
   type DashboardEscalation,
   type DashboardHandoff,
-  type DashboardOrchestrator,
+  type DashboardDelegation,
   type DashboardReview,
   type DashboardSessionInfo,
   type DashboardSnapshot,
@@ -43,7 +43,7 @@ export interface DashboardArtifactRecord extends DashboardArtifact {
   sourceSession?: string;
 }
 
-export interface OrchestratorProjectionInput {
+export interface DelegationProjectionInput {
   children?: readonly any[] | null;
   handoffs?: readonly any[] | Map<string, { record?: any }> | null;
   reviews?: readonly any[] | null;
@@ -99,7 +99,7 @@ function entriesOf<T>(value: readonly T[] | Map<string, T> | null | undefined): 
  *
  * Deliberately absent: sessionFile, lastTail, stallStrikes, watchdog, specPath,
  * frozenCriteria, launchScriptFile, interactive/autoExit. Those either identify a
- * private file, contain terminal content, or describe orchestrator control.
+ * private file, contain terminal content, or describe parent control.
  */
 export function projectChild(raw: any): DashboardChild | undefined {
   if (!raw || typeof raw !== "object") return undefined;
@@ -210,8 +210,8 @@ function projectSpecReview(raw: any): DashboardSpecReview | undefined {
   };
 }
 
-/** Project the orchestrator collections, keeping the newest rows when capped. */
-export function projectOrchestrator(input: OrchestratorProjectionInput): DashboardOrchestrator {
+/** Project the delegation collections, keeping the newest rows when capped. */
+export function projectDelegation(input: DelegationProjectionInput): DashboardDelegation {
   const children = (input.children ?? [])
     .map(projectChild)
     .filter((child): child is DashboardChild => Boolean(child))
@@ -233,7 +233,7 @@ export function projectOrchestrator(input: OrchestratorProjectionInput): Dashboa
     .filter((review): review is DashboardSpecReview => Boolean(review))
     .slice(-DASHBOARD_LIMITS.specReviews);
   return {
-    ...emptyOrchestrator(),
+    ...emptyDelegation(),
     children,
     handoffs: handoffRecords,
     reviews,
@@ -329,19 +329,19 @@ export function projectSession(context: any, mode: string, fallbackId = "unknown
 /** Final assembly. Inputs are already projected; this only copies them into one snapshot. */
 export function projectSnapshot(input: {
   session: DashboardSessionInfo;
-  orchestrator?: DashboardOrchestrator;
+  delegation?: DashboardDelegation;
   artifacts?: readonly DashboardArtifact[];
 }): DashboardSnapshot {
   return {
     session: { ...input.session },
-    orchestrator: input.orchestrator ? {
-      children: input.orchestrator.children.map(child => ({ ...child })),
-      handoffs: input.orchestrator.handoffs.map(handoff => ({ ...handoff })),
-      reviews: input.orchestrator.reviews.map(review => ({ ...review })),
-      escalations: input.orchestrator.escalations.map(escalation => ({ ...escalation })),
-      specReviews: input.orchestrator.specReviews.map(review => ({ ...review })),
-      paused: input.orchestrator.paused === true,
-    } : emptyOrchestrator(),
+    delegation: input.delegation ? {
+      children: input.delegation.children.map(child => ({ ...child })),
+      handoffs: input.delegation.handoffs.map(handoff => ({ ...handoff })),
+      reviews: input.delegation.reviews.map(review => ({ ...review })),
+      escalations: input.delegation.escalations.map(escalation => ({ ...escalation })),
+      specReviews: input.delegation.specReviews.map(review => ({ ...review })),
+      paused: input.delegation.paused === true,
+    } : emptyDelegation(),
     artifacts: (input.artifacts ?? []).map(artifact => ({ ...artifact })),
   };
 }

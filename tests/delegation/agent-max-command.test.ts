@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import orchestrator from "../../extensions/agent.ts";
+import agentParent from "../../extensions/agent.ts";
 
 async function harness() {
   const dir = await mkdtemp(join(tmpdir(), "agent-max-command-"));
@@ -19,7 +19,7 @@ async function harness() {
     appendEntry() {},
     sendMessage() {},
   };
-  orchestrator(pi, { client: {} as any, stream: { watch: () => () => {}, onReconcile: () => () => {} } });
+  agentParent(pi, { client: {} as any, stream: { watch: () => () => {}, onReconcile: () => () => {} } });
 
   const notices: { text: string; level: string }[] = [];
   const ctx: any = {

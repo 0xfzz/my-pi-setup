@@ -1,10 +1,10 @@
 /**
- * escalation.ts — the "I am unsure" ladder: child → orchestrator → user.
+ * escalation.ts — the "I am unsure" ladder: child → parent → user.
  *
  * The rule this module encodes, and the reason it is a state machine instead of
  * prose in a prompt:
  *
- *   A child that does not know asks. An orchestrator that does not know asks the
+ *   A child that does not know asks. A parent that does not know asks the
  *   user. Nobody invents an answer, and a cancelled dialog is never consent.
  *
  * The failure this replaces had two shapes. A child with no declared escalation
@@ -22,11 +22,11 @@
 export const ESCALATION_TYPE = "subagent-escalation:v1";
 
 export type EscalationStage =
-  /** Asked by the child, not yet seen by the orchestrator. */
+  /** Asked by the child, not yet seen by the parent. */
   | "child"
-  /** Waiting on the orchestrator. */
-  | "orchestrator"
-  /** Orchestrator could not answer from its own context; waiting on the user. */
+  /** Waiting on the parent. */
+  | "parent"
+  /** The parent could not answer from its own context; waiting on the user. */
   | "user"
   /** Resolved with a real answer. */
   | "answered"
@@ -36,7 +36,7 @@ export type EscalationStage =
 export interface EscalationEvent {
   at: string;
   stage: EscalationStage;
-  actor: "child" | "orchestrator" | "user";
+  actor: "child" | "parent" | "user";
   note?: string;
 }
 
@@ -53,7 +53,7 @@ export interface Escalation {
   askedAt: string;
   updatedAt: string;
   answer?: string;
-  answeredBy?: "orchestrator" | "user";
+  answeredBy?: "parent" | "user";
   history: EscalationEvent[];
 }
 
@@ -74,7 +74,7 @@ export interface OpenEscalationInput {
 export class EscalationLedger {
   private readonly byId = new Map<string, Escalation>();
 
-  /** A child's question always enters the ladder addressed to the orchestrator. */
+  /** A child's question always enters the ladder addressed to the parent. */
   open(input: OpenEscalationInput): Escalation {
     const question = String(input.question ?? "").trim();
     if (!question) {
@@ -90,10 +90,10 @@ export class EscalationLedger {
       question,
       ...(input.context ? { context: String(input.context).trim() } : {}),
       ...(input.options?.length ? { options: input.options.map(String) } : {}),
-      stage: "orchestrator",
+      stage: "parent",
       askedAt: now,
       updatedAt: now,
-      history: [{ at: now, stage: "orchestrator", actor: "child", note: "Question raised by child." }],
+      history: [{ at: now, stage: "parent", actor: "child", note: "Question raised by child." }],
     };
     this.byId.set(escalation.id, escalation);
     return escalation;
@@ -110,7 +110,7 @@ export class EscalationLedger {
   /** Rehydrate from a persistence snapshot. A restored escalation keeps its stage and history. */
   restore(escalation: Escalation): void {
     if (!escalation?.id) return;
-    this.byId.set(escalation.id, escalation);
+    this.byId.set(escalation.id, migrateLegacyEscalation(escalation));
   }
 
   /**
@@ -122,12 +122,12 @@ export class EscalationLedger {
     this.byId.clear();
   }
 
-  /** Waiting on the orchestrator. */
-  forOrchestrator(): Escalation[] {
-    return this.all().filter((e) => e.stage === "orchestrator");
+  /** Waiting on the parent. */
+  forParent(): Escalation[] {
+    return this.all().filter((e) => e.stage === "parent");
   }
 
-  /** Orchestrator deferred: waiting on the user. */
+  /** The parent deferred it: waiting on the user. */
   forUser(): Escalation[] {
     return this.all().filter((e) => e.stage === "user");
   }
@@ -142,28 +142,28 @@ export class EscalationLedger {
   }
 
   /**
-   * The orchestrator answers from reliable context it actually has.
+   * The parent answers from reliable context it actually has.
    *
-   * Only legal while the question is addressed to the orchestrator: once it has
+   * Only legal while the question is addressed to the parent: once it has
    * been handed to the user, answering it here would silently override a decision
-   * that was escalated precisely because the orchestrator was not competent to
+   * that was escalated precisely because the parent was not competent to
    * make it.
    */
-  answerAsOrchestrator(id: string, answer: string, now = new Date()): Escalation {
+  answerAsParent(id: string, answer: string, now = new Date()): Escalation {
     const escalation = this.requireOpen(id);
-    if (escalation.stage !== "orchestrator") {
+    if (escalation.stage !== "parent") {
       throw new EscalationError(
         `Escalation ${id} is with ${escalation.stage === "user" ? "the user" : escalation.stage}. ` +
-          `The orchestrator cannot answer a question it already escalated.`,
+          `The parent cannot answer a question it already escalated.`,
       );
     }
-    return this.resolve(escalation, answer, "orchestrator", "Answered by orchestrator from its own context.", now);
+    return this.resolve(escalation, answer, "parent", "Answered by the parent from its own context.", now);
   }
 
   /**
-   * The orchestrator does not know either. Hand it to the user.
+   * The parent does not know either. Hand it to the user.
    *
-   * A reason is required, because "escalate" without one is how an orchestrator
+   * A reason is required, because "escalate" without one is how a parent
    * hides that it simply did not look.
    */
   escalateToUser(id: string, reason: string, now = new Date()): Escalation {
@@ -171,18 +171,18 @@ export class EscalationLedger {
     const why = String(reason ?? "").trim();
     if (!why) {
       throw new EscalationError(
-        `Escalating ${id} needs a reason: what did the orchestrator check, and what decision is it not competent to make?`,
+        `Escalating ${id} needs a reason: what did the parent check, and what decision is it not competent to make?`,
       );
     }
     if (escalation.stage === "user") return escalation;
-    if (escalation.stage !== "orchestrator") {
-      throw new EscalationError(`Escalation ${id} is ${escalation.stage}; only an orchestrator-pending question can be escalated.`);
+    if (escalation.stage !== "parent") {
+      throw new EscalationError(`Escalation ${id} is ${escalation.stage}; only a parent-pending question can be escalated.`);
     }
     const at = now.toISOString();
     return this.transition(escalation, "user", {
       at,
       stage: "user",
-      actor: "orchestrator",
+      actor: "parent",
       note: `Escalated to user: ${why}`,
     });
   }
@@ -222,7 +222,7 @@ export class EscalationLedger {
     const escalation = this.byId.get(id);
     if (!escalation) throw new EscalationError(`No escalation ${id}.`);
     if (escalation.stage === "answered") {
-      const who = escalation.answeredBy === "user" ? "the user" : "the orchestrator";
+      const who = escalation.answeredBy === "user" ? "the user" : "the parent";
       return [
         `Answer to your question — decided by ${who}:`,
         "",
@@ -261,7 +261,7 @@ export class EscalationLedger {
   private resolve(
     escalation: Escalation,
     answer: string,
-    by: "orchestrator" | "user",
+    by: "parent" | "user",
     note: string,
     now: Date,
   ): Escalation {
@@ -284,4 +284,53 @@ export class EscalationLedger {
     escalation.history.push(event);
     return escalation;
   }
+}
+
+/**
+ * The stage/actor names this ledger used before the parent/child rename.
+ *
+ * Stored escalations outlive the code that wrote them: a session restored after
+ * an upgrade still carries `"orchestrator"` in its stage, actor, answeredBy and
+ * history. Translating on read keeps those questions answerable instead of
+ * stranding a child on a stage the current ladder does not know.
+ */
+const LEGACY_STAGE: Readonly<Record<string, EscalationStage>> = { orchestrator: "parent" };
+
+function legacyActor(value: unknown): "child" | "parent" | "user" | undefined {
+  if (value === "orchestrator") return "parent";
+  if (value === "child" || value === "parent" || value === "user") return value;
+  return undefined;
+}
+
+/**
+ * Map a persisted escalation onto the current vocabulary. Unknown fields pass
+ * through; the record is read as loose data because a stored one may carry a
+ * stage this build no longer declares.
+ */
+export function migrateLegacyEscalation(escalation: Escalation): Escalation {
+  const raw = escalation as unknown as Record<string, unknown>;
+  const stage = LEGACY_STAGE[String(raw.stage)] ?? escalation.stage;
+  const answeredByRaw = raw.answeredBy;
+  const answeredBy = answeredByRaw === "orchestrator"
+    ? "parent"
+    : answeredByRaw === "parent" || answeredByRaw === "user"
+      ? answeredByRaw
+      : undefined;
+  const history = Array.isArray(escalation.history)
+    ? escalation.history.map((event) => {
+      const loose = event as unknown as Record<string, unknown>;
+      const eventActor = legacyActor(loose.actor);
+      return {
+        ...event,
+        stage: LEGACY_STAGE[String(loose.stage)] ?? event.stage,
+        ...(eventActor ? { actor: eventActor } : {}),
+      };
+    })
+    : [];
+  return {
+    ...escalation,
+    stage,
+    ...(answeredBy ? { answeredBy } : {}),
+    history,
+  } as Escalation;
 }

@@ -9,7 +9,7 @@
  *  - ids are processed in sorted order, so the same set of children always
  *    produces the same assignment;
  *  - an explicit, human-looking author name always wins and is never rewritten;
- *  - the orchestrator is not a dictionary name: it reads `{Project} Manager`;
+ *  - the parent session is not a dictionary name: it reads `{Project} Manager`;
  *  - a handoff is a document, not a person: `Spec · <Scope>`.
  */
 
@@ -127,7 +127,7 @@ export function isHumanName(value) {
 
 /**
  * Split an already-composed label (`Bima · Skeleton Builder`).
- * The orchestrator stores that composed string as the child's name so panes,
+ * The parent stores that composed string as the child's name so panes,
  * prompts and the dashboard agree; the projection must not compose it twice.
  */
 export function splitComposedName(value) {
@@ -167,6 +167,7 @@ function usableManagerLabel(value, { minimum = 2 } = {}) {
 /** A bounded user-approved title, not a transcript-derived summary. */
 export function meaningfulSessionTitle(value, { project } = {}) {
   if (typeof value !== "string") return "";
+  // oxlint-disable-next-line no-control-regex -- stripping terminal controls is deliberate
   const clean = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
   const label = clean.replace(/(?:\s+manager)+$/i, "").trim();
   if (label.length < 2 || UUID_RE.test(label) || NON_NAMES.has(label.toLowerCase())) return "";
@@ -179,7 +180,7 @@ export function meaningfulSessionTitle(value, { project } = {}) {
   return clampLabel(label, 200);
 }
 
-/** Session identity and orchestrator identity deliberately have different labels. */
+/** Session identity and parent identity deliberately have different labels. */
 export function sessionTitle({ project, sessionName, goalTitle } = {}) {
   const goal = meaningfulSessionTitle(goalTitle, { project });
   const name = meaningfulSessionTitle(sessionName, { project });

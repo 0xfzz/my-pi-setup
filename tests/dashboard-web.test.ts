@@ -49,7 +49,7 @@ function makeView(overrides: Record<string, Any> = {}) {
     connected: true,
     lastSeen: 1_000,
     revision: 7,
-    orchestrator: {
+    delegation: {
       children: [
         {
           id: "c1",
@@ -181,26 +181,26 @@ test("hiding completed workers prunes their edges, orphan nodes and keeps stable
 test("topology signature ignores status and includes labels/edges", () => {
   const first = projectGraph(makeView());
   const statusChanged = makeView();
-  statusChanged.orchestrator.children[0].status = "blocked";
+  statusChanged.delegation.children[0].status = "blocked";
   const second = projectGraph(statusChanged);
   assert.equal(topologySignature(first), topologySignature(second));
 
   // A slug-shaped name is replaced by a dictionary name, so renaming a slug is not
   // a topology change; an explicit human name and a scope change both are.
   const slugRename = makeView();
-  slugRename.orchestrator.children[0].name = "renamed-worker";
+  slugRename.delegation.children[0].name = "renamed-worker";
   assert.equal(topologySignature(first), topologySignature(projectGraph(slugRename)));
 
   const humanRename = makeView();
-  humanRename.orchestrator.children[0].name = "Wayan Kusuma";
+  humanRename.delegation.children[0].name = "Wayan Kusuma";
   assert.notEqual(topologySignature(first), topologySignature(projectGraph(humanRename)));
 
   const scopeChanged = makeView();
-  scopeChanged.orchestrator.children[0].scope = "api-v2";
+  scopeChanged.delegation.children[0].scope = "api-v2";
   assert.notEqual(topologySignature(first), topologySignature(projectGraph(scopeChanged)));
 
   const added = makeView();
-  added.orchestrator.children.push({ id: "c5", name: "new-worker", scope: "x", status: "running", startedAt: 9 });
+  added.delegation.children.push({ id: "c5", name: "new-worker", scope: "x", status: "running", startedAt: 9 });
   assert.notEqual(topologySignature(first), topologySignature(projectGraph(added)));
 });
 
@@ -219,11 +219,11 @@ test("DOT labels are escaped and stable regardless of input order", () => {
 
   // Projected labels stay byte-stable regardless of the order rows arrive in.
   const view = makeView();
-  view.orchestrator.children[0].name = "api-worker";
+  view.delegation.children[0].name = "api-worker";
   const dot = buildDot(projectGraph(view));
   const reversed = makeView();
-  reversed.orchestrator.children.reverse();
-  reversed.orchestrator.handoffs.reverse();
+  reversed.delegation.children.reverse();
+  reversed.delegation.handoffs.reverse();
   const normalize = (text: string) => text.replace(/^.*$/gm, (line: string) => line.trim()).split("\n").sort().join("\n");
   assert.equal(normalize(buildDot(projectGraph(reversed))), normalize(dot));
 
@@ -246,7 +246,7 @@ test("artifact catalog search matches id/title/type/tags/scope and sorts newest 
 
 test("describeNode exposes handoff goal and acceptance criteria without truncating to the sublabel", () => {
   const view = makeView();
-  view.orchestrator.handoffs[0] = {
+  view.delegation.handoffs[0] = {
     id: "h1",
     scope: "api",
     goal: `Deliver the dashboard detail drawer ${"x".repeat(4000)}`,
@@ -286,7 +286,7 @@ test("describeNode exposes handoff goal and acceptance criteria without truncati
 
 test("handoff nodes resolve workers by handoffId only and derive their status", () => {
   const view = makeView();
-  view.orchestrator.children.push({ id: "c-lookalike", name: "same-scope", scope: "api", status: "running", startedAt: 6 } as Any);
+  view.delegation.children.push({ id: "c-lookalike", name: "same-scope", scope: "api", status: "running", startedAt: 6 } as Any);
   const graph = projectGraph(view);
   const h1: Any = graph.nodes.find((candidate: Any) => candidate.id === "handoff:h1")!;
   const h2: Any = graph.nodes.find((candidate: Any) => candidate.id === "handoff:h2")!;
@@ -307,7 +307,7 @@ test("handoff nodes resolve workers by handoffId only and derive their status", 
 
 test("hidden completed workers stay in handoff detail without becoming graph nodes", () => {
   const view = makeView();
-  view.orchestrator.children.push({ id: "c5", name: "old-worker", scope: "api", status: "closed", handoffId: "h1", startedAt: 5 } as Any);
+  view.delegation.children.push({ id: "c5", name: "old-worker", scope: "api", status: "closed", handoffId: "h1", startedAt: 5 } as Any);
   const graph = projectGraph(view, { hideCompleted: true });
   const ids = graph.nodes.map((node: Any) => node.id);
   assert.ok(!ids.includes("child:c5"), "hidden workers are not resurrected as nodes");
@@ -341,7 +341,7 @@ test("handoff nodes inherit the artifacts produced by their own workers", () => 
 
 test("handoff artifact inheritance dedups shared ids and sorts newest first", () => {
   const view = makeView();
-  view.orchestrator.children.push({
+  view.delegation.children.push({
     id: "c5",
     name: "api-reviewer",
     scope: "api",
@@ -367,9 +367,9 @@ test("handoff artifact inheritance dedups shared ids and sorts newest first", ()
 
 test("handoffs without workers or without worker artifacts get no association entry", () => {
   const view = makeView();
-  view.orchestrator.handoffs.push({ id: "h-bare", scope: "api", goal: "no workers", acceptanceCriteria: [] });
-  view.orchestrator.handoffs.push({ id: "h-idle", scope: "api", goal: "worker without artifacts", acceptanceCriteria: [] });
-  view.orchestrator.children.push({ id: "c-idle", name: "idle-worker", scope: "api", status: "running", handoffId: "h-idle", startedAt: 6 } as Any);
+  view.delegation.handoffs.push({ id: "h-bare", scope: "api", goal: "no workers", acceptanceCriteria: [] });
+  view.delegation.handoffs.push({ id: "h-idle", scope: "api", goal: "worker without artifacts", acceptanceCriteria: [] });
+  view.delegation.children.push({ id: "c-idle", name: "idle-worker", scope: "api", status: "running", handoffId: "h-idle", startedAt: 6 } as Any);
 
   const graph = projectGraph(view);
   assert.equal(Object.hasOwn(graph.associations, "handoff:h-bare"), false, "no workers means no key, not an empty array");
@@ -383,7 +383,7 @@ test("handoff artifacts never come from scope alone", () => {
   const view = makeView();
   // a-unowned already carries scope "api" with no child provenance; a-lookalike
   // is owned by a same-scope worker that is not attached to h1.
-  view.orchestrator.children.push({
+  view.delegation.children.push({
     id: "c-lookalike",
     name: "same-scope",
     scope: "api",
@@ -392,7 +392,7 @@ test("handoff artifacts never come from scope alone", () => {
     startedAt: 6,
   } as Any);
   view.artifacts.push(artifact("a-lookalike", "Lookalike artifact", { scope: "api", childId: "c-lookalike" }));
-  view.orchestrator.handoffs.push({ id: "h-scope", scope: "api", goal: "scope only", acceptanceCriteria: [] });
+  view.delegation.handoffs.push({ id: "h-scope", scope: "api", goal: "scope only", acceptanceCriteria: [] });
 
   const graph = projectGraph(view);
   assert.deepEqual(graph.associations["handoff:h1"].map((summary: Any) => summary.id), ["a-owned"]);
@@ -401,7 +401,7 @@ test("handoff artifacts never come from scope alone", () => {
 
 test("hiding completed workers leaves handoff artifact provenance unchanged", () => {
   const view = makeView();
-  view.orchestrator.children.push({
+  view.delegation.children.push({
     id: "c5",
     name: "old-worker",
     scope: "api",
@@ -445,8 +445,8 @@ test("handoffStatusFor derives handoff status from attached workers", () => {
 
 test("needsAttention flags pings, stuck statuses and escalations", () => {
   const view = makeView();
-  (view.orchestrator.children[0] as Any).pendingPing = true;
-  view.orchestrator.children.push({ id: "c6", name: "stuck", scope: "api", status: "blocked", handoffId: "h1", startedAt: 6 } as Any);
+  (view.delegation.children[0] as Any).pendingPing = true;
+  view.delegation.children.push({ id: "c6", name: "stuck", scope: "api", status: "blocked", handoffId: "h1", startedAt: 6 } as Any);
   const graph = projectGraph(view);
   const described = (id: string): Any => describeNode(graph.nodes.find((candidate: Any) => candidate.id === id)!);
   assert.equal(described("child:c1").needsAttention, true, "a pending ping needs a human");
@@ -460,8 +460,8 @@ test("needsAttention flags pings, stuck statuses and escalations", () => {
 
 test("groupWork and workCounts split non-session nodes in graph order", () => {
   const view = makeView();
-  (view.orchestrator.children[0] as Any).pendingPing = true;
-  view.orchestrator.children.push({ id: "c6", name: "stuck", scope: "api", status: "blocked", handoffId: "h1", startedAt: 6 } as Any);
+  (view.delegation.children[0] as Any).pendingPing = true;
+  view.delegation.children.push({ id: "c6", name: "stuck", scope: "api", status: "blocked", handoffId: "h1", startedAt: 6 } as Any);
   const graph = projectGraph(view);
   const grouped: Any = graphModel.groupWork(graph);
   const ids = (list: Any[]) => list.map((node: Any) => node.id);
@@ -515,8 +515,8 @@ test("Graphviz renders malicious DOT labels as inert escaped text", async () => 
     const view = makeView();
     // The handoff scope still reaches a DOT label verbatim, so it is the field
     // that must be proven inert (worker names are sanitized by the naming layer).
-    view.orchestrator.handoffs[0].scope = '</text><script>alert("xss")</script><a href="javascript:alert(1)">x</a>';
-    view.orchestrator.children[0].task = "onload=alert(1)";
+    view.delegation.handoffs[0].scope = '</text><script>alert("xss")</script><a href="javascript:alert(1)">x</a>';
+    view.delegation.children[0].task = "onload=alert(1)";
     const dot = buildDot(projectGraph(view));
     const svg = await renderDot(dot);
     assert.ok(svg.includes("<svg"), "graphviz produced SVG");
@@ -649,7 +649,7 @@ test("graph DOM decoration exposes accessible node semantics and selection", asy
     assert.equal(child.getAttribute("aria-current"), "true");
 
     const statusChanged = makeView();
-    statusChanged.orchestrator.children[0].status = "blocked";
+    statusChanged.delegation.children[0].status = "blocked";
     assert.equal(updateGraphSvg(svg, projectGraph(statusChanged)), true);
     assert.ok(child.classList.contains("status-blocked"));
     assert.ok(!child.classList.contains("status-running"));
@@ -960,7 +960,7 @@ test("status-only updates keep kind classes, kind paint and no relayout", async 
     assert.match(handoff.getAttribute("aria-label") || "", /Spec, (Running|Completed)/);
 
     const next = makeView();
-    next.orchestrator.children[0].status = "completed";
+    next.delegation.children[0].status = "completed";
     const nextGraph = projectGraph(next);
     assert.equal(topologySignature(graph), topologySignature(nextGraph), "a status change is not a topology change");
     assert.equal(updateGraphSvg(svg, nextGraph), true);
@@ -1003,7 +1003,7 @@ test("motion plan is class-based, status-flashes updates and dies under reduced 
   assert.deepEqual(firstPlan.updated, []);
 
   const statusOnly = makeView();
-  statusOnly.orchestrator.children[0].status = "completed";
+  statusOnly.delegation.children[0].status = "completed";
   const next: Any = projectGraph(statusOnly);
   next.signature = topologySignature(next);
   const inPlace: Any = planGraphMotion(first, next, { reducedMotion: false });
@@ -1015,7 +1015,7 @@ test("motion plan is class-based, status-flashes updates and dies under reduced 
   assert.ok(inPlace.updated.includes("handoff:h1"));
 
   const topology = makeView();
-  topology.orchestrator.children.push({ id: "c9", name: "new-worker", scope: "docs", status: "running", startedAt: 20 });
+  topology.delegation.children.push({ id: "c9", name: "new-worker", scope: "docs", status: "running", startedAt: 20 });
   const added: Any = projectGraph(topology);
   added.signature = topologySignature(added);
   const plan: Any = planGraphMotion(first, added, { reducedMotion: false });

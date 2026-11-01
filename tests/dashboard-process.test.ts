@@ -103,7 +103,7 @@ const emit = event => process.stdout.write(JSON.stringify({ ...event, sessionId 
 let revision = 0;
 const snapshot = rev => ({
   session: { id: sessionId, name: sessionId + " rev " + rev, project: "proc-test", mode: "orchestrator" },
-  orchestrator: {
+  delegation: {
     children: [{ id: "child-1", name: "worker", scope: "net-retry", status: "running", laneFiles: [], lastMilestoneFiles: [] }],
     handoffs: [], reviews: [], escalations: [], specReviews: [], paused: false,
   },

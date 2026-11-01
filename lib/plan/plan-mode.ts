@@ -56,7 +56,7 @@ export function pendingPlanDeferredTools(branch: readonly any[]): string[] {
  *
  * Membership here is an ALLOWLIST, not an assertion of presence. Plenty of these
  * tools are registered conditionally — `tool_search` by the MCP gateway,
- * `agent_running` only while the orchestrator extension is loaded, `google_search` only with the Antigravity
+ * `agent_running` only while the delegation extension is loaded, `google_search` only with the Antigravity
  * provider, and so on — so an absent name usually means "that feature is off",
  * not "someone renamed a tool". See `EXPECTED_PLAN_TOOLS` for the subset whose
  * absence really is a bug.

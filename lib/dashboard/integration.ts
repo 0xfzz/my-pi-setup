@@ -20,8 +20,8 @@ import {
   DASHBOARD_ARTIFACTS_EVENT,
   DASHBOARD_MODE_EVENT,
   DASHBOARD_STATE_EVENT,
-  emptyOrchestrator,
-  type DashboardOrchestrator,
+  emptyDelegation,
+  type DashboardDelegation,
   type DashboardSessionInfo,
   type DashboardSnapshot,
 } from "./protocol.ts";
@@ -43,7 +43,7 @@ export interface DashboardModeNotice {
 }
 
 export interface DashboardStateNotice {
-  orchestrator: DashboardOrchestrator;
+  delegation: DashboardDelegation;
   /** Explicit session-file → child-id provenance from the registry rows. */
   childSessions?: ReadonlyMap<string, string>;
   at: number;
@@ -79,7 +79,7 @@ export function publishDashboardState(
   notice: Omit<DashboardStateNotice, "at"> & { at?: number },
 ): void {
   emit(pi, DASHBOARD_STATE_EVENT, {
-    orchestrator: notice.orchestrator,
+    delegation: notice.delegation,
     ...(notice.childSessions ? { childSessions: notice.childSessions } : {}),
     at: notice.at ?? Date.now(),
   } satisfies DashboardStateNotice);
@@ -119,7 +119,7 @@ export type DashboardProducerFactory = (
 /**
  * Default runtime factory. Kept behind a seam so tests can inject a fake producer
  * and so a package without the shared runtime still loads safely: the import is
- * deferred until a successful Orchestrator entry actually needs it.
+ * deferred until the first delegated child actually needs it.
  */
 export async function defaultDashboardProducerFactory(
   options: DashboardProducerOptions,
@@ -149,15 +149,15 @@ export interface DashboardBridgeOptions {
  * One producer lease for one parent session.
  *
  * `start()` is the only thing that creates the producer, and the dashboard
- * extension calls it only after a successful Orchestrator entry/restore. Every
- * mutation before that is retained in `mode`/`orchestrator`/`artifacts`, so the
+ * extension calls it only after the first child is registered or a branch restore. Every
+ * mutation before that is retained in `mode`/`delegation`/`artifacts`, so the
  * first snapshot published is the current state rather than an empty shell.
  */
 export class DashboardBridge {
   private readonly options: DashboardBridgeOptions;
   private session: DashboardSessionInfo | undefined;
   private mode = "normal";
-  private orchestrator: DashboardOrchestrator | undefined;
+  private delegation: DashboardDelegation | undefined;
   private childSessions: ReadonlyMap<string, string> | undefined;
   private artifactRecords: DashboardArtifactRecord[] = [];
   private producer: DashboardProducerLike | undefined;
@@ -191,11 +191,11 @@ export class DashboardBridge {
     if (this.producer) this.schedule();
   }
 
-  observeOrchestrator(
-    orchestrator: DashboardOrchestrator | undefined,
+  observeDelegation(
+    delegation: DashboardDelegation | undefined,
     childSessions?: ReadonlyMap<string, string>,
   ): void {
-    this.orchestrator = orchestrator;
+    this.delegation = delegation;
     if (childSessions) this.childSessions = childSessions;
     if (this.producer) this.schedule();
   }
@@ -301,7 +301,7 @@ export class DashboardBridge {
     if (this.closed) {
       this.session = undefined;
       this.mode = "normal";
-      this.orchestrator = undefined;
+      this.delegation = undefined;
       this.childSessions = undefined;
       this.artifactRecords = [];
       this.readyUrl = undefined;
@@ -315,7 +315,7 @@ export class DashboardBridge {
     const session: DashboardSessionInfo = { ...this.session, mode: this.mode || this.session.mode };
     return projectSnapshot({
       session,
-      orchestrator: this.orchestrator ?? emptyOrchestrator(),
+      delegation: this.delegation ?? emptyDelegation(),
       artifacts: projectArtifacts(this.artifactRecords, { childBySession: this.childSessions }),
     });
   }
@@ -326,7 +326,7 @@ export class DashboardBridge {
     return JSON.stringify({
       session: snapshot.session,
       mode: snapshot.session.mode,
-      orchestrator: snapshot.orchestrator,
+      delegation: snapshot.delegation,
       artifacts,
     });
   }

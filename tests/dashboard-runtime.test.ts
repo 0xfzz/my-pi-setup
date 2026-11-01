@@ -74,7 +74,7 @@ let sessionCounter = 0;
 function makeSnapshot(sessionId = `session-${++sessionCounter}`, mutate: (snapshot: DashboardSnapshot) => void = () => {}): DashboardSnapshot {
   const snapshot: DashboardSnapshot = {
     session: { id: sessionId, name: `Session ${sessionId}`, project: "project-a", mode: "orchestrator" },
-    orchestrator: {
+    delegation: {
       children: [
         {
           id: "child-1",
@@ -342,17 +342,17 @@ test("sanitizeSnapshot keeps protocol fields only and drops unrepresentable entr
   const input = makeSnapshot("session-clean") as unknown as Record<string, any>;
   input.evil = true;
   input.session.evil = "x";
-  input.orchestrator.evil = 1;
-  input.orchestrator.children[0].evil = "x";
-  input.orchestrator.children.push({ id: "invalid-no-scope" }, { id: "child-2", scope: "ok", status: "not-a-status" });
+  input.delegation.evil = 1;
+  input.delegation.children[0].evil = "x";
+  input.delegation.children.push({ id: "invalid-no-scope" }, { id: "child-2", scope: "ok", status: "not-a-status" });
   input.artifacts[0].evil = "x";
 
   const clean = sanitizeSnapshot(input);
-  assert.deepEqual(Object.keys(clean).sort(), ["artifacts", "orchestrator", "session"]);
+  assert.deepEqual(Object.keys(clean).sort(), ["artifacts", "delegation", "session"]);
   assert.equal("evil" in clean, false);
   assert.equal("evil" in clean.session, false);
-  assert.equal(clean.orchestrator.children.length, 1, "unrepresentable children are dropped, not invented");
-  assert.equal("evil" in clean.orchestrator.children[0]!, false);
+  assert.equal(clean.delegation.children.length, 1, "unrepresentable children are dropped, not invented");
+  assert.equal("evil" in clean.delegation.children[0]!, false);
   assert.equal("evil" in clean.artifacts[0]!, false);
   assert.equal(({} as Record<string, unknown>).evil, undefined, "no prototype pollution");
 });
@@ -449,7 +449,7 @@ test("publish is projected into summaries and a content-free session view", asyn
 
     const view = (await getJson(handle, "api/session?id=session-view", cookie)).body.session;
     assert.equal(view.connected, true);
-    assert.equal(view.orchestrator.children[0].status, "running");
+    assert.equal(view.delegation.children[0].status, "running");
     assert.equal(view.artifacts.length, 1);
     assert.equal(view.artifacts[0].title, "Spec");
     assert.equal("content" in view.artifacts[0], false, "catalog listings never inline artifact bodies");
@@ -704,7 +704,7 @@ test("producer liveness is separate from domain state and lapsed sessions expire
 
     const lapsed = (await getJson(handle, "api/session?id=session-liveness", cookie)).body.session;
     assert.equal(lapsed.connected, false);
-    assert.equal(lapsed.orchestrator.children[0].status, "running", "disconnect is not worker failure");
+    assert.equal(lapsed.delegation.children[0].status, "running", "disconnect is not worker failure");
     assert.equal(lapsed.revision, 1);
 
     assert.equal(await heartbeat(handle, "session-liveness", { generation: 1 }), 200);

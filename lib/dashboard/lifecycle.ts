@@ -1,7 +1,7 @@
 /**
  * lifecycle.ts — discovery, race-safe startup, and shutdown for the shared server.
  *
- * Every Pi process that enters Orchestrator mode calls `ensureDashboard()`. The
+ * Every Pi process that first delegates work calls `ensureDashboard()`. The
  * contract is: however many processes call it, concurrently or not, exactly one
  * server per runtime directory ends up serving them.
  *

@@ -183,12 +183,12 @@ export function handoffStatusFor(handoffId, children) {
 export function projectGraph(view, options = {}) {
   const hideCompleted = Boolean(options.hideCompleted);
   const session = view?.session || { id: "unknown", name: "Session", project: "", mode: "" };
-  const orchestrator = view?.orchestrator || {};
-  const children = Array.isArray(orchestrator.children) ? [...orchestrator.children] : [];
-  const handoffs = Array.isArray(orchestrator.handoffs) ? [...orchestrator.handoffs] : [];
-  const reviews = Array.isArray(orchestrator.reviews) ? [...orchestrator.reviews] : [];
-  const escalations = Array.isArray(orchestrator.escalations) ? [...orchestrator.escalations] : [];
-  const specReviews = Array.isArray(orchestrator.specReviews) ? [...orchestrator.specReviews] : [];
+  const delegation = view?.delegation || {};
+  const children = Array.isArray(delegation.children) ? [...delegation.children] : [];
+  const handoffs = Array.isArray(delegation.handoffs) ? [...delegation.handoffs] : [];
+  const reviews = Array.isArray(delegation.reviews) ? [...delegation.reviews] : [];
+  const escalations = Array.isArray(delegation.escalations) ? [...delegation.escalations] : [];
+  const specReviews = Array.isArray(delegation.specReviews) ? [...delegation.specReviews] : [];
   const artifacts = Array.isArray(view?.artifacts) ? view.artifacts : [];
 
   children.sort((a, b) => (Number(a.startedAt) || 0) - (Number(b.startedAt) || 0) || byText(a.id, b.id));
@@ -222,7 +222,7 @@ export function projectGraph(view, options = {}) {
     label: managerName({ project: session.project, sessionName: session.name }),
     displayName: `${sessionTitle({ project: session.project, sessionName: session.name })} Manager`,
     sublabel: [session.project, session.mode].filter(Boolean).join(" · "),
-    status: orchestrator.paused ? "paused" : "running",
+    status: delegation.paused ? "paused" : "running",
     scope: undefined,
     raw: session,
   });

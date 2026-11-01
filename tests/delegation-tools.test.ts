@@ -63,7 +63,7 @@ test("retired names are disjoint from the canonical surface", () => {
 test("every retired name with a successor translates to a canonical tool", () => {
   for (const name of RETIRED_V1_TOOLS) {
     const target = canonicalDelegationName(name);
-    // `spec_review_submit`'s successor was removed with the orchestrator
+    // `spec_review_submit`'s successor was removed with the delegation
     // pipeline; the others still have a live canonical name.
     if (!target) continue;
     assert.equal(isDelegationTool(target), true, `${target} exists`);

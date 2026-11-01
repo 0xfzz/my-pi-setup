@@ -6,7 +6,7 @@
  *
  * 1. THE ORCHESTRATOR ONLY HANDS OFF AND REVIEWS.
  *    Its product is a handoff spec (agent_handoff), and its second act is a verdict
- *    (agent_review). It has no edit/write tool. An orchestrator that implements
+ *    (agent_review). It has no edit/write tool. A parent that implements
  *    produces diffs nobody owns and a review that is not independent of the work.
  *
  * 2. A CHILD RECEIVES ITS OWN HANDOFF AND NOTHING ELSE.
@@ -18,8 +18,8 @@
  *    UID, so a path given to one child is a path the others can open by guessing.
  *    Non-disclosure is the only boundary that actually holds.
  *
- * 3. UNCERTAINTY ESCALATES: child → orchestrator → user.
- *    A child that does not know pings the orchestrator. An orchestrator that does
+ * 3. UNCERTAINTY ESCALATES: child → parent → user.
+ *    A child that does not know pings the parent. A parent that does
  *    not know asks the user. A cancelled dialog is never consent, and a settled
  *    decision is not renegotiated. See lib/escalation.ts.
  */
@@ -83,8 +83,8 @@ import { readOnlyShellCommand } from "../lib/plan/plan-shell.ts";
 import { ensureRolePrompts, loadRolePrompt, renderRolePromptReport } from "../lib/delegation/role-prompts.ts";
 import { providerModelPicker } from "../lib/provider/provider-model-picker.ts";
 import {
-  ORCH_ROLES,
-  isOrchRole,
+  CHILD_ROLES,
+  isChildRole,
   modelKey,
   normalizeRoleModels,
   parseBinding,
@@ -94,7 +94,7 @@ import {
   renderRoleMenu,
   resolveRoleModel,
   type ModelRegistryPort,
-  type OrchRole,
+  type ChildRole,
   type ResolvedRoleModel,
   type RoleBinding,
 } from "../lib/delegation/role-models.ts";
@@ -122,7 +122,7 @@ import {
 } from "../lib/spawn-policy.ts";
 import type { SpawnPurpose } from "../lib/delegation-tools.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardState } from "../lib/dashboard/integration.ts";
-import { projectChildProvenance, projectOrchestrator } from "../lib/dashboard/projection.ts";
+import { projectChildProvenance, projectDelegation } from "../lib/dashboard/projection.ts";
 import { displayName as namingDisplayName, givenNameFor, givenNamePart, isHumanName } from "../lib/naming.ts";
 
 /** Shared handles. Exported so tests can assert on real state, not a mock. */
@@ -160,7 +160,7 @@ export function escalationGuidance(escalationId: string): string[] {
 /**
  * The sentence that ends the parent's turn.
  *
- * The orchestrator is event-driven: completion, a child question, and a
+ * The parent is event-driven: completion, a child question, and a
  * watchdog notice all arrive as messages that trigger a turn. Sleep-polling was
  * the observed failure (session 01a17cb6 spent six minutes in `bash sleep`), so
  * the contract is stated in every result that starts asynchronous work.
@@ -191,7 +191,7 @@ export function resetPollFingerprints(): void {
   lastPollFingerprints.clear();
 }
 
-export interface OrchestratorDeps {
+export interface DelegationDeps {
   client?: HerdrClient;
   stream?: any;
   /** Clock seam: the watchdog's budget maths must be testable without waiting. */
@@ -312,7 +312,7 @@ export function stallNotice(params: {
     + `Inspect its pane, then agent_resume with direction, or agent_close to end it.`;
 }
 
-export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps): void {
+export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps): void {
   const client: HerdrClient = deps?.client || createHerdrClient();
   const moduleController = new AbortController();
   /**
@@ -368,26 +368,29 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
    * Registry sidecar, keyed by session id.
    *
    * The session directory is shared by every session — and every child — started in
-   * the same cwd, so a bare `main-agent-registry.json` was one file for all of them
+   * the same cwd, so a bare `delegation-registry.json` was one file for all of them
    * and each writer raced every other. A child gets no path at all: it owns no
    * children, no handoffs and no escalations.
    */
   function registryPath(): string | null {
     if (isChildSession || !sessionDir || !ownerSessionId) return null;
-    return join(sessionDir, `main-agent-registry-${ownerSessionId}.json`);
+    return join(sessionDir, `delegation-registry-${ownerSessionId}.json`);
   }
 
   /**
-   * The retired filename for the same keyed sidecar.
+   * The retired filenames for the same keyed sidecar, newest first.
    *
-   * A session started before the rename left its registry under the old name.
+   * A session started before a rename left its registry under an older name.
    * Reading it once on restore keeps its running children, pending escalations and
-   * spec reviews instead of silently forgetting them; the next write lands under
-   * the new name, and the old file is left in place as history.
+   * handoffs instead of silently forgetting them; the next write lands under the
+   * current name, and the old file is left in place as history.
    */
-  function legacyRegistryPath(): string | null {
-    if (isChildSession || !sessionDir || !ownerSessionId) return null;
-    return join(sessionDir, `orchestrator-registry-${ownerSessionId}.json`);
+  function legacyRegistryPaths(): string[] {
+    if (isChildSession || !sessionDir || !ownerSessionId) return [];
+    return [
+      join(sessionDir, `main-agent-registry-${ownerSessionId}.json`),
+      join(sessionDir, `orchestrator-registry-${ownerSessionId}.json`),
+    ];
   }
 
   function persistState(): void {
@@ -407,7 +410,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
   }
 
   /**
-   * Publish the current orchestrator view for the dashboard.
+   * Publish the current delegation view for the dashboard.
    *
    * Children own no top-level session, so a delegated child never publishes. The
    * projection is allowlisted there; this function only decides when and what to
@@ -419,7 +422,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
     try {
       const children = registry.getAllChildren();
       publishDashboardState(pi, {
-        orchestrator: projectOrchestrator({
+        delegation: projectDelegation({
           children,
           handoffs: [],
           reviews: registry.getReviews(),
@@ -455,7 +458,11 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
     // an in-flight session is not silently forgotten on upgrade.
     const path = registryPath();
     if (!path) return;
-    const snapshot = loadRegistrySnapshot(path) ?? loadRegistrySnapshot(legacyRegistryPath()!);
+    let snapshot = loadRegistrySnapshot(path);
+    for (const legacy of legacyRegistryPaths()) {
+      if (snapshot) break;
+      snapshot = loadRegistrySnapshot(legacy);
+    }
     if (!snapshot) return;
     registry.loadSnapshot(snapshot);
     for (const esc of snapshot.escalations ?? []) {
@@ -593,7 +600,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
         status: "closed",
         ended: true,
         updatedAt: child.closedAt ?? new Date(now()).toISOString(),
-        summary: `Closed by the orchestrator (${reason}).`,
+        summary: `Closed by the parent (${reason}).`,
         files: child.lastMilestoneFiles ?? [],
         verification: "",
         next: "",
@@ -911,7 +918,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
    * Attribution is the point: `pane list` also contains the user's panes and other
    * sessions' children. Only an id recorded when *this* parent called paneStart is
    * ever closed, so a lost row cannot hide a live pane without risking a pane the
-   * orchestrator never owned.
+   * parent never owned.
    */
   async function sweepOrphanPanes(): Promise<{ closed: number }> {
     const known = registry.getKnownPanes();
@@ -1098,7 +1105,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
     const parked = registry.getRunningChildren().filter((c) => c.status === "blocked");
     ctx.ui.notify(
       [
-        "orchestrator active: author a handoff with agent_handoff, then delegate with agent_spawn.",
+        "delegation active: delegate with agent_spawn. Every spawn is ad-hoc: describe the work in `task` and state a delegationReason.",
         restored.restored || restored.closed
           ? `Restored ${restored.restored} live child(ren); closed ${restored.closed} whose pane was gone.`
           : "",
@@ -1122,7 +1129,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
     activeWatchers.clear();
   });
 
-  // A child's `--tools` allowlist excludes the orchestrator surface, but a resumed or
+  // A child's `--tools` allowlist excludes the parent surface, but a resumed or
   // user-touched child can still have it active. Refuse rather than let a child spawn
   // work the parent cannot see or review.
 
@@ -1656,7 +1663,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       }
 
       const agentDefs = params.agent ? loadAgentDefaults(params.agent) : null;
-      const spawnRole: OrchRole = role;
+      const spawnRole: ChildRole = role;
       const roleModel = resolveChildModel(ctx, spawnRole, subagentSettings, params.model, agentDefs?.model);
       const rolePrompt = loadRolePrompt(spawnRole, ctx.cwd);
       const childArtifactSessionId = `${ownerSessionId}-adhoc-${scope}`;
@@ -1844,7 +1851,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       });
     }
 
-    // Orchestrator/Supervise continuation is implementation too. A worker cannot
+    // A parent continuation is implementation too. A worker cannot
     // resume past the spec gate by using resume instead of spawn.
 
 
@@ -1975,7 +1982,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
   }
 
   // ── read-only research surface ─────────────────────────────────────────────
-  // Engine-backed code views and cited web evidence for the orchestrator and the
+  // Engine-backed code views and cited web evidence for the parent and the
   // devil's advocate. Every path goes through the same policy the review uses,
   // every web source carries a digest, and none of these tools writes the work
   // tree: the artifact tool is the only durable write, scoped separately.
@@ -2122,7 +2129,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
   // ── agent_resume ────────────────────────────────────────────────────────────
   pi.registerTool({
     name: "agent_resume",
-    label: "Resume Orchestrator",
+    label: "Resume Subagent",
     description: "Resume an ended or paused child, optionally delivering an answer or correction.",
     parameters: Type.Object({
       sessionPath: Type.String({ description: "Child session .jsonl path." }),
@@ -2138,7 +2145,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
   // ── agent_interrupt ─────────────────────────────────────────────────────────
   pi.registerTool({
     name: "agent_interrupt",
-    label: "Interrupt Orchestrator",
+    label: "Interrupt Subagent",
     description:
       "Send Escape to a running child's active turn. By default the pane, session, and watcher are kept; pass close:true to end the child instead of parking it.",
     parameters: Type.Object({
@@ -2235,7 +2242,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
   // ── agent_close ─────────────────────────────────────────────────────────────
   pi.registerTool({
     name: "agent_close",
-    label: "Close Orchestrator Child",
+    label: "Close Subagent",
     description:
       "Close a child's pane and mark it closed — the terminal transition for a paused, blocked, completed, or already-vanished child. Idempotent, and reports what it observed.",
     parameters: Type.Object({
@@ -2284,7 +2291,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
   // ── agent_steer ─────────────────────────────────────────────────────────────
   pi.registerTool({
     name: "agent_steer",
-    label: "Steer Orchestrator",
+    label: "Steer Subagent",
     description:
       "Deliver a correction to a child: 'interrupt' (Esc, wait for the prompt, then type) or 'queue' (type without interrupting). Reports what was observed, not what was attempted.",
     parameters: Type.Object({
@@ -2298,8 +2305,8 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
         }),
       ),
       origin: Type.Optional(
-        Type.Union([Type.Literal("user"), Type.Literal("orchestrator")], {
-          description: "User defaults to interrupt; orchestrator may only queue.",
+        Type.Union([Type.Literal("user"), Type.Literal("parent")], {
+          description: "The user defaults to interrupt; the parent may only queue.",
         }),
       ),
       settleTimeoutMs: Type.Optional(Type.Number({ description: "How long to wait for the pane to return to an idle prompt after Escape." })),
@@ -2324,14 +2331,14 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
         );
       }
 
-      // Authority rule: an orchestrator may only redirect inside an existing scope.
+      // Authority rule: the parent may only redirect inside an existing scope.
       const reviewerRefusal = reviewerContactRefusal(target);
       if (reviewerRefusal) {
         return text(reviewerRefusal, { error: "reviewer-contact-forbidden", childId: target.id });
       }
-      if (origin === "orchestrator" && params.scope && params.scope !== target.scope) {
+      if (origin === "parent" && params.scope && params.scope !== target.scope) {
         return text(
-          `Authority violation: the orchestrator cannot move "${target.name}" from scope "${target.scope}" to "${params.scope}". ` +
+          `Authority violation: the parent cannot move "${target.name}" from scope "${target.scope}" to "${params.scope}". ` +
             `A scope change is a new handoff and a user decision.`,
           { status: "unauthorized", error: "cross-scope" },
         );
@@ -2396,8 +2403,8 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       name: Type.Optional(Type.String({ description: "Explicit target child name." })),
       scope: Type.Optional(Type.String({ description: "Explicit target scope." })),
       origin: Type.Optional(
-        Type.Union([Type.Literal("user"), Type.Literal("orchestrator")], {
-          description: "'user' may interrupt; 'orchestrator' may only queue and may not change scope.",
+        Type.Union([Type.Literal("user"), Type.Literal("parent")], {
+          description: "'user' may interrupt; 'parent' may only queue and may not change scope.",
         }),
       ),
       queue: Type.Optional(Type.Boolean({ description: "Force soft queue even for a user-origin update." })),
@@ -2430,13 +2437,13 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
   pi.registerTool({
     name: "agent_running",
     label: "Running Subagents v2",
-    description: "Enumerate running children with their scope, lane, status, and pending escalation. The orchestrator cannot route to what it cannot see.",
+    description: "Enumerate running children with their scope, lane, status, and pending escalation. The parent cannot route to what it cannot see.",
     parameters: Type.Object({
       scope: Type.Optional(Type.String({ description: "Filter by scope." })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       // Lazy zombie reconcile: a running/blocked child whose pane is gone is
-      // never coming back — reporting it sends the orchestrator into the same
+      // never coming back — reporting it sends the parent into the same
       // cleanup loop every session (observed live: 40 messages re-handling one
       // dead child). Ping-blocked children are different: exiting the pane is how
       // they wait for an answer, so their dead pane is normal, not a zombie.
@@ -2461,7 +2468,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       const budgets = resolveBudgets(loadSubagentSettings((ctx as any)?.cwd ?? process.cwd()));
       const running = registry.getRunningChildren();
       const filtered = params.scope ? running.filter((c) => c.scope === params.scope) : running;
-      const pending = escalations.forOrchestrator();
+      const pending = escalations.forParent();
 
       // A poll that changed nothing is not information. Answer once, then refuse
       // the repeat: the parent has triggers, not a timer.
@@ -2492,7 +2499,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       });
 
       // One line per child. The previous form spent four lines each on facts the
-      // orchestrator reads once, and it is re-read on every tick of the loop.
+      // parent reads once, and it is re-read on every tick of the loop.
       const reviewLines = awaiting.map((child) =>
         `- ${child.name} [${child.id}] ${child.scope} revision=${child.accountability?.resultRevision ?? "n/a"}`
         + ` disposition=${child.accountability?.disposition ?? "pending"} — judge with agent_accept_result`);
@@ -2682,13 +2689,13 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
         Type.Literal("cancel"),
       ]),
       answer: Type.Optional(Type.String({ description: "The decision, for 'answer' and 'relay-user'." })),
-      reason: Type.Optional(Type.String({ description: "Why the orchestrator cannot decide, for 'to-user'. Required there." })),
+      reason: Type.Optional(Type.String({ description: "Why the parent cannot decide, for 'to-user'. Required there." })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const escalation = escalations.get(params.id);
       if (!escalation) {
         return text(
-          `No escalation "${params.id}". Open ones: ${escalations.forOrchestrator().map((e) => e.id).join(", ") || "(none)"}.`,
+          `No escalation "${params.id}". Open ones: ${escalations.forParent().map((e) => e.id).join(", ") || "(none)"}.`,
           { error: "unknown-escalation" },
         );
       }
@@ -2719,12 +2726,12 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
         }
 
         if (params.action === "cancel") {
-          const cancelled = escalations.cancel(params.id, params.reason ?? "Orchestrator cancelled the question.");
+          const cancelled = escalations.cancel(params.id, params.reason ?? "The parent cancelled the question.");
           pi.appendEntry(ESCALATION_TYPE, { id: cancelled.id, childId: cancelled.childId, stage: cancelled.stage });
           return deliverAnswer(ctx, cancelled.id);
         }
 
-        const resolved = escalations.answerAsOrchestrator(params.id, params.answer ?? "");
+        const resolved = escalations.answerAsParent(params.id, params.answer ?? "");
         pi.appendEntry(ESCALATION_TYPE, { id: resolved.id, childId: resolved.childId, stage: resolved.stage });
         return deliverAnswer(ctx, resolved.id);
       } catch (error: any) {
@@ -2820,7 +2827,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
    * fallback for sessions where ask_user is not callable.
    */
   async function askUserFor(ctx: ExtensionContext, escalation: { question: string; context?: string }, reason: string): Promise<string | undefined> {
-    const question = `A worker cannot proceed and the orchestrator cannot decide.\n\nQuestion: ${escalation.question}` +
+    const question = `A worker cannot proceed and the parent cannot decide.\n\nQuestion: ${escalation.question}` +
       (escalation.context ? `\n\nContext: ${escalation.context}` : "") +
       `\n\nWhy this needs you: ${reason || "(no reason given)"}`;
 
@@ -2849,7 +2856,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
     if (typeof (ctx.ui as any)?.input !== "function" || ctx.mode !== "tui") return undefined;
     const answer = await (ctx.ui as any).input(
       [
-        `A worker cannot proceed and the orchestrator cannot decide.`,
+        `A worker cannot proceed and the parent cannot decide.`,
         ``,
         `Question: ${escalation.question}`,
         escalation.context ? `Context: ${escalation.context}` : "",
@@ -3018,11 +3025,11 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
         return;
       }
       if (sub === "escalations") {
-        const pending = escalations.forOrchestrator();
+        const pending = escalations.forParent();
         const forUser = escalations.forUser();
         ctx.ui.notify(
           [
-            pending.length ? `Waiting on orchestrator:\n${pending.map((e) => `${e.id} [${e.scope}] ${e.question}`).join("\n")}` : "No escalations waiting on the orchestrator.",
+            pending.length ? `Waiting on the parent:\n${pending.map((e) => `${e.id} [${e.scope}] ${e.question}`).join("\n")}` : "No escalations waiting on the parent.",
             forUser.length ? `Waiting on user:\n${forUser.map((e) => `${e.id} [${e.scope}] ${e.question}`).join("\n")}` : "",
           ].filter(Boolean).join("\n\n"),
           "info",
@@ -3036,14 +3043,14 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       const pendingResults = reader ? registry.getPendingResults(reader) : [];
       ctx.ui.notify(
         [
-          `Orchestrator`,
+          `Parent agent`,
           `Running: ${running.length} of ${all.length} tracked`,
           `Delegation: ${occupiedSlots.length} occupied slot(s) (running, blocked, or awaiting your result disposition) — concurrent cap ${caps.concurrent}, launch budget ${batch ? `${batch.launches}/${caps.launchesPerBatch}` : "n/a"} (batch reset: /agent batch)`,
           pendingResults.length
             ? `Results awaiting YOUR review: ${pendingResults.map((c) => `${c.name} [${c.id}]`).join(", ")} — a finished child is not an accepted result`
             : `No results awaiting review`,
           `Legacy delegate cap: ${delegateCap} (/agent max <n>)`,
-          `Escalations: ${escalations.forOrchestrator().length} waiting on you, ${escalations.forUser().length} waiting on the user`,
+          `Escalations: ${escalations.forParent().length} waiting on you, ${escalations.forUser().length} waiting on the user`,
           `Usage: /agent status | list | escalations | max [n] | batch`,
         ].join("\n"),
         "info",
@@ -3083,7 +3090,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
     return Array.isArray(binding) ? binding.map(modelKey) : [modelKey(binding)];
   }
 
-  function saveRoleBinding(ctx: ExtensionContext, role: OrchRole, binding: RoleBinding, project: boolean): void {
+  function saveRoleBinding(ctx: ExtensionContext, role: ChildRole, binding: RoleBinding, project: boolean): void {
     const cwd = (ctx as any).cwd || process.cwd();
     const current = normalizeRoleModels(loadSubagentSettings(cwd).roleModels);
     current[role] = binding;
@@ -3136,7 +3143,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
    */
   function resolveChildModel(
     ctx: ExtensionContext,
-    role: OrchRole,
+    role: ChildRole,
     settings: ReturnType<typeof loadSubagentSettings>,
     explicit?: string,
     agentDefault?: string,
@@ -3164,10 +3171,10 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
       const { choices, auth } = registryModelChoices(ctx);
       const known = choices.map((choice) => choice.id);
 
-      let role: OrchRole | undefined;
+      let role: ChildRole | undefined;
       if (rest[0]) {
-        if (!isOrchRole(rest[0])) {
-          ctx.ui.notify(`Unknown role "${rest[0]}". Roles: ${ORCH_ROLES.join(", ")}.`, "error");
+        if (!isChildRole(rest[0])) {
+          ctx.ui.notify(`Unknown role "${rest[0]}". Roles: ${CHILD_ROLES.join(", ")}.`, "error");
           return;
         }
         role = rest[0];
@@ -3181,11 +3188,11 @@ export default function agentExtension(pi: ExtensionAPI, deps?: OrchestratorDeps
           return;
         }
         const rows = renderRoleMenu(roleModels);
-        const picked = await ctx.ui.select("Orchestrator child roles", [...rows, "Done"]);
+        const picked = await ctx.ui.select("Subagent roles", [...rows, "Done"]);
         if (!picked || picked === "Done") return;
         const index = rows.indexOf(picked);
         if (index < 0) return;
-        role = ORCH_ROLES[index]!;
+        role = CHILD_ROLES[index]!;
       }
 
       // Text shortcut: scripting, and the only path that works without a UI.

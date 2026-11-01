@@ -1,7 +1,7 @@
 /**
  * role-models.ts — which model a delegated child runs on.
  *
- * The orchestrator delegates work to two child roles: planner (read-only research
+ * The parent delegates work to two child roles: planner (read-only research
  * and planning) and worker (read-write plan execution and verification). This
  * module maps a role to one model, or to a pool that is rolled once per spawned
  * child, so a pooled panel is diverse by construction.
@@ -17,8 +17,8 @@
  * roll is deterministic in tests.
  */
 
-export const ORCH_ROLES = ["planner", "worker"] as const;
-export type OrchRole = (typeof ORCH_ROLES)[number];
+export const CHILD_ROLES = ["planner", "worker"] as const;
+export type ChildRole = (typeof CHILD_ROLES)[number];
 
 /** Upper bound on a pool: more members add variance, not coverage. */
 export const MAX_POOL = 8;
@@ -30,7 +30,7 @@ export interface ModelRef {
 
 /** `inherit` follows the parent (no `--model` argument is passed). */
 export type RoleBinding = "inherit" | ModelRef | ModelRef[];
-export type RoleModels = Partial<Record<OrchRole, RoleBinding>>;
+export type RoleModels = Partial<Record<ChildRole, RoleBinding>>;
 
 /** The slice of the host model registry this module needs. */
 export interface ModelRegistryPort {
@@ -42,15 +42,15 @@ export interface ResolvedRoleModel {
   /** `undefined` means "let pi inherit the parent's model". */
   model?: string;
   source: "explicit" | "role" | "agent" | "global" | "default";
-  role: OrchRole;
+  role: ChildRole;
   /** How many pool members the roll chose from (1 for a single binding). */
   poolSize?: number;
   /** Facts the caller should surface: fallback, missing credentials. */
   notes: string[];
 }
 
-export function isOrchRole(value: unknown): value is OrchRole {
-  return typeof value === "string" && (ORCH_ROLES as readonly string[]).includes(value);
+export function isChildRole(value: unknown): value is ChildRole {
+  return typeof value === "string" && (CHILD_ROLES as readonly string[]).includes(value);
 }
 
 export function modelKey(ref: ModelRef): string {
@@ -116,7 +116,7 @@ export function parseBinding(value: unknown): { ok: true; binding: RoleBinding }
 export function normalizeRoleModels(raw: unknown): RoleModels {
   const out: RoleModels = {};
   if (!raw || typeof raw !== "object") return out;
-  for (const role of ORCH_ROLES) {
+  for (const role of CHILD_ROLES) {
     const parsed = parseBinding((raw as Record<string, unknown>)[role]);
     if (parsed.ok) out[role] = parsed.binding;
   }
@@ -133,7 +133,7 @@ export function renderBinding(binding: RoleBinding | undefined): string {
 
 /** `worker  [a, b]`, one row per role, in lifecycle order. */
 export function renderRoleMenu(roleModels: RoleModels): string[] {
-  return ORCH_ROLES.map((role) => `${role}  ${renderBinding(roleModels[role])}`);
+  return CHILD_ROLES.map((role) => `${role}  ${renderBinding(roleModels[role])}`);
 }
 
 /**
@@ -142,10 +142,10 @@ export function renderRoleMenu(roleModels: RoleModels): string[] {
  * Precedence: explicit tool argument, then the role binding, then the agent
  * profile, then the global default, then pi's own behaviour. A binding that no
  * longer resolves falls back rather than failing the spawn: a removed provider
- * must not strand the orchestrator.
+ * must not strand the parent.
  */
 export function resolveRoleModel(input: {
-  role: OrchRole;
+  role: ChildRole;
   binding?: RoleBinding;
   /** Raw `model` argument from the tool call, when present. */
   explicit?: string;

@@ -896,13 +896,13 @@ class DashboardRuntime {
     return [...this.#sessions.values()]
       .sort((a, b) => b.lastSeen - a.lastSeen || a.sessionId.localeCompare(b.sessionId))
       .map(record => {
-        const running = record.snapshot.orchestrator.children.filter(child => child.status === "running").length;
+        const running = record.snapshot.delegation.children.filter(child => child.status === "running").length;
         return {
           ...record.snapshot.session,
           connected: this.#connected(record, now),
           lastSeen: record.lastSeen,
           revision: record.revision,
-          workers: { running, total: record.snapshot.orchestrator.children.length },
+          workers: { running, total: record.snapshot.delegation.children.length },
         };
       });
   }
@@ -915,7 +915,7 @@ class DashboardRuntime {
     const now = this.#options.now();
     return {
       session: record.snapshot.session,
-      orchestrator: record.snapshot.orchestrator,
+      delegation: record.snapshot.delegation,
       artifacts: projectArtifacts(record.snapshot),
       connected: this.#connected(record, now),
       lastSeen: record.lastSeen,
