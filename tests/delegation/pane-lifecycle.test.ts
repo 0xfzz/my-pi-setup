@@ -104,7 +104,7 @@ function child(partial: Partial<ScopedChild> = {}): ScopedChild {
     id,
     name: `Worker ${id}`,
     scope: `scope-${id}`,
-    sessionFile: `/tmp/orchestrator-tests/${id}.jsonl`,
+    sessionFile: `/tmp/delegation-tests/${id}.jsonl`,
     paneId: `w1:p${++seq}`,
     status: "running",
     laneFiles: ["src/x/"],
@@ -162,7 +162,7 @@ describe("watchdog: one notice per trip", () => {
 
   it("two rows for one session file produce one verdict", async () => {
     const h = harness({ now: () => 10_000_000 });
-    const sessionFile = "/tmp/orchestrator-tests/dup-session.jsonl";
+    const sessionFile = "/tmp/delegation-tests/dup-session.jsonl";
     registry.registerChild(child({ id: "dup-old", sessionFile, startedAt: 0, budgetMs: 45 * 60_000 }));
     registry.registerChild(child({ id: "dup-new", sessionFile, startedAt: 0, budgetMs: 60_000 }));
 

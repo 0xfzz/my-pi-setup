@@ -25,7 +25,7 @@ pure function of the id, so a worker keeps its name across reloads, restarts,
 resumes and status updates.
 
 Explicit names chosen by the author of a spawn are never overwritten. The
-orchestrator itself is not a dictionary name: it reads as `{Project} Manager`.
+the parent session is not a dictionary name: it reads as `{Project} Manager`.
 
 ## Maintenance
 

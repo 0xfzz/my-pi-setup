@@ -31,7 +31,7 @@ dependency is involved.
   spec review is **`Spec Review · Auth`**, an escalation is
   **`Escalation · API`**.
 - The session title follows the **current user goal** (`Dashboard polish`). The
-  orchestrator is an authority, not a peer worker: its graph label is
+  parent agent is an authority, not a peer worker: its graph label is
   **`Dashboard polish Manager`**. Project remains secondary metadata. UUIDs,
   generic names, child stamps and hex blobs are rejected; project/`Workflow`
   are fallbacks, never a randomly chosen worker name.

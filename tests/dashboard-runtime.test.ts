@@ -360,7 +360,7 @@ test("sanitizeSnapshot keeps protocol fields only and drops unrepresentable entr
 
 test("sanitizeSnapshot rejects payloads that cannot be represented", () => {
   assert.throws(
-    () => sanitizeSnapshot({ orchestrator: {} }),
+    () => sanitizeSnapshot({} as any),
     (error: unknown) => error instanceof ValidationError && error.status === 400,
   );
   assert.throws(

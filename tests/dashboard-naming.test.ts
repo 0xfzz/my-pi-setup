@@ -184,7 +184,7 @@ test("humanizeSlug keeps acronyms and drops nothing", () => {
 
 /* --------------------------------------------------------------- manager */
 
-test("the orchestrator reads as {Project} Manager, never as a worker", () => {
+test("the parent session reads as {Project} Manager, never as a worker", () => {
   assert.equal(managerName({ project: "pi-workflow-extensions" }), "Pi Workflow Extensions Manager");
   assert.equal(
     managerName({ project: "pi-workflow-extensions", sessionName: "aa2e0e1c-1c2b-4d3e-8f90-0123456789ab" }),
