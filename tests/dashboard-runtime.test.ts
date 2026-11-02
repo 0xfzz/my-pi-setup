@@ -74,7 +74,7 @@ async function waitFor<T>(check: () => Promise<T | null | undefined | false>, la
 let sessionCounter = 0;
 function makeSnapshot(sessionId = `session-${++sessionCounter}`, mutate: (snapshot: DashboardSnapshot) => void = () => {}): DashboardSnapshot {
   const snapshot: DashboardSnapshot = {
-    session: { id: sessionId, name: `Session ${sessionId}`, project: "project-a", mode: "orchestrator" },
+    session: { id: sessionId, name: `Session ${sessionId}`, project: "project-a", mode: "normal" },
     delegation: {
       children: [
         {

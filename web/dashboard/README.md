@@ -73,7 +73,7 @@ and share the selection, so switching between them does not lose your place.
 
 | Kind | DOT shape | Border | Label |
 | --- | --- | --- | --- |
-| Orchestrator (session) | `box3d` | solid, accent-tinted | `{Goal} Manager` |
+| Parent agent (session) | `box3d` | solid, accent-tinted | `{Goal} Manager` |
 | Worker | `box, rounded` | solid, status paint | `Bima · Skeleton Builder` |
 | Spec / handoff | `note` | **dashed**, neutral paper | `Spec · Repo Skeleton` |
 | Review | `hexagon` | solid, verdict paint | `Rangga · Review` |

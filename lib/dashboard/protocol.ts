@@ -2,9 +2,9 @@
 /**
  * Wire version.
  *
- * 2 — the delegation collections moved from `snapshot.orchestrator` to
- *     `snapshot.delegation`, and escalation stages/actors read `parent` instead
- *     of `orchestrator`. Bumped so an already-open tab built against v1 is
+ * 2 — the delegation collections moved to `snapshot.delegation`, and escalation
+ *     stages/actors read `parent`. Bumped so an already-open tab built against
+ *     the pre-rename field is
  *     rejected loudly at handshake instead of rendering an empty graph from a
  *     field that no longer exists.
  */

@@ -17,7 +17,7 @@ test("the mode cannot change what a child is allowed to exist for", () => {
   // spelling, including one this build does not know, so a future mode cannot
   // silently reintroduce a mode-dependent spawn table.
   const baseline = allowedSpawnPurposes("normal");
-  for (const mode of ["plan", "supervise", "orchestrator", undefined, ""]) {
+  for (const mode of ["plan", "normal", "supervise", undefined, ""]) {
     assert.deepEqual(allowedSpawnPurposes(mode), baseline, `mode ${String(mode)} changed the admitted purposes`);
     assert.equal(spawnRefusal(mode, "adhoc"), undefined);
     assert.equal(spawnRefusal(mode, "research"), undefined);

@@ -188,10 +188,11 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
     mode = next;
     bridge.observeMode(next);
     if (!verifiedParent) return;
-    // Only a live child or a branch restore starts registration. A child
-    // never reaches here with verifiedParent true.
-    if (next === "orchestrator") void bridge.start();
-    else bridge.schedule();
+    // A mode name never starts the dashboard. Delegated work does: the first
+    // child starts registration in onState, and a mode switch only relabels the
+    // snapshot. The old mode-name gate is why a Normal-mode spawn never
+    // appeared in the graph.
+    bridge.schedule();
   }
 
   function onState(data: unknown): void {
@@ -221,8 +222,7 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
     // the initial snapshot because the request is answered now.
     if (ctx) refreshTitle(ctx, true);
     requestDashboardSync(pi);
-    if (mode === "orchestrator") void bridge.start();
-    else bridge.flush();
+    bridge.flush();
   }
 
   pi.events?.on(DASHBOARD_MODE_EVENT, onMode);
@@ -234,7 +234,6 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
     bind(context);
     if (!verifiedParent) return;
     requestDashboardSync(pi);
-    if (mode === "orchestrator") void bridge.start();
   });
 
   // A branch/session move can change the session id, leaf, or restored mode. The
@@ -244,8 +243,7 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
     bind(context);
     if (!verifiedParent) return;
     requestDashboardSync(pi);
-    if (mode === "orchestrator") void bridge.start();
-    else bridge.flush();
+    bridge.flush();
   });
 
   pi.on("session_shutdown", () => {

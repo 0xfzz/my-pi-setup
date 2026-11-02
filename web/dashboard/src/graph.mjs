@@ -27,7 +27,7 @@ import {
 } from "./naming.mjs";
 
 const KIND_LABELS = {
-  session: "Orchestrator",
+  session: "Parent agent",
   child: "Worker",
   handoff: "Spec",
   review: "Review",

@@ -1037,7 +1037,7 @@ test("motion plan is class-based, status-flashes updates and dies under reduced 
 test("the projection names the root as the manager and never prints a uuid", () => {
   const uuid = "aa2e0e1c-1c2b-4d3e-8f90-0123456789ab";
   const view = makeView();
-  view.session = { id: uuid, name: uuid, project: "pi-workflow-extensions", mode: "orchestrator", branchId: "main" };
+  view.session = { id: uuid, name: uuid, project: "pi-workflow-extensions", mode: "normal", branchId: "main" };
   const graph = projectGraph(view);
   const session = graph.nodes.find((node: Any) => node.kind === "session")!;
   assert.equal(session.label, "Pi Workflow Extensions Manager");

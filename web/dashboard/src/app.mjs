@@ -61,7 +61,7 @@ const LEGEND_STATUS = [
   { status: "blocked", label: "Needs attention" },
 ];
 const LEGEND_NODES = [
-  { kind: "session", label: "Orchestrator" },
+  { kind: "session", label: "Parent agent" },
   { kind: "child", label: "Worker" },
   { kind: "handoff", label: "Spec (handoff)" },
   { kind: "review", label: "Review" },

@@ -3057,13 +3057,13 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         // the cancel path, so report and stop.
         if (payload.status === "cancelled" || payload.status === "unavailable") {
           if (payload.status === "unavailable") {
-            pi.appendEntry(ESCALATION_TYPE, { id: escalation.question, stage: "orchestrator", note: "ask_user unavailable; fell back to ui.input" });
+            pi.appendEntry(ESCALATION_TYPE, { id: escalation.question, stage: "parent", note: "ask_user unavailable; fell back to ui.input" });
           } else {
             return undefined;
           }
         }
       } catch (error: any) {
-        pi.appendEntry(ESCALATION_TYPE, { id: escalation.question, stage: "orchestrator", note: `ask_user failed: ${error?.message ?? String(error)}` });
+        pi.appendEntry(ESCALATION_TYPE, { id: escalation.question, stage: "parent", note: `ask_user failed: ${error?.message ?? String(error)}` });
       }
     }
 

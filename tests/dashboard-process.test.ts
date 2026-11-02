@@ -102,7 +102,7 @@ const [runtimeDir, sessionId, mode] = process.argv.slice(2);
 const emit = event => process.stdout.write(JSON.stringify({ ...event, sessionId }) + "\\n");
 let revision = 0;
 const snapshot = rev => ({
-  session: { id: sessionId, name: sessionId + " rev " + rev, project: "proc-test", mode: "orchestrator" },
+  session: { id: sessionId, name: sessionId + " rev " + rev, project: "proc-test", mode: "normal" },
   delegation: {
     children: [{ id: "child-1", name: "worker", scope: "net-retry", status: "running", laneFiles: [], lastMilestoneFiles: [] }],
     handoffs: [], reviews: [], escalations: [], specReviews: [], paused: false,

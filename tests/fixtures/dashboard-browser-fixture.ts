@@ -15,7 +15,7 @@ await mkdir(directory, { recursive: true, mode: 0o700 });
 const runtimeDir = join(directory, "runtime");
 const timestamp = new Date().toISOString();
 const first: DashboardSnapshot = {
-  session: { id: "browser-fixture-a", name: "Dashboard verification", project: "Project Atlas", mode: "orchestrator", branchId: "branch-a" },
+  session: { id: "browser-fixture-a", name: "Dashboard verification", project: "Project Atlas", mode: "normal", branchId: "branch-a" },
   delegation: {
     ...emptyDelegation(),
     children: [
@@ -24,7 +24,7 @@ const first: DashboardSnapshot = {
       { id: "reviewer-api", name: "Contract reviewer", scope: "review-api", status: "running", purpose: "review", reviewRunId: "review-run-api", reviewLens: "readiness", laneFiles: [], lastMilestoneFiles: [] },
     ],
     handoffs: [{ id: "handoff-api", scope: "api", goal: "Implement API contract", acceptanceCriteria: ["API contract tests pass", "Worker stays inside declared lane"] }],
-    escalations: [{ id: "question-ui", childId: "worker-ui", scope: "ui", question: "Which theme should the UI use?", stage: "orchestrator" }],
+    escalations: [{ id: "question-ui", childId: "worker-ui", scope: "ui", question: "Which theme should the UI use?", stage: "parent" }],
     specReviews: [{ id: "review-run-api", title: "API specification", status: "reviewing", reviewerIds: ["reviewer-api"] }],
   },
   artifacts: [
@@ -33,7 +33,7 @@ const first: DashboardSnapshot = {
   ],
 };
 const second: DashboardSnapshot = {
-  session: { id: "browser-fixture-b", name: "Independent orchestration", project: "Project Beacon", mode: "orchestrator", branchId: "branch-b" },
+  session: { id: "browser-fixture-b", name: "Independent orchestration", project: "Project Beacon", mode: "normal", branchId: "branch-b" },
   delegation: { ...emptyDelegation(), children: [{ id: "worker-docs", name: "Documentation worker", scope: "docs", status: "completed", task: "Document the independent project", laneFiles: ["README.md"], lastMilestoneFiles: ["README.md"] }] },
   artifacts: [{ id: "independent-note", title: "Beacon notes", type: "plan", content: "# Independent session\n\nThis artifact belongs only to **Project Beacon**.\n", version: 1, createdBy: "main", createdAt: timestamp, updatedAt: timestamp, tags: [] }],
 };
