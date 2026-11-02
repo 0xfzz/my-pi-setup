@@ -44,6 +44,7 @@ import { sanitizeScope } from "../lib/delegation/handoff.ts";
 import { MAX_REWORK_ROUNDS } from "../lib/delegation/admission.ts";
 import { isWaitGuardTool, waitCommandProblem } from "../lib/delegation/wait-guard.ts";
 import { hasLiveDelegation, setDelegationProbe } from "../lib/delegation/live.ts";
+import { noteInspection, POLL_GUARD_REASON, resetInspectionCounts } from "../lib/delegation/poll-guard.ts";
 import {
   buildHandoffTicket,
   handoffArtifactId,
@@ -1124,6 +1125,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     sessionDir = ctx.sessionManager.getSessionDir();
     ownerSessionId = ctx.sessionManager.getSessionId();
     resetPollFingerprints();
+    // A replaced session (`/new`, `/resume`, `/fork`) must not inherit the
+    // previous one's inspection counts, or its first `find` would be refused.
+    resetInspectionCounts();
     const header = (ctx.sessionManager as any).getHeader?.();
     const provenChild = isSubagentChildSession(ctx);
     // `seeded` folds in the child flag for legacy seeds that carry a parent-session
@@ -1430,8 +1434,17 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           // `input` is a discriminated union across every registered tool, so the
           // command is read through a narrow structural view rather than asserted
           // onto the union member this guard happens to name.
-          const waitProblem = waitCommandProblem((event.input as { command?: unknown } | undefined)?.command);
+          const command = (event.input as { command?: unknown } | undefined)?.command;
+          const waitProblem = waitCommandProblem(command);
           if (waitProblem) return { block: true, reason: waitProblem };
+          // The other half of watching a child: the same read-only inspection,
+          // issued again and again because the lane has not changed yet. Session
+          // 01a19cd6 ran one `find` twenty times this way. The lane is the
+          // child's workspace, not a progress channel.
+          if (typeof command === "string" && readOnlyShellCommand(command) !== undefined
+            && noteInspection(guardOwner ?? "parent", command)) {
+            return { block: true, reason: POLL_GUARD_REASON };
+          }
         }
       }
       // Independence is a fact about who touched the lane, so the parent's own
@@ -2057,6 +2070,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           ``,
           `The scope (${scope}) is the identity: use it in agent_steer, agent_interrupt, agent_close, agent_running.`,
           `The outcome (or an agent_ping escalation) arrives automatically.`,
+          `Progress arrives as agent_progress checkpoints and the child's report; do not inspect the lane to watch it.`,
           RETRIGGER_CONTRACT,
         ].join("\n"),
         {

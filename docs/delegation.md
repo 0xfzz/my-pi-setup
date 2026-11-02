@@ -161,17 +161,30 @@ watchdog budget/stall notice. Idle is the normal state.
 This is enforced, not requested:
 
 - `RETRIGGER_CONTRACT` states the contract in every result that starts asynchronous
-  work.
+  work, and says the run is ending rather than asking for it.
+- **The run actually ends.** A repeated `agent_running` with nothing actionable, and
+  a successful `agent_spawn`, return `terminate: true`, so pi stops the run after the
+  batch. Prose alone was not enough: session `01a19cd6` was told "your turn ends here"
+  ten times and answered with forty `find` calls. A pending escalation or an
+  undispositioned result is actionable, so that case keeps the turn — terminating
+  there would strand the review duty the parent still owes.
 - `lib/delegation/wait-guard.ts` refuses a `bash` command whose **purpose** is to
-  wait, in a parent session: `sleep`, `wait`, `watch`, `tail -f`/`--follow`, an
-  unbounded `ping`, and never-terminating `while true`/`until false`/`for((;;))`
-  loops. Wrapping does not hide it — leading `VAR=` assignments,
-  `sudo`/`env`/`nohup`/`time`/`timeout`/`xargs` (compared by basename), pipelines,
-  `&&` chains and `bash -c '…'` are all descended into.
-- Work that merely takes time is **not** a wait: `npm test`, `cargo build`,
-  `pnpm install` and long `git` operations run normally.
-- Children are exempt. A child waiting on its own build is doing the work it was
-  given; a parent waiting on a child is polling a channel that pushes.
+  wait, in a parent session **while a child is in flight**: `sleep`, `wait`, `watch`,
+  `tail -f`/`--follow`, an unbounded `ping`, and never-terminating
+  `while true`/`until false`/`for((;;))` loops. Wrapping does not hide it — leading
+  `VAR=` assignments, `sudo`/`env`/`nohup`/`time`/`timeout`/`xargs` (compared by
+  basename), pipelines, `&&` chains and `bash -c '…'` are all descended into.
+- The guard is **scoped** by `lib/delegation/live.ts` (`hasLiveDelegation`). Waiting
+  for a service, a port or a build is work, and a parent with no child may wait: in
+  session `01a19cd6` a `sleep 8 && docker compose ps`, run to let MySQL accept
+  connections, was refused while that session had no child at all. Children are
+  exempt for the same reason: a child waiting on its own build is doing its work.
+- `lib/delegation/poll-guard.ts` refuses the **same read-only inspection** (the closed
+  grammar of `lib/plan/plan-shell.ts`) more than three times while a child is in
+  flight. That is the other half of watching a child: the lane is the child's
+  workspace, not a progress channel — progress arrives as `agent_progress`
+  checkpoints and the report. Work that merely takes time (`npm test`, `cargo build`,
+  `pnpm install`, long `git` operations) is never counted, even when repeated.
 - A repeated `agent_running` with no new event is answered with one line instead of
   the same page.
 
@@ -206,7 +219,7 @@ nothing.
 | Handoff frozen | a child cannot rewrite its `handoff-*`/`rework-*` artifact. |
 | Verdict evidence | `accepted` requires checked evidence; `changes-requested` requires a defect list. |
 | Rework cap | at most 2 rounds per work unit, then the user decides. |
-| No waiting | the parent cannot sleep, poll or follow. |
+| No waiting | the parent cannot wait **on a child**, poll it, or follow it; a wait on a service or a build is work. |
 
 Defaults are **2 occupied slots** and **4 launches per batch**. An explicitly
 configured ceiling (`maxDelegates` from `/agent max`, `maxConcurrentDelegations`, or

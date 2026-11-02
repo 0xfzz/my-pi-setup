@@ -26,6 +26,18 @@ export default function modesExtension(pi: ExtensionAPI) {
   let installedEditor: EditorFactory | undefined;
   let baseEditor: EditorFactory | undefined;
   const isPlan = (ctx: ExtensionContext) => planModeFromBranch(policyEntries(ctx))?.enabled === true;
+  /**
+   * The owner session id, when this context exposes one.
+   *
+   * A synthetic or older context (tests, a host without the getter) has no
+   * `getSessionId`; asking it for one must not throw from inside an input
+   * handler. `undefined` means "this process's children", which is what the
+   * delegation probe answers anyway.
+   */
+  const ownerSessionIdOf = (ctx: ExtensionContext): string | undefined =>
+    typeof (ctx as any)?.sessionManager?.getSessionId === "function"
+      ? (ctx as any).sessionManager.getSessionId()
+      : undefined;
   const allowedPlanTool = (name: string) => isPlanTool(name, pi.getAllTools().find(tool => tool.name === name));
 
   const restrictPlanTools = () => pi.setActiveTools(pi.getAllTools()
@@ -295,7 +307,7 @@ export default function modesExtension(pi: ExtensionAPI) {
         // child be woken instead of parking on a sleep or a poll loop. Scoped to
         // live delegation for the same reason as the tool guard: waiting for a
         // service or a port is work, and blocking it refuses the wrong command.
-        if (!isSubagentChildSession(ctx) && hasLiveDelegation(ctx.sessionManager.getSessionId())) {
+        if (!isSubagentChildSession(ctx) && hasLiveDelegation(ownerSessionIdOf(ctx))) {
           const command = text.trimStart().replace(/^!+/, "").trim();
           const problem = waitCommandProblem(command);
           if (problem) {
