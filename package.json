@@ -40,9 +40,13 @@
     ]
   },
   "scripts": {
-    "test": "node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/*.test.ts tests/provider/*.test.ts tests/sidebar/*.test.ts tests/delegation/*.test.ts",
-    "test:core": "node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/*.test.ts tests/provider/*.test.ts tests/sidebar/*.test.ts",
-    "test:delegation": "node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/delegation/*.test.ts",
+    "test": "node scripts/test.mjs all",
+    "test:core": "node scripts/test.mjs core",
+    "test:unit": "node scripts/test.mjs unit",
+    "test:integration": "node scripts/test.mjs integration",
+    "test:delegation": "node scripts/test.mjs delegation",
+    "test:changed": "node scripts/test.mjs changed",
+    "test:profile": "node scripts/test.mjs all --test-reporter=spec",
     "typecheck": "tsc --noEmit",
     "build:dashboard": "node scripts/build-dashboard.mjs",
     "build:nowrite": "node scripts/build-nowrite.mjs",

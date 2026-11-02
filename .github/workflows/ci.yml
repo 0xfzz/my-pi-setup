@@ -12,6 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         node: ["22.x"]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
 
@@ -28,7 +29,7 @@ jobs:
         run: npm run typecheck
 
       - name: Test
-        run: npm test
+        run: npm test -- --test-shard=${{ matrix.shard }}/3
 
       # Dead-code and duplication reporting is advisory, not blocking.
       #

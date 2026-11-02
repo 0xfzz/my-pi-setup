@@ -92,17 +92,27 @@ test("the doc template the contributing guide links to exists and keeps its shap
 /** Directories under tests/ that hold helpers, not suites. */
 const NOT_SUITE_DIRS = new Set(["fixtures"]);
 
-test("package.json test globs cover every suite directory under tests/", async () => {
+test("the test runner covers every suite directory under tests/", async () => {
   // A nested suite directory that no glob matches runs zero tests while the run
   // still reports success. This happened when tests/provider/ was introduced.
+  // The tiered runner walks tests/ recursively, so the invariant is now that
+  // package.json goes through it, the walk is recursive, and every tier entry
+  // names a real test file.
   const pkg = JSON.parse(await read("package.json"));
-  const script: string = pkg.scripts.test;
-  const uncovered: string[] = [];
+  assert.match(pkg.scripts.test, /scripts\/test\.mjs all/, "scripts.test must go through the tiered runner");
+  const runner = await read("scripts/test.mjs");
+  assert.match(runner, /readdirSync/, "the runner must walk tests/ recursively, not rely on a fixed glob list");
+  const tiers = JSON.parse(await read("tests/tiers.json"));
+  for (const file of tiers.integration ?? []) {
+    assert.ok(file.endsWith(".test.ts"), `tiers.json must list test files: ${file}`);
+    assert.ok(existsSync(resolve(root, file)), `tiers.json references a missing test: ${file}`);
+  }
   for (const entry of await readdir(join(root, "tests"), { withFileTypes: true })) {
     if (!entry.isDirectory() || NOT_SUITE_DIRS.has(entry.name)) continue;
-    const pattern = `tests/${entry.name}/*.test.ts`;
-    if (!script.includes(pattern)) uncovered.push(pattern);
+    const files = await readdir(join(root, "tests", entry.name));
+    assert.ok(
+      files.some((name) => name.endsWith(".test.ts")),
+      `tests/${entry.name}/ has no *.test.ts files, so it is a helper directory and belongs in NOT_SUITE_DIRS`,
+    );
   }
-  assert.deepEqual(uncovered, [],
-    `these suite directories are not matched by the "test" script, so their tests would silently never run — add them to package.json scripts.test (or to NOT_SUITE_DIRS if they hold helpers):\n  ${uncovered.join("\n  ")}`);
 });

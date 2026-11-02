@@ -1,0 +1,27 @@
+{
+  "integration": [
+    "tests/account-router-runtime.test.ts",
+    "tests/account-router-startup.test.ts",
+    "tests/antigravity-accounts.test.ts",
+    "tests/artifact-mentions-fff.test.ts",
+    "tests/artifact-mentions-runtime.test.ts",
+    "tests/artifact-tools-runtime.test.ts",
+    "tests/child-identity.test.ts",
+    "tests/codemode-runtime.test.ts",
+    "tests/context-isolation.test.ts",
+    "tests/dashboard-icons.test.ts",
+    "tests/dashboard-process.test.ts",
+    "tests/dashboard-runtime.test.ts",
+    "tests/dashboard-web.test.ts",
+    "tests/delegation/pi-load.test.ts",
+    "tests/dynamic-prompt.test.ts",
+    "tests/mode-lifecycle-runtime.test.ts",
+    "tests/mode-shell-runtime.test.ts",
+    "tests/plan-bash-mutation-runtime.test.ts",
+    "tests/plan-mode-runtime.test.ts",
+    "tests/plan-native-shell.test.ts",
+    "tests/provider/provider-discovery.test.ts",
+    "tests/runtime.test.ts",
+    "tests/subagent-runtime.test.ts"
+  ]
+}
