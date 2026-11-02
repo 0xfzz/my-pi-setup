@@ -2,15 +2,36 @@
 
 > Part of [pi-workflow-extensions](../README.md). How a parent agent spawns child agents, what a handoff is, who owns the result, and every guardrail that is enforced in code.
 
-## Vocabulary
-
-Three words, used precisely everywhere in this package:
+## Definition
 
 | Term | Meaning |
 | --- | --- |
-| **Parent agent** | the session that spawns. It owns the work, the budget and the verdict. |
-| **Child agent** (subagent) | a session spawned by a parent. It sees its own handoff and nothing else. |
-| **Handoff** | the document the parent sends a child, and the report the child sends back. |
+| **Parent Agent** | the agent that spawns a child agent. It owns the work, the budget and the verdict. |
+| **Child Agent** / **Subagent** | the agent that is spawned by a parent agent. It sees its own handoff and nothing else. |
+| **Handoff** | the document a parent sends a child, and the report a child sends back. |
+
+Both modes have both roles: Normal and Plan can each spawn, and a child is a child in
+either one.
+
+## Behaviour
+
+Four rules. Each is enforced in code, not requested in a prompt.
+
+1. **The parent is responsible for the child's result.** A finished child is not an
+   accepted result. If the child did not do what the handoff said, the parent spawns
+   again and asks for the part that does not match the **first** handoff. It never
+   edits the handoff to fit what the child did — see
+   [rework](#rework-spawn-again-against-the-same-handoff).
+2. **A child cannot modify the handoff it was given.** `artifact_save` and
+   `artifact_edit` on a `handoff-*` or `rework-*` id are refused in a child session.
+   A wrong handoff is escalated with `agent_ping`, never corrected in place.
+3. **A child reports before it ends** — with an artifact (`report-<scope>-<n>`) or a
+   tool call (`agent_progress`, `agent_ping`, `agent_done`). Silence is not a report:
+   a pane that ends without `agent_done` is `failed`, not `completed`.
+4. **A parent never waits.** No `sleep`, no polling loop, no `tail -f`, no `!sleep`.
+   The parent ends its turn; the child's completion, its question, or the watchdog
+   re-triggers it. `lib/delegation/wait-guard.ts` refuses the command in a parent
+   session, in every mode, including behind `!`.
 
 Delegation is **not a mode**. Normal and Plan both reach the same `agent_*` surface.
 A mode narrows the **parent's** own tools; it never narrows what a child may exist
@@ -239,8 +260,8 @@ Recording a verdict does not close a child; `agent_close` does that.
 The registry persists to an atomic, versioned, session-keyed sidecar
 (`delegation-registry-<session>.json`) and is restored and reconciled on session
 start: dead panes are closed, live panes keep running, pending escalations survive.
-The two older sidecar names (`main-agent-registry-*`, `orchestrator-registry-*`) are
-read once on restore so an upgraded session does not forget its children.
+The two pre-rename sidecar names are read once on restore, so an upgraded session
+does not forget its children.
 
 A watchdog enforces each child's wall-clock budget and stall-detects when the pane has
 not changed **and** the child's session file has not been written for ~90s —
