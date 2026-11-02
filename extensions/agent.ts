@@ -2032,24 +2032,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
   });
 
   /**
-   * A reviewer session is independent for life.
-   *
-   * `reviewRunId` is persisted with the row, so the decision survives a reload;
-   * `purpose` is the shorter form used before the run id existed. Either is
-   * enough to refuse author contact.
-   */
-  function isSpecReviewer(child: ScopedChild | undefined): boolean {
-    return Boolean(child && (child.purpose === "review" || child.reviewRunId));
-  }
-
-  function reviewerContactRefusal(child: ScopedChild | undefined): string | undefined {
-    if (!isSpecReviewer(child)) return undefined;
-    return `"${child!.name}" is an independent specification reviewer (run ${child!.reviewRunId ?? "unknown"}). `
-      + `Author instructions or answers would contaminate the review. Spawn a fresh reviewer instead; `
-      + `this session stays recorded for audit.`;
-  }
-
-  /**
    * The launch half of a resume, shared by `agent_resume` and by an answered
    * escalation. One implementation, so "answer the child" cannot drift from
    * "resume the child" — that drift produced a second pi process on one session
@@ -2061,17 +2043,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
   ) {
     const child = registry.getChildBySession(params.sessionPath);
     const scope = child?.scope ?? "resumed";
-
-    // Refuse before any pane close, sidecar cleanup or row mutation: resuming a
-    // reviewer would graft the author's answer onto a review that must stay
-    // independent. A refusal must leave the reviewer exactly as it was.
-    if (isSpecReviewer(child)) {
-      return text(reviewerContactRefusal(child)!, {
-        error: "reviewer-resume-forbidden",
-        childId: child!.id,
-        runId: child!.reviewRunId ?? null,
-      });
-    }
 
     // A parent continuation is implementation too. A worker cannot
     // resume past the spec gate by using resume instead of spawn.
@@ -2554,10 +2525,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       }
 
       // Authority rule: the parent may only redirect inside an existing scope.
-      const reviewerRefusal = reviewerContactRefusal(target);
-      if (reviewerRefusal) {
-        return text(reviewerRefusal, { error: "reviewer-contact-forbidden", childId: target.id });
-      }
       if (origin === "parent" && params.scope && params.scope !== target.scope) {
         return text(
           `Authority violation: the parent cannot move "${target.name}" from scope "${target.scope}" to "${params.scope}". ` +
@@ -2646,7 +2613,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           origin,
           queue: params.queue,
           apply,
-          targetRefusal: target => reviewerContactRefusal(target),
         },
         client as any,
       );
@@ -3521,7 +3487,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
 
       const resolution = await routeUpdate(
         registry,
-        { update: message, origin: "user", queue: isQueue, apply: !isDryRun, targetRefusal: target => reviewerContactRefusal(target) },
+        { update: message, origin: "user", queue: isQueue, apply: !isDryRun },
         client as any,
       );
 
