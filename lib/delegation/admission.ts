@@ -10,9 +10,15 @@
  *      registry.recordDisposition). This keeps a parent from reviewing work it
  *      already forgot while spawning five new children.
  *   2. Cumulative launches per batch: completion no longer frees capacity for
- *      unbounded sequential spawning. A change-requested row keeps its slot
- *      until settled, so rework is steered through the SAME child instead of a
- *      fresh spawn.
+ *      unbounded sequential spawning.
+ *
+ * A REWORK is the one exception, and it is explicit rather than inferred: it
+ * continues the work unit a recorded `changes-requested` verdict already opened,
+ * so it is not a duplicate of that unit and it does not spend the batch budget.
+ * The caller passes `reworkOf` with the unit's key; the source row is handed over
+ * to the successor (see `ScopeRegistry.supersedeChild`) and stops holding a slot.
+ * Without this exemption the rework path was unreachable: the unit it continues
+ * was exactly the duplicate the gate refused.
  *
  * Defaults are deliberately conservative starting values, not proven constants.
  * An explicitly configured ceiling (the legacy `maxDelegates` from /agent max,
@@ -104,6 +110,15 @@ export interface AdmissionInput {
   delegationReason: string;
   /** Work-unit keys already occupied by this owner, for duplicate detection. */
   occupiedKeys: readonly string[];
+  /**
+   * Work-unit key this spawn reworks.
+   *
+   * Present only for a rework of a recorded `changes-requested` unit. It exempts
+   * the spawn from the duplicate-unit and batch-budget checks, because it is the
+   * same unit continuing rather than new work. Occupancy is still checked — the
+   * caller excludes the handed-over source row from that count.
+   */
+  reworkOf?: string;
   budgets: SpawnBudgets;
 }
 
@@ -114,7 +129,10 @@ export function admissionProblem(input: AdmissionInput): string | undefined {
       + "(independent parallel lane, bounded substantial research, specialised context). "
       + "Small, tightly coupled, quick or coordination-heavy work belongs in this session.";
   }
-  if (input.occupiedKeys.includes(input.workUnitKey)) {
+  // A rework names the very unit it continues, so the duplicate check must not
+  // fire for it. Every other spawn that repeats an occupied unit is still refused.
+  const reworksThisUnit = input.reworkOf !== undefined && input.reworkOf === input.workUnitKey;
+  if (!reworksThisUnit && input.occupiedKeys.includes(input.workUnitKey)) {
     return `Refused: work unit "${input.workUnitKey}" already occupies a slot. Steer or resume that child `
       + "(agent_steer / agent_resume), settle its result first, or pass `replaces` with the child id "
       + "and why reuse is unsuitable.";
@@ -132,7 +150,9 @@ export function admissionProblem(input: AdmissionInput): string | undefined {
   }
   // In-flight reservations hold budget too, so parallel calls cannot overshoot
   // the cumulative limit when both launch after passing the same read.
-  if (input.launchesInBatch + input.reserved > input.budgets.launchesPerBatch) {
+  // A rework is a continuation, not a new unit: charging it to the launch budget
+  // made the fix for a failed child impossible once the batch was spent.
+  if (!reworksThisUnit && input.launchesInBatch + input.reserved > input.budgets.launchesPerBatch) {
     return `Refused: the launch budget for this batch is exhausted (${input.launchesInBatch}`
       + `/${input.budgets.launchesPerBatch}). Finish and integrate existing results, or the user can `
       + "reset the batch explicitly with /agent batch. A model must not raise or reset it silently.";

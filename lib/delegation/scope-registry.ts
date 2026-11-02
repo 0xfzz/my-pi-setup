@@ -150,6 +150,16 @@ export interface ScopedChild {
   closeReason?: CloseReason;
   /** Ids this row superseded (resume history), so an audit can follow the chain. */
   supersededIds?: string[];
+  /**
+   * The child id that took this row's work unit over.
+   *
+   * A rework is the SAME unit continued, not a second unit in parallel, so the
+   * source row stops holding a slot the moment its successor is registered. The
+   * row keeps its `changes-requested` verdict and defect list as audit history —
+   * only its occupancy ends. Without this, one rework consumed two of the two
+   * default slots and the source waited for a verdict that could never come.
+   */
+  supersededBy?: string;
   /** Launch shape, persisted so a child restored after a restart can be re-watched. */
   interactive?: boolean;
   autoExit?: boolean;
@@ -318,6 +328,31 @@ export class ScopeRegistry {
 
   public getChildById(id: string): ScopedChild | undefined {
     return this.childrenById.get(id);
+  }
+
+  /**
+   * Hand a work unit over to its successor (a rework).
+   *
+   * The source keeps its verdict and defect list; it simply stops occupying the
+   * unit. Refuses to overwrite an existing hand-over so the chain stays linear:
+   * a second successor must rework the current holder, not leapfrog it.
+   */
+  public supersedeChild(ownerSessionId: string, childId: string, supersededBy: string): ScopedChild {
+    const child = this.childrenById.get(childId);
+    if (!child?.accountability || child.accountability.ownerSessionId !== ownerSessionId) {
+      throw new Error("Unknown child attempt or wrong parent owner: cannot hand the work unit over.");
+    }
+    if (!supersededBy || supersededBy === childId) {
+      throw new Error("A rework must name a different successor child.");
+    }
+    if (child.supersededBy && child.supersededBy !== supersededBy) {
+      throw new Error(
+        `Work unit already handed over to ${child.supersededBy}; rework that child instead of ${childId}.`,
+      );
+    }
+    child.supersededBy = supersededBy;
+    child.updatedAt = new Date().toISOString();
+    return child;
   }
 
   public getChildBySession(sessionFile: string): ScopedChild | undefined {
@@ -600,6 +635,8 @@ export class ScopeRegistry {
     return this.getAllChildren().filter((child) => {
       const a = child.accountability;
       if (a && ownerSessionId && a.ownerSessionId !== ownerSessionId) return false;
+      // A superseded row is history: its work unit belongs to the successor now.
+      if (child.supersededBy) return false;
       return child.status === "running" || child.status === "blocked"
         || (a !== undefined && (a.disposition === "pending" || a.disposition === "changes-requested"));
     });

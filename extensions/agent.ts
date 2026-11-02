@@ -1554,11 +1554,10 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       const budgets = resolveBudgets(subagentSettings);
 
       // ── need-based admission: metadata before any side effect ───────────
-      const scope = adhocScope(params);
+      let scope = adhocScope(params);
       const delegationReason = typeof params.delegationReason === "string" ? params.delegationReason.trim() : "";
-      const workUnitKey = (typeof params.workUnitKey === "string" ? params.workUnitKey.trim() : "") || scope;
+      let workUnitKey = (typeof params.workUnitKey === "string" ? params.workUnitKey.trim() : "") || scope;
       const occupied = registry.getOccupiedChildren(ownerSessionId);
-      const occupiedKeys = occupied.map((child) => child.accountability?.workUnitKey ?? child.scope);
       const replacesId = typeof params.replaces === "string" && params.replaces.trim() ? params.replaces.trim() : "";
 
       // ── rework: re-spawn the SAME work unit against the SAME handoff ──────
@@ -1608,6 +1607,22 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
             { error: "rework-rounds-exhausted", reworkOf: reworkOfId, rounds: alreadyReworked },
           );
         }
+        // A handed-over row is history. Refusing it keeps the rework chain
+        // linear, which is what makes the round counter monotonic: naming an
+        // earlier attempt again used to reset it to 0 and bypass the cap.
+        if (source.supersededBy) {
+          return text(
+            `Refused: work unit "${source.scope}" was already handed to ${source.supersededBy}. Rework that child instead — `
+              + `the chain is linear, so an earlier attempt cannot be re-opened to restart the round count.`,
+            { error: "rework-superseded", reworkOf: reworkOfId, successor: source.supersededBy },
+          );
+        }
+        // A rework continues the SAME unit, so it inherits the unit's identity:
+        // scope, work-unit key, lane and criteria. Recomputing the scope from a
+        // re-worded task silently turned a rework into a different unit with
+        // different artifact ids, a different lane and a different report slot.
+        scope = source.scope;
+        workUnitKey = accountabilityOf.workUnitKey || source.scope;
         reworkSource = source;
       }
       if (replacesId && !occupied.some((child) => child.id === replacesId)) {
@@ -1617,14 +1632,25 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           { error: "replaces-unknown", replaces: replacesId },
         );
       }
+      // A rework takes its unit's slot over: the source row is handed to this
+      // child once the launch succeeds, so counting it here would charge one
+      // unit twice and refuse the rework at the default cap of two.
+      const admissionOccupied = reworkSource
+        ? occupied.filter((child) => child.id !== reworkSource!.id)
+        : occupied;
+      const admissionKeys = admissionOccupied.map((child) => child.accountability?.workUnitKey ?? child.scope);
+      const reworkKey = reworkSource
+        ? (reworkSource.accountability?.workUnitKey ?? reworkSource.scope)
+        : undefined;
       {
         const refusal = admissionProblem({
-          occupied: occupied.length,
+          occupied: admissionOccupied.length,
           reserved: 0,
           launchesInBatch: registry.getBatch(ownerSessionId).launches,
           workUnitKey,
           delegationReason,
-          occupiedKeys,
+          occupiedKeys: admissionKeys,
+          ...(reworkKey ? { reworkOf: reworkKey } : {}),
           budgets,
         });
         if (refusal) {
@@ -1644,12 +1670,13 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         // includes this call's own reservation, so two parallel spawn calls in
         // one assistant message cannot both pass the last-slot check.
         const admissionRefusal = admissionProblem({
-          occupied: occupied.length,
+          occupied: admissionOccupied.length,
           reserved: outstandingLaunchSlots(ownerSessionId),
           launchesInBatch: registry.getBatch(ownerSessionId).launches,
           workUnitKey,
           delegationReason,
-          occupiedKeys,
+          occupiedKeys: admissionKeys,
+          ...(reworkKey ? { reworkOf: reworkKey } : {}),
           budgets,
         });
         if (admissionRefusal) {
@@ -1692,6 +1719,14 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       // is actually registered, where the registry row owns the slot.
       let laneFiles = [...(params.laneFiles ?? [])];
       let acceptanceCriteria = [...(params.acceptanceCriteria ?? [])];
+      if (reworkSource) {
+        // The contract being fixed is the ORIGINAL one. A rework that declared
+        // neither lane nor criteria used to author a brief saying "no lane
+        // declared, do not modify files" — a read-only no-op for a worker, and
+        // nothing to judge the result against.
+        if (!laneFiles.length) laneFiles = [...reworkSource.laneFiles];
+        if (!acceptanceCriteria.length) acceptanceCriteria = [...(reworkSource.frozenCriteria ?? [])];
+      }
       let parsedPlan: Plan | undefined;
       let planStep: PlanStep | undefined;
       if (params.planId) {
@@ -1922,7 +1957,18 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       // The registry row now owns the slot; the finally below drops the
       // reservation on every exit path, so only the registry is charged after
       // registration and a failed launch never eats capacity.
-      registry.recordLaunch(ownerSessionId);
+      if (reworkSource) {
+        // The successor holds the unit from here on. The source keeps its
+        // `changes-requested` verdict and defect list as audit history, but it
+        // stops occupying a slot and stops waiting for a verdict nobody owes.
+        registry.supersedeChild(ownerSessionId, reworkSource.id, running.id);
+        // A continuation is not a new unit, so it does not spend the batch
+        // budget; otherwise the fix for a failed child was impossible once the
+        // batch was spent.
+        persistState();
+      } else {
+        registry.recordLaunch(ownerSessionId);
+      }
 
       return text(
         [
@@ -1945,7 +1991,10 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           `Review duty: when it finishes, the result waits for YOUR verification (plan: ${accountability.reviewPlan}) — accept, request changes or abandon it with agent_accept_result; the slot stays occupied until then.`,
           `Check agent_running for the row's resultRevision before judging: a verdict on a superseded result is refused.`,
           `Rework: steer or resume THIS child instead of spawning a replacement; a replacement needs \`replaces\` plus capacity.`,
-          `Batch budget: ${registry.getBatch(ownerSessionId).launches}/${budgets.launchesPerBatch} launch(es), ${occupied.length + 1}/${budgets.concurrent} slot(s) occupied.`,
+          `Batch budget: ${registry.getBatch(ownerSessionId).launches}/${budgets.launchesPerBatch} launch(es), ${admissionOccupied.length + 1}/${budgets.concurrent} slot(s) occupied.`,
+          ...(reworkSource
+            ? [`Rework: \`${reworkSource.id}\` handed the work unit over — it no longer holds a slot, and this launch was not charged to the batch.`]
+            : []),
           ...(roleModel ? [`Model: ${renderAttribution(roleModel)}.`] : []),
           ...(rolePrompt
             ? [`Role prompt: ${rolePrompt.source}${rolePrompt.path ? ` (${relative(ctx.cwd, rolePrompt.path)})` : ""}.`]
