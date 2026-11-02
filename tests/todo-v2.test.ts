@@ -4,6 +4,7 @@ import todoExtension, {
   PLAN_TOOL, ACT_TOOL, NEXT_TOOL, LEGACY_TOOL, TODO_TOOL_NAMES, isTodoTool,
   getTodoGuidance, todoIcon, WORKFLOW_TODO_ENTRY,
 } from "../extensions/todo.ts";
+import { setDelegationProbe } from "../lib/delegation/live.ts";
 
 /** Minimal ExtensionAPI harness. `hasUI` stays false so rendering never runs. */
 async function setup(options: { branch?: any[]; header?: any } = {}) {
@@ -233,6 +234,27 @@ test("v1 sync: in_progress becomes a leased claim the turn-end nudge can see", a
   assert.ok(task.claim?.expiresAt > Date.now(), "a v1 in_progress must carry a lease, not a claimless claim");
   const nudged = await s.fire("turn_end", { outcome: "completed", message: { role: "assistant", stopReason: "stop" } });
   assert.equal(nudged?.continue, true, "an abandoned v1 claim must earn one reminder");
+});
+
+test("a claim waiting on a delegated child does not re-open the turn", async () => {
+  const s = await setup();
+  await s.call(PLAN_TOOL, { goal: "G", tasks: [{ title: "Inspect" }] });
+  const [task] = await board(s);
+  await s.call(ACT_TOOL, { id: task.id, transition: "claim" });
+
+  // A live child re-triggers the parent by itself: continuing the turn here is
+  // what made session 01a19cd6 poll `find` for twenty minutes.
+  setDelegationProbe(() => true);
+  try {
+    const nudged = await s.fire("turn_end", { outcome: "completed", message: { role: "assistant", stopReason: "stop" } });
+    assert.equal(nudged, undefined, "the child's report is the trigger, not a forced continuation");
+  } finally {
+    setDelegationProbe(undefined);
+  }
+
+  // With no children left the open claim IS abandoned, so the nudge still fires.
+  const after = await s.fire("turn_end", { outcome: "completed", message: { role: "assistant", stopReason: "stop" } });
+  assert.equal(after?.continue, true, "the exemption must not silence the nudge forever");
 });
 
 test("v1 sync: only one task may be in_progress, and the refusal is atomic", async () => {

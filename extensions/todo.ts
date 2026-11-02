@@ -35,6 +35,7 @@ import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
 import { TODO_DETAILS_HINT } from "../lib/workflow-actions.ts";
 import { planModeFromBranch } from "../lib/plan/plan-mode.ts";
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";
+import { hasLiveDelegation } from "../lib/delegation/live.ts";
 import * as G from "../lib/intent-graph.ts";
 
 const ENTRY = "workflow-todo:v2";
@@ -936,6 +937,15 @@ export default function todoExtension(pi: ExtensionAPI) {
   pi.on("turn_end", (event, ctx) => {
     if (!plan || plan.scope !== "committed" || plan.supersededAt) return;
     if (event.outcome !== "completed" || ctx.signal?.aborted) return;
+    // A claim that is waiting on a delegated child is not an abandoned claim:
+    // the child's report or ping is the trigger that brings the parent back.
+    // Continuing the turn here is what made session 01a19cd6 loop — a task
+    // claimed at 15:23 and settled at 15:33 re-opened turns whose only work was
+    // polling `find`. `lastNudgedClaim` is deliberately NOT set: if the parent
+    // goes idle with no children and the claim still open, the nudge fires then.
+    // Any live child in this process belongs to this session, so no owner id is
+    // needed; a child session's own registry never holds children.
+    if (hasLiveDelegation()) return;
     const message = (event as any).message;
     if (message && message.role === "assistant" && message.stopReason !== "stop") return;
     const claimed = G.unsettled(plan).filter(task => G.isLiveClaim(task, Date.now()));
