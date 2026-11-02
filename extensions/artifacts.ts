@@ -2,10 +2,9 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
 import { watch, readFileSync, readdirSync, statSync, type FSWatcher } from "node:fs";
-import { open, rename, writeFile, rm, mkdtemp } from "node:fs/promises";
+import { open, writeFile, rm, mkdtemp } from "node:fs/promises";
 import { dirname, basename, join, delimiter } from "node:path";
 import { tmpdir } from "node:os";
-import { randomUUID } from "node:crypto";
 import {
   MarkdownPopup, popupOverlayOptions, PLAIN_THEME, type PopupTheme,
 } from "../lib/popup/frame.ts";
@@ -17,6 +16,7 @@ import {
   sanitizeArtifactId, sanitizeScope,
   artifactFromRecord, recordsFromBranch, ordered,
   artifactCatalogContext, describeArtifact, artifactSidecarPath, parentArtifactsSnapshotPath,
+  writeSidecarArtifact,
   formatBytes, clip, lookupArtifact, type Artifact, type ArtifactType,
   applyArtifactEdit, artifactLineCount, renderArtifactSlice, searchArtifactText, sliceArtifactContent,
 } from "../lib/artifact-state.ts";
@@ -36,16 +36,6 @@ export async function readSidecarArtifact(filePath: string): Promise<Artifact | 
     return undefined;
   } finally {
     await handle?.close();
-  }
-}
-
-export async function writeSidecarArtifact(filePath: string, artifact: Artifact): Promise<void> {
-  const temp = `${filePath}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temp, JSON.stringify(artifact, null, 2), { mode: 0o600 });
-    await rename(temp, filePath);
-  } finally {
-    await rm(temp, { force: true });
   }
 }
 

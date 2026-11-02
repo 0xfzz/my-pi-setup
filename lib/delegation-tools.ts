@@ -39,8 +39,7 @@ export type DelegationVerb =
   | "ping"
   | "accept-result"
   | "parent-recall"
-  | "parent-digest"
-  | "spec-review-submit";
+  | "parent-digest";
 
 export interface DelegationTool {
   /** Canonical name. Always `agent_`-prefixed. */

@@ -92,6 +92,10 @@ export interface HandoffDocumentInput {
   rework?: {
     originalHandoffId: string;
     originalVersion?: number;
+    /** The assignment the original handoff gave, quoted verbatim. */
+    originalAssignment?: string;
+    /** The criteria the original handoff froze. */
+    originalCriteria?: readonly string[];
     defects: readonly string[];
   };
 }
@@ -130,7 +134,15 @@ The original handoff \`${input.rework.originalHandoffId}\`${
 child worked against it and the parent found these parts did NOT match:
 
 ${input.rework.defects.map((defect, index) => `${index + 1}. ${defect}`).join("\n")}
+${input.rework.originalAssignment?.trim() ? `
+### The original assignment (unchanged)
 
+${input.rework.originalAssignment.trim()}
+` : ""}${input.rework.originalCriteria?.length ? `
+### The original criteria (unchanged)
+
+${input.rework.originalCriteria.map(criterion => `- ${criterion}`).join("\n")}
+` : ""}
 Fix exactly those parts, and keep everything that already matched. If you
 believe a defect is not real, escalate with \`agent_ping\` instead of paying a
 round to disagree.
@@ -202,6 +214,8 @@ export function buildHandoffTicket(input: {
   acceptanceCriteria?: readonly string[];
   /** Rework only: the defect list, restated so it is impossible to miss. */
   defects?: readonly string[];
+  /** Rework only: the frozen original the defects are measured against. */
+  originalHandoffId?: string;
 }): string {
   const round = Math.max(1, Math.trunc(input.round ?? 1));
   const lane = input.laneFiles?.length
@@ -221,7 +235,9 @@ export function buildHandoffTicket(input: {
 
 ${role}
 
-**Read your handoff first:** \`artifact_recall({ id: "${input.handoffId}" })\`.
+**Read your handoff first:** \`artifact_recall({ id: "${input.handoffId}" })\`${input.originalHandoffId
+    ? `, then the original it fixes: \`artifact_recall({ id: "${input.originalHandoffId}" })\``
+    : ""}.
 
 That artifact is your whole brief and it is FROZEN: you may read it, you may not
 rewrite it. If it is missing or wrong, \`agent_ping\` the parent — an unavailable

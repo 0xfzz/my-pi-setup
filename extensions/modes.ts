@@ -8,6 +8,7 @@ import { readOnlyShellCommand } from "../lib/plan/plan-shell.ts";
 import { INPUT_MODE_CONTEXT_TYPE, inputModeGuidance, isPlanTool, missingPlanTools, pendingPlanDeferredTools, pendingPlanExitTools, PLAN_MODE_GUIDANCE, PLAN_MODE_TYPE, planModeFromBranch } from "../lib/plan/plan-mode.ts";
 import { reconcileLoadout, switchStateFromBranch } from "../lib/delegation-switch.ts";
 import { describeRetiredTools, isRetiredDelegationTool, stripRetiredTools } from "../lib/delegation-tools.ts";
+import { waitCommandProblem } from "../lib/delegation/wait-guard.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardMode } from "../lib/dashboard/integration.ts";
 
 /** Derive from the UI contract so this does not depend on a re-exported alias. */
@@ -287,6 +288,18 @@ export default function modesExtension(pi: ExtensionAPI) {
       };
       routeSubmissions(editor, text => registry.current.route(text), (text, submit) => {
         if (!text.trimStart().startsWith("!")) return submit();
+        // A `!` shell is a wait with the same failure mode as a tool call: the
+        // turn ends while the command still runs. A child is exempt because it
+        // has to wait on its own build; a parent must end its turn and let the
+        // child be woken instead of parking on a sleep or a poll loop.
+        if (!isSubagentChildSession(ctx)) {
+          const command = text.trimStart().replace(/^!+/, "").trim();
+          const problem = waitCommandProblem(command);
+          if (problem) {
+            ctx.ui.notify(problem, "warning");
+            return;
+          }
+        }
         // Observe Pi's existing async submit path rather than replace user_bash
         // operations (which would steal remote-shell handlers from extensions).
         nativeShellSubmissions++;

@@ -50,7 +50,7 @@ import {
   reportArtifactId,
 } from "../lib/delegation/handoff-artifact.ts";
 import { artifactSidecarPath, type Artifact } from "../lib/artifact-state.ts";
-import { writeSidecarArtifact } from "./artifacts.ts";
+import { writeSidecarArtifact } from "../lib/artifact-state.ts";
 import {
   ScopeRegistry,
   type ChildAccountability,
@@ -1566,6 +1566,16 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       // handoff. So a rework never edits or replaces the handoff; it quotes it
       // and adds the defect list. The original stays the contract.
       const reworkOfId = typeof params.reworkOf === "string" && params.reworkOf.trim() ? params.reworkOf.trim() : "";
+      // Two different operations. reworkOf continues a unit against its frozen
+      // handoff; replaces swaps in a new child for an occupied unit. Accepting
+      // both would silently drop one of them.
+      if (reworkOfId && replacesId) {
+        return text(
+          `Refused: reworkOf and replaces are different operations. `
+            + `reworkOf re-spawns the same unit against its frozen handoff; replaces swaps in a new child for an occupied unit. Pick one.`,
+          { error: "rework-and-replaces", reworkOf: reworkOfId, replaces: replacesId },
+        );
+      }
       let reworkSource: ScopedChild | undefined;
       let reworkDefects: string[] = [];
       if (reworkOfId) {
@@ -1792,9 +1802,8 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       // ── the handoff is a document, not an inlined prompt ────────────────
       // Write the frozen handoff artifact BEFORE the pane exists, so the child
       // starts from a brief it can cite and the parent can judge, and so a
-      // failure to write it leaves no pane behind. A planner/plan-step child
-      // keeps its own ticket shape: those are generated from a plan artifact
-      // that already is the document.
+      // failure to write it leaves no pane behind. A plan-backed spawn is no
+      // exception: its plan ticket IS the brief, so it becomes the document.
       // A rework is the same work unit one round older. The ORIGINAL handoff id
       // is what the child's defect list points at, and the original is never
       // rewritten -- that is the whole point of re-spawning instead of re-editing.
@@ -1804,54 +1813,61 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       const usesPlanTicket = Boolean(
         (role === "planner" && plannerPlanId) || (parsedPlan && planStep && params.planId),
       );
-      let handoffDoc: Artifact | undefined;
-      if (!usesPlanTicket) {
-        const now = new Date().toISOString();
-        handoffDoc = {
-          id: handoffId,
-          title: reworkSource ? `Rework: ${scope} (round ${handoffRound})` : `Handoff: ${scope}`,
-          type: "spec",
-          content: renderHandoffDocument({
-            scope,
-            round: handoffRound,
-            assignment: params.task,
-            laneFiles,
-            acceptanceCriteria,
-            role: purpose === "research" ? "research" : "worker",
-            budgetMinutes: params.budgetMinutes,
-            guidance: typeof (params as any).guidance === "string" ? (params as any).guidance : undefined,
-            ...(reworkSource
-              ? {
-                  rework: {
-                    originalHandoffId: originalHandoffId ?? handoffArtifactId(scope, 1),
-                    originalVersion: reworkSource.handoffRevision ?? 1,
-                    defects: reworkDefects,
-                  },
-                }
-              : {}),
-          }),
-          version: 1,
-          createdBy: `parent:${ownerSessionId}`,
-          createdAt: now,
-          updatedAt: now,
-          tags: reworkSource ? ["handoff", "rework", scope] : ["handoff", scope],
-          scope,
-        };
-      }
-
-      const ticket = usesPlanTicket
+      // The plan-backed shapes already render their whole brief. That text is
+      // the document; the ticket below only points at it.
+      const planBrief = usesPlanTicket
         ? role === "planner" && plannerPlanId
           ? buildPlannerTicket({ scope, planId: plannerPlanId, task: params.task })
           : buildPlanStepTicket({ scope, planId: params.planId!, plan: parsedPlan!, step: planStep!, task: params.task })
-        : buildHandoffTicket({
-            scope,
-            round: handoffRound,
-            handoffId,
-            role: purpose === "research" ? "research" : "worker",
-            laneFiles,
-            acceptanceCriteria,
-            ...(reworkSource ? { defects: reworkDefects } : {}),
-          });
+        : undefined;
+
+      const now = new Date().toISOString();
+      const handoffDoc: Artifact = {
+        id: handoffId,
+        title: reworkSource ? `Rework: ${scope} (round ${handoffRound})` : `Handoff: ${scope}`,
+        type: "spec",
+        content: planBrief ?? renderHandoffDocument({
+          scope,
+          round: handoffRound,
+          assignment: params.task,
+          laneFiles,
+          acceptanceCriteria,
+          role: purpose === "research" ? "research" : "worker",
+          budgetMinutes: params.budgetMinutes,
+          guidance: typeof (params as any).guidance === "string" ? (params as any).guidance : undefined,
+          ...(reworkSource
+            ? {
+                rework: {
+                  originalHandoffId: originalHandoffId ?? handoffArtifactId(scope, 1),
+                  originalVersion: reworkSource.handoffRevision ?? 1,
+                  // #7: the child must see the contract it is being judged
+                  // against, not just its id.
+                  originalAssignment: reworkSource.task,
+                  originalCriteria: reworkSource.frozenCriteria,
+                  defects: reworkDefects,
+                },
+              }
+            : {}),
+        }),
+        version: 1,
+        createdBy: `parent:${ownerSessionId}`,
+        createdAt: now,
+        updatedAt: now,
+        tags: reworkSource ? ["handoff", "rework", scope] : ["handoff", scope],
+        scope,
+      };
+
+      const ticket = buildHandoffTicket({
+        scope,
+        round: handoffRound,
+        handoffId,
+        role: purpose === "research" ? "research" : "worker",
+        laneFiles,
+        acceptanceCriteria,
+        ...(reworkSource
+          ? { defects: reworkDefects, originalHandoffId: originalHandoffId ?? handoffArtifactId(scope, 1) }
+          : {}),
+      });
 
       let plan: LaunchPlan;
       try {
@@ -1888,25 +1904,27 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       // exists once the launch plan does. The child's catalog reads sidecars from
       // this directory, so writing it here is what makes the handoff reachable by
       // `artifact_recall` inside the child.
-      if (handoffDoc) {
-        try {
-          await writeSidecarArtifact(artifactSidecarPath(plan.sessionFile, handoffDoc.id), handoffDoc);
-        } catch (error: any) {
-          // A spawn whose handoff could not be written must not start: the child
-          // would work from a ticket it cannot re-read, and the parent could not
-          // cite the brief it judges. Close nothing yet -- no pane exists.
-          return text(
-            `Refused: the handoff artifact \`${handoffId}\` could not be written (${error?.message ?? error}). `
-              + `No pane was opened. The handoff is the document the child works from and the parent judges against, so a spawn without it is untraceable.`,
-            { error: "handoff-write-failed", handoffId, reason: String(error?.message ?? error) },
-          );
-        }
+      const handoffSidecar = artifactSidecarPath(plan.sessionFile, handoffDoc.id);
+      try {
+        await writeSidecarArtifact(handoffSidecar, handoffDoc);
+      } catch (error: any) {
+        // A spawn whose handoff could not be written must not start: the child
+        // would work from a ticket it cannot re-read, and the parent could not
+        // cite the brief it judges. Close nothing yet -- no pane exists.
+        return text(
+          `Refused: the handoff artifact \`${handoffId}\` could not be written (${error?.message ?? error}). `
+            + `No pane was opened. The handoff is the document the child works from and the parent judges against, so a spawn without it is untraceable.`,
+          { error: "handoff-write-failed", handoffId, reason: String(error?.message ?? error) },
+        );
       }
 
       let started;
       try {
         started = await client.paneStart(plan.paneStart);
       } catch (error: any) {
+        // No pane means no child. Drop the handoff we just wrote, otherwise a
+        // failed launch leaves an artifact no row cites and no child can read.
+        rmSync(handoffSidecar, { force: true });
         return text(`Failed to start pane: ${error.message}`, { error: error.message });
       }
       registry.recordPane(started.paneId);
@@ -1949,7 +1967,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         laneFiles,
         // The handoff id is durable row state: the receipt gate re-reads it to
         // prove the child actually opened the document it was given.
-        handoffDoc ? handoffId : undefined,
+        handoffId,
         params.budgetMinutes ? params.budgetMinutes * 60_000 : undefined,
         { criteria: acceptanceCriteria, revision: 1 },
         { purpose: registryPurpose(purpose), accountability },

@@ -1,3 +1,6 @@
+import { rename, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+
 export type ArtifactType = "plan" | "spec" | "scratchpad" | "code" | "review" | "other";
 
 export interface Artifact {
@@ -451,4 +454,21 @@ export function applyArtifactEdit(content: string, spec: ArtifactEditSpec): { co
 
 export function parentArtifactsSnapshotPath(sessionFile: string): string {
   return `${sessionFile}${PARENT_SNAPSHOT_SUFFIX}`;
+}
+
+/**
+ * Write an artifact sidecar atomically.
+ *
+ * A reader never sees a half-written catalog, and the temp file never survives
+ * a crash: rename is atomic on one filesystem, and the finally removes the temp
+ * whether or not the rename happened.
+ */
+export async function writeSidecarArtifact(filePath: string, artifact: Artifact): Promise<void> {
+  const temp = `${filePath}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temp, JSON.stringify(artifact, null, 2), { mode: 0o600 });
+    await rename(temp, filePath);
+  } finally {
+    await rm(temp, { force: true });
+  }
 }
