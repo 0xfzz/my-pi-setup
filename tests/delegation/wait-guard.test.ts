@@ -86,3 +86,9 @@ test("only bash is governed: the guard does not guess at gateway arguments", () 
   assert.equal(isWaitGuardTool("mcp"), false);
   assert.equal(isWaitGuardTool("browser"), false);
 });
+
+test("the refusal states its scope, so a service wait is not read as forbidden work", () => {
+  assert.match(WAIT_GUARD_REASON, /must not wait on a child/);
+  assert.match(WAIT_GUARD_REASON, /only while a child is in flight/);
+  assert.match(WAIT_GUARD_REASON, /waiting for a service/);
+});

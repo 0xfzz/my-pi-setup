@@ -43,6 +43,7 @@ import { dirname, join, relative } from "node:path";
 import { sanitizeScope } from "../lib/delegation/handoff.ts";
 import { MAX_REWORK_ROUNDS } from "../lib/delegation/admission.ts";
 import { isWaitGuardTool, waitCommandProblem } from "../lib/delegation/wait-guard.ts";
+import { hasLiveDelegation, setDelegationProbe } from "../lib/delegation/live.ts";
 import {
   buildHandoffTicket,
   handoffArtifactId,
@@ -336,6 +337,14 @@ export function stallNotice(params: {
 
 export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps): void {
   const client: HerdrClient = deps?.client || createHerdrClient();
+  // The wait guard and the todo claim nudge both ask whether a child is in
+  // flight. The registry is the truth; a probe keeps that dependency one-way,
+  // so `lib/delegation/live.ts` never imports this extension module.
+  setDelegationProbe((owner) => registry.getActiveChildren().some((child) => {
+    const childOwner = child.accountability?.ownerSessionId;
+    // A legacy row with no accountability still owns a live pane: it counts.
+    return !owner || !childOwner || childOwner === owner;
+  }));
   const moduleController = new AbortController();
   /**
    * One watcher per session file, tagged with the attempt that armed it.
@@ -1143,6 +1152,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
   pi.on("session_shutdown", () => {
     stopWatchdog();
     resetPollFingerprints();
+    // The probe closes over this session's registry; a disposed session must not
+    // keep answering for the next one.
+    setDelegationProbe(undefined);
     // Only the owner writes the sidecar. A child writing its restored view marked
     // siblings closed/blocked behind the parent's back.
     if (!isChildSession) persistState();
@@ -1365,7 +1377,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
   // A child's `--tools` allowlist excludes the delegation surface, but a resumed
   // or user-touched child can still have it active. Refuse rather than let a
   // child spawn work the parent cannot see.
-  pi.on("tool_call", (event, _ctx) => {
+  pi.on("tool_call", (event, ctx) => {
     // ── read-only reading roles ────────────────────────────────────────────
     // research children are declared read-only. A resumed or user-touched child
     // can still hold bash, and bash can write; narrow it to the same closed
@@ -1385,18 +1397,28 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     }
 
     if (!isChildSession) {
-      // ── the parent never waits ─────────────────────────────────────────
+      // ── the parent never waits ON A CHILD ──────────────────────────────
       // `RETRIGGER_CONTRACT` asked for this in prose on every result and a
       // parent spent six minutes in `bash sleep` anyway. A child's completion,
       // question and watchdog all arrive as messages that re-trigger the
       // session, so a blocking wait is a request to poll a push channel. Refuse
       // the wait, not the long command: `npm test` may run for a minute.
+      //
+      // Scoped by `hasLiveDelegation`: the failure this rule exists for is a
+      // parent waiting on its child. Session `01a19cd6` shows what the unscoped
+      // version cost — `sleep 8 && docker compose ps`, run to let MySQL accept
+      // connections, was refused while that session had no child at all.
       if (isWaitGuardTool(event.toolName)) {
-        // `input` is a discriminated union across every registered tool, so the
-        // command is read through a narrow structural view rather than asserted
-        // onto the union member this guard happens to name.
-        const waitProblem = waitCommandProblem((event.input as { command?: unknown } | undefined)?.command);
-        if (waitProblem) return { block: true, reason: waitProblem };
+        const guardOwner = typeof (ctx as any)?.sessionManager?.getSessionId === "function"
+          ? (ctx as any).sessionManager.getSessionId()
+          : ownerSessionId ?? undefined;
+        if (hasLiveDelegation(guardOwner)) {
+          // `input` is a discriminated union across every registered tool, so the
+          // command is read through a narrow structural view rather than asserted
+          // onto the union member this guard happens to name.
+          const waitProblem = waitCommandProblem((event.input as { command?: unknown } | undefined)?.command);
+          if (waitProblem) return { block: true, reason: waitProblem };
+        }
       }
       // Independence is a fact about who touched the lane, so the parent's own
       // writes are recorded as they happen.

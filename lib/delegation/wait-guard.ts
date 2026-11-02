@@ -19,6 +19,14 @@
  *      that already pushes. The caller decides which side it is on, and the guard
  *      says so in its own name rather than inferring it.
  *
+ *   3. It applies only while a child is actually in flight. The failure it was
+ *      built for is a parent waiting on its child, and session `01a19cd6` shows
+ *      the cost of forgetting that: `sleep 8 && docker compose ps`, run to let
+ *      MySQL accept connections, was refused while the session had no child at
+ *      all. Waiting for a service, a port or a build is work. The call sites
+ *      gate on `hasLiveDelegation` (`lib/delegation/live.ts`) instead of running
+ *      this rule against every parent command.
+ *
  * Deliberately NOT refused: `pnpm install`, `cargo build`, `npm test`,
  * `docker compose up -d`, long `git` operations. Those are work. The refusal
  * names the re-trigger contract so the parent is told what to do instead, which
@@ -27,8 +35,9 @@
 
 /** The sentence the parent gets instead of the wait. Kept here so tests pin it. */
 export const WAIT_GUARD_REASON =
-  "Refused: the parent must not wait. A child's completion, its question and its budget/stall all arrive as "
-  + "messages that re-trigger this session, so end your turn and act when one arrives. "
+  "Refused: the parent must not wait on a child. A child's completion, its question and its budget/stall all "
+  + "arrive as messages that re-trigger this session, so end your turn and act when one arrives. "
+  + "This refusal applies only while a child is in flight: waiting for a service, a port or a build is work. "
   + "Delegate the wait to a child if something really must block, or ask the user.";
 
 /**
