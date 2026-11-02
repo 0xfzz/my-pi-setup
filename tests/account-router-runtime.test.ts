@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader, ModelRegistry, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import accountRouter, { poolProviderId } from "../extensions/account-router.ts";
 import { SECTION_EVENT, type SectionOffer } from "../lib/sidebar/sidebar-channel.ts";
@@ -488,6 +488,33 @@ test("reloading a config that dropped a route unregisters it from the catalog", 
   }, (seen) => ({
     providers: [{ name: "primary", config: fakeProvider("primary", ["main-model"], seen).config }],
     config: { routes: [{ name: "auto", targets: ["primary/main-model"] }] },
+  }));
+});
+
+test("reloading a config that added a pool registers its shadow provider", { timeout: 20000 }, async () => {
+  await withSession(async ({ dir, session, registry }) => {
+    // A newly saved pool used to stay invisible to every model picker
+    // (including /agent-model) until /router reload or a new session, because
+    // the editor's reload refreshed virtual routes but never pool providers.
+    assert.equal(registry.getModel("pool:ag", "gemini-pro"), undefined, "no pool before the reload");
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(join(dir, "account-router.json"), JSON.stringify({
+      pools: { ag: { provider: "antigravity", source: "antigravity-accounts", strategy: "round-robin" } },
+      routes: [],
+    }));
+    const command = session.extensionRunner.getRegisteredCommands().find((c: any) => c.invocationName === "router");
+    const original = console.log;
+    console.log = () => {};
+    try {
+      // Production hands the extension a ModelRegistry facade, not the raw runtime.
+      await command.handler("reload", { hasUI: false, cwd: dir, modelRegistry: new ModelRegistry(registry) } as any);
+    } finally {
+      console.log = original;
+    }
+    assert.ok(registry.getModel("pool:ag", "gemini-pro"), "the pool's shadow provider is registered after reload");
+  }, (seen) => ({
+    providers: [{ name: "antigravity", config: fakeProvider("antigravity", ["gemini-pro"], seen).config }],
+    config: { routes: [] },
   }));
 });
 

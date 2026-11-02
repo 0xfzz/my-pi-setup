@@ -1169,9 +1169,13 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     };
   };
 
-  /** Re-read the files and make the registered virtual models match them. */
+  /** Re-read the files and make the registered routes and pool shadow providers match them. */
   const reloadRoutes = (ctx: ExtensionContext): void => {
     loadConfig(ctx.cwd ?? activeCwd);
+    // Pools register their shadow providers; routes register virtual models.
+    // Reloading one without the other left a newly saved pool invisible to every
+    // model picker (including /agent-model) until /router reload or a new session.
+    registerPools(ctx);
     syncRoutes();
     updateSidebar();
   };
@@ -1379,10 +1383,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
           return;
         }
         case "reload": {
-          loadConfig(ctx.cwd ?? activeCwd);
-          registerPools(ctx);
-          syncRoutes();
-          updateSidebar();
+          reloadRoutes(ctx);
           emit(ctx, configErrors.length
             ? `Reloaded with ${configErrors.length} warning(s):\n${configErrors.join("\n")}`
             : `Reloaded ${table.routes.length} route(s) and ${Object.keys(config.pools).length} pool(s).`,
