@@ -188,10 +188,24 @@ export function escalationGuidance(escalationId: string): string[] {
  * the observed failure (session 01a17cb6 spent six minutes in `bash sleep`), so
  * the contract is stated in every result that starts asynchronous work.
  */
+/**
+ * The sentence that ends the parent's turn.
+ *
+ * The parent is event-driven: completion, a child question, and a
+ * watchdog notice all arrive as messages that trigger a turn. Sleep-polling was
+ * the observed failure (session 01a17cb6 spent six minutes in `bash sleep`), so
+ * the contract is stated in every result that starts asynchronous work.
+ *
+ * Prose is not the enforcement. Session 01a19cd6 shows what a sentence alone is
+ * worth: told "your turn ends here" ten times, the parent answered with forty
+ * `find` polls instead. The tools that mean "nothing to do until a child event"
+ * now return `terminate: true`, which ends the run for real; this text explains
+ * why the run is ending so the model does not read the stop as a failure.
+ */
 export const RETRIGGER_CONTRACT =
-  "Your turn ends here. You will be re-triggered when a child completes (report), asks a question (escalation), "
-  + "or hits its budget/stalls (watchdog). A completed child's result is NOT verified work: it stays pending "
-  + "YOUR review until you disposition it with agent_accept_result. Do not poll or sleep; act only when triggered.";
+  "Do not poll or sleep: this run ends here. The next turn starts by itself when a child completes (report), "
+  + "asks a question (escalation), or hits its budget/stalls (watchdog). A completed child's result is NOT verified "
+  + "work: it stays pending YOUR review until you disposition it with agent_accept_result.";
 
 /**
  * Fingerprints of the last status/collect answer per session and action.
@@ -2010,7 +2024,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         registry.recordLaunch(ownerSessionId);
       }
 
-      return text(
+      const result = text(
         [
           `Subagent "${displayName}" launched (scope: ${scope}, ad-hoc).`,
           ...(handoffDoc
@@ -2062,6 +2076,11 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           accountability: { ...accountability },
         },
       );
+        // A spawn is the end of the parent's actionable turn: the next event is
+        // the child's report or its question. `terminate` only fires when every
+        // result in the batch agrees, so a parent that also plans or writes in
+        // this same message keeps its turn.
+        return { ...result, terminate: true };
       } finally {
         // Always: the reservation only covers the launch window. Once the row
         // is registered the registry owns the count, and on any earlier failure
@@ -2707,10 +2726,15 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         awaiting: awaiting.map((child) => [child.id, child.accountability?.resultRevision]),
       });
       if (notePoll(owner ?? "parent", `running:${params.scope ?? "*"}`, fingerprint)) {
-        return text(`No new events since your last check. ${RETRIGGER_CONTRACT}`, {
-          error: "no-new-events",
-          count: filtered.length,
-        });
+        const message = `No new events since your last check. ${RETRIGGER_CONTRACT}`;
+        const details = { error: "no-new-events", count: filtered.length };
+        // A repeat poll with nothing actionable IS the parent polling a push
+        // channel. Asking it to stop was not enough (session 01a19cd6 answered
+        // that sentence with forty `find` calls), so end the run: the next turn
+        // starts on a real event. A pending escalation or an undispositioned
+        // result is actionable, so the parent keeps its turn to act on it.
+        const actionable = pending.length > 0 || awaiting.length > 0;
+        return actionable ? text(message, details) : { ...text(message, details), terminate: true };
       }
 
       const lines = filtered.map((child) => {
