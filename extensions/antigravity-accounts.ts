@@ -134,6 +134,25 @@ export function credentialEnvelope(account: {
   });
 }
 
+/**
+ * A request-scoped credential is the JSON envelope `parseApiKey` expects.
+ *
+ * Anything else is not a credential. In particular `"account-managed"` is the
+ * placeholder this extension registers so Pi keeps the provider "configured";
+ * Pi can hand that placeholder back as `options.apiKey`, and forwarding it made
+ * the vendored client throw `"account-managed" is not valid JSON`.
+ */
+export function isCredentialEnvelope(value: unknown): value is string {
+  if (typeof value !== "string" || !value.trimStart().startsWith("{")) return false;
+  try {
+    const parsed = JSON.parse(value) as { token?: unknown; projectId?: unknown };
+    return typeof parsed.token === "string" && parsed.token.length > 0 &&
+      typeof parsed.projectId === "string" && parsed.projectId.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** True when an access token can be used for a request right now. */
 export function slotIsFresh(
   account: { access?: string; expires?: number }, now = Date.now(), skewMs = REFRESH_SKEW_MS,
@@ -223,10 +242,10 @@ export default function antigravityAccountsExtension(pi: ExtensionAPI): void {
     // A request-scoped credential is an explicit override and must win, the way
     // Pi's own auth resolution treats it. A pool fronting these accounts picks
     // an account per request and passes that credential here; ignoring it would
-    // silently bill the pinned slot instead of the selected one.
-    const override = typeof options?.apiKey === "string" && options.apiKey.length > 0
-      ? options.apiKey
-      : undefined;
+    // silently bill the pinned slot instead of the selected one. Only a real
+    // envelope counts: Pi also hands back the `"account-managed"` registration
+    // placeholder, which is not a credential.
+    const override = isCredentialEnvelope(options?.apiKey) ? options.apiKey : undefined;
     void (async () => {
       try {
         const apiKey = override ?? await credentialFor(slot);

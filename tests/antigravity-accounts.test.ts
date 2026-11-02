@@ -7,7 +7,7 @@ import {
   createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import {
-  credentialEnvelope, indexForProvider, providerForIndex, readAccountSlots,
+  credentialEnvelope, indexForProvider, isCredentialEnvelope, providerForIndex, readAccountSlots,
   slotIsFresh, slotLabel,
 } from "../extensions/antigravity-accounts.ts";
 
@@ -121,6 +121,21 @@ test("freshness reserves a refresh window before expiry", () => {
   assert.equal(slotIsFresh({ expires: FUTURE }, NOW), false, "no access token is not fresh");
   assert.equal(slotIsFresh({ access: "", expires: FUTURE }, NOW), false);
   assert.equal(slotIsFresh({ access: "t" }, NOW), false, "no expiry is not fresh");
+});
+
+test("only a token+project envelope is accepted as a request credential", () => {
+  assert.equal(isCredentialEnvelope(credentialEnvelope({ access: "t", projectId: "p" })), true);
+  for (const bad of [
+    // The registration placeholder Pi hands back is the bug this guards.
+    "account-managed", "pool-managed", "pi-local", "", "  ", "{oops",
+    JSON.stringify({ token: "t" }),
+    JSON.stringify({ projectId: "p" }),
+    JSON.stringify({ token: "", projectId: "p" }),
+  ]) {
+    assert.equal(isCredentialEnvelope(bad), false, JSON.stringify(bad));
+  }
+  // Leading whitespace is the same JSON document.
+  assert.equal(isCredentialEnvelope(` ${JSON.stringify({ token: "t", projectId: "p" })}`), true);
 });
 
 // ── Real Pi registration ─────────────────────────────────────────────────────

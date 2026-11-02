@@ -144,6 +144,41 @@ export function accountIsFresh(account: StoredAntigravityAccount, now: number, s
     typeof account.expires === "number" && account.expires > now + skewMs;
 }
 
+/** The placeholder antigravity-N providers register so Pi keeps them "configured". */
+const ANTIGRAVITY_PLACEHOLDER = "account-managed";
+
+/** Find the linked login behind a pool account, by account id or antigravity-N. */
+function linkedAccount(account: AccountConfig, ctx: SourceContext): StoredAntigravityAccount | undefined {
+  const stored = readAntigravityAccounts(ctx);
+  const direct = stored.find((entry) => entry.accountId === account.id);
+  if (direct) return direct;
+  const match = /^antigravity-([1-9][0-9]*)$/.exec(account.id);
+  // Never fall back to "the only account": that would silently bill a different
+  // login than the one the pool selected.
+  return match ? stored[Number(match[1]) - 1] : undefined;
+}
+
+/** Credential envelope for a linked login, refreshing an expired token. */
+async function linkedCredential(
+  account: AccountConfig,
+  ctx: SourceContext,
+): Promise<ResolvedCredential | { error: string }> {
+  const stored = linkedAccount(account, ctx);
+  if (!stored) return { error: `Antigravity account "${account.id}" is not linked` };
+  const now = ctx.now ?? Date.now();
+  let usable = stored;
+  if (!accountIsFresh(usable, now)) {
+    if (!ctx.refresh) return { error: `Antigravity account "${account.id}" needs re-login (token expired)` };
+    try {
+      usable = await ctx.refresh(stored);
+    } catch (error) {
+      return { error: `Antigravity account "${account.id}" refresh failed: ${(error as Error).message}` };
+    }
+    if (!accountIsFresh(usable, now, 0)) return { error: `Antigravity account "${account.id}" refresh returned no usable token` };
+  }
+  return { apiKey: antigravityKey(usable) };
+}
+
 /**
  * Resolve request credentials for a pool account.
  * Returns an error string (safe to display) instead of throwing.
@@ -160,26 +195,17 @@ export async function resolveAccountCredential(
       const fromModels = readModelsJsonAccounts(pool.provider, ctx);
       key = fromModels.find((a) => a.id === account.id)?.apiKey;
     }
+    // antigravity-N providers store the placeholder, not a credential. Resolve
+    // the linked login instead of forwarding a literal that parseApiKey cannot
+    // read (it made the vendored client throw "account-managed is not valid
+    // JSON" the moment a pool routed to one of them).
+    if (key === ANTIGRAVITY_PLACEHOLDER) return linkedCredential(account, ctx);
     if (!key) return { error: `account "${account.id}" has no apiKey` };
     const resolved = resolveStaticKey(key, ctx.env);
     return "error" in resolved ? { error: `account "${account.id}": ${resolved.error}` } : { apiKey: resolved.value };
   }
   if (source !== ANTIGRAVITY_SOURCE) return { error: `pool "${pool.provider}": unknown source "${source}"` };
-
-  const now = ctx.now ?? Date.now();
-  const stored = readAntigravityAccounts(ctx).find((entry) => entry.accountId === account.id);
-  if (!stored) return { error: `Antigravity account "${account.id}" is not linked` };
-  let usable = stored;
-  if (!accountIsFresh(usable, now)) {
-    if (!ctx.refresh) return { error: `Antigravity account "${account.id}" needs re-login (token expired)` };
-    try {
-      usable = await ctx.refresh(stored);
-    } catch (error) {
-      return { error: `Antigravity account "${account.id}" refresh failed: ${(error as Error).message}` };
-    }
-    if (!accountIsFresh(usable, now, 0)) return { error: `Antigravity account "${account.id}" refresh returned no usable token` };
-  }
-  return { apiKey: antigravityKey(usable) };
+  return linkedCredential(account, ctx);
 }
 
 /** Accounts to consider for a pool, honoring the configured source. */

@@ -168,6 +168,35 @@ test("static pools resolve their own account key", async () => {
   assert.ok("error" in unset && /not set/.test(unset.error));
 });
 
+test("a static pool over antigravity providers resolves the linked login, not the placeholder", async () => fixture(async dir => {
+  // antigravity-N providers register apiKey "account-managed" so Pi keeps them
+  // "configured". Forwarding that literal as a request credential made the
+  // vendored client throw `"account-managed" is not valid JSON`.
+  await writeFile(join(dir, "models.json"), JSON.stringify({
+    providers: {
+      "antigravity-1": { name: "Antigravity 1", apiKey: "account-managed" },
+      "antigravity-2": { name: "Antigravity 2", apiKey: "account-managed" },
+    },
+  }));
+  await writeFile(antigravityAccountsPath(dir), antigravityStore([
+    { accountId: "one@x.com", access: "tok-one", refresh: "r1", expires: FUTURE, projectId: "p1" },
+    { accountId: "two@x.com", access: "tok-two", refresh: "r2", expires: FUTURE, projectId: "p2" },
+  ]));
+
+  const p = pool({ provider: "antigravity", accounts: [] });
+  const accounts = poolAccounts(p, source(dir));
+  assert.deepEqual(accounts.map((a) => a.id), ["antigravity-1", "antigravity-2"]);
+  assert.ok(accounts.every((a) => a.apiKey === "account-managed"), "the store hands out the placeholder");
+
+  const first = await resolveAccountCredential(p, accounts[0]!, source(dir));
+  assert.ok("apiKey" in first && first.apiKey !== "account-managed");
+  assert.deepEqual(JSON.parse(first.apiKey), { token: "tok-one", projectId: "p1" });
+
+  const second = await resolveAccountCredential(p, accounts[1]!, source(dir));
+  assert.ok("apiKey" in second && second.apiKey !== "account-managed");
+  assert.deepEqual(JSON.parse(second.apiKey), { token: "tok-two", projectId: "p2" });
+}));
+
 test("an unknown source is rejected with the pool name", async () => {
   const result = await resolveAccountCredential(
     pool({ provider: "p", source: "mystery" }), { id: "a", apiKey: "k" }, { agentDir: tmpdir() });
