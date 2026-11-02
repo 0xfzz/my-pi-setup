@@ -29,7 +29,7 @@ diff record, not documentation.
 | --- | --- |
 | [Delegation](docs/delegation.md) | How delegated work runs: parent and child, the handoff, re-spawn on a missed handoff, the escalation ladder, and every guardrail. **Start here.** |
 | [Modes](docs/modes.md) | What Normal and Plan allow, how a switch is enforced, and why delegation is not a mode. |
-| [Todo](docs/todo.md) | The `workflow_todo` guardrail: assessment, atomic sync, evidence, blocked states, loop correction, and its limits. |
+| [Todo](docs/todo.md) | The intent graph: `todo_plan` / `todo_act` / `todo_next`, leases, derived state, typed evidence, and the v1 shim. |
 | [Questions](docs/questions.md) | When the agent must ask, how a child routes a question to the parent, and why a cancelled dialog is never consent. |
 | [Checkpoints](docs/checkpoints.md) | What the parent records about a child, milestone sidecars, recovery limits, and VCC history reduction. |
 | [VCC compaction](docs/vcc.md) | The compaction policy, its calibration, telemetry and rollback. |

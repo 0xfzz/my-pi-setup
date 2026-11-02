@@ -686,18 +686,54 @@ export default function todoExtension(pi: ExtensionAPI) {
           (typeof id === "string" && id.length > 2 && candidate.id.endsWith(id.replace(/^t-/, ""))) ||
           (text ? candidate.title.startsWith(text) : false));
       };
-      const declare = (goal: string, titles: string[], statuses?: Record<string, string>) => {
-        const next = G.buildPlan({ goal, scope: "committed", seeds: titles.map(title => ({ title })), at: now, previous: plan });
-        if (statuses) {
-          for (const task of next.tasks) {
-            const target = statuses[G.normalizeTitle(task.title)];
-            if (target && target !== "open") task.status = legacyStatus[target] ?? "open";
-          }
-        }
+      /**
+       * Persist a plan without ever writing a status directly. Non-open states go
+       * through `refusal` + `applyTransition` below, so a v1 call cannot produce a
+       * state the v2 model forbids.
+       */
+      const declare = (goal: string, seeds: G.TaskSeed[]) => {
+        const next = G.buildPlan({ goal, scope: "committed", seeds, at: now, previous: plan });
         append(ctx, { v: G.STATE_VERSION, kind: "plan", plan: next } satisfies G.PlanEntry);
       };
 
-      switch (args.action) {
+      /** Validate and apply one transition against a plan, without writing anything. */
+      const applyLocal = (working: G.Plan, request: G.TransitionRequest) => {
+        const why = G.refusal(working, request, resolver);
+        if (why) throw new Error(why);
+        return G.applyTransition(working, request, resolver);
+      };
+
+      /** One transition, validated exactly as todo_act validates it. */
+      const transition = (
+        taskId: string,
+        to: G.TaskStatus,
+        extra: { evidence?: G.Evidence[]; reason?: string; note?: string } = {},
+      ): void => {
+        if (!plan) throw new Error("No active plan.");
+        const applied = applyLocal(plan, {
+          taskId, to, by: owner, at: now,
+          ...(extra.evidence ? { evidence: extra.evidence } : {}),
+          ...(extra.reason ? { reason: extra.reason } : {}),
+          ...(extra.note ? { note: extra.note } : {}),
+        });
+        append(ctx, applied.entry);
+      };
+
+      /** activeText is display-only, so it rides on the plan rather than a transition. */
+      const setActiveText = (taskId: string, text: string): void => {
+        if (!plan) return;
+        const task = plan.tasks.find(candidate => candidate.id === taskId);
+        if (!task) return;
+        task.activeText = text.trim();
+        append(ctx, { v: G.STATE_VERSION, kind: "plan", plan: { ...plan, updatedAt: now } } satisfies G.PlanEntry);
+      };
+
+      // v1's documented shorthand is a bare `todos: [...]` with no action; treat it
+      // as sync instead of silently doing nothing.
+      const action: string = args.action
+        ?? (Array.isArray(args.todos) && args.todos.length ? "sync" : "list");
+
+      switch (action) {
         case "skip":
           // The gate is gone, so there is nothing to record; keep the call a no-op.
           return { content: [{ type: "text" as const, text: "No assessment needed. Proceed with the work." }], details: { workflowTodo: true } };
@@ -705,7 +741,7 @@ export default function todoExtension(pi: ExtensionAPI) {
         case "plan": {
           const steps: string[] = (args.steps ?? []).map((step: string) => step.trim()).filter(Boolean);
           if (!steps.length) throw new Error("plan requires at least one step.");
-          declare(args.reason?.trim() || "Multi-step task", steps);
+          declare(args.reason?.trim() || "Multi-step task", steps.map(title => ({ title })));
           break;
         }
 
@@ -713,31 +749,84 @@ export default function todoExtension(pi: ExtensionAPI) {
           const incoming = (args.todos ?? []).filter((item: any) => String(item.text ?? "").trim());
           if (!incoming.length) throw new Error("sync requires a non-empty todos array.");
           const goal = plan?.goal ?? args.reason?.trim() ?? "Tracked work";
-          const statuses: Record<string, string> = {};
-          for (const item of incoming) statuses[G.normalizeTitle(String(item.text))] = String(item.status);
-          declare(goal, incoming.map((item: any) => String(item.text).trim()), statuses);
-          // Route completions through the real transition so v1 prose is recorded
-          // as ATTESTED evidence instead of being written straight onto the task.
-          for (const item of incoming) {
-            if (String(item.status) !== "done") continue;
-            const task = plan!.tasks.find(candidate => G.normalizeTitle(candidate.title) === G.normalizeTitle(String(item.text)));
-            if (!task || task.status !== "done") continue;
-            const text = String(item.evidence ?? "").trim();
-            const { plan: reset } = { plan: { ...plan!, tasks: plan!.tasks.map(candidate => candidate.id === task.id ? { ...candidate, status: "open" as G.TaskStatus, settledAt: undefined, evidence: undefined, verified: undefined } : candidate) } };
-            const { entry } = G.applyTransition(reset, {
-              taskId: task.id, to: "done", by: owner, at: now,
-              ...(text ? { evidence: [{ kind: "cmd", cmd: text.slice(0, 500), exit: 0 } as G.Evidence], note: text } : {}),
-            }, resolver);
-            // A v1 completion without text evidence has nothing to attest, so it stays
-            // as recorded rather than being upgraded to a claim it cannot support.
-            if (text) append(ctx, entry);
+          const prior = plan && G.normalizeTitle(plan.goal) === G.normalizeTitle(goal) ? plan : undefined;
+          const byTitle = new Map((prior?.tasks ?? []).map(task => [G.normalizeTitle(task.title), task]));
+          const titleOf = (item: any) => G.normalizeTitle(String(item.text));
+
+          const seeds: G.TaskSeed[] = incoming.map((item: any) => {
+            const title = String(item.text).trim();
+            const before = byTitle.get(G.normalizeTitle(title));
+            const activeText = typeof item.activeText === "string" && item.activeText.trim()
+              ? item.activeText.trim() : before?.activeText;
+            return {
+              title,
+              ...(before?.deps.length ? { deps: before.deps } : {}),
+              ...(before?.resource ? { resource: before.resource } : {}),
+              ...(activeText ? { activeText } : {}),
+            };
+          });
+          // v1 never let a checklist silently delete settled work: carry it forward.
+          const requested = new Set(incoming.map(titleOf));
+          for (const task of prior?.tasks ?? []) {
+            if (!G.isSettled(task) || requested.has(G.normalizeTitle(task.title))) continue;
+            seeds.push({
+              title: task.title, deps: task.deps, resource: task.resource,
+              note: task.note, activeText: task.activeText,
+            });
           }
+
+          // Compute every transition against a local plan first, so a rejected sync
+          // leaves the real board untouched instead of half-applied.
+          const next = G.buildPlan({ goal, scope: "committed", seeds, at: now, previous: plan });
+          let working = next;
+          const entries: G.TransitionEntry[] = [];
+          let claimed = 0;
+          for (const item of incoming) {
+            const target = legacyStatus[String(item.status)] ?? "open";
+            const task = working.tasks.find(candidate => G.normalizeTitle(candidate.title) === titleOf(item));
+            if (!task || target === "open") continue;
+            if (target === "claimed") {
+              if (task.status !== "open") continue; // a settled task cannot be silently reopened
+              if (claimed >= 1) {
+                throw new Error("Only one task may be in progress at a time. Mark the others pending, then claim the next after this one is settled.");
+              }
+              const applied = applyLocal(working, { taskId: task.id, to: "claimed", by: owner, at: now });
+              working = applied.plan;
+              entries.push(applied.entry);
+              claimed++;
+              continue;
+            }
+            if (target === "done") {
+              if (task.status === "done") continue;
+              const text = String(item.evidence ?? "").trim();
+              if (!text) {
+                throw new Error(`"${task.title}" is done without evidence. v1 requires an evidence note: pass evidence text, or leave it in_progress/pending.`);
+              }
+              const applied = applyLocal(working, {
+                taskId: task.id, to: "done", by: owner, at: now,
+                evidence: [{ kind: "cmd", cmd: text.slice(0, 500), exit: 0 }], note: text,
+              });
+              working = applied.plan;
+              entries.push(applied.entry);
+              continue;
+            }
+            if (target === "dropped") {
+              const applied = applyLocal(working, {
+                taskId: task.id, to: "dropped", by: owner, at: now,
+                reason: String(item.reason ?? "").trim() || "Cancelled via deprecated sync",
+              });
+              working = applied.plan;
+              entries.push(applied.entry);
+            }
+          }
+
+          append(ctx, { v: G.STATE_VERSION, kind: "plan", plan: next } satisfies G.PlanEntry);
+          for (const entry of entries) append(ctx, entry);
           break;
         }
 
         case "continue":
         case "list":
-        case undefined:
           break;
 
         case "add": {
@@ -758,6 +847,7 @@ export default function todoExtension(pi: ExtensionAPI) {
           if (!task) throw new Error(`No task ${args.id}.`);
           if (args.text?.trim()) task.title = String(args.text).trim();
           if (args.reason?.trim()) task.note = String(args.reason).trim();
+          if (args.activeText?.trim()) task.activeText = String(args.activeText).trim();
           append(ctx, { v: G.STATE_VERSION, kind: "plan", plan: { ...plan, updatedAt: now } } satisfies G.PlanEntry);
           break;
         }
@@ -766,35 +856,63 @@ export default function todoExtension(pi: ExtensionAPI) {
           if (!plan) throw new Error("Create a plan first.");
           const task = findTask(args.id, args.text);
           if (!task) throw new Error(`No task ${args.id}. Known ids: ${plan.tasks.map(candidate => candidate.id).join(", ")}.`);
-          const target = legacyStatus[String(args.status)] ?? "open";
+          const raw = String(args.status ?? "");
+          const target = legacyStatus[raw] ?? "open";
           const text = String(args.evidence ?? args.reason ?? "").trim();
-          if (target === "done" && !text) throw new Error("done requires evidence text in the deprecated tool; prefer todo_act with typed evidence.");
+          // blocked/waiting are derived in v2, so record the reason and keep the real
+          // state instead of silently degrading it to open.
+          if (raw === "blocked" || raw === "waiting") {
+            if (task.status !== "open") {
+              throw new Error(`"${task.title}" is ${task.status}; blocked and waiting are derived in v2 and cannot be set on it.`);
+            }
+            if (!text) throw new Error(`${raw} requires a reason in the deprecated tool.`);
+            task.note = text;
+            append(ctx, { v: G.STATE_VERSION, kind: "plan", plan: { ...plan, updatedAt: now } } satisfies G.PlanEntry);
+            break;
+          }
+          if (target === "open") {
+            // pending on a claimed or settled task is a reopen, which v2 refuses.
+            if (task.status !== "open") {
+              throw new Error(`"${task.title}" is ${task.status}; reopen it with todo_plan, not the deprecated update.`);
+            }
+            if (text) {
+              task.note = text;
+              append(ctx, { v: G.STATE_VERSION, kind: "plan", plan: { ...plan, updatedAt: now } } satisfies G.PlanEntry);
+            }
+            break;
+          }
           if (target === "claimed") {
-            const { entry } = G.applyTransition(plan, { taskId: task.id, to: "claimed", by: owner, at: now });
-            append(ctx, entry);
+            transition(task.id, "claimed");
+            if (args.activeText?.trim()) setActiveText(task.id, String(args.activeText));
             break;
           }
           if (target === "done") {
-            const { entry } = G.applyTransition(plan, {
-              taskId: task.id, to: "done", by: owner, at: now, note: text,
+            if (!text) throw new Error("done requires evidence text in the deprecated tool; prefer todo_act with typed evidence.");
+            transition(task.id, "done", {
               evidence: [{ kind: "cmd", cmd: text.slice(0, 500), exit: 0 }],
-            }, resolver);
-            append(ctx, entry);
+              note: text,
+            });
+            if (args.activeText?.trim()) setActiveText(task.id, String(args.activeText));
             break;
           }
-          const { entry } = G.applyTransition(plan, { taskId: task.id, to: target, by: owner, at: now, reason: text || undefined });
-          append(ctx, entry);
-          break;
+          if (target === "dropped") {
+            transition(task.id, "dropped", { reason: text || undefined });
+            break;
+          }
+          throw new Error(`Unknown status ${raw}.`);
         }
 
         case "cancel": {
           if (!plan) throw new Error("No active plan.");
-          for (const task of G.unsettled(plan)) {
-            const { entry } = G.applyTransition(plan, {
-              taskId: task.id, to: "dropped", by: owner, at: now,
-              reason: args.reason?.trim() || "Dropped via deprecated cancel",
-            });
-            append(ctx, entry);
+          const reason = args.reason?.trim() || "Dropped via deprecated cancel";
+          // v1 supports per-item cancellation by id as well as global cancellation.
+          const targets = args.id !== undefined
+            ? [findTask(args.id, args.text)].filter((task): task is G.Task => !!task)
+            : G.unsettled(plan);
+          if (!targets.length) throw new Error(`No task ${args.id}.`);
+          for (const task of targets) {
+            if (G.isSettled(task)) continue;
+            transition(task.id, "dropped", { reason });
           }
           break;
         }
@@ -802,9 +920,9 @@ export default function todoExtension(pi: ExtensionAPI) {
         default:
           throw new Error(`Unknown action ${String(args.action)}. Prefer todo_plan / todo_act / todo_next.`);
       }
-      const writing = args.action === undefined ? false
-        : ["plan", "sync", "cancel", "add", "modify"].includes(args.action) ||
-          (args.action === "update" && args.status !== "in_progress");
+      // A bare `todos: [...]` shorthand is a sync, so it counts as progress.
+      const writing = ["plan", "sync", "cancel", "add", "modify"].includes(action) ||
+        (action === "update" && args.status !== "in_progress");
       if (writing) progressThisTurn = true;
       return {
         content: [{ type: "text" as const, text: report() }],

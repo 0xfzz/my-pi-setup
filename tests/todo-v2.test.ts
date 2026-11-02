@@ -185,6 +185,149 @@ test("the v1 shim still answers, without the gate and without pretending prose i
   assert.equal(done.details.tasks[0].verified, false, "v1 prose is attested, never verified");
 });
 
+// ── v1 shim regressions ─────────────────────────────────────────────────────
+// The shim translates v1 onto the v2 graph. It used to write task.status directly,
+// so a v1 call could produce states the graph forbids (unverified `done`, claimless
+// `claimed`, reopened tasks) and bare `todos: [...]` did nothing at all.
+
+const board = async (s: Awaited<ReturnType<typeof setup>>) =>
+  (await s.call(NEXT_TOOL, {})).details.tasks as any[];
+
+/** The shim must not touch the log when it rejects a call. */
+const assertRejectsAtomically = async (
+  s: Awaited<ReturnType<typeof setup>>,
+  call: Promise<unknown>,
+  pattern: RegExp,
+) => {
+  const before = JSON.stringify(await board(s));
+  const written = s.branch.length;
+  await assert.rejects(call, pattern);
+  assert.equal(JSON.stringify(await board(s)), before, "a rejected call must leave the board untouched");
+  assert.equal(s.branch.length, written, "a rejected call must write nothing");
+};
+
+test("v1 shorthand: a bare todos array is a sync, not a silent no-op", async () => {
+  const s = await setup();
+  const result = await s.call(LEGACY_TOOL, {
+    todos: [{ id: 1, text: "Inspect", status: "done", evidence: "read src/login.ts" }],
+  });
+  assert.match(parse(result), /1\/1 done/);
+  assert.equal((await board(s))[0].status, "done");
+});
+
+test("v1 sync: done without an evidence note is refused, and writes nothing", async () => {
+  const s = await setup();
+  await s.call(LEGACY_TOOL, { action: "plan", steps: ["Inspect", "Fix"] });
+  await assertRejectsAtomically(
+    s,
+    s.call(LEGACY_TOOL, { action: "sync", todos: [{ id: 1, text: "Inspect", status: "done" }] }),
+    /done without evidence/,
+  );
+});
+
+test("v1 sync: in_progress becomes a leased claim the turn-end nudge can see", async () => {
+  const s = await setup();
+  await s.call(LEGACY_TOOL, { action: "sync", todos: [{ id: 1, text: "Inspect", status: "in_progress" }] });
+  const [task] = await board(s);
+  assert.equal(task.status, "claimed");
+  assert.ok(task.claim?.expiresAt > Date.now(), "a v1 in_progress must carry a lease, not a claimless claim");
+  const nudged = await s.fire("turn_end", { outcome: "completed", message: { role: "assistant", stopReason: "stop" } });
+  assert.equal(nudged?.continue, true, "an abandoned v1 claim must earn one reminder");
+});
+
+test("v1 sync: only one task may be in_progress, and the refusal is atomic", async () => {
+  const s = await setup();
+  await s.call(LEGACY_TOOL, { action: "plan", steps: ["A", "B"] });
+  await assertRejectsAtomically(
+    s,
+    s.call(LEGACY_TOOL, { action: "sync", todos: [
+      { id: 1, text: "A", status: "in_progress" },
+      { id: 2, text: "B", status: "in_progress" },
+    ] }),
+    /Only one task may be in progress/,
+  );
+});
+
+test("v1 sync: dependencies, resources and settled work survive a checklist sync", async () => {
+  const s = await setup();
+  await s.call(PLAN_TOOL, { goal: "G", tasks: [{ title: "A", resource: "file:x" }, { title: "B", deps: ["A"] }] });
+  const [a] = await board(s);
+  await s.call(ACT_TOOL, { id: a.id, transition: "done", evidence: [{ kind: "cmd", cmd: "ls", exit: 0 }] });
+
+  // Sync mentions only B: A's completion and B's dependency must not be erased.
+  await s.call(LEGACY_TOOL, { action: "sync", todos: [{ id: 2, text: "B", status: "pending" }] });
+  const tasks = await board(s);
+  const done = tasks.find(task => task.title === "A");
+  const open = tasks.find(task => task.title === "B");
+  assert.equal(done?.status, "done", "a completed item cannot be silently removed by a sync");
+  assert.equal(done?.resource, "file:x");
+  assert.deepEqual(open?.deps, [done?.id], "the dependency edge survives the sync");
+});
+
+test("v1 sync: claiming a task whose deps are unmet is refused atomically", async () => {
+  const s = await setup();
+  await s.call(PLAN_TOOL, { goal: "G", tasks: [{ title: "A" }, { title: "B", deps: ["A"] }] });
+  await assertRejectsAtomically(
+    s,
+    s.call(LEGACY_TOOL, { action: "sync", todos: [
+      { id: 1, text: "A", status: "pending" },
+      { id: 2, text: "B", status: "in_progress" },
+    ] }),
+    /Blocked by/,
+  );
+});
+
+test("v1 cancel: an id drops only that item, a bare cancel drops the rest", async () => {
+  const s = await setup();
+  await s.call(LEGACY_TOOL, { action: "plan", steps: ["one", "two", "three"] });
+  await s.call(LEGACY_TOOL, { action: "cancel", id: 2, reason: "drop two" });
+  assert.deepEqual((await board(s)).map(task => [task.title, task.status]), [
+    ["one", "open"], ["two", "dropped"], ["three", "open"],
+  ]);
+
+  await s.call(LEGACY_TOOL, { action: "cancel", reason: "scope changed" });
+  assert.deepEqual((await board(s)).map(task => task.status), ["dropped", "dropped", "dropped"]);
+});
+
+test("v1 update: a done task cannot be silently reopened, and blocked keeps its reason", async () => {
+  const s = await setup();
+  await s.call(LEGACY_TOOL, { action: "plan", steps: ["one"] });
+  const [task] = await board(s);
+  await s.call(ACT_TOOL, { id: task.id, transition: "done", evidence: [{ kind: "cmd", cmd: "ls", exit: 0 }] });
+  await assert.rejects(
+    s.call(LEGACY_TOOL, { action: "update", id: 1, status: "in_progress" }),
+    /Task is done; reopen it with todo_plan first/,
+  );
+  assert.equal((await board(s))[0].status, "done");
+
+  const t = await setup();
+  await t.call(LEGACY_TOOL, { action: "plan", steps: ["one"] });
+  await t.call(LEGACY_TOOL, { action: "update", id: 1, status: "blocked", reason: "need the user's choice" });
+  const [blocked] = await board(t);
+  assert.equal(blocked.status, "open", "blocked is derived in v2, never a stored status");
+  assert.equal(blocked.note, "need the user's choice", "the reason is kept instead of silently dropped");
+});
+
+test("v1 modify: activeText is persisted and shown while the task is claimed", async () => {
+  const s = await setup();
+  await s.call(LEGACY_TOOL, { action: "plan", steps: ["one"] });
+  await s.call(LEGACY_TOOL, { action: "modify", id: 1, activeText: "doing one" });
+  await s.call(LEGACY_TOOL, { action: "update", id: 1, status: "in_progress" });
+  const [task] = await board(s);
+  assert.equal(task.activeText, "doing one");
+  assert.match(parse(await s.call(NEXT_TOOL, {})), /one → doing one/);
+});
+
+test("guidance is short, mode-aware, and the tool set is discoverable by other extensions", () => {
+  assert.ok(getTodoGuidance().length < 700, "guidance must stay cheap");
+  assert.notEqual(getTodoGuidance("plan"), getTodoGuidance("normal"));
+  for (const name of TODO_TOOL_NAMES) assert.equal(isTodoTool(name), true);
+  assert.equal(isTodoTool("read"), false);
+  assert.equal(todoIcon("done"), "\u{f0132}");
+  assert.equal(todoIcon("claimed"), "\u{f0450}");
+  assert.equal(todoIcon("dropped"), "\u{f0156}");
+});
+
 test("a plan owned by another session is not inherited", async () => {
   const foreign = [{
     type: "custom", customType: WORKFLOW_TODO_ENTRY, timestamp: new Date(0).toISOString(),
@@ -211,14 +354,4 @@ test("/workflow-todos cancel drops unfinished scope and keeps the log", async ()
   assert.match(parse(board), /Ready: none/);
   // The two transitions are still in the branch, which is the audit trail.
   assert.ok(s.branch.filter(entry => entry.data?.kind === "transition").length >= 2);
-});
-
-test("guidance is short, mode-aware, and the tool set is discoverable by other extensions", () => {
-  assert.ok(getTodoGuidance().length < 700, "guidance must stay cheap");
-  assert.notEqual(getTodoGuidance("plan"), getTodoGuidance("normal"));
-  for (const name of TODO_TOOL_NAMES) assert.equal(isTodoTool(name), true);
-  assert.equal(isTodoTool("read"), false);
-  assert.equal(todoIcon("done"), "\u{f0132}");
-  assert.equal(todoIcon("claimed"), "\u{f0450}");
-  assert.equal(todoIcon("dropped"), "\u{f0156}");
 });

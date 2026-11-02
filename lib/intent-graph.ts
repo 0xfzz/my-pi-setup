@@ -72,6 +72,8 @@ export interface Task {
   reason?: string;
   /** Free text carried over from the v1 tool or supplied by the model. Never used for verification. */
   note?: string;
+  /** v1's "continuous activeText": what the task looks like while it is claimed. Display only. */
+  activeText?: string;
   createdAt: number;
   settledAt?: number;
   /** True when at least one evidence ref was confirmed by the harness. */
@@ -440,7 +442,9 @@ export const renderTask = (plan: Plan, task: Task, now: number): string => {
   if (isExpiredClaim(task, now)) flags.push("claim expired");
   if (task.resource) flags.push(task.resource);
   if (task.status === "done" && task.verified === false) flags.push("unverified");
-  return `${task.id} [${taskLabel(task)}] ${task.title}${flags.length ? ` — ${flags.join("; ")}` : ""}`;
+  // v1's activeText described the work while it was claimed, so only surface it then.
+  const title = task.status === "claimed" && task.activeText ? `${task.title} → ${task.activeText}` : task.title;
+  return `${task.id} [${taskLabel(task)}] ${title}${flags.length ? ` — ${flags.join("; ")}` : ""}`;
 };
 
 // ── Construction ────────────────────────────────────────────────────────────
@@ -450,6 +454,7 @@ export interface TaskSeed {
   deps?: string[];
   resource?: string;
   note?: string;
+  activeText?: string;
 }
 
 /**
@@ -482,6 +487,7 @@ export function buildPlan(input: {
       deps: [...(seed.deps ?? [])],
       ...(seed.resource ? { resource: seed.resource } : {}),
       ...(seed.note ? { note: seed.note } : {}),
+      ...(seed.activeText ? { activeText: seed.activeText } : {}),
       createdAt: at,
     });
   }
@@ -528,6 +534,7 @@ export function fromLegacyState(state: any, owner: string, at = Date.now()): Pla
       ...(status === "claimed" ? { claim: { owner, at, expiresAt: at + DEFAULT_CLAIM_TTL_MS } } : {}),
       ...(status === "done" && note ? { verificationNote: note } : {}),
       ...(note ? { note } : {}),
+      ...(typeof item.activeText === "string" && item.activeText.trim() ? { activeText: item.activeText.trim() } : {}),
       ...(status === "done" ? { verified: false, settledAt: at } : {}),
       createdAt: at,
     } as Task;
