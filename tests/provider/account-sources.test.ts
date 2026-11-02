@@ -189,11 +189,13 @@ test("a static pool over antigravity providers resolves the linked login, not th
   assert.ok(accounts.every((a) => a.apiKey === "account-managed"), "the store hands out the placeholder");
 
   const first = await resolveAccountCredential(p, accounts[0]!, source(dir));
-  assert.ok("apiKey" in first && first.apiKey !== "account-managed");
+  assert.ok("apiKey" in first, "the placeholder resolved to a real credential");
+  assert.ok(typeof first.apiKey === "string" && first.apiKey !== "account-managed");
   assert.deepEqual(JSON.parse(first.apiKey), { token: "tok-one", projectId: "p1" });
 
   const second = await resolveAccountCredential(p, accounts[1]!, source(dir));
-  assert.ok("apiKey" in second && second.apiKey !== "account-managed");
+  assert.ok("apiKey" in second, "the second placeholder resolved to its own credential");
+  assert.ok(typeof second.apiKey === "string" && second.apiKey !== "account-managed");
   assert.deepEqual(JSON.parse(second.apiKey), { token: "tok-two", projectId: "p2" });
 }));
 
