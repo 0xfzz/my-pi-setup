@@ -112,15 +112,16 @@ test("an undispositioned result keeps the turn: terminating would strand the rev
   resetPollFingerprints();
 });
 
-test("a spawn ends the parent's turn, so it cannot start polling the lane", async () => {
+test("a spawn does NOT end the turn: independent lanes stay launchable in parallel", async () => {
   registry.resetForTests();
   resetPollFingerprints();
   const dir = await mkdtemp(join(tmpdir(), "terminate-spawn-"));
   const { tools, ctx, emit } = harness();
   ctx.cwd = dir;
+  const spawn = tools.get("agent_spawn");
 
   try {
-    const result = await tools.get("agent_spawn").execute("t1", {
+    const first = await spawn.execute("t1", {
       name: "tidy",
       task: "tidy one import in src/unit-a/queue.ts",
       delegationReason: "independent lane work in a separate file",
@@ -128,8 +129,22 @@ test("a spawn ends the parent's turn, so it cannot start polling the lane", asyn
       acceptanceCriteria: ["the import is removed and the file still typechecks"],
     }, undefined, undefined, ctx);
 
-    assert.equal(result.details?.status, "started", result.content?.[0]?.text);
-    assert.equal(result.terminate, true, "the next event is the child's report, not a poll");
+    assert.equal(first.details?.status, "started", first.content?.[0]?.text);
+    // Terminating here is what serialised session 01a19d41: its three lanes
+    // started at 17:23, 17:35 and 17:45, each waiting for the previous report.
+    assert.equal(first.terminate, undefined, "a spawn must not end the turn");
+    assert.match(first.content[0].text, /Launch every other independent lane now/);
+
+    const second = await spawn.execute("t2", {
+      name: "split",
+      task: "split one helper in src/unit-b/page.ts",
+      delegationReason: "a second independent lane in another directory",
+      laneFiles: ["src/unit-b/page.ts"],
+      acceptanceCriteria: ["the helper is split and the file still typechecks"],
+    }, undefined, undefined, ctx);
+
+    assert.equal(second.details?.status, "started", second.content?.[0]?.text);
+    assert.equal(registry.getRunningChildren().length, 2, "both lanes run at once");
   } finally {
     await emit("session_shutdown");
     registry.resetForTests();

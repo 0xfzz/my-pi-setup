@@ -162,12 +162,18 @@ This is enforced, not requested:
 
 - `RETRIGGER_CONTRACT` states the contract in every result that starts asynchronous
   work, and says the run is ending rather than asking for it.
-- **The run actually ends.** A repeated `agent_running` with nothing actionable, and
-  a successful `agent_spawn`, return `terminate: true`, so pi stops the run after the
-  batch. Prose alone was not enough: session `01a19cd6` was told "your turn ends here"
-  ten times and answered with forty `find` calls. A pending escalation or an
-  undispositioned result is actionable, so that case keeps the turn — terminating
-  there would strand the review duty the parent still owes.
+- **The run actually ends.** A repeated `agent_running` with nothing actionable
+  returns `terminate: true`, so pi stops the run after the batch. Prose alone was not
+  enough: session `01a19cd6` was told "your turn ends here" ten times and answered
+  with forty `find` calls. A pending escalation or an undispositioned result is
+  actionable, so that case keeps the turn — terminating there would strand the
+  review duty the parent still owes.
+- **A spawn does not end it.** `agent_spawn` keeps the turn so the remaining
+  independent lanes can be launched before the parent goes idle. Terminating on a
+  spawn serialised session `01a19d41`: its three lanes started at 17:23, 17:35 and
+  17:45 because each spawn ended the run and the next lane had to wait for the
+  previous child's report. Parallelism is the point of delegation; the poll loop is
+  stopped by the `agent_running` repeat and the poll guard instead.
 - `lib/delegation/wait-guard.ts` refuses a `bash` command whose **purpose** is to
   wait, in a parent session **while a child is in flight**: `sleep`, `wait`, `watch`,
   `tail -f`/`--follow`, an unbounded `ping`, and never-terminating

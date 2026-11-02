@@ -2037,7 +2037,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         registry.recordLaunch(ownerSessionId);
       }
 
-      const result = text(
+      return text(
         [
           `Subagent "${displayName}" launched (scope: ${scope}, ad-hoc).`,
           ...(handoffDoc
@@ -2071,7 +2071,14 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           `The scope (${scope}) is the identity: use it in agent_steer, agent_interrupt, agent_close, agent_running.`,
           `The outcome (or an agent_ping escalation) arrives automatically.`,
           `Progress arrives as agent_progress checkpoints and the child's report; do not inspect the lane to watch it.`,
-          RETRIGGER_CONTRACT,
+          // Deliberately NOT `RETRIGGER_CONTRACT` + `terminate`. Ending the run on a
+          // spawn serialised session 01a19d41's three lanes: each spawn terminated,
+          // and the next lane had to wait for the previous child's report — spawns
+          // at 17:23, 17:35 and 17:45 for work that was meant to run in parallel.
+          // A parent may launch every independent lane before it goes idle; the
+          // poll loop is stopped by `agent_running`'s repeat and the poll guard.
+          `Launch every other independent lane now, in this turn: a child does not have to finish before the next one starts. `,
+          `When you have nothing left to do, end your turn — the child's report or ping re-triggers you. Do not poll.`,
         ].join("\n"),
         {
           id: running.id,
@@ -2090,11 +2097,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           accountability: { ...accountability },
         },
       );
-        // A spawn is the end of the parent's actionable turn: the next event is
-        // the child's report or its question. `terminate` only fires when every
-        // result in the batch agrees, so a parent that also plans or writes in
-        // this same message keeps its turn.
-        return { ...result, terminate: true };
       } finally {
         // Always: the reservation only covers the launch window. Once the row
         // is registered the registry owns the count, and on any earlier failure
