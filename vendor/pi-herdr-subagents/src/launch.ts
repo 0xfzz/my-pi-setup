@@ -31,7 +31,6 @@ import { fileURLToPath } from "node:url";
 import {
   type AgentDefaults,
   currentSubagentDepth,
-  getAgentConfigDir,
   getDefaultSessionDirFor,
   resolveDenyTools,
   resolveEffectiveInteractive,
