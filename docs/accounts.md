@@ -15,7 +15,7 @@ Command: **`/router`**. Routes each request to any registered provider/model, an
 
 Two independent layers, both optional:
 
-- **Routes** — a virtual model `router/<name>` that dispatches to an ordered fallback chain of `provider/model` targets. Pick it in `/model` like any model.
+- **Routes** — a virtual model `router/<name>` that dispatches to an ordered fallback chain of `provider/model` targets. Pick it in `/model` like any model. When `enabledModels` in `settings.json` is a curated list, the router adds `router/*` to it on session start (printing a `/reload` hint), so routes are not hidden from `/model` and Ctrl+P; an unset or empty list already shows everything.
 - **Pools** — a set of accounts for one provider, rotated by strategy, so several Google logins (or several API keys) share one provider.
 
 Config is read from the global `<agent-dir>/account-router.json` and then the project `.pi/account-router.json`; a project entry wins per route or pool name.
