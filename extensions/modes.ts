@@ -2,6 +2,7 @@ import { createLocalBashOperations, CustomEditor, type ExtensionAPI, type Extens
 import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import { ModeRegistry, MODE_SWITCH_KEY, MODE_SWITCH_LABEL, routeSubmissions } from "../lib/modes.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
+import { markVolatileTail } from "../lib/cache-anchor.ts";
 import { recordsFromBranch as childRecords } from "../lib/subagent-state.ts";
 import { childContextState, isSubagentChildSession, ownEntries } from "../lib/subagent-context.ts";
 import { readOnlyShellCommand } from "../lib/plan/plan-shell.ts";
@@ -401,7 +402,7 @@ export default function modesExtension(pi: ExtensionAPI) {
     if (!isPlan(ctx) && !planModeFromBranch(policyEntries(ctx))) return { messages };
     messages.push({
       role: "custom", customType: INPUT_MODE_CONTEXT_TYPE, display: false, timestamp: Date.now(),
-      content: `<current-input-mode>\nLive mode for this request; it supersedes earlier mode instructions, assistant claims and compaction summaries.\n${inputModeGuidance(registry.current)}\n</current-input-mode>`,
+      content: markVolatileTail(`<current-input-mode>\nLive mode for this request; it supersedes earlier mode instructions, assistant claims and compaction summaries.\n${inputModeGuidance(registry.current)}\n</current-input-mode>`),
     });
     return { messages };
   });

@@ -32,6 +32,7 @@ import {
   type PopupRow,
 } from "../lib/popup/frame.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
+import { markVolatileTail } from "../lib/cache-anchor.ts";
 import { TODO_DETAILS_HINT } from "../lib/workflow-actions.ts";
 import { planModeFromBranch } from "../lib/plan/plan-mode.ts";
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";
@@ -456,7 +457,7 @@ export default function todoExtension(pi: ExtensionAPI) {
       !(message.role === "custom" && message.customType === "workflow-todo-guidance"));
     const line = injectionFor();
     if (line) {
-      messages.push({ role: "custom", customType: "workflow-todo-guidance", display: false, content: line, timestamp: Date.now() });
+      messages.push({ role: "custom", customType: "workflow-todo-guidance", display: false, content: markVolatileTail(line), timestamp: Date.now() });
     }
     return { messages };
   });

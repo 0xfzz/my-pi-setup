@@ -10,6 +10,7 @@ import {
 } from "../lib/popup/frame.ts";
 import { PopupList } from "../lib/ui/shell.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
+import { markVolatileTail } from "../lib/cache-anchor.ts";
 import { createArtifactAutocompleteProvider, expandArtifactMentions } from "../lib/artifact-mentions.ts";
 import {
   ARTIFACT_TYPE, ARTIFACT_CONTEXT_TYPE, ARTIFACT_SIDECAR_PREFIX, ARTIFACT_SIDECAR_SUFFIX,
@@ -877,7 +878,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
         messages.push({
           role: "custom",
           customType: ARTIFACT_CONTEXT_TYPE,
-          content: catalog,
+          content: markVolatileTail(catalog),
           display: false,
           timestamp: Date.now(),
         });

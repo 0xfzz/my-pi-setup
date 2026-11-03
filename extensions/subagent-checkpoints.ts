@@ -21,6 +21,7 @@ import {
 } from "../lib/subagent-state.ts";
 import { contextModeLabel } from "../lib/subagent-context.ts";
 import { offerSection } from "../lib/sidebar/sidebar-channel.ts";
+import { markVolatileTail } from "../lib/cache-anchor.ts";
 import { isTodoTool } from "../lib/todo-tools.ts";
 import { SUBAGENT_DETAILS_HINT } from "../lib/workflow-actions.ts";
 import { compileSubagentSession, recallSubagentHistory } from "../lib/vcc-subagent-adapter.ts";
@@ -374,10 +375,10 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
     const snapshot = checkpointContext(records, observed);
     const messages = event.messages.filter(m =>
       !(m.role === "custom" && (m.customType === CONTEXT_TYPE || m.customType === PARENT_BRIEF_TYPE)));
-    if (snapshot) messages.push({ role: "custom", customType: CONTEXT_TYPE, content: snapshot, display: false, timestamp: Date.now() });
+    if (snapshot) messages.push({ role: "custom", customType: CONTEXT_TYPE, content: markVolatileTail(snapshot), display: false, timestamp: Date.now() });
     const brief = await ensureParentBrief();
     if (brief) {
-      messages.push({ role: "custom", customType: PARENT_BRIEF_TYPE, content: brief, display: false, timestamp: Date.now() });
+      messages.push({ role: "custom", customType: PARENT_BRIEF_TYPE, content: markVolatileTail(brief), display: false, timestamp: Date.now() });
     }
     return { messages };
   });

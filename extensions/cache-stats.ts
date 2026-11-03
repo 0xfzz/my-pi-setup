@@ -1,3 +1,6 @@
+// Prompt-cache health: the sidebar "Cache" section, and the fix that keeps the
+// cache breakpoint off request-local text (see lib/cache-anchor.ts).
+//
 // Sidebar "Cache" section: did the last request hit the provider's prompt cache?
 //
 // Reads the usage every assistant message already carries, so it costs no
@@ -5,6 +8,7 @@
 // prompt tokens.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { planCacheBreakpoints } from "../lib/cache-anchor.ts";
 import { addSample, cacheRows, emptyTotals, sampleOf, type CacheSample } from "../lib/cache-stats.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
 
@@ -33,6 +37,9 @@ export default function cacheStatsExtension(pi: ExtensionAPI): void {
     totals = addSample(totals, sample);
     publish();
   });
+  // Mutates the serialised payload in place; a payload without the tail text
+  // (or without breakpoints) is left untouched.
+  pi.on("before_provider_request", (event) => { planCacheBreakpoints(event.payload); return event.payload; });
   // The sidebar clears its sections on tree navigation and asks everyone to re-offer.
   pi.events?.on(REFRESH_EVENT, () => { if (last) publish(); });
 }
