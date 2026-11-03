@@ -1,14 +1,12 @@
-// Prompt-cache health: the sidebar "Cache" section, and the fix that keeps the
-// cache breakpoint off request-local text (see lib/cache-anchor.ts).
-//
-// Sidebar "Cache" section: did the last request hit the provider's prompt cache?
+// Prompt-cache health: the sidebar "Cache" section.
 //
 // Reads the usage every assistant message already carries, so it costs no
-// requests and no tokens. The section stays hidden until a provider reports
-// prompt tokens.
+// requests and no tokens, and the plan the breakpoint extension applied to the
+// last request (see lib/cache-anchor.ts). The section stays hidden until a
+// provider reports prompt tokens.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { planCacheBreakpoints } from "../lib/cache-anchor.ts";
+import { lastCachePlan, resetCachePlan } from "../lib/cache-anchor.ts";
 import { addSample, cacheRows, emptyTotals, sampleOf, type CacheSample } from "../lib/cache-stats.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
 
@@ -18,16 +16,19 @@ export default function cacheStatsExtension(pi: ExtensionAPI): void {
 
   const publish = (): void => {
     const view = cacheRows(last, totals);
+    // A skipped marker is the difference between "the tail is expensive" and
+    // "the conversation is being re-written": say which one it is.
+    const skipped = lastCachePlan()?.skipped;
     offerSection(pi, {
       id: "cache",
       title: last ? `Cache ${Math.round((last.hitRate ?? 0) * 100)}%` : "Cache",
       tone: view.tone,
-      rows: view.rows,
+      rows: skipped ? [...view.rows, `breakpoint: ${skipped}`] : view.rows,
       hint: "prompt cache · read / new",
     });
   };
 
-  pi.on("session_start", () => { totals = emptyTotals(); last = undefined; publish(); });
+  pi.on("session_start", () => { totals = emptyTotals(); last = undefined; resetCachePlan(); publish(); });
   pi.on("message_end", (event) => {
     const message = event.message as { role?: string; stopReason?: string; usage?: Parameters<typeof sampleOf>[0] };
     if (message.role !== "assistant" || message.stopReason === "error" || message.stopReason === "aborted") return;
@@ -37,9 +38,6 @@ export default function cacheStatsExtension(pi: ExtensionAPI): void {
     totals = addSample(totals, sample);
     publish();
   });
-  // Mutates the serialised payload in place; a payload without the tail text
-  // (or without breakpoints) is left untouched.
-  pi.on("before_provider_request", (event) => { planCacheBreakpoints(event.payload); return event.payload; });
   // The sidebar clears its sections on tree navigation and asks everyone to re-offer.
   pi.events?.on(REFRESH_EVENT, () => { if (last) publish(); });
 }

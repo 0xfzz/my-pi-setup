@@ -27,6 +27,7 @@
       "./extensions/dynamic-prompt.ts",
       "./extensions/sidebar.ts",
       "./extensions/cache-stats.ts",
+      "./extensions/cache-breakpoints.ts",
       "./extensions/prompt-ui.ts",
       "./extensions/clipboard-paste.ts",
       "./extensions/providers.ts",
