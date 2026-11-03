@@ -46,6 +46,7 @@ import { isWaitGuardTool, waitCommandProblem } from "../lib/delegation/wait-guar
 import { hasLiveDelegation, setDelegationProbe } from "../lib/delegation/live.ts";
 import { classifyChildError, isHaltedPing, HALTED_PREFIX } from "../lib/delegation/child-error.ts";
 import { decideRecovery, emptyRecovery, MAX_FAILOVERS, MAX_RETRIES_PER_MODEL, type RecoveryState } from "../lib/delegation/recovery.ts";
+import { decideBudget, HARD_CAP_MULTIPLIER } from "../lib/delegation/budget.ts";
 import { errorIsTerminal, readChildHealth } from "../lib/delegation/child-health.ts";
 import { attributeChanges, changedSince, snapshotTree } from "../lib/delegation/git-changes.ts";
 import { checkVerdicts, checkEvidence } from "../lib/delegation/verdict-check.ts";
@@ -1237,7 +1238,25 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       const budgetMs = child.budgetMs ?? DEFAULT_BUDGET_MS;
       const elapsed = child.startedAt !== undefined ? now() - child.startedAt : 0;
 
-      if (elapsed >= budgetMs) {
+      const budget = decideBudget({ elapsedMs: elapsed, budgetMs, lastActivityAt: sessionActivityAt(child.sessionFile), nowMs: now() });
+      if (budget === "extend") {
+        // Still writing its transcript past the soft limit: let it work, once tell
+        // the parent (no turn), and stop at the hard cap.
+        if (!child.watchdog?.extendedAt) {
+          registry.updateWatchdog(child.sessionFile, { extendedAt: new Date(now()).toISOString() });
+          persistState();
+          pi.sendMessage(
+            {
+              customType: "subagent_result",
+              content: `Child "${child.name}" (scope: ${child.scope}) passed its ${Math.round(budgetMs / 60_000)}m budget but is still making progress; `
+                + `it may run to ${Math.round((budgetMs * HARD_CAP_MULTIPLIER) / 60_000)}m. No action needed.`,
+              display: true,
+              details: { id: child.id, name: child.name, scope: child.scope, reason: "budget-extended" },
+            },
+            { triggerTurn: false },
+          );
+        }
+      } else if (budget === "trip") {
         await tripWatchdog(child, "budget-exceeded", { elapsedMs: elapsed, budgetMs, tail });
         continue;
       }
@@ -1907,7 +1926,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       skills: Type.Optional(Type.String({ description: "Comma-separated skills." })),
       tools: Type.Optional(Type.String({ description: "Comma-separated allowed tools." })),
       cwd: Type.Optional(Type.String({ description: "Working directory for the child." })),
-      budgetMinutes: Type.Optional(Type.Number({ description: "Wall-clock minutes before the watchdog interrupts the child. Default 30." })),
+      budgetMinutes: Type.Optional(Type.Number({ description: "Wall-clock minutes — the SOFT limit: a child still making progress may run to 4x this before the watchdog interrupts it. Default 30." })),
       agents: Type.Optional(Type.Array(Type.Object({
         name: Type.Optional(Type.String()),
         task: Type.String({ description: "This lane's assignment." }),

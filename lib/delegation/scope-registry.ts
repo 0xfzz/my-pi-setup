@@ -42,6 +42,8 @@ export interface WatchdogState {
   interrupts: number;
   /** Failed Escape deliveries; the watchdog ends the child after MAX attempts. */
   interruptFailures?: number;
+  /** When the soft budget was passed by a child still making progress (told to the parent once). */
+  extendedAt?: string;
   /** Why the last automatic close attempt failed, so the retry is diagnosable. */
   lastFailure?: string;
 }
