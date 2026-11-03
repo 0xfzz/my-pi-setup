@@ -28,6 +28,12 @@ export interface ChildErrorVerdict {
   retryAfterMs?: number;
   /** Whether a bounded automatic/parent resume of the SAME model is sensible. */
   retryable: boolean;
+  /**
+   * The endpoint stopped answering (no response headers, a dropped connection, a
+   * timeout). Retrying the same endpoint on a backoff just waits out the same
+   * stall, so recovery moves to another model when one is available.
+   */
+  stalled: boolean;
   /** The remedy, in the parent's vocabulary. */
   advice: string;
 }
@@ -73,6 +79,9 @@ export function parseRetryAfterMs(message: string): number | undefined {
   return undefined;
 }
 
+/** Wording that means the endpoint went silent, not that it said "busy, try later". */
+const STALL_PATTERN = /no response headers|fetch failed|timed out|ETIMEDOUT|ECONNRESET|connection error|stream ended|terminated/i;
+
 export function classifyChildError(message: string | null | undefined): ChildErrorVerdict {
   const text = String(message ?? "");
   const rule = RULES.find((candidate) => candidate.test.test(text));
@@ -82,6 +91,7 @@ export function classifyChildError(message: string | null | undefined): ChildErr
     class: cls,
     ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
     retryable: cls === "transient",
+    stalled: cls === "transient" && STALL_PATTERN.test(text),
     advice: ADVICE[cls],
   };
 }

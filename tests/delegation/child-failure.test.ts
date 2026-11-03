@@ -36,6 +36,14 @@ describe("classifyChildError", () => {
     it(`${expected}: ${message.slice(0, 50)}`, () => assert.equal(classifyChildError(message).class, expected));
   }
 
+  it("a silent endpoint is a stall; a busy endpoint is not", () => {
+    assert.equal(classifyChildError("no response headers within 180000ms").stalled, true);
+    assert.equal(classifyChildError("fetch failed").stalled, true);
+    assert.equal(classifyChildError("Connection error.").stalled, true);
+    assert.equal(classifyChildError("429 rate limit exceeded, retry in 20s").stalled, false);
+    assert.equal(classifyChildError("usage limit reached").stalled, false);
+  });
+
   it("only transient failures are retryable", () => {
     assert.equal(classifyChildError("Connection error.").retryable, true);
     assert.equal(classifyChildError("Codex error: The usage limit has been reached").retryable, false);

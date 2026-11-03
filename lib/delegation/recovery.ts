@@ -46,6 +46,11 @@ export function retryDelayMs(attempt: number, retryAfterMs?: number): number {
 export function decideRecovery(input: {
   errorClass: ChildErrorClass;
   retryAfterMs?: number;
+  /**
+   * The provider went silent (see ChildErrorVerdict.stalled). Retrying the same
+   * endpoint only waits out the same stall, so another usable model is preferred.
+   */
+  stalled?: boolean;
   state: RecoveryState;
   /** Usable models for this role (credentials present), in preference order. */
   candidates: readonly string[];
@@ -53,7 +58,9 @@ export function decideRecovery(input: {
   const { errorClass, state } = input;
   if (errorClass === "aborted") return { action: "escalate", reason: "the run was cancelled, not failed by the provider" };
 
-  if (errorClass === "transient" && state.attempts < MAX_RETRIES_PER_MODEL) {
+  const next = input.candidates.find((model) => !state.tried.includes(model));
+  const stallSwitch = input.stalled === true && next !== undefined;
+  if (errorClass === "transient" && !stallSwitch && state.attempts < MAX_RETRIES_PER_MODEL) {
     return { action: "retry", attempt: state.attempts + 1, delayMs: retryDelayMs(state.attempts, input.retryAfterMs) };
   }
 
@@ -62,7 +69,6 @@ export function decideRecovery(input: {
     if (state.failovers >= MAX_FAILOVERS) {
       return { action: "escalate", reason: `${state.failovers} model failovers already spent on this work unit` };
     }
-    const next = input.candidates.find((model) => !state.tried.includes(model));
     if (next) return { action: "failover", model: next, delayMs: 5_000 };
     return {
       action: "escalate",

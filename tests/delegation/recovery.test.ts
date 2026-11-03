@@ -18,6 +18,23 @@ describe("recovery policy", () => {
     assert.deepEqual(d, { action: "failover", model: "b/two", delayMs: 5_000 });
   });
 
+  it("a stalled endpoint fails over at once instead of retrying the same dead model", () => {
+    // Regression: "no response headers within 180000ms" was retried three times on
+    // the same model, about fifteen minutes of waiting before any failover.
+    const d = decideRecovery({ errorClass: "transient", stalled: true, state: emptyRecovery(), candidates: pool });
+    assert.deepEqual(d, { action: "failover", model: "a/one", delayMs: 5_000 });
+  });
+
+  it("a stall with no alternative model still retries the same model", () => {
+    const d = decideRecovery({ errorClass: "transient", stalled: true, state: emptyRecovery(), candidates: [] });
+    assert.deepEqual(d, { action: "retry", attempt: 1, delayMs: 15_000 });
+  });
+
+  it("a non-stall transient error (busy, rate limited) still retries the same model first", () => {
+    const d = decideRecovery({ errorClass: "transient", stalled: false, state: emptyRecovery(), candidates: pool });
+    assert.equal(d.action, "retry");
+  });
+
   it("quota, config and auth fail over immediately, skipping tried models", () => {
     for (const errorClass of ["quota", "config", "auth"] as const) {
       const d = decideRecovery({ errorClass, state: { attempts: 0, failovers: 1, tried: ["a/one", "b/two"] }, candidates: pool });

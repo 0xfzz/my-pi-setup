@@ -1624,6 +1624,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       const decision = decideRecovery({
         errorClass: verdict.class,
         retryAfterMs: verdict.retryAfterMs,
+        stalled: verdict.stalled,
         state,
         candidates: failoverCandidates(row),
       });
