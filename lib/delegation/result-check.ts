@@ -31,6 +31,7 @@ import { readChildHealth } from "./child-health.ts";
 export type ResultIssueCode =
   | "report-missing"
   | "lane-violation"
+  | "unowned-change"
   | "ended-on-error"
   | "no-clean-exit"
   | "criterion-not-reported"
@@ -62,6 +63,11 @@ export interface ResultCheckInput {
   /** How the watcher saw the child end. */
   outcome: "completed" | "completed-user-exit" | "failed";
   now?: () => number;
+  /**
+   * Working-tree findings (see git-changes.ts), which see writes made by ANY tool,
+   * `bash` included. Absent when the directory is not a git repository.
+   */
+  tree?: { unowned: string[]; ambiguous: boolean };
 }
 
 const WRITE_TOOLS = new Set(["write", "edit", "multi_edit", "multiedit", "apply_patch", "applypatch", "patch"]);
@@ -196,6 +202,16 @@ export function checkResult(input: ResultCheckInput): ResultReceipt {
       detail: input.laneFiles.length
         ? `wrote outside its lane (${input.laneFiles.join(", ")}): ${[...outOfLane].slice(0, 8).join(", ")}`
         : `no lane was declared, yet it wrote: ${[...outOfLane].slice(0, 8).join(", ")}`,
+    });
+  }
+
+  if (input.tree && input.tree.unowned.length > 0) {
+    issues.push({
+      code: "unowned-change",
+      // The parent ran shell commands in the window, so the change may be its own.
+      blocking: !input.tree.ambiguous,
+      detail: `the working tree changed outside this child's lane (any tool, bash included): ${input.tree.unowned.slice(0, 8).join(", ")}`
+        + (input.tree.ambiguous ? " — the parent also ran shell commands meanwhile, so this may not be the child's doing" : ""),
     });
   }
 

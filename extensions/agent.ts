@@ -46,6 +46,7 @@ import { isWaitGuardTool, waitCommandProblem } from "../lib/delegation/wait-guar
 import { hasLiveDelegation, setDelegationProbe } from "../lib/delegation/live.ts";
 import { classifyChildError, isHaltedPing, HALTED_PREFIX } from "../lib/delegation/child-error.ts";
 import { errorIsTerminal, readChildHealth } from "../lib/delegation/child-health.ts";
+import { attributeChanges, changedSince, snapshotTree } from "../lib/delegation/git-changes.ts";
 import { checkVerdicts, checkEvidence } from "../lib/delegation/verdict-check.ts";
 import { checkResult, renderReceipt, unresolvedBlockers } from "../lib/delegation/result-check.ts";
 import { noteInspection, POLL_GUARD_REASON, resetInspectionCounts } from "../lib/delegation/poll-guard.ts";
@@ -1479,6 +1480,29 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       });
   }
 
+  /**
+   * Working-tree attribution for a settling child: what changed on disk since it
+   * started that neither its own lane, another child's lane, nor the parent's own
+   * writes account for. Unknown (not a git repo, no baseline) yields nothing.
+   */
+  function treeFindings(row: ScopedChild): { tree?: { unowned: string[]; ambiguous: boolean } } {
+    try {
+      if (!row.baselineTree) return {};
+      const current = snapshotTree(process.cwd());
+      if (!current) return {};
+      const since = new Date(row.startedAt ?? 0).toISOString();
+      const attribution = attributeChanges({
+        changed: changedSince(row.baselineTree, current),
+        ownLane: row.laneFiles,
+        otherLanes: registry.getAllChildren().filter((c) => c.sessionFile !== row.sessionFile).flatMap((c) => c.laneFiles),
+        parentWrites: registry.getAuthorWrites(since).map((w) => w.path),
+      });
+      return { tree: { unowned: attribution.unowned, ambiguous: registry.getAuthorShells(since).length > 0 } };
+    } catch {
+      return {};
+    }
+  }
+
   /** Receipt for a settled row, never throwing: a checker bug must not hide a result. */
   function computeReceipt(row: ScopedChild, outcome: "completed" | "completed-user-exit" | "failed") {
     try {
@@ -1491,6 +1515,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         cwd: process.cwd(),
         outcome,
         now,
+        ...treeFindings(row),
       });
     } catch {
       return undefined;
@@ -2232,6 +2257,8 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         );
       }
 
+      // Baseline BEFORE the child exists: the receipt later diffs the tree against it.
+      const baselineTree = snapshotTree(ctx.cwd);
       let started;
       try {
         started = await client.paneStart(plan.paneStart);
@@ -2286,6 +2313,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         { criteria: acceptanceCriteria, revision: 1 },
         { purpose: registryPurpose(purpose), accountability },
       );
+      if (baselineTree) registry.updateRuntime(running.sessionFile, { baselineTree });
       // The registry row now owns the slot; the finally below drops the
       // reservation on every exit path, so only the registry is charged after
       // registration and a failed launch never eats capacity.
@@ -3310,6 +3338,55 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
   // loops and nothing reports success that was never verified. Active children
   // are deliberate abstention: they re-trigger the parent by themselves, so a
   // settle with live work yields instead of forging ahead.
+  /** Accepted-lane sets that already got their one integration continuation. */
+  const integrationNotified = new Set<string>();
+
+  /**
+   * Every lane was accepted one by one — nothing yet says the lanes work TOGETHER.
+   * Once, per accepted set, hand the parent the owed check plus the one fact that
+   * can be established mechanically: working-tree changes no accepted lane owns.
+   */
+  function integrationOwed(owner: string) {
+    const accepted = registry.getAllChildren().filter((c) =>
+      c.accountability?.ownerSessionId === owner && c.accountability.disposition === "accepted" && !c.supersededBy);
+    if (accepted.length < 2) return;
+    const key = accepted.map((c) => c.id).sort().join(",");
+    if (integrationNotified.has(key)) return;
+    integrationNotified.add(key);
+
+    const baselines = accepted.map((c) => c.baselineTree).filter((b): b is NonNullable<typeof b> => Boolean(b));
+    let stray: string[] = [];
+    try {
+      const current = baselines.length ? snapshotTree(process.cwd()) : null;
+      if (current) {
+        const merged = Object.assign({}, ...baselines.reverse());
+        stray = attributeChanges({
+          changed: changedSince(merged, current),
+          ownLane: accepted.flatMap((c) => c.laneFiles),
+          otherLanes: [],
+          parentWrites: registry.getAuthorWrites().map((w) => w.path),
+        }).unowned;
+      }
+    } catch {
+      stray = [];
+    }
+    return {
+      continue: true as const,
+      entries: [{
+        type: "custom_message" as const,
+        customType: "integration_owed",
+        display: true,
+        content:
+          `All ${accepted.length} lanes were accepted individually: ${accepted.map((c) => `${c.name} (${c.scope})`).join(", ")}. `
+          + "Accepting every lane is NOT proof the combined result works. Do ONE integration check across them now — "
+          + "run the whole verification (build/tests/lint for code; for research or documents, read the pieces together and look for contradictions, gaps and duplicated claims) — "
+          + "and tell the user the outcome, or spawn a rework against the lane that broke it."
+          + (stray.length ? `\nChanges outside every accepted lane (nobody owns these): ${stray.slice(0, 12).join(", ")}.` : ""),
+        details: { lanes: accepted.map((c) => c.scope), stray },
+      }],
+    };
+  }
+
   pi.on("agent_before_settle", async (_event, ctx) => {
     if (isChildSession) return;
     const owner = typeof (ctx as any)?.sessionManager?.getSessionId === "function"
@@ -3321,7 +3398,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     // asking the parent to "review" its failed attempt now would make it generate.
     if (retryTimers.size > 0) return;
     const fresh = registry.getPendingResults(owner).filter((child) => !settledNotified.has(child.id));
-    if (fresh.length === 0) return;
+    if (fresh.length === 0) return integrationOwed(owner);
     for (const child of fresh) settledNotified.add(child.id);
     const lines = fresh.map((child) =>
       `- ${child.name} [${child.id}] ${child.scope} resultRevision=${child.accountability?.resultRevision ?? "n/a"}`
