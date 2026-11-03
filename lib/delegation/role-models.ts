@@ -47,6 +47,12 @@ export interface ResolvedRoleModel {
   poolSize?: number;
   /** Facts the caller should surface: fallback, missing credentials. */
   notes: string[];
+  /**
+   * Set when no usable model exists for the request (every candidate lacks
+   * credentials). The spawn must be refused: a child on such a model cannot start,
+   * and its failed launch used to spend the batch budget.
+   */
+  problem?: string;
 }
 
 export function isChildRole(value: unknown): value is ChildRole {
@@ -168,6 +174,12 @@ export function resolveRoleModel(input: {
     if (ref && !registry.has(ref.provider, ref.model)) {
       notes.push(`${key} is not in the current registry`);
     }
+    if (ref && registry.has(ref.provider, ref.model) && !registry.hasAuth(ref.provider, ref.model)) {
+      return {
+        role, model: key, source: "explicit", notes,
+        problem: `${key} has no credentials, so a child on it cannot start; pick a model that has them`,
+      };
+    }
     return { role, model: key, source: "explicit", notes };
   }
 
@@ -177,16 +189,25 @@ export function resolveRoleModel(input: {
 
   if (binding) {
     const pool = Array.isArray(binding) ? binding : [binding];
-    const usable = pool.filter((ref) => registry.has(ref.provider, ref.model));
-    const missing = pool.filter((ref) => !usable.includes(ref)).map(modelKey);
+    const registered = pool.filter((ref) => registry.has(ref.provider, ref.model));
+    const missing = pool.filter((ref) => !registered.includes(ref)).map(modelKey);
     if (missing.length) notes.push(`${missing.join(", ")} no longer resolves`);
+    // Only members with credentials are rolled. A member without them is skipped
+    // rather than chosen, because a child on it fails before its first turn.
+    const usable = registered.filter((ref) => registry.hasAuth(ref.provider, ref.model));
+    const unauthed = registered.filter((ref) => !usable.includes(ref)).map(modelKey);
+    if (unauthed.length) notes.push(`skipped ${unauthed.join(", ")} (no credentials)`);
     if (usable.length) {
       const index = Math.min(usable.length - 1, Math.floor(rng() * usable.length));
       const chosen = usable[index]!;
-      if (!registry.hasAuth(chosen.provider, chosen.model)) {
-        notes.push(`no credentials for ${modelKey(chosen)} — the child may fail to start`);
-      }
       return { role, model: modelKey(chosen), source: "role", poolSize: usable.length, notes };
+    }
+    if (registered.length) {
+      return {
+        role, model: undefined, source: "role", poolSize: pool.length, notes,
+        problem: `none of the ${role} pool (${unauthed.join(", ")}) has credentials, so a child cannot start; `
+          + "add credentials for one of them or bind another model with /agent-model",
+      };
     }
     notes.push("the role binding did not resolve; following the parent model");
     return { role, model: undefined, source: "role", poolSize: pool.length, notes };

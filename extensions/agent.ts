@@ -2228,6 +2228,15 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       const agentDefs = params.agent ? loadAgentDefaults(params.agent) : null;
       const spawnRole: ChildRole = role;
       const roleModel = resolveChildModel(ctx, spawnRole, subagentSettings, params.model, agentDefs?.model);
+      if (roleModel.problem) {
+        // Refused before any handoff or pane exists: a child that cannot authenticate
+        // never starts, and its failed launch would otherwise cost a slot and budget.
+        return text(`Refused: ${roleModel.problem}. Nothing was launched.`, {
+          error: "no-credentials",
+          role: spawnRole,
+          model: roleModel.model,
+        });
+      }
       const rolePrompt = loadRolePrompt(spawnRole, ctx.cwd);
       const childArtifactSessionId = `${ownerSessionId}-adhoc-${scope}`;
 
