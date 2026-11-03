@@ -242,6 +242,19 @@ describe("pane lifecycle: close is a terminal transition", () => {
     assert.equal((result.details as any).status, "closed");
   });
 
+  it("agent_interrupt accepts the scope the parent names the child by", async () => {
+    // Regression: the parent passed the scope ("policy-safety") as `name`; the
+    // display name differs, so the interrupt reported "No child matched".
+    const h = harness();
+    const c = child({ id: "interrupt-by-scope", name: "Suprianto · Policy Safety Builder", scope: "policy-safety" });
+    registry.registerChild(c);
+
+    const result = await h.tools.get("agent_interrupt").execute("t", { name: "policy-safety" });
+
+    assert.deepEqual(h.calls.keys, [{ paneId: c.paneId, keys: ["esc"] }]);
+    assert.equal((result.details as any).status, "interrupted");
+  });
+
   it("agent_interrupt reconciles a vanished pane instead of failing", async () => {
     const h = harness({ paneGet: async () => null });
     const c = child({ id: "interrupt-gone" });

@@ -3736,7 +3736,10 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       return child && (child.status === "running" || child.status === "blocked") ? child : undefined;
     }
     if (params.name) {
-      const matches = registry.getRunningChildren().filter((c) => c.name.toLowerCase() === params.name!.toLowerCase());
+      // Parents naturally pass the scope ("policy-safety") where the display name
+      // is "Suprianto · Policy Safety Builder". Match either, so that miss stopped
+      // a live interrupt in a real session.
+      const matches = registry.getRunningChildren().filter((c) => nameOrScopeMatches(c, params.name!));
       return matches.length === 1 ? matches[0] : undefined;
     }
     if (params.scope) {
@@ -3745,6 +3748,12 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     }
     const running = registry.getRunningChildren();
     return running.length === 1 ? running[0] : undefined;
+  }
+
+  /** Case-insensitive match on the display name, or on the scope the parent names the child by. */
+  function nameOrScopeMatches(child: ScopedChild, query: string): boolean {
+    const wanted = query.trim().toLowerCase();
+    return child.name.toLowerCase() === wanted || child.scope.toLowerCase() === wanted;
   }
 
   /** A terminal row matched by id: it exists, but it is finished. */
@@ -3771,7 +3780,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       return all.find((c) => c.id === params.id || c.supersededIds?.includes(params.id!));
     }
     if (params.name) {
-      const matches = all.filter((c) => c.name.toLowerCase() === params.name!.toLowerCase());
+      const matches = all.filter((c) => nameOrScopeMatches(c, params.name!));
       const active = matches.filter((c) => c.status === "running" || c.status === "blocked");
       return (active.length ? active : matches).at(-1);
     }
