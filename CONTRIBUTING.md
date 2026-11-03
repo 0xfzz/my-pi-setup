@@ -6,8 +6,8 @@
 git clone <this repo>
 cd pi-workflow-extensions
 npm install --ignore-scripts --legacy-peer-deps
-npm test
-npm run typecheck
+npx simple-git-hooks   # installs the pre-commit lint hook; --ignore-scripts skips it
+npm run tidy           # typecheck + lint:smell + test, the same gate CI runs
 ```
 
 Node 22.6+ is required (the suites use `--experimental-strip-types`, so there is no

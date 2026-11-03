@@ -14,6 +14,6 @@ For development:
 
 ```sh
 npm install --ignore-scripts --legacy-peer-deps   # dev-only: typescript + @types/node
-npm test                                          # every suite, no network or inference
-npm run typecheck
+npx simple-git-hooks                              # install the pre-commit lint hook (skipped by --ignore-scripts)
+npm run tidy                                      # typecheck + lint:smell + test, no network or inference
 ```
