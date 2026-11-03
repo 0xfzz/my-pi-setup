@@ -111,3 +111,42 @@ test("a crash close of a running child keeps the unit pending: a report may stil
   assert.equal(r.getOccupiedChildren("parent").length, 1);
   assert.equal(r.getChildById("first")!.accountability!.disposition, "pending");
 });
+
+test("a launch that never produced output is refunded when its unit is released", () => {
+  // Regression: children that never reached a model turn spent the whole batch,
+  // so the parent was blocked at 4/4 with nothing running.
+  const r = new ScopeRegistry();
+  r.registerChild(child());
+  r.recordLaunch("parent");
+  r.markLaunchCharged("/tmp/unit.jsonl");
+  assert.equal(r.getBatch("parent").launches, 1);
+  r.closeChild("/tmp/unit.jsonl", "user-closed");
+  r.releaseUnstarted("/tmp/unit.jsonl");
+  assert.equal(r.getBatch("parent").launches, 0);
+  assert.equal(r.getOccupiedChildren("parent").length, 0);
+  // A second release must not refund again.
+  r.releaseUnstarted("/tmp/unit.jsonl");
+  assert.equal(r.getBatch("parent").launches, 0);
+});
+
+test("a refund never reduces a batch the launch was not charged to", () => {
+  const r = new ScopeRegistry();
+  r.registerChild(child());
+  r.recordLaunch("parent");
+  r.markLaunchCharged("/tmp/unit.jsonl");
+  r.newBatch("parent");
+  assert.equal(r.refundLaunch("/tmp/unit.jsonl"), false);
+  assert.equal(r.getBatch("parent").launches, 0);
+});
+
+test("a released unit with a recorded result keeps its result and its launch", () => {
+  const r = new ScopeRegistry();
+  r.registerChild(child());
+  r.recordLaunch("parent");
+  r.markLaunchCharged("/tmp/unit.jsonl");
+  r.updateStatus("/tmp/unit.jsonl", "completed");
+  r.recordDisposition("parent", "first", decision);
+  r.releaseUnstarted("/tmp/unit.jsonl");
+  assert.equal(r.getChildById("first")!.accountability!.disposition, "accepted");
+  assert.equal(r.getBatch("parent").launches, 1);
+});

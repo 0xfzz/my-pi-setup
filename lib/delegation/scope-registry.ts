@@ -91,6 +91,12 @@ export interface ChildAccountability {
    * the user, not to another round of the same loop.
    */
   reworkRound?: number;
+  /**
+   * The batch id this unit's launch was charged to, while the charge stands.
+   * Cleared by a refund, so a launch can never be refunded twice, and a charge
+   * from an earlier batch cannot reduce a newer one.
+   */
+  launchCharged?: string;
   reviews: ResultDisposition[];
   /** Prior attempts survive resume, including the decisions made on them. */
   attempts: Array<{ id: string; resultRevision: number; reviews: ResultDisposition[] }>;
@@ -535,7 +541,9 @@ export class ScopeRegistry {
     child.closeReason = reason;
     child.watchdog = { trip: null, interrupts: child.watchdog?.interrupts ?? 0 };
     child.updatedAt = child.closedAt;
-    if (wasActive && DELIBERATE_CLOSES.has(reason)) this.abandonUnreported(child, reason);
+    if (wasActive && DELIBERATE_CLOSES.has(reason)) {
+      this.abandonUnreported(child, `Closed (${reason}) while still running; no result was reported.`);
+    }
     return child;
   }
 
@@ -545,14 +553,14 @@ export class ScopeRegistry {
    * waiting for a verdict on output that does not exist, and the parent had to
    * fabricate "abandoned" verdicts just to free capacity.
    */
-  private abandonUnreported(child: ScopedChild, reason: CloseReason): void {
+  private abandonUnreported(child: ScopedChild, summary: string): void {
     const a = child.accountability;
     if (!a) return;
     const at = new Date().toISOString();
     a.reviews.push({
       disposition: "abandoned",
       resultRevision: a.resultRevision,
-      summary: `Closed (${reason}) while still running; no result was reported.`,
+      summary,
       evidence: [],
       integration: "Nothing to integrate. Inspect the lane files for partial writes before reusing the unit.",
       at,
@@ -716,6 +724,43 @@ export class ScopeRegistry {
   public recordLaunch(ownerSessionId: string): void {
     this.getBatch(ownerSessionId);
     this.batch!.launches++;
+  }
+
+  /** Record which batch a registered child's launch was charged to. */
+  public markLaunchCharged(sessionFile: string): void {
+    const a = this.childrenBySession.get(sessionFile)?.accountability;
+    if (a) a.launchCharged = this.getBatch(a.ownerSessionId).id;
+  }
+
+  /**
+   * A child that never reached a model turn did not consume a launch. Refund it
+   * only while the charge is still in the current batch; returns whether a refund happened.
+   */
+  public refundLaunch(sessionFile: string): boolean {
+    const a = this.childrenBySession.get(sessionFile)?.accountability;
+    if (!a?.launchCharged) return false;
+    const batch = this.getBatch(a.ownerSessionId);
+    const current = a.launchCharged === batch.id && batch.launches > 0;
+    a.launchCharged = undefined;
+    if (!current) return false;
+    this.batch!.launches--;
+    return true;
+  }
+
+  /**
+   * Release a child that closed or ended without ever producing output. Its unit
+   * is abandoned (if still pending) and its launch refunded, so it stops holding a
+   * slot and stops spending the batch. Callers must check there was no output.
+   * A unit that was accepted or sent back for changes has a result, so it is untouched.
+   */
+  public releaseUnstarted(sessionFile: string): void {
+    const child = this.childrenBySession.get(sessionFile);
+    const a = child?.accountability;
+    if (!child || !a) return;
+    if (a.disposition === "pending") {
+      this.abandonUnreported(child, "Closed before the child produced any output; the launch was refunded.");
+    }
+    if (a.disposition === "abandoned") this.refundLaunch(sessionFile);
   }
 
   /** User command only. Unresolved child ownership deliberately remains intact. */

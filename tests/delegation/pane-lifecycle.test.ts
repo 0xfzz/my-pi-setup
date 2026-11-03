@@ -255,6 +255,26 @@ describe("pane lifecycle: close is a terminal transition", () => {
     assert.equal((result.details as any).status, "interrupted");
   });
 
+  it("agent_close of a child with no session output refunds its launch and frees its slot", async () => {
+    // Regression: a pane closed before its first turn held a slot and spent the batch.
+    const h = harness();
+    const c = child({ id: "close-unstarted" });
+    c.accountability = {
+      ownerSessionId: "owner-unstarted", batchId: "owner-unstarted:1", workUnitKey: "unit-unstarted",
+      delegationReason: "Independent lane", reviewPlan: "Read diff", resultRevision: 0,
+      disposition: "pending", reviews: [], attempts: [],
+    };
+    registry.registerChild(c);
+    registry.recordLaunch("owner-unstarted");
+    registry.markLaunchCharged(c.sessionFile);
+
+    await h.tools.get("agent_close").execute("t", { id: c.id, reason: "never started" });
+
+    assert.equal(registry.getBatch("owner-unstarted").launches, 0);
+    assert.equal(registry.getChildById(c.id)?.accountability?.disposition, "abandoned");
+    assert.equal(registry.getOccupiedChildren("owner-unstarted").some((row) => row.id === c.id), false);
+  });
+
   it("agent_interrupt reconciles a vanished pane instead of failing", async () => {
     const h = harness({ paneGet: async () => null });
     const c = child({ id: "interrupt-gone" });

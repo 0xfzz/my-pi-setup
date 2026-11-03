@@ -37,7 +37,7 @@
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import { chmodSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 
 import { sanitizeScope } from "../lib/delegation/handoff.ts";
@@ -45,6 +45,7 @@ import { MAX_REWORK_ROUNDS } from "../lib/delegation/admission.ts";
 import { isWaitGuardTool, waitCommandProblem } from "../lib/delegation/wait-guard.ts";
 import { hasLiveDelegation, setDelegationProbe } from "../lib/delegation/live.ts";
 import { classifyChildError, isHaltedPing, HALTED_PREFIX } from "../lib/delegation/child-error.ts";
+import { sessionHasAssistantOutput } from "../lib/delegation/child-output.ts";
 import { decideRecovery, emptyRecovery, MAX_FAILOVERS, MAX_RETRIES_PER_MODEL, type RecoveryState } from "../lib/delegation/recovery.ts";
 import { decideBudget, HARD_CAP_MULTIPLIER } from "../lib/delegation/budget.ts";
 import { errorIsTerminal, readChildHealth } from "../lib/delegation/child-health.ts";
@@ -681,6 +682,15 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     }
   }
 
+  /** Whether the child's session log ever recorded assistant output. Unreadable means never started. */
+  function childProducedOutput(sessionFile: string): boolean {
+    try {
+      return sessionHasAssistantOutput(readFileSync(sessionFile, "utf8"));
+    } catch {
+      return false;
+    }
+  }
+
   async function settleChild(
     target: ScopedChild,
     reason: CloseReason,
@@ -722,6 +732,10 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     closeEscalationsFor(target, `Child closed (${reason}).`);
     const wasClosed = target.status === "closed";
     const child = registry.closeChild(target.sessionFile, reason) ?? target;
+    // A child that never reached a model turn must not hold a slot or spend the
+    // batch: it is released (unit abandoned, launch refunded) instead of waiting
+    // for a verdict on output that does not exist.
+    if (!wasClosed && !childProducedOutput(target.sessionFile)) registry.releaseUnstarted(target.sessionFile);
     if (!wasClosed) recordChildClosed(child, reason);
     persistState();
     return { ok: true, paneState, child };
@@ -2407,6 +2421,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         persistState();
       } else {
         registry.recordLaunch(ownerSessionId);
+        registry.markLaunchCharged(running.sessionFile);
       }
 
       const launched = text(
