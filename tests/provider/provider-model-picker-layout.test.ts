@@ -83,7 +83,19 @@ function fixture(mode: Mode, rows = 24) {
   tui.start();
   tui.renderNow();
   // showExtensionCustom only needs these fields on the real InteractiveMode host.
-  const host = { ui: tui, editor, editorContainer, keybindings: {}, disposeActiveSelector() {} };
+  // The legacy (non-overlay) path calls the host's extension-dialog methods on
+  // `this`, so the fake host must carry the real implementations. Without them
+  // the editor is never swapped and the legacy tests fail before any clipping check.
+  const dialogMethods = Object.fromEntries(
+    ["pushExtensionDialog", "removeExtensionDialog", "showTopExtensionDialog"]
+      .map(name => [name, Reflect.get(InteractiveMode.prototype, name)]),
+  );
+  const host = {
+    ui: tui, editor, editorContainer, keybindings: {}, disposeActiveSelector() {},
+    extensionDialogs: [] as { component: Component; blocked?: boolean }[],
+    programStatus: { setBlocked() {} },
+    ...dialogMethods,
+  };
   let picker: ProviderModelPicker | undefined;
   let options: CustomOptions;
   let result: Promise<ModelSelection> | undefined;
