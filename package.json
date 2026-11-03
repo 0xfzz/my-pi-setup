@@ -26,6 +26,7 @@
       "./extensions/modes.ts",
       "./extensions/dynamic-prompt.ts",
       "./extensions/sidebar.ts",
+      "./extensions/cache-stats.ts",
       "./extensions/prompt-ui.ts",
       "./extensions/clipboard-paste.ts",
       "./extensions/providers.ts",

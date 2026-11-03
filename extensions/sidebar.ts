@@ -45,9 +45,9 @@ export default function sidebarExtension(pi: ExtensionAPI) {
   function sectionRowCount(): number {
     const limit = (tui?.terminal.rows ?? 0) < 18 ? 1 : 3;
     let rows = 0;
-    for (const id of ["mode", "account", "todo", "subagents", "artifacts"] as const) {
+    for (const id of ["mode", "account", "cache", "todo", "subagents", "artifacts"] as const) {
       const section = sections.get(id);
-      if (!section || (!section.rows.length && (id === "subagents" || id === "account"))) continue;
+      if (!section || (!section.rows.length && (id === "subagents" || id === "account" || id === "cache"))) continue;
       rows += (rows ? 1 : 0) + 1 + 1;
       if (id === "todo" && tui) {
         const maxLines = tui.terminal.rows < 18 ? 2 : 4;
@@ -116,9 +116,9 @@ export default function sidebarExtension(pi: ExtensionAPI) {
           const lines: string[] = [];
           const limit = renderer.terminal.rows < 18 ? 1 : 3;
           sectionBounds.clear();
-          for (const id of ["mode", "account", "todo", "subagents", "artifacts"] as const) {
+          for (const id of ["mode", "account", "cache", "todo", "subagents", "artifacts"] as const) {
             const section = sections.get(id);
-            if (!section || (!section.rows.length && (id === "subagents" || id === "account"))) continue;
+            if (!section || (!section.rows.length && (id === "subagents" || id === "account" || id === "cache"))) continue;
             if (lines.length) lines.push("");
             const startLine = lines.length;
             const title = fit(section.title, width - 2);
@@ -205,7 +205,7 @@ export default function sidebarExtension(pi: ExtensionAPI) {
             });
           }
           if (!active || !enabled || renderer.terminal.columns >= SIDEBAR_MIN_COLUMNS) return [];
-          const text = ["mode", "account", "todo", "subagents", "artifacts"]
+          const text = ["mode", "account", "cache", "todo", "subagents", "artifacts"]
             .map(id => sections.get(id)?.title)
             .filter(Boolean).join(" · ");
           return text ? [ctx.ui.theme.fg("muted", fit(text, width))] : [];
