@@ -35,7 +35,7 @@ function fakeContext(overrides: Record<string, unknown> = {}) {
     thinkingLevel: "high",
     getContextUsage: () => ({ tokens: 275_000, contextWindow: 1_000_000, percent: 27.5 }),
     sessionManager: {
-      getCwd: () => "/home/faiz/projects/pi-workflow-extensions",
+      getCwd: () => process.cwd(),
       getSessionName: () => "Popup design system",
       getEntries: () => entries,
       getLeafId: () => "leaf-1",
