@@ -35,6 +35,46 @@ export interface DynamicPromptConfig {
   maxSnippetChars: number;
   /** Include each tool's own promptGuidelines bullets. */
   includeToolGuidelines: boolean;
+  /**
+   * Per-model overrides keyed by `provider/model`, a bare model id, or a `*`
+   * glob. Each value may set `mode`, `maxSnippetChars` and `includeToolGuidelines`.
+   */
+  profiles?: Record<string, Partial<Omit<DynamicPromptConfig, "profiles">>>;
+}
+
+/** Windows below this get the compact prompt unless a profile says otherwise. */
+export const COMPACT_CONTEXT_WINDOW = 48_000;
+
+/** Snippet cap and guideline switch for a window that cannot afford the full prompt. */
+const COMPACT_OVERRIDES = { maxSnippetChars: 60, includeToolGuidelines: false } as const;
+
+const globToRegExp = (pattern: string): RegExp =>
+  new RegExp(`^${pattern.split("*").map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`, "i");
+
+/**
+ * The config that applies to one model.
+ *
+ * Small context windows pay proportionally more for the same prompt, so they
+ * default to the compact shape; an explicit profile always wins over that
+ * heuristic. Profiles are matched most-specific first: exact `provider/model`,
+ * bare model id, then globs in file order.
+ */
+export function configForModel(
+  config: DynamicPromptConfig,
+  model: { provider?: string; id?: string; contextWindow?: number } | undefined,
+): DynamicPromptConfig {
+  const { profiles, ...base } = config;
+  let result: DynamicPromptConfig = { ...base };
+  if (model?.contextWindow && model.contextWindow > 0 && model.contextWindow < COMPACT_CONTEXT_WINDOW) {
+    result = { ...result, ...COMPACT_OVERRIDES };
+  }
+  if (!profiles || !model?.id) return result;
+  const full = `${model.provider ?? ""}/${model.id}`;
+  const entries = Object.entries(profiles);
+  const hit = entries.find(([key]) => key.toLowerCase() === full.toLowerCase())
+    ?? entries.find(([key]) => key.toLowerCase() === model.id!.toLowerCase())
+    ?? entries.find(([key]) => key.includes("*") && (globToRegExp(key).test(full) || globToRegExp(key).test(model.id!)));
+  return hit ? { ...result, ...hit[1] } : result;
 }
 
 export const DEFAULT_DYNAMIC_PROMPT_CONFIG: DynamicPromptConfig = {
@@ -55,7 +95,25 @@ export function validateConfig(value: unknown): DynamicPromptConfig {
   const includeToolGuidelines = typeof raw.includeToolGuidelines === "boolean"
     ? raw.includeToolGuidelines
     : DEFAULT_DYNAMIC_PROMPT_CONFIG.includeToolGuidelines;
-  return { mode, maxSnippetChars, includeToolGuidelines };
+  const profiles = parseProfiles(raw.profiles);
+  return { mode, maxSnippetChars, includeToolGuidelines, ...(profiles ? { profiles } : {}) };
+}
+
+function parseProfiles(value: unknown): DynamicPromptConfig["profiles"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const out: NonNullable<DynamicPromptConfig["profiles"]> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (!entry || typeof entry !== "object") continue;
+    // Reuse the top-level validation per field, but keep only what was set.
+    const raw = entry as Record<string, unknown>;
+    const checked = validateConfig(raw);
+    const profile: Partial<Omit<DynamicPromptConfig, "profiles">> = {};
+    if ("mode" in raw) profile.mode = checked.mode;
+    if ("maxSnippetChars" in raw) profile.maxSnippetChars = checked.maxSnippetChars;
+    if ("includeToolGuidelines" in raw) profile.includeToolGuidelines = checked.includeToolGuidelines;
+    out[key] = profile;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** Tools the model can actually see. Hidden tools are reachable only via another tool. */

@@ -13,6 +13,7 @@ import {
   DEFAULT_DYNAMIC_PROMPT_CONFIG,
   buildDynamicSections,
   capabilityFacts,
+  configForModel,
   derivedRules,
   generalPreamble,
   groupTools,
@@ -336,4 +337,19 @@ test("the rendered sections do not depend on tool registration order", () => {
   const forward = buildDynamicSections(tools, CONFIG);
   const reversed = buildDynamicSections([...tools].reverse(), CONFIG);
   assert.deepEqual(reversed, forward, "registration order must not change the cached prefix");
+});
+
+test("small windows default to the compact prompt and profiles override by specificity", () => {
+  const base = { ...CONFIG, profiles: { "anthropic/*": { maxSnippetChars: 200 }, "gpt-5": { mode: "append" as const } } };
+  assert.equal(configForModel(base, { provider: "x", id: "tiny", contextWindow: 8000 }).includeToolGuidelines, false);
+  assert.equal(configForModel(base, { provider: "x", id: "big", contextWindow: 200000 }).includeToolGuidelines, true);
+  assert.equal(configForModel(base, { provider: "anthropic", id: "sonnet", contextWindow: 200000 }).maxSnippetChars, 200);
+  assert.equal(configForModel(base, { provider: "openai", id: "gpt-5", contextWindow: 200000 }).mode, "append");
+  assert.equal(configForModel(base, { provider: "anthropic", id: "small", contextWindow: 8000 }).maxSnippetChars, 200, "an explicit profile beats the window heuristic");
+  assert.equal(configForModel(base, undefined).mode, "replace");
+});
+
+test("profiles are validated field by field", () => {
+  const parsed = validateConfig({ profiles: { "a/b": { maxSnippetChars: 9999, bogus: 1 }, junk: 5 } });
+  assert.deepEqual(parsed.profiles, { "a/b": { maxSnippetChars: 400 } });
 });

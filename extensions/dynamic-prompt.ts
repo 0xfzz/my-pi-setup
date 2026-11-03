@@ -22,9 +22,11 @@ import {
   preserveDefaultSections,
   snippetFor,
   toolsMissingSnippets,
+  configForModel,
   validateConfig,
   visibleTools,
   type DynamicPromptConfig,
+  type PromptMode,
   type PromptTool,
 } from "../lib/dynamic-prompt.ts";
 
@@ -122,6 +124,8 @@ export default function dynamicPromptExtension(pi: ExtensionAPI) {
   const path = join(getAgentDir(), CONFIG_FILE);
   let active: DynamicPromptConfig = { ...DEFAULT_DYNAMIC_PROMPT_CONFIG };
   let configError: string | undefined;
+  /** A `/dynamic-prompt <mode>` choice wins over any per-model profile. */
+  let sessionMode: PromptMode | undefined;
   try {
     active = validateConfig(JSON.parse(readFileSync(path, "utf8")));
   } catch (error) {
@@ -135,12 +139,13 @@ export default function dynamicPromptExtension(pi: ExtensionAPI) {
     }
   });
 
-  pi.on("before_agent_start", (event) => {
-    if (active.mode === "off") return;
+  pi.on("before_agent_start", (event, ctx) => {
+    const effective = { ...configForModel(active, ctx.model), ...(sessionMode ? { mode: sessionMode } : {}) };
+    if (effective.mode === "off") return;
     applyDynamicPrompt(
       event.systemPromptOptions as unknown as PromptOptions,
       readTools(pi),
-      active,
+      effective,
       event.systemPrompt,
     );
     // A forced prompt from another extension is opaque; nothing to contribute.
@@ -152,6 +157,7 @@ export default function dynamicPromptExtension(pi: ExtensionAPI) {
 
     if (verb === "replace" || verb === "append" || verb === "off") {
       active = { ...active, mode: verb };
+      sessionMode = verb;
       ctx.ui.notify(`dynamic-prompt: mode ${verb} for this session (${path} sets the default).`, "info");
       return;
     }
