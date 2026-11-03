@@ -63,17 +63,6 @@ export interface FoodParticle {
   eaten: boolean;     // Eaten by a fish or crab
 }
 
-export type BiotaMood = "satisfied" | "hungry" | "seeking" | "eating";
-
-export interface BiotaStatus {
-  name: string;
-  hunger: number;     // 0.0 (full) to 1.0 (starving)
-  mood: BiotaMood;
-  x: number;
-  y: number;
-  facing: "right" | "left" | "turn";
-}
-
 /** Multi-harmonic wander generator with exact period LOOP = 48. */
 function wander1D(u: number, seed: number): { pos: number; vel: number } {
   const w = (2 * Math.PI) / LOOP;

@@ -3,18 +3,15 @@
   "entry": [
     "extensions/*.ts",
     "tests/**/*.test.ts",
-    "scripts/*.mjs"
+    "scripts/*.mjs",
+    "lib/vcc/auto-compact-entry.ts",
+    "tests/fixtures/*.ts"
   ],
   "project": [
     "extensions/**/*.ts",
     "lib/**/*.ts",
     "tests/**/*.ts",
     "scripts/**/*.mjs"
-  ],
-  "ignore": [
-    "vendor/**",
-    "web/**",
-    "crates/**"
   ],
   "ignoreExportsUsedInFile": true
 }

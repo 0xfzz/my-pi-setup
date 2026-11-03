@@ -15,12 +15,12 @@
 carries a dead-export backlog, so making them blocking today would reject every
 commit. This note records where that backlog stands.
 
-- **Unused files**: 3 — `lib/ui/index.ts`, and two test fixtures.
-- **Unused dependencies**: 4 — `@viz-js/viz`, `highlight.js`, `tree-sitter`, `tree-sitter-bash`.
+- **Unused files**: 0 — the deployed VCC entry and the test fixtures are knip entries.
+- **Unused dependencies**: 2 — `@viz-js/viz` and `highlight.js`, which `scripts/build-dashboard.mjs` bundles. `tree-sitter` and `tree-sitter-bash` had no importer anywhere and were removed.
 - **Unlisted dependencies**: 15 — mostly `@earendil-works/pi-ai` in tests, plus
   `playwright-core` and `jiti`, which are provided by the Pi runtime rather than
   installed by this package.
-- **Unused exports**: 41 functions/constants plus 1 exported type.
+- **Unused exports**: 0.
 - **Duplicated blocks**: 19 clones, 342 lines (0.57%) of 59,982 TypeScript lines.
 
 ---
