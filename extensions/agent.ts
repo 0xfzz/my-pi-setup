@@ -44,6 +44,9 @@ import { sanitizeScope } from "../lib/delegation/handoff.ts";
 import { MAX_REWORK_ROUNDS } from "../lib/delegation/admission.ts";
 import { isWaitGuardTool, waitCommandProblem } from "../lib/delegation/wait-guard.ts";
 import { hasLiveDelegation, setDelegationProbe } from "../lib/delegation/live.ts";
+import { classifyChildError, isHaltedPing, HALTED_PREFIX } from "../lib/delegation/child-error.ts";
+import { errorIsTerminal, readChildHealth } from "../lib/delegation/child-health.ts";
+import { checkResult, renderReceipt, unresolvedBlockers } from "../lib/delegation/result-check.ts";
 import { noteInspection, POLL_GUARD_REASON, resetInspectionCounts } from "../lib/delegation/poll-guard.ts";
 import {
   buildHandoffTicket,
@@ -391,6 +394,14 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
   const WATCHDOG_INTERVAL_MS = deps?.watchdogIntervalMs ?? 30_000;
   const DEFAULT_BUDGET_MS = 30 * 60 * 1000;
   const MAX_STALL_STRIKES = 3;
+  /** Consecutive unreachable-herdr probes (~3 min at 30s) before the parent is told. */
+  const MAX_BLIND_PROBES = 6;
+  /**
+   * How long a trailing model error may sit untouched before it is terminal. pi's
+   * own retry backs off for a while and writes each attempt; the grace outlives
+   * that and any provider-stated retry-after (see `errorIsTerminal`).
+   */
+  const ERROR_GRACE_MS = 2 * 60 * 1000;
   /** After an interrupt the pane is static by definition; do not call it a stall. */
   const INTERRUPT_COOLDOWN_MS = 10 * 60 * 1000;
   /** Backoff before retrying a close that failed while the pane was still alive. */
@@ -1010,6 +1021,34 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
    * Input is `getWatchdogChildren()` (running only): a tripped or ping-paused
    * child is waiting on a decision, not on a timer.
    */
+  /** A live pane whose transcript ended on an error nothing is retrying any more. */
+  async function failStuckChild(child: ScopedChild, message: string): Promise<void> {
+    if (child.paneId) {
+      try {
+        await client.paneClose(child.paneId);
+      } catch (error: any) {
+        // A pane we cannot close stays under the watchdog; try again next tick
+        // rather than reporting a failure whose process still burns tokens.
+        if (!/pane_not_found|not found/i.test(String(error?.message ?? error))) return;
+      }
+    }
+    detachWatcher(child.sessionFile);
+    const running: RunningSubagent = {
+      id: child.id,
+      name: child.name,
+      task: child.task ?? "",
+      agent: child.agent,
+      paneId: child.paneId ?? "",
+      startTime: child.startedAt ?? now(),
+      sessionFile: child.sessionFile,
+      launchScriptFile: child.launchScriptFile ?? "",
+      interactive: child.interactive ?? false,
+      autoExit: child.autoExit ?? false,
+      scope: child.scope,
+    };
+    handleChildFailure(running, child.scope, message, "stuck");
+  }
+
   async function runWatchdogTick(): Promise<void> {
     for (const child of registry.getWatchdogChildren()) {
       // A failed close is not a decision for the parent to make: retry it.
@@ -1038,8 +1077,42 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         await settlePaneGone(child);
         continue;
       }
-      if (liveness.state === "unknown") continue; // never close on a failed probe
+      if (liveness.state === "unknown") {
+        // Never close on a failed probe — but never stay silent about it either.
+        // A herdr that is unreachable for ~3 minutes means NOBODY is watching.
+        const blind = (child.probeFailures ?? 0) + 1;
+        registry.updateRuntime(child.sessionFile, { probeFailures: blind });
+        if (blind >= MAX_BLIND_PROBES && !child.probeAlerted) {
+          registry.updateRuntime(child.sessionFile, { probeAlerted: true });
+          persistState();
+          pi.sendMessage(
+            {
+              customType: "subagent_result",
+              content:
+                `Watchdog: child "${child.name}" (scope: ${child.scope}) cannot be probed — herdr has been unreachable for `
+                + `${blind} consecutive checks (${liveness.reason}). The child may still be running; nothing was closed. `
+                + `Check herdr, then agent_running. It keeps being probed.`,
+              display: true,
+              details: { id: child.id, name: child.name, scope: child.scope, reason: "probe-blind", probeFailures: blind },
+            },
+            { triggerTurn: true, deliverAs: "followUp" },
+          );
+        }
+        continue;
+      }
+      if ((child.probeFailures ?? 0) > 0 || child.probeAlerted) {
+        registry.updateRuntime(child.sessionFile, { probeFailures: 0, probeAlerted: false });
+      }
       const tail = liveness.tail;
+
+      // Provider health: the pane cannot tell "working" from "stuck on a 429", but
+      // the transcript can. A trailing error that outlived pi's own retry window is
+      // terminal, so end the pane and hand the parent the class, not a stall.
+      const health = readChildHealth(child.sessionFile);
+      if (errorIsTerminal(health, now(), { graceMs: ERROR_GRACE_MS }) && health.error) {
+        await failStuckChild(child, health.error.message);
+        continue;
+      }
 
       const budgetMs = child.budgetMs ?? DEFAULT_BUDGET_MS;
       const elapsed = child.startedAt !== undefined ? now() - child.startedAt : 0;
@@ -1323,6 +1396,61 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       });
   }
 
+  /** Receipt for a settled row, never throwing: a checker bug must not hide a result. */
+  function computeReceipt(row: ScopedChild, outcome: "completed" | "completed-user-exit" | "failed") {
+    try {
+      return checkResult({
+        sessionFile: row.sessionFile,
+        scope: row.scope,
+        ...(row.handoffId ? { handoffId: row.handoffId } : {}),
+        laneFiles: row.laneFiles,
+        frozenCriteria: row.frozenCriteria ?? [],
+        cwd: process.cwd(),
+        outcome,
+        now,
+      });
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * A child ended on a provider/model error. It is a failure with a cause, so the
+   * row records the class and the parent is told the remedy for THAT class —
+   * never opened as an escalation, which is a channel for questions.
+   */
+  function handleChildFailure(running: RunningSubagent, scope: string, rawMessage: string, source: "halted" | "stuck"): void {
+    const verdict = classifyChildError(rawMessage);
+    registry.updateStatus(running.sessionFile, "failed", { pendingPing: false });
+    const row = registry.getChildBySession(running.sessionFile);
+    const receipt = row ? computeReceipt(row, "failed") : undefined;
+    registry.updateRuntime(running.sessionFile, {
+      failure: { class: verdict.class, message: rawMessage.slice(0, 500), at: new Date(now()).toISOString() },
+      ...(receipt ? { receipt } : {}),
+    });
+    persistState();
+    const wait = verdict.retryAfterMs ? ` Provider asked for ~${Math.ceil(verdict.retryAfterMs / 1000)}s.` : "";
+    pi.sendMessage(
+      {
+        customType: "subagent_result",
+        content: [
+          `Child "${running.name}" (scope: ${scope}) ${source === "stuck" ? "is stuck on" : "halted on"} a model error — class: ${verdict.class}.${wait}`,
+          "",
+          rawMessage.slice(0, 400),
+          "",
+          verdict.advice,
+          ...(receipt ? ["", renderReceipt(receipt)] : []),
+          "",
+          `This is a FAILED result pending YOUR review (resultRevision ${row?.accountability?.resultRevision ?? "n/a"}); `
+            + "it was not a question, so there is no escalation to answer.",
+        ].join("\n"),
+        display: true,
+        details: { id: running.id, name: running.name, scope, error: "child-error", errorClass: verdict.class, retryable: verdict.retryable, message: rawMessage.slice(0, 400) },
+      },
+      { triggerTurn: true, deliverAs: "steer" },
+    );
+  }
+
   function handleOutcome(running: RunningSubagent, scope: string, outcome: SubagentOutcome) {
     // Ownership check: a superseded attempt must not speak for the current row.
     // Without it, an aborted watcher from a resume's old run deleted the new
@@ -1336,6 +1464,16 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     }
     // A terminal transition wins over a late report: never resurrect a closed row.
     if (current.status === "closed") return;
+
+    // A child that halted on a provider/model error wrote the same `ping` sidecar
+    // as one that asked a question. It is a FAILURE, not a question: answering a
+    // 429 with text resumes the child into the same wall. Classify it and route it
+    // to the failure path below so the remedy matches the cause.
+    const haltedPing = outcome.kind === "ping" && isHaltedPing(outcome.message);
+    if (haltedPing && outcome.kind === "ping") {
+      handleChildFailure(running, scope, outcome.message.replace(HALTED_PREFIX, "").trim(), "halted");
+      return;
+    }
 
     if (outcome.kind === "ping") {
       // A child that asked a question is *paused*, not failed. It stays in the
@@ -1372,12 +1510,28 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       return;
     }
 
-    const completed = outcome.kind === "completed" || outcome.kind === "completed-user-exit";
+    // Rule 3: a pane that ends without `agent_done` is `failed`, not `completed`.
+    // `completed-user-exit` is exactly that case; it used to be reported as done.
+    const completed = outcome.kind === "completed";
     registry.updateStatus(running.sessionFile, completed ? "completed" : "failed", { pendingPing: false });
+    // The mechanical receipt: compare the result with the handoff before the parent
+    // reads a word of the child's own summary.
+    const receiptRow = registry.getChildBySession(running.sessionFile);
+    const receipt = receiptRow ? computeReceipt(receiptRow, completed ? "completed" : outcome.kind === "completed-user-exit" ? "completed-user-exit" : "failed") : undefined;
+    if (receipt) registry.updateRuntime(running.sessionFile, { receipt });
     persistState();
 
     const message = buildOutcomeMessage(running, outcome);
     if (message) {
+      if (receipt) message.content += `\n\n${renderReceipt(receipt)}`;
+      if (!completed) {
+        // A failed child may have died on the provider; say which kind so the
+        // remedy (wait / switch model / ask the user) is not guessed.
+        const health = readChildHealth(running.sessionFile);
+        if (health.error) {
+          message.content += `\n\nTrailing model error (${health.error.verdict.class}): ${health.error.message.slice(0, 240)}\n${health.error.verdict.advice}`;
+        }
+      }
       // A terminal report is a claim, not an outcome. The parent still owns the
       // verification decision, and the obligation is stated in the message the
       // parent acts on — not only in the row nobody says out loud.
@@ -2753,7 +2907,10 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         const budget = child.budgetMs && child.startedAt
           ? ` ${Math.max(0, Math.round((Date.now() - child.startedAt) / 60_000))}m/${Math.round(child.budgetMs / 60_000)}m`
           : "";
-        const lane = child.laneFiles.length ? ` lane:${child.laneFiles.join(",")}` : " lane:(none)";
+        const idle = child.status === "running" && child.lastSessionActivity
+          ? ` idle:${Math.max(0, Math.round((now() - child.lastSessionActivity) / 1000))}s`
+          : "";
+        const lane = (child.laneFiles.length ? ` lane:${child.laneFiles.join(",")}` : " lane:(none)") + idle;
         const ping = waiting.length ? ` WAITING:${waiting.map((e) => e.id).join(",")}` : "";
         return `- ${child.name} [${child.id}] ${child.scope} ${child.status}${budget}${lane}${watchdog}${ping}`;
       });
@@ -2818,8 +2975,11 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         description: "Required for 'accepted': concrete checked references (files inspected, commands run, artifact versions). Claims must be verified, not quoted from the child.",
       })),
       integration: Type.String({ description: "How the result is integrated or used; for 'abandoned', what was left behind and what cleanup remains." }),
+      overrides: Type.Optional(Type.Array(Type.String(), {
+        description: "Receipt issue codes you accept despite a BLOCKING mechanical finding (e.g. 'report-missing'), each justified in `summary`. Without them 'accepted' is refused while a blocking issue stands.",
+      })),
       defects: Type.Optional(Type.Array(Type.String(), {
-        description: "Required for 'changes-requested': name the acceptance criterion that was not met and what you observed. This list is what agent_spawn({ reworkOf }) hands the next child, so an empty one makes the rework a fresh spawn that never saw the first handoff.",
+        description: "Required for 'changes-requested'': name the acceptance criterion that was not met and what you observed. This list is what agent_spawn({ reworkOf }) hands the next child, so an empty one makes the rework a fresh spawn that never saw the first handoff.",
       })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -2841,6 +3001,18 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
             + "you ran, or an artifact version you read. A child's own summary is not evidence.",
           { error: "evidence-required", childId: params.childId, disposition: params.disposition },
         );
+      }
+      if (params.disposition === "accepted") {
+        const target = registry.getChildById(params.childId);
+        const blockers = unresolvedBlockers(target?.receipt, params.overrides ?? []);
+        if (blockers.length > 0) {
+          return text(
+            "Refused: the mechanical receipt shows the result cannot match its handoff:\n"
+              + blockers.map((b) => `- ${b.code}: ${b.detail}`).join("\n")
+              + "\nRecord changes-requested (defects) or abandoned — or, if you have a reason, accept with `overrides` naming each code and justify it in `summary`.",
+            { error: "receipt-blocking", childId: params.childId, blockers: blockers.map((b) => b.code) },
+          );
+        }
       }
       try {
         const child = registry.recordDisposition(owner, params.childId, {

@@ -27,7 +27,7 @@ Four rules. Each is enforced in code, not requested in a prompt.
    A wrong handoff is escalated with `agent_ping`, never corrected in place.
 3. **A child reports before it ends** — with an artifact (`report-<scope>-<n>`) or a
    tool call (`agent_progress`, `agent_ping`, `agent_done`). Silence is not a report:
-   a pane that ends without `agent_done` is `failed`, not `completed`.
+   a pane that ends without `agent_done` is `failed`, not `completed` (enforced for the `completed-user-exit` path; a missing `report-*` is a blocking receipt issue).
 4. **A parent never waits.** No `sleep`, no polling loop, no `tail -f`, no `!sleep`.
    The parent ends its turn; the child's completion, its question, or the watchdog
    re-triggers it. `lib/delegation/wait-guard.ts` refuses the command in a parent
@@ -193,6 +193,55 @@ This is enforced, not requested:
   `pnpm install`, long `git` operations) is never counted, even when repeated.
 - A repeated `agent_running` with no new event is answered with one line instead of
   the same page.
+
+## Health, failure and the result receipt
+
+All of this is machinery in the parent process (a 30s watchdog tick plus a settle
+hook). None of it is a tool call, and none of it needs the parent's turn to be live.
+
+**Health ping.** Each tick, per running child: pane liveness (`pane get`), the pane
+tail, the transcript mtime, and the transcript's last assistant turn
+(`lib/delegation/child-health.ts`). The pane cannot tell "working" from "stuck on a
+429" — a retry countdown changes the tail — but the child's own session file can.
+
+| Signal | Action |
+| --- | --- |
+| pane gone | row closed, parent told (`pane-gone`) |
+| herdr unreachable | never closes; after 6 blind ticks (~3 min) the parent is told once, and probing continues |
+| tail frozen **and** transcript frozen, 3 ticks | Esc + parked, parent told (`stall-detected`) |
+| wall-clock budget spent | Esc + parked, parent told (`budget-exceeded`) |
+| last assistant turn is an error that outlived pi's retry window and any provider retry-after | pane closed, row `failed` with the error class, parent told the remedy |
+
+**Failure classes** (`lib/delegation/child-error.ts`, patterns taken from real
+transcripts). A model error is a failure with a cause, **not** a question — the
+child's `Subagent halted:` sidecar used to open an escalation, i.e. a 429 was handled
+as something to answer.
+
+| Class | Examples | Remedy handed to the parent |
+| --- | --- | --- |
+| `transient` | 429 at capacity, Connection error, fetch failed, 502, no response headers | `agent_resume` the same session after the wait |
+| `quota` | usage limit reached, quota reached, hourly rate limit | do **not** resume the same model; resume with another `model` or ask the user |
+| `auth` | invalid credentials, 401/403 | the user must log in again |
+| `config` | provider not registered, model not supported | resume with a different model |
+| `aborted` | operation was aborted | never treated as a provider fault |
+
+**The receipt** (`lib/delegation/result-check.ts`). When a child settles, the parent
+computes a mechanical comparison of the result with the frozen handoff and stores it
+on the row; it is printed in the completion message.
+
+| Issue | Tier |
+| --- | --- |
+| `report-missing` — no `report-<scope>-<n>` sidecar | **blocking** |
+| `lane-violation` — a write/edit outside the lane (or any write with no lane) | **blocking** |
+| `no-clean-exit` — pane exited without `agent_done` (also makes the row `failed`) | **blocking** |
+| `ended-on-error` — last turn was a provider error | **blocking** |
+| `criterion-not-reported` — a frozen criterion's words are absent from the report | advisory |
+| `handoff-not-opened` — no `artifact_recall` of the handoff in the transcript | advisory |
+
+`agent_accept_result` refuses `accepted` while a blocking issue stands, unless the
+parent names each code in `overrides` and justifies it in `summary`.
+`changes-requested` and `abandoned` are never gated. The receipt proves the result
+*could* match the handoff; whether it does remains the parent's judgment.
 
 ## Escalation: child → parent → user
 
@@ -365,9 +414,13 @@ that registers one is stripped from the active set and refused at call time.
 
 ## Known limitations
 
-- The verdict gate is the **parent's own reading** of the report and the lane. There
-  is no transcript receipt check yet: nothing mechanically proves the child opened its
-  handoff, only that the document was written, frozen and recorded on the row.
+- The receipt is lexical where it must be: criterion coverage is a word-overlap check,
+  not understanding, which is why it is advisory. Lane checks see `write`/`edit`-style
+  tool calls only; a `bash` redirect can still write anywhere.
+- There is no automatic resume of a `transient` failure yet — the parent is told the
+  class and remedy and chooses. Auto-resume with backoff needs a context-free resume path.
+- The watchdog lives in the parent process: in a one-shot (`-p`) run the process exits
+  when the run ends and takes the watchdog with it.
 - `accepted` is evidence-checked in shape, not in truth: the parent attests that it
   inspected what it lists.
 - Harness isolation is not an OS sandbox. A child that escaped its `--tools`

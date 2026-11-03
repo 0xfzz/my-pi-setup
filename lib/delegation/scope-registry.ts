@@ -1,4 +1,6 @@
 import { lanesOverlap, normalizePath } from "./lane.ts";
+import type { ChildErrorClass } from "./child-error.ts";
+import type { ResultReceipt } from "./result-check.ts";
 
 /**
  * Why a child stopped. Present iff its status is terminal, so an audit can tell
@@ -145,6 +147,18 @@ export interface ScopedChild {
   lastContextWindow?: number;
   /** Watchdog trip state — persisted so a restart cannot replay a notice. */
   watchdog?: WatchdogState;
+  /**
+   * Mechanical receipt computed when the child settled: report present, lane
+   * respected, criteria mentioned, no trailing error. `agent_accept_result`
+   * refuses `accepted` while a blocking issue is unresolved.
+   */
+  receipt?: ResultReceipt;
+  /** Why the child failed, when the cause was a provider/model error. */
+  failure?: { class: ChildErrorClass; message: string; at: string };
+  /** Consecutive health probes that could not reach herdr (never a death certificate). */
+  probeFailures?: number;
+  /** True once the parent was told the probe has been blind for a while. */
+  probeAlerted?: boolean;
   /** How the child ended; present iff status is terminal. */
   closedAt?: string;
   closeReason?: CloseReason;
@@ -458,7 +472,7 @@ export class ScopeRegistry {
 
   public updateRuntime(
     sessionFile: string,
-    fields: Partial<Pick<ScopedChild, "lastTail" | "stallStrikes" | "lastTokens" | "lastContextWindow" | "lastSessionActivity">>
+    fields: Partial<Pick<ScopedChild, "lastTail" | "stallStrikes" | "lastTokens" | "lastContextWindow" | "lastSessionActivity" | "receipt" | "failure" | "probeFailures" | "probeAlerted">>
   ): ScopedChild | undefined {
     const child = this.childrenBySession.get(sessionFile);
     if (!child) return undefined;
