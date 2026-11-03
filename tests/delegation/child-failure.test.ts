@@ -11,8 +11,9 @@ import { join } from "node:path";
 import { classifyChildError, isHaltedPing, parseRetryAfterMs } from "../../lib/delegation/child-error.ts";
 import { errorIsTerminal, readChildHealth } from "../../lib/delegation/child-health.ts";
 import { checkResult, criterionMentioned, roundOfHandoff, unresolvedBlockers } from "../../lib/delegation/result-check.ts";
+import { retryDelayMs as autoResumeDelayMs } from "../../lib/delegation/recovery.ts";
 import { artifactSidecarPath } from "../../lib/artifact-state.ts";
-import agentExtension, { autoResumeDelayMs, autoResumeSeams, registry } from "../../extensions/agent.ts";
+import agentExtension, { autoResumeSeams, registry } from "../../extensions/agent.ts";
 import type { ScopedChild } from "../../lib/delegation/scope-registry.ts";
 
 describe("classifyChildError", () => {

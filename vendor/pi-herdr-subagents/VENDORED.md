@@ -53,14 +53,15 @@ files therefore include local work on context forking, progress control, termina
 shutdown and the workflow completion contract. The human-readable record of that work is
 in [`../../docs/patches/`](../../docs/patches/).
 
-Two behavioural changes made *in this repository* on top of the snapshot:
+Behavioural changes made *in this repository* on top of the snapshot:
 
 1. `src/launch.ts` — `SUBAGENT_CONTROL_TOOLS` now grants `todo_plan`, `todo_act` and
    `todo_next` alongside the deprecated `workflow_todo` shim. Without them every child
    launched with a restricted `tools:` profile lost the v2 todo surface while its prompt
    still told it to use it. See `tests/orchestrator-child-guard.test.ts` and the artifact
    `qa-orch-todo-investigation`.
-2. Type-only corrections so `npm run typecheck` is clean (no runtime change).
+2. `src/launch.ts` — `ResumeLaunchParams.model` and a `--model` argument on the resume argv, so a failed child can fail over to another model of its role pool.
+3. Type-only corrections so `npm run typecheck` is clean (no runtime change).
 
 ## Updating the snapshot
 

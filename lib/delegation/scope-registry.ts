@@ -3,6 +3,7 @@ import type { ChildErrorClass } from "./child-error.ts";
 import type { ResultReceipt } from "./result-check.ts";
 import type { EvidenceCheck } from "./verdict-check.ts";
 import type { TreeSignature } from "./git-changes.ts";
+import type { RecoveryState } from "./recovery.ts";
 
 /**
  * Why a child stopped. Present iff its status is terminal, so an audit can tell
@@ -159,6 +160,8 @@ export interface ScopedChild {
   receipt?: ResultReceipt;
   /** Why the child failed, when the cause was a provider/model error. */
   failure?: { class: ChildErrorClass; message: string; at: string };
+  /** Retry/failover bookkeeping for this work unit; persisted so a restart re-arms a pending recovery. */
+  recovery?: RecoveryState;
   /** Dirty-path signatures at spawn; the receipt diffs against it to see bash writes. */
   baselineTree?: TreeSignature;
   /** Consecutive health probes that could not reach herdr (never a death certificate). */
@@ -330,6 +333,9 @@ export class ScopeRegistry {
           }],
         };
       }
+      // A resume continues the SAME work: its baseline and recovery history travel.
+      child.baselineTree ??= existing.baselineTree;
+      child.recovery ??= existing.recovery;
       existing.status = "closed";
       existing.pendingPing = false;
       existing.closedAt = new Date().toISOString();
@@ -478,7 +484,7 @@ export class ScopeRegistry {
 
   public updateRuntime(
     sessionFile: string,
-    fields: Partial<Pick<ScopedChild, "lastTail" | "stallStrikes" | "lastTokens" | "lastContextWindow" | "lastSessionActivity" | "receipt" | "failure" | "probeFailures" | "probeAlerted" | "baselineTree">>
+    fields: Partial<Pick<ScopedChild, "lastTail" | "stallStrikes" | "lastTokens" | "lastContextWindow" | "lastSessionActivity" | "receipt" | "failure" | "probeFailures" | "probeAlerted" | "baselineTree" | "recovery">>
   ): ScopedChild | undefined {
     const child = this.childrenBySession.get(sessionFile);
     if (!child) return undefined;

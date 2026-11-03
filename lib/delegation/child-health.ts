@@ -18,6 +18,8 @@ import { classifyChildError, type ChildErrorVerdict } from "./child-error.ts";
 export interface ChildHealth {
   /** Last transcript write, ms epoch; null when the file is unreadable. */
   lastActivityAt: number | null;
+  /** `provider/model` of the last assistant turn, so a failure can be pinned to the model that had it. */
+  model?: string;
   /** The trailing provider error, when the last assistant turn failed. */
   error?: { message: string; verdict: ChildErrorVerdict; at: number | null };
 }
@@ -57,15 +59,19 @@ export function readChildHealth(sessionFile: string): ChildHealth {
     return { lastActivityAt };
   }
   const last = lastAssistant(entries);
+  const provider = last?.message?.provider;
+  const modelId = last?.message?.model;
+  const model = typeof provider === "string" && typeof modelId === "string" ? `${provider}/${modelId}` : undefined;
   if (last?.message?.stopReason === "error") {
     const message = String(last.message.errorMessage ?? "Model error (stopReason: error).");
     const at = Date.parse(last.timestamp ?? "");
     return {
       lastActivityAt,
+      ...(model ? { model } : {}),
       error: { message, verdict: classifyChildError(message), at: Number.isFinite(at) ? at : lastActivityAt },
     };
   }
-  return { lastActivityAt };
+  return { lastActivityAt, ...(model ? { model } : {}) };
 }
 
 /**

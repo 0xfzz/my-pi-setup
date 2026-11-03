@@ -626,6 +626,8 @@ export interface ResumeLaunchParams {
   name?: string;
   message?: string;
   autoExit?: boolean;
+  /** Resume on a different model (`provider/model`) — failover after a quota/config failure. */
+  model?: string;
 }
 
 /**
@@ -692,6 +694,7 @@ export function buildResumeLaunchPlan(
   const piBin = env.PI_HERDR_PI_BIN ?? (ctx.resolvePiBin ?? defaultResolvePiBin)(env);
   const orchChildPath = ctx.orchChildPath ?? join(PACKAGE_ROOT, "orch-child.ts");
   const piArgv: string[] = [piBin, "--session", params.sessionPath, "-e", orchChildPath];
+  if (params.model) piArgv.push("--model", params.model);
 
   let resumeMessageFile: string | null = null;
   if (params.message) {

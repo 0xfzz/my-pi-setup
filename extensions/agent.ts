@@ -45,6 +45,7 @@ import { MAX_REWORK_ROUNDS } from "../lib/delegation/admission.ts";
 import { isWaitGuardTool, waitCommandProblem } from "../lib/delegation/wait-guard.ts";
 import { hasLiveDelegation, setDelegationProbe } from "../lib/delegation/live.ts";
 import { classifyChildError, isHaltedPing, HALTED_PREFIX } from "../lib/delegation/child-error.ts";
+import { decideRecovery, emptyRecovery, MAX_FAILOVERS, MAX_RETRIES_PER_MODEL, type RecoveryState } from "../lib/delegation/recovery.ts";
 import { errorIsTerminal, readChildHealth } from "../lib/delegation/child-health.ts";
 import { attributeChanges, changedSince, snapshotTree } from "../lib/delegation/git-changes.ts";
 import { checkVerdicts, checkEvidence } from "../lib/delegation/verdict-check.ts";
@@ -254,12 +255,6 @@ export interface DelegationDeps {
  * `null` until then, so a test cannot silently exercise an uninitialised tick.
  */
 export const autoResumeSeams: { run: ((sessionFile: string) => Promise<void>) | null } = { run: null };
-
-/** Backoff for the Nth automatic resume: exponential from 15s, never below the provider's wait, capped at 10m. */
-export function autoResumeDelayMs(attempt: number, retryAfterMs?: number): number {
-  const exponential = 15_000 * 2 ** Math.max(0, attempt);
-  return Math.min(10 * 60_000, Math.max(exponential, (retryAfterMs ?? 0) + 5_000));
-}
 
 export const watchdogSeams: { tick: (() => Promise<void>) | null } = { tick: null };
 
@@ -1037,68 +1032,114 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
    * Input is `getWatchdogChildren()` (running only): a tripped or ping-paused
    * child is waiting on a decision, not on a timer.
    */
-  const MAX_AUTO_RESUMES = 3;
-  /** Failed-then-resumed attempts per session file, so the loop is bounded. */
-  const autoResumeAttempts = new Map<string, number>();
-  /** Session files with a retry pending: they are still "in flight" to every gate. */
+  /** Session files with a recovery pending: they are still "in flight" to every gate. */
   const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  function scheduleAutoResume(running: RunningSubagent, scope: string, attempt: number, delayMs: number, why: string): void {
-    autoResumeAttempts.set(running.sessionFile, attempt);
-    const timer = setTimeout(() => {
-      retryTimers.delete(running.sessionFile);
-      void runAutoResume(running.sessionFile).catch(() => {});
-    }, delayMs);
-    (timer as any).unref?.();
-    retryTimers.set(running.sessionFile, timer);
+  /** Models of this child's role pool that resolve and have credentials, in preference order. */
+  function failoverCandidates(row: ScopedChild): string[] {
+    const ctx = lastCtx;
+    if (!ctx) return [];
+    try {
+      const role: ChildRole = row.purpose === "research" ? "planner" : "worker";
+      const binding = normalizeRoleModels(loadSubagentSettings(ctx.cwd).roleModels)[role];
+      if (!binding || binding === "inherit") return [];
+      const registryPort = roleModelRegistry(ctx);
+      return (Array.isArray(binding) ? binding : [binding])
+        .filter((ref) => registryPort.has(ref.provider, ref.model) && registryPort.hasAuth(ref.provider, ref.model))
+        .map((ref) => `${ref.provider}/${ref.model}`);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Arm a recovery (retry or failover) for a failed row. The decision is persisted
+   * on the row (`recovery.dueAt`), so a restart re-arms it instead of forgetting it.
+   */
+  function scheduleRecovery(row: ScopedChild, state: RecoveryState, why: string): void {
+    const delayMs = Math.max(0, (state.dueAt ?? now()) - now());
+    registry.updateRuntime(row.sessionFile, { recovery: state });
+    persistState();
+    armRecoveryTimer(row.sessionFile, delayMs);
     // Visible, but it does not trigger a turn: the parent stays idle.
     pi.sendMessage(
       {
         customType: "subagent_result",
         content:
-          `Child "${running.name}" (scope: ${scope}) hit a transient model error (${why.slice(0, 120)}). `
-          + `Auto-resume ${attempt}/${MAX_AUTO_RESUMES} in ~${Math.ceil(delayMs / 1000)}s. No action needed.`,
+          `Child "${row.name}" (scope: ${row.scope}) failed (${why.slice(0, 120)}). `
+          + (state.action === "failover"
+            ? `Failing over to ${state.model} in ~${Math.ceil(delayMs / 1000)}s (failover ${state.failovers + 1}/${MAX_FAILOVERS}). `
+            : `Retrying the same model in ~${Math.ceil(delayMs / 1000)}s (retry ${state.attempts}/${MAX_RETRIES_PER_MODEL}). `)
+          + "No action needed.",
         display: true,
-        details: { id: running.id, name: running.name, scope, reason: "auto-resume-scheduled", attempt, delayMs },
+        details: { id: row.id, name: row.name, scope: row.scope, reason: "recovery-scheduled", action: state.action, model: state.model, delayMs },
       },
       { triggerTurn: false },
     );
   }
 
-  /** Resume a failed child after backoff. Exposed to tests via `watchdogSeams`. */
-  async function runAutoResume(sessionFile: string): Promise<void> {
+  function armRecoveryTimer(sessionFile: string, delayMs: number): void {
+    const existing = retryTimers.get(sessionFile);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      retryTimers.delete(sessionFile);
+      void runRecovery(sessionFile).catch(() => {});
+    }, delayMs);
+    (timer as any).unref?.();
+    retryTimers.set(sessionFile, timer);
+  }
+
+  /** Re-arm recoveries that were pending when the previous process ended. */
+  function rearmPendingRecoveries(): number {
+    let armed = 0;
+    for (const row of registry.getAllChildren()) {
+      if (row.status !== "failed" || row.accountability?.disposition !== "pending" || !row.recovery?.dueAt) continue;
+      armRecoveryTimer(row.sessionFile, Math.max(0, row.recovery.dueAt - now()));
+      armed++;
+    }
+    return armed;
+  }
+
+  /** Resume a failed child after backoff, on the same model or the failover model. */
+  async function runRecovery(sessionFile: string): Promise<void> {
     const row = registry.getChildBySession(sessionFile);
     const ctx = lastCtx;
     // Only a still-failed, still-unjudged row is resumed: a parent that already
     // closed, superseded or dispositioned it has taken the decision back.
-    if (!ctx || !row || row.status !== "failed" || row.accountability?.disposition !== "pending") {
-      autoResumeAttempts.delete(sessionFile);
-      return;
-    }
-    const attempt = autoResumeAttempts.get(sessionFile) ?? 1;
+    if (!ctx || !row || row.status !== "failed" || row.accountability?.disposition !== "pending" || !row.recovery?.dueAt) return;
+    const state = row.recovery;
+    const failover = state.action === "failover" && state.model;
     const result: any = await startResume(ctx, {
       sessionPath: sessionFile,
-      message:
-        `Your previous request failed with a transient provider error (${row.failure?.message.slice(0, 160) ?? "unknown"}). `
-        + `This is automatic retry ${attempt} of ${MAX_AUTO_RESUMES}. Continue exactly where you left off; do not restart the task.`,
+      message: failover
+        ? `Your previous model (${state.tried.at(-1) ?? "unknown"}) failed (${row.failure?.message.slice(0, 160) ?? "unknown"}). `
+          + `You are now running on ${state.model}. Continue exactly where you left off; do not restart the task.`
+        : `Your previous request failed with a transient provider error (${row.failure?.message.slice(0, 160) ?? "unknown"}). `
+          + `This is automatic retry ${state.attempts} of ${MAX_RETRIES_PER_MODEL}. Continue exactly where you left off; do not restart the task.`,
       name: row.name,
       autoExit: row.autoExit ?? true,
+      ...(failover ? { model: state.model } : {}),
     });
     if (result?.details?.error) {
       // Could not start (e.g. herdr unreachable): wake the parent — machinery is out of options.
+      registry.updateRuntime(sessionFile, { recovery: { ...state, dueAt: undefined, action: undefined, model: undefined } });
       pi.sendMessage(
         {
           customType: "subagent_result",
-          content: `Auto-resume of "${row.name}" (scope: ${row.scope}) could not start: ${result.details.error}. `
+          content: `Automatic recovery of "${row.name}" (scope: ${row.scope}) could not start: ${result.details.error}. `
             + `Its result is FAILED and pending your review; resume it yourself with agent_resume or close it.`,
           display: true,
           details: { id: row.id, name: row.name, scope: row.scope, reason: "auto-resume-failed", error: result.details.error },
         },
         { triggerTurn: true, deliverAs: "followUp" },
       );
+    } else {
+      // The resumed row carries the history; the schedule itself is consumed.
+      const resumed = registry.getChildBySession(sessionFile);
+      if (resumed?.recovery) registry.updateRuntime(sessionFile, { recovery: { ...resumed.recovery, dueAt: undefined, action: undefined, model: undefined } });
     }
   }
-  autoResumeSeams.run = runAutoResume;
+  autoResumeSeams.run = runRecovery;
 
   /** A live pane whose transcript ended on an error nothing is retrying any more. */
   async function failStuckChild(child: ScopedChild, message: string): Promise<void> {
@@ -1304,6 +1345,8 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     publishDashboard();
     const restored = await reconcileRestoredChildren();
     const swept = await sweepOrphanPanes();
+    // A recovery that was pending when the last process ended is armed again.
+    rearmPendingRecoveries();
     startWatchdog();
     const parked = registry.getRunningChildren().filter((c) => c.status === "blocked");
     ctx.ui.notify(
@@ -1326,7 +1369,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     lastCtx = null;
     for (const timer of retryTimers.values()) clearTimeout(timer);
     retryTimers.clear();
-    autoResumeAttempts.clear();
     resetPollFingerprints();
     // The probe closes over this session's registry; a disposed session must not
     // keep answering for the next one.
@@ -1538,17 +1580,35 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     });
     persistState();
 
-    // Transient failures are handled by machinery, silently: the parent is not
-    // woken (it generates nothing) until the retry budget is spent.
-    const attempt = autoResumeAttempts.get(running.sessionFile) ?? 0;
-    if (verdict.retryable && attempt < MAX_AUTO_RESUMES && lastCtx && !isChildSession) {
-      const delay = autoResumeDelayMs(attempt, verdict.retryAfterMs);
-      scheduleAutoResume(running, scope, attempt + 1, delay, rawMessage);
-      return;
+    // Recovery is machinery, not a parent decision: retry a transient error on the
+    // same model, fail over to the role pool when the MODEL is the problem, and only
+    // wake the parent when nothing is left to try.
+    let exhausted = "";
+    if (row && lastCtx && !isChildSession) {
+      const health = readChildHealth(running.sessionFile);
+      const state: RecoveryState = { ...(row.recovery ?? emptyRecovery()) };
+      if (health.model && !state.tried.includes(health.model)) state.tried = [...state.tried, health.model];
+      const decision = decideRecovery({
+        errorClass: verdict.class,
+        retryAfterMs: verdict.retryAfterMs,
+        state,
+        candidates: failoverCandidates(row),
+      });
+      if (decision.action === "retry") {
+        scheduleRecovery(row, { ...state, attempts: decision.attempt, action: "retry", dueAt: now() + decision.delayMs, model: undefined }, rawMessage);
+        return;
+      }
+      if (decision.action === "failover") {
+        scheduleRecovery(
+          row,
+          { ...state, attempts: 0, failovers: state.failovers + 1, action: "failover", model: decision.model, dueAt: now() + decision.delayMs },
+          rawMessage,
+        );
+        return;
+      }
+      registry.updateRuntime(running.sessionFile, { recovery: state });
+      exhausted = verdict.class === "aborted" ? "" : `Automatic recovery stopped: ${decision.reason}. `;
     }
-    const exhausted = verdict.retryable && attempt >= MAX_AUTO_RESUMES
-      ? `Automatic resume gave up after ${attempt} attempt(s) with backoff. `
-      : "";
     const wait = verdict.retryAfterMs ? ` Provider asked for ~${Math.ceil(verdict.retryAfterMs / 1000)}s.` : "";
     pi.sendMessage(
       {
@@ -1633,7 +1693,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     // Rule 3: a pane that ends without `agent_done` is `failed`, not `completed`.
     // `completed-user-exit` is exactly that case; it used to be reported as done.
     const completed = outcome.kind === "completed";
-    if (completed) autoResumeAttempts.delete(running.sessionFile);
+    if (completed) registry.updateRuntime(running.sessionFile, { recovery: undefined });
     registry.updateStatus(running.sessionFile, completed ? "completed" : "failed", { pendingPing: false });
     // The mechanical receipt: compare the result with the handoff before the parent
     // reads a word of the child's own summary.
@@ -2466,7 +2526,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
    */
   async function startResume(
     ctx: ExtensionContext,
-    params: { sessionPath: string; message?: string; name?: string; autoExit?: boolean },
+    params: { sessionPath: string; message?: string; name?: string; autoExit?: boolean; model?: string },
   ) {
     lastCtx = ctx;
     const child = registry.getChildBySession(params.sessionPath);
@@ -2543,6 +2603,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           message: params.message,
           name: params.name ?? child?.name ?? "Resumed Subagent",
           autoExit: params.autoExit ?? true,
+          ...(params.model ? { model: params.model } : {}),
         },
         {
           sessionDir: ctx.sessionManager.getSessionDir(),
@@ -2761,6 +2822,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       message: Type.Optional(Type.String({ description: "Follow-up message, answer, or correction." })),
       name: Type.Optional(Type.String({ description: "Display name." })),
       autoExit: Type.Optional(Type.Boolean({ description: "Whether the child auto-exits when its turn completes." })),
+      model: Type.Optional(Type.String({ description: "Resume on a different model (provider/model) — use after a quota/config failure." })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       return startResume(ctx, params);
@@ -3341,6 +3403,18 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
   // loops and nothing reports success that was never verified. Active children
   // are deliberate abstention: they re-trigger the parent by themselves, so a
   // settle with live work yields instead of forging ahead.
+  const headlessWaitDisabled = process.env.PI_DELEGATION_NO_HEADLESS_WAIT === "1";
+  /** Longest a headless parent holds its run open for children (6h). */
+  const HEADLESS_WAIT_MAX_MS = 6 * 60 * 60 * 1000;
+
+  async function waitForChildrenToSettle(): Promise<void> {
+    const deadline = now() + HEADLESS_WAIT_MAX_MS;
+    while (now() < deadline && (registry.getActiveChildren().length > 0 || retryTimers.size > 0)) {
+      // A ref'd timer on purpose: it is what keeps a one-shot process alive.
+      await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+
   /** Accepted-lane sets that already got their one integration continuation. */
   const integrationNotified = new Set<string>();
 
@@ -3396,6 +3470,12 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       ? (ctx as any).sessionManager.getSessionId()
       : ownerSessionId;
     if (!owner) return;
+    // Headless runs (`pi -p`, json, rpc without a UI) exit the moment the run
+    // settles, taking the watchdog, the recovery timers and every child's report
+    // with them. Hold the settle open — in a loop over in-memory state, no model
+    // call — until nothing is in flight; the children's own messages are already
+    // queued by then, so the final turn sees every report.
+    if ((ctx as any)?.hasUI === false && !headlessWaitDisabled) await waitForChildrenToSettle();
     if (registry.getActiveChildren().length > 0) return;
     // A child waiting out a backoff is in flight: it will resume by itself, and
     // asking the parent to "review" its failed attempt now would make it generate.
