@@ -188,6 +188,39 @@ describe("agent_accept_result honours the receipt", () => {
   });
 });
 
+describe("agent_accept_result binds the verdict to frozen criteria", () => {
+  it("requires a verdict per criterion and verifies the evidence", async () => {
+    registry.resetForTests();
+    const tools = new Map<string, any>();
+    agentExtension(
+      { registerTool: (t: any) => tools.set(t.name, t), registerCommand() {}, on() {}, getAllTools: () => [], events: undefined } as any,
+      { client: {} as any, stream: { watch: () => () => {}, onReconcile: () => () => {} } },
+    );
+    const cwd = mkdtempSync(join(tmpdir(), "accept-cwd-"));
+    writeFileSync(join(cwd, "out.md"), "findings");
+    const ctx: any = { cwd, sessionManager: { getSessionId: () => "sess-owner", getBranch: () => [] } };
+    const run = (args: object) => tools.get("agent_accept_result").execute("t", args, undefined, undefined, ctx);
+    registry.registerChild({
+      id: "bc-1", name: "R", scope: "topic", sessionFile: "/tmp/bind-criteria/bc-1.jsonl", status: "running",
+      laneFiles: [], lastMilestoneFiles: [], updatedAt: "2026-01-01", frozenCriteria: ["names three sources", "states the limits"],
+      accountability: { ownerSessionId: "sess-owner", batchId: "b", workUnitKey: "u", delegationReason: "r", reviewPlan: "p", resultRevision: 0, disposition: "pending", reviews: [], attempts: [] },
+    } as ScopedChild);
+    registry.updateStatus("/tmp/bind-criteria/bc-1.jsonl", "completed");
+    const base = { childId: "bc-1", disposition: "accepted", resultRevision: 1, summary: "read it", integration: "used in the memo" };
+
+    assert.equal((await run({ ...base, evidence: ["out.md"] })).details.error, "criteria-required");
+    const bad = await run({ ...base, criteria: [{ criterion: "1", met: true, evidence: ["out.md"] }] });
+    assert.equal(bad.details.error, "verdict-invalid");
+    const good = await run({ ...base, criteria: [
+      { criterion: "1", met: true, evidence: ["out.md"] },
+      { criterion: "2", met: true, evidence: ["out.md:1"] },
+    ] });
+    assert.match(String(good.content[0].text), /dispositioned: accepted/, String(good.content[0].text));
+    const review = registry.getChildById("bc-1")!.accountability!.reviews.at(-1)!;
+    assert.equal(review.criteria?.length, 2);
+  });
+});
+
 describe("auto-resume of transient failures", () => {
   it("backs off exponentially, honours the provider's wait, and is capped", () => {
     assert.equal(autoResumeDelayMs(0), 15_000);

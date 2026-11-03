@@ -46,6 +46,7 @@ import { isWaitGuardTool, waitCommandProblem } from "../lib/delegation/wait-guar
 import { hasLiveDelegation, setDelegationProbe } from "../lib/delegation/live.ts";
 import { classifyChildError, isHaltedPing, HALTED_PREFIX } from "../lib/delegation/child-error.ts";
 import { errorIsTerminal, readChildHealth } from "../lib/delegation/child-health.ts";
+import { checkVerdicts, checkEvidence } from "../lib/delegation/verdict-check.ts";
 import { checkResult, renderReceipt, unresolvedBlockers } from "../lib/delegation/result-check.ts";
 import { noteInspection, POLL_GUARD_REASON, resetInspectionCounts } from "../lib/delegation/poll-guard.ts";
 import {
@@ -54,7 +55,7 @@ import {
   renderHandoffDocument,
   reportArtifactId,
 } from "../lib/delegation/handoff-artifact.ts";
-import { artifactSidecarPath, type Artifact } from "../lib/artifact-state.ts";
+import { artifactSidecarPath, recordsFromBranch, type Artifact } from "../lib/artifact-state.ts";
 import { writeSidecarArtifact } from "../lib/artifact-state.ts";
 import {
   ScopeRegistry,
@@ -3154,6 +3155,11 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         description: "Required for 'accepted': concrete checked references (files inspected, commands run, artifact versions). Claims must be verified, not quoted from the child.",
       })),
       integration: Type.String({ description: "How the result is integrated or used; for 'abandoned', what was left behind and what cleanup remains." }),
+      criteria: Type.Optional(Type.Array(Type.Object({
+        criterion: Type.String({ description: "1-based number (or exact text) of a frozen acceptance criterion." }),
+        met: Type.Boolean({ description: "Did the result satisfy it, by YOUR check?" }),
+        evidence: Type.Array(Type.String(), { description: "References that prove it: a file path (checked to exist), an artifact id (checked to exist), a command you ran, a URL." }),
+      }), { description: "REQUIRED for 'accepted' whenever the handoff has acceptance criteria: one verdict per criterion. An unmet criterion cannot be accepted." })),
       overrides: Type.Optional(Type.Array(Type.String(), {
         description: "Receipt issue codes you accept despite a BLOCKING mechanical finding (e.g. 'report-missing'), each justified in `summary`. Without them 'accepted' is refused while a blocking issue stands.",
       })),
@@ -3174,7 +3180,59 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           error: "no-owner-session",
         });
       }
-      if (params.disposition === "accepted" && (!params.evidence || params.evidence.length === 0)) {
+      // ── the verdict is bound to the handoff ──────────────────────────────
+      // A frozen criterion list means every criterion gets its own verdict, and the
+      // evidence is checked where it can be (paths and artifacts must exist). The
+      // flattened references also satisfy the legacy "some evidence" rule below.
+      let criteriaChecks: ReturnType<typeof checkVerdicts>["checks"] | undefined;
+      let evidenceRefs = (params.evidence ?? []).map((e) => e.trim()).filter(Boolean);
+      if (params.disposition === "accepted") {
+        const target = registry.getChildById(params.childId);
+        const frozen = target?.frozenCriteria ?? [];
+        const cwd = (ctx as any)?.cwd ?? process.cwd();
+        const artifactExists = (id: string): boolean => {
+          if (target && existsSync(artifactSidecarPath(target.sessionFile, id))) return true;
+          const parentFile = (ctx as any)?.sessionManager?.getSessionFile?.();
+          if (typeof parentFile === "string" && existsSync(artifactSidecarPath(parentFile, id))) return true;
+          return recordsFromBranch(branchOf(ctx as ExtensionContext)).has(id);
+        };
+        if (frozen.length > 0) {
+          if (!params.criteria?.length) {
+            return text(
+              "Refused: this handoff froze " + frozen.length + " acceptance criteria, so 'accepted' needs a verdict for EACH in `criteria` "
+                + "(criterion = its 1-based number, met, evidence). Criteria:\n"
+                + frozen.map((c, i) => `${i + 1}. ${c}`).join("\n"),
+              { error: "criteria-required", childId: params.childId, criteria: frozen },
+            );
+          }
+          const judged = checkVerdicts({
+            frozen,
+            verdicts: params.criteria.map((v) => ({ criterion: String(v.criterion), met: v.met === true, evidence: v.evidence ?? [] })),
+            cwd,
+            artifactExists,
+            overrides: params.overrides ?? [],
+          });
+          if (judged.problems.length > 0) {
+            return text(
+              "Refused: the verdicts do not bind to the handoff:\n" + judged.problems.map((p) => `- ${p.code}: ${p.detail}`).join("\n"),
+              { error: "verdict-invalid", childId: params.childId, problems: judged.problems.map((p) => p.code) },
+            );
+          }
+          criteriaChecks = judged.checks;
+          evidenceRefs = [...new Set([...evidenceRefs, ...judged.checks.flatMap((c) => c.evidence.map((e) => e.ref))])];
+        } else if (evidenceRefs.length > 0) {
+          // No frozen criteria (open-ended research, say): still refuse a reference
+          // that provably does not exist.
+          const failed = checkEvidence(evidenceRefs, { cwd, artifactExists }).filter((e) => e.kind === "failed");
+          if (failed.length > 0) {
+            return text(
+              "Refused: evidence that does not check out:\n" + failed.map((f) => `- "${f.ref}": ${f.why}`).join("\n"),
+              { error: "evidence-failed", childId: params.childId },
+            );
+          }
+        }
+      }
+      if (params.disposition === "accepted" && evidenceRefs.length === 0) {
         return text(
           "Refused: 'accepted' requires at least one checked evidence reference — a file you inspected, a command "
             + "you ran, or an artifact version you read. A child's own summary is not evidence.",
@@ -3198,8 +3256,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           disposition: params.disposition,
           resultRevision: params.resultRevision,
           summary: params.summary.trim(),
-          evidence: (params.evidence ?? []).map((e) => e.trim()).filter(Boolean),
+          evidence: evidenceRefs,
           integration: params.integration.trim(),
+          ...(criteriaChecks ? { criteria: criteriaChecks } : {}),
           ...(params.defects?.length
             ? { defects: params.defects.map((defect) => String(defect).trim()).filter(Boolean) }
             : {}),

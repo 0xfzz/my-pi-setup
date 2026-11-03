@@ -1,6 +1,7 @@
 import { lanesOverlap, normalizePath } from "./lane.ts";
 import type { ChildErrorClass } from "./child-error.ts";
 import type { ResultReceipt } from "./result-check.ts";
+import type { EvidenceCheck } from "./verdict-check.ts";
 
 /**
  * Why a child stopped. Present iff its status is terminal, so an audit can tell
@@ -58,6 +59,8 @@ export interface ResultDisposition {
    * forgot the first brief, which is the failure this field exists to prevent.
    */
   defects?: string[];
+  /** Per-criterion verdicts as checked at the time: what was verified, what was only attested. */
+  criteria?: Array<{ index: number; criterion: string; met: boolean; evidence: EvidenceCheck[] }>;
   at: string;
 }
 
