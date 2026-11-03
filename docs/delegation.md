@@ -13,6 +13,39 @@
 Both modes have both roles: Normal and Plan can each spawn, and a child is a child in
 either one.
 
+## General purpose: not just coding
+
+Delegation is a general parent → child mechanism. Code is one kind of work. A child
+can research a question, draft a document, analyse a dataset, review another child's
+output, or compare options — anything that can be stated as a **handoff**, delivered as
+a **report**, and judged against **criteria**. The machinery never assumes a repository:
+
+| Concern | Code work | Research / writing / analysis |
+| --- | --- | --- |
+| Handoff | assignment + `laneFiles` + criteria | assignment + criteria; **no lane** |
+| Deliverable | changed files + `report-<scope>-<n>` | the report artifact itself (and any artifacts it cites) |
+| Evidence the parent cites | file paths, commands | artifact ids, source URLs, paths |
+| Receipt | report present, no write outside the lane (tool calls **and** the working tree) | report present, no workspace write at all |
+| Child tools | `worker` | `planner` (read-only, `web_research`, `web_read`, `shell_read`) or a `tools` list you choose |
+
+A child with no lane is read-only by construction: any workspace write is a blocking
+receipt issue, whichever tool made it. Worked examples:
+
+```text
+agent_spawn({ agents: [
+  { name: "market", role: "planner", task: "Summarise the three leading approaches to X with sources",
+    delegationReason: "independent research lane",
+    acceptanceCriteria: ["names at least three approaches", "every claim cites a source", "states what is unknown"] },
+  { name: "legal",  role: "planner", task: "List regulatory constraints on X in the EU",
+    delegationReason: "independent research lane",
+    acceptanceCriteria: ["each constraint cites the regulation", "flags where counsel is needed"] },
+] })
+```
+
+Both lanes start in that one call, the run ends, and each report wakes the parent. The
+parent accepts with one verdict per criterion, citing the report artifact (verified to
+exist) and the sources (recorded as attested).
+
 ## Behaviour
 
 Four rules. Each is enforced in code, not requested in a prompt.
@@ -246,16 +279,55 @@ on the row; it is printed in the completion message.
 
 `agent_accept_result` refuses `accepted` while a blocking issue stands, unless the
 parent names each code in `overrides` and justifies it in `summary`.
+
+**The verdict binds to the handoff** (`lib/delegation/verdict-check.ts`). When the
+handoff froze acceptance criteria, `accepted` needs `criteria: [{ criterion, met,
+evidence }]` — one verdict per frozen criterion (1-based number or exact text). An
+uncovered criterion, an unknown one, or `met: false` is refused (an unmet criterion is
+`changes-requested`). Evidence is checked where it can be: a path must exist inside the
+working directory, an artifact id must exist; a command, a URL or free text is recorded
+as **attested** and never as verified. Each met criterion needs one verified reference
+unless `evidence-unverifiable` is overridden with a reason. The per-criterion checks
+are stored on the disposition. Once every lane is accepted the parent is owed **one
+integration check** (`integration_owed`, once per accepted set), with any working-tree
+change no accepted lane owns listed.
 `changes-requested` and `abandoned` are never gated. The receipt proves the result
 *could* match the handoff; whether it does remains the parent's judgment.
 
-**Auto-resume.** A `transient` failure is resumed by machinery, not by the parent: up
-to 3 attempts, backoff `15s·2ⁿ` (never less than the provider's stated wait, capped at
-10 min), each with a "continue where you left off" message. The row is `failed` while
-it waits, but the settle hook treats a pending retry as in flight, so the parent is
-**not** woken to "review" it. The parent hears about it only when the budget is
-spent or the resume cannot start. `quota`, `auth`, `config` and `unknown` are never
-retried — they wake the parent with the class remedy.
+**Working-tree check.** The receipt also catches writes made through `bash` (`sed -i`,
+`>`, a generator script). A signature of every dirty path is taken at spawn and diffed
+at settle (`lib/delegation/git-changes.ts`). A change is held against a child only when
+neither its own lane, a sibling's lane, nor the parent's recorded writes account for it
+(`unowned-change`, blocking); if the parent also ran shell commands in the window it
+is advisory, because it may be the parent's doing. A directory that is not a git
+repository yields no finding — unknown, never "clean".
+
+**Recovery** (`lib/delegation/recovery.ts`) — machinery, not a parent decision, and the
+parent is not woken for any of it:
+
+1. `transient` → retry the same model, up to 3 times, backoff `15s·2ⁿ` (never below the
+   provider's stated wait, capped at 10 min).
+2. The model is the problem (`quota`, `config`, `auth`, or `transient` that keeps
+   failing) → **fail over**: resume the same session on the next usable model of the
+   role's pool (`/agent-model`), skipping every model that already failed this work
+   unit, at most 3 failovers.
+3. Nothing left (no pool, pool exhausted, cap reached) or an unclassifiable failure →
+   wake the parent with the class remedy and the reason recovery stopped.
+
+The schedule is persisted on the row (`recovery.dueAt`) and re-armed at session start;
+the history (models tried, retries, failovers) travels across resumes. The row is
+`failed` while it waits, but the settle hook treats a pending recovery as in flight.
+A parent can still fail over by hand: `agent_resume({ sessionPath, model })`.
+
+**Headless runs.** In `pi -p` / json / rpc without a UI the run would exit the moment it
+settles, taking the watchdog and the recovery timers with it. `agent_before_settle`
+holds the run open (a loop over in-memory state, **no model call**, capped at 6h,
+`PI_DELEGATION_NO_HEADLESS_WAIT=1` disables it) until no child or recovery is in
+flight; the children's reports are queued by then, so the final turn sees them.
+
+**Budget.** `budgetMinutes` is the **soft** limit. A child whose transcript is still
+being written at the soft limit keeps running (the parent is told once, no turn) up to
+4× the budget; a quiet child is interrupted at the soft limit as before.
 
 ## Escalation: child → parent → user
 
@@ -428,16 +500,20 @@ that registers one is stripped from the active set and refused at call time.
 
 ## Known limitations
 
-- The receipt is lexical where it must be: criterion coverage is a word-overlap check,
-  not understanding, which is why it is advisory. Lane checks see `write`/`edit`-style
-  tool calls only; a `bash` redirect can still write anywhere.
-- The watchdog lives in the parent process: in a one-shot (`-p`) run the process exits
-  when the run ends and takes the watchdog with it.
-- `accepted` is evidence-checked in shape, not in truth: the parent attests that it
-  inspected what it lists.
+- Criterion coverage in the receipt is a word-overlap check, not understanding — which
+  is why it is advisory. The binding check is the parent's per-criterion verdict.
+- `attested` evidence (commands, URLs, free text) is the parent's own observation. The
+  gate guarantees every criterion has a verdict and at least one *verifiable* reference,
+  not that the claim is true.
+- Working-tree attribution is a signature diff of dirty paths: it needs git, cannot tell
+  two children apart when their lanes overlap (admission refuses that), and downgrades
+  to advisory when the parent also ran shell commands.
+- Failover needs a bound role pool with credentials (`/agent-model`); with `inherit`
+  there is nothing to fail over to and the parent is woken instead.
+- Recovery timers re-arm after a restart only when the parent session itself resumes;
+  nothing revives a parent that is gone.
+- The headless hold is an in-process loop capped at 6 hours.
 - Harness isolation is not an OS sandbox. A child that escaped its `--tools`
   allowlist would still be a process with the parent's UID.
-- The watchdog and registry are per process; a restarted session reconciles from the
-  sidecar but cannot vouch for work it did not observe.
 
 Tests: `node --test tests/delegation/*.test.ts`.

@@ -110,7 +110,7 @@ export interface HandoffDocumentInput {
 export function renderHandoffDocument(input: HandoffDocumentInput): string {
   const lane = input.laneFiles?.length
     ? input.laneFiles.map(file => `- \`${file}\``).join("\n")
-    : "_No lane declared._ Do not modify files; report what you found and what would need to change.";
+    : "_No lane declared._ Do not modify files in the workspace; put your findings, drafts or analysis in your report artifact and say what would need to change.";
   const outOfLane = input.outOfLaneFiles?.length
     ? input.outOfLaneFiles.map(file => `- \`${file}\``).join("\n")
     : undefined;
@@ -119,7 +119,7 @@ export function renderHandoffDocument(input: HandoffDocumentInput): string {
     : "_No acceptance criteria declared._ Say what you verified and how.";
   const role = input.role === "research"
     ? "You are a research child: inspect, read and report. Do not modify files."
-    : "You are an implementation child. Change only what this handoff and the lane allow.";
+    : "You are a worker child. Do exactly the work this handoff describes — writing, analysis, data work, a draft, a change to files — and touch only what the handoff and the lane allow. Your deliverable is what the handoff names; your report artifact proves it.";
   const budget = typeof input.budgetMinutes === "number" && input.budgetMinutes > 0
     ? `You have about ${input.budgetMinutes} minutes. When the budget runs out the parent is interrupted and decides what happens next.`
     : undefined;
@@ -229,7 +229,7 @@ export function buildHandoffTicket(input: {
     : "";
   const role = input.role === "research"
     ? "You are a research child: inspect, read and report. Do not modify files."
-    : "You are an implementation child. Change only what the handoff and the lane allow.";
+    : "You are a worker child. Do exactly the work the handoff describes and touch only what it and the lane allow.";
 
   return `# Work unit: ${input.scope} (round ${round})
 

@@ -118,6 +118,15 @@ describe("result receipt", () => {
     assert.deepEqual(receipt.issues, []);
   });
 
+  it("a non-code child (no lane, report only) is clean and needs no workspace write", () => {
+    const receipt = child({
+      lane: [],
+      report: "The retry budget is configurable (see source 2). Errors are logged; limits stated in section 4.",
+      calls: [call("artifact_recall", { id: "handoff-api-1" }), call("web_research", { query: "retry budgets" })],
+    });
+    assert.deepEqual(receipt.issues, []);
+  });
+
   it("no report is blocking", () => {
     const receipt = child({ calls: [call("artifact_recall", { id: "handoff-api-1" })] });
     assert.ok(receipt.issues.some((i) => i.code === "report-missing" && i.blocking));
