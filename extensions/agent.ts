@@ -1535,23 +1535,23 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       name: Type.Optional(
         Type.String({
           description:
-            "Display name for the worker. Optional: omit it and a Javanese given name plus role is derived from the handoff scope (e.g. 'Bima · Skeleton Builder'). An explicit human name is kept; a slug is replaced.",
+            "Display name. Omit to derive one from the handoff scope; a slug is replaced.",
         }),
       ),
       task: Type.String({ description: "The specific assignment. It is delivered verbatim as the child's whole brief; changes after launch go through agent_steer, never a silent re-author." }),
-      delegationReason: Type.String({ description: "REQUIRED. The concrete benefit of a separate agent: independent work on a distinct lane, bounded substantial research, or specialised context. Small, tightly coupled, quick or coordination-heavy tasks belong in this session. Its result stays YOUR responsibility to verify and integrate; a slot frees only when the result is accepted, sent back for changes or abandoned — not when the pane closes." }),
-      workUnitKey: Type.Optional(Type.String({ description: "Stable work-unit key for this batch (default: the scope). A duplicate occupied key is refused: steer or resume that child, settle its result, or pass `replaces`." })),
-      reviewPlan: Type.Optional(Type.String({ description: "How THIS parent will verify the result before accepting (default: inspect the final report, lane edits and acceptance criteria)." })),
-      replaces: Type.Optional(Type.String({ description: "Child id this spawn replaces, only when its work unit is occupied. The replaced child keeps its review obligation until you disposition it." })),
-      reworkOf: Type.Optional(Type.String({ description: "Child id whose result you sent back with 'changes-requested'. Re-spawns the SAME work unit against the SAME frozen handoff plus that defect list. The handoff is never edited, so what you judged stays what the new child is judged by." })),
+      delegationReason: Type.String({ description: "REQUIRED. The concrete benefit of a separate agent: a distinct lane, bounded substantial research, or specialised context. Small or tightly coupled tasks stay in this session. A slot frees only when the result is accepted, sent back or abandoned." }),
+      workUnitKey: Type.Optional(Type.String({ description: "Work-unit key (default: the scope). A duplicate occupied key is refused: steer/resume that child, settle it, or pass `replaces`." })),
+      reviewPlan: Type.Optional(Type.String({ description: "How you will verify the result (default: report, lane edits, criteria)." })),
+      replaces: Type.Optional(Type.String({ description: "Child id this spawn replaces when its work unit is occupied." })),
+      reworkOf: Type.Optional(Type.String({ description: "Child id you sent back with 'changes-requested'. Re-spawns the same unit against the same frozen handoff plus the defect list." })),
       role: Type.Optional(
         Type.Union([Type.Literal("planner"), Type.Literal("worker"), Type.Literal("research")], {
-          description: "planner = read-only research and planning agent; worker = read-and-write implementation agent (research is accepted as a legacy alias for planner).",
+          description: "planner = read-only research/planning; worker = read-and-write implementation (research = planner).",
         }),
       ),
       planId: Type.Optional(Type.String({ description: "Worker steps: plan artifact id from a planner child. Its step supplies the lane and criteria." })),
       stepId: Type.Optional(Type.String({ description: "Worker steps: which plan step to execute. Required when the plan has more than one step." })),
-      handoffId: Type.Optional(Type.String({ description: "Removed: every spawn is ad-hoc. Describe the work in `task` and state a delegationReason. Passing an id is refused explicitly rather than silently reinterpreted." })),
+      handoffId: Type.Optional(Type.String({ description: "Removed; passing an id is refused. Describe the work in `task`." })),
       purpose: Type.Optional(
         Type.Union(
           [
@@ -1563,13 +1563,13 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           ],
           {
             description:
-              "Legacy selector. Only 'adhoc' (worker) and 'research' (planner) are admitted; the spec/review/implementation pipeline was removed and those values are refused.",
+              "Legacy. Only 'adhoc' (worker) and 'research' (planner) are admitted.",
           },
         ),
       ),
       laneFiles: Type.Optional(
         Type.Array(Type.String(), {
-          description: "Ad-hoc only: files this child owns. Omit it and the result carries no lane instead of an invented one; acceptance still gates on the criteria you state.",
+          description: "Ad-hoc only: files this child owns. Omit for no lane.",
         }),
       ),
       acceptanceCriteria: Type.Optional(
@@ -1580,7 +1580,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       skills: Type.Optional(Type.String({ description: "Comma-separated skills." })),
       tools: Type.Optional(Type.String({ description: "Comma-separated allowed tools." })),
       cwd: Type.Optional(Type.String({ description: "Working directory for the child." })),
-      budgetMinutes: Type.Optional(Type.Number({ description: "Wall-clock budget in minutes. The watchdog interrupts the child at the budget and asks the parent to decide. Default 30." })),
+      budgetMinutes: Type.Optional(Type.Number({ description: "Wall-clock minutes before the watchdog interrupts the child. Default 30." })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       // ── depth and breadth are hard stops ─────────────────────────────────
