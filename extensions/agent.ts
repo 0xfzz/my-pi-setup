@@ -148,6 +148,7 @@ import type { SpawnPurpose } from "../lib/delegation-tools.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardState } from "../lib/dashboard/integration.ts";
 import { projectChildProvenance, projectDelegation } from "../lib/dashboard/projection.ts";
 import { displayName as namingDisplayName, givenNameFor, givenNamePart, isHumanName } from "../lib/naming.ts";
+import { stringEnum } from "../lib/schema.ts";
 
 /** Shared handles. Exported so tests can assert on real state, not a mock. */
 export const registry = new ScopeRegistry();
@@ -1545,7 +1546,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       replaces: Type.Optional(Type.String({ description: "Child id this spawn replaces when its work unit is occupied." })),
       reworkOf: Type.Optional(Type.String({ description: "Child id you sent back with 'changes-requested'. Re-spawns the same unit against the same frozen handoff plus the defect list." })),
       role: Type.Optional(
-        Type.Union([Type.Literal("planner"), Type.Literal("worker"), Type.Literal("research")], {
+        stringEnum(["planner", "worker", "research"], {
           description: "planner = read-only research/planning; worker = read-and-write implementation (research = planner).",
         }),
       ),
@@ -1553,19 +1554,10 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       stepId: Type.Optional(Type.String({ description: "Worker steps: which plan step to execute. Required when the plan has more than one step." })),
       handoffId: Type.Optional(Type.String({ description: "Removed; passing an id is refused. Describe the work in `task`." })),
       purpose: Type.Optional(
-        Type.Union(
-          [
-            Type.Literal("spec"),
-            Type.Literal("adhoc"),
-            Type.Literal("research"),
-            Type.Literal("review"),
-            Type.Literal("implementation"),
-          ],
-          {
+        stringEnum(["spec", "adhoc", "research", "review", "implementation"], {
             description:
               "Legacy. Only 'adhoc' (worker) and 'research' (planner) are admitted.",
-          },
-        ),
+          }),
       ),
       laneFiles: Type.Optional(
         Type.Array(Type.String(), {
@@ -2344,7 +2336,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       maxResults: Type.Optional(Type.Number({ description: "Search results to consider (default 5, cap 8)." })),
       maxPages: Type.Optional(Type.Number({ description: "Pages to fetch (default 3, cap 5)." })),
       maxBytesPerPage: Type.Optional(Type.Number({ description: "Per-page byte cap (default 40k, cap 120k)." })),
-      recency: Type.Optional(Type.Union([Type.Literal("day"), Type.Literal("week"), Type.Literal("month"), Type.Literal("year")])),
+      recency: Type.Optional(stringEnum(["day", "week", "month", "year"])),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       void ctx;
@@ -2568,12 +2560,12 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       name: Type.Optional(Type.String({ description: "Target child name." })),
       scope: Type.Optional(Type.String({ description: "Target child scope." })),
       mode: Type.Optional(
-        Type.Union([Type.Literal("interrupt"), Type.Literal("queue")], {
+        stringEnum(["interrupt", "queue"], {
           description: "User corrections interrupt: in-flight work does not have the new information. Queue when nothing conflicts.",
         }),
       ),
       origin: Type.Optional(
-        Type.Union([Type.Literal("user"), Type.Literal("parent")], {
+        stringEnum(["user", "parent"], {
           description: "The user defaults to interrupt; the parent may only queue.",
         }),
       ),
@@ -2667,7 +2659,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       name: Type.Optional(Type.String({ description: "Explicit target child name." })),
       scope: Type.Optional(Type.String({ description: "Explicit target scope." })),
       origin: Type.Optional(
-        Type.Union([Type.Literal("user"), Type.Literal("parent")], {
+        stringEnum(["user", "parent"], {
           description: "'user' may interrupt; 'parent' may only queue and may not change scope.",
         }),
       ),
@@ -2817,11 +2809,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       + "accountability so a verdict issued against a superseded result is refused.",
     parameters: Type.Object({
       childId: Type.String({ description: "The child attempt id (agent_running output)." }),
-      disposition: Type.Union([
-        Type.Literal("accepted"),
-        Type.Literal("changes-requested"),
-        Type.Literal("abandoned"),
-      ], {
+      disposition: stringEnum(["accepted", "changes-requested", "abandoned"], {
         description: "accepted = you verified the work; changes-requested = reuse the child; abandoned = recorded as wasted, with cleanup obligations.",
       }),
       resultRevision: Type.Number({ description: "The accountability resultRevision you are judging, so a stale verdict is refused." }),
@@ -2959,12 +2947,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       "Resolve a child's question. action 'answer' answers from context you actually have and resumes the child. action 'to-user' hands the decision to the user with a required reason. action 'relay-user' delivers a decision the user made. action 'cancel' resumes the child with an explicit NOT-approved message.",
     parameters: Type.Object({
       id: Type.String({ description: "Escalation id, e.g. from a subagent_ping message or agent_running." }),
-      action: Type.Union([
-        Type.Literal("answer"),
-        Type.Literal("to-user"),
-        Type.Literal("relay-user"),
-        Type.Literal("cancel"),
-      ]),
+      action: stringEnum(["answer", "to-user", "relay-user", "cancel"]),
       answer: Type.Optional(Type.String({ description: "The decision, for 'answer' and 'relay-user'." })),
       reason: Type.Optional(Type.String({ description: "Why the parent cannot decide, for 'to-user'. Required there." })),
     }),

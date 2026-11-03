@@ -24,6 +24,7 @@ import { isSubagentChildProcess } from "../lib/subagent-context.ts";
 import { isChildReadOnlyArtifact } from "../lib/delegation/handoff-artifact.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardArtifacts } from "../lib/dashboard/integration.ts";
 import { toArtifactRecord, type DashboardArtifactRecord } from "../lib/dashboard/projection.ts";
+import { stringEnum } from "../lib/schema.ts";
 
 export async function readSidecarArtifact(filePath: string): Promise<Artifact | undefined> {
   let handle;
@@ -911,14 +912,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
     parameters: Type.Object({
       id: Type.String({ minLength: 1, maxLength: 64, description: "Unique slug identifier (e.g. 'auth-spec', 'migration-plan', 'debug-scratch')" }),
       title: Type.String({ minLength: 1, maxLength: 200, description: "Descriptive human-readable title" }),
-      type: Type.Union([
-        Type.Literal("plan"),
-        Type.Literal("spec"),
-        Type.Literal("scratchpad"),
-        Type.Literal("code"),
-        Type.Literal("review"),
-        Type.Literal("other"),
-      ], { description: "Artifact category" }),
+      type: stringEnum(["plan", "spec", "scratchpad", "code", "review", "other"], { description: "Artifact category" }),
       content: Type.String({ minLength: 1, description: "The full artifact markdown/code/text content" }),
       tags: Type.Optional(Type.Array(Type.String({ maxLength: 40 }), { description: "Optional tags for search/categorization" })),
       scope: Type.Optional(Type.String({ minLength: 1, maxLength: 64, description: "Optional work scope for isolation. Scoped specs are isolated to that work unit." })),
@@ -1018,15 +1012,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
     parameters: Type.Object({
       id: Type.Optional(Type.String({ description: "Specific artifact ID to recall" })),
       query: Type.Optional(Type.String({ description: "Search query across titles, tags, and content" })),
-      type: Type.Optional(Type.Union([
-        Type.Literal("plan"),
-        Type.Literal("spec"),
-        Type.Literal("scratchpad"),
-        Type.Literal("code"),
-        Type.Literal("review"),
-        Type.Literal("other"),
-        Type.Literal("all"),
-      ], { description: "Filter by artifact category" })),
+      type: Type.Optional(stringEnum(["plan", "spec", "scratchpad", "code", "review", "other", "all"], { description: "Filter by artifact category" })),
       offset: Type.Optional(Type.Integer({ minimum: 1, description: "1-based first line to return. Omit to read from the start." })),
       limit: Type.Optional(Type.Integer({ minimum: 1, description: "Maximum number of lines to return from `offset`. Omit to read to the end." })),
       lineNumbers: Type.Optional(Type.Boolean({ description: "Include the `NNN│ ` line-number gutter (default true). Set false when copying exact text into artifact_edit `oldString`." })),
@@ -1166,18 +1152,13 @@ export default function artifactsExtension(pi: ExtensionAPI) {
       "Each edit bumps the version and preserves scope and author placement rules.",
     parameters: Type.Object({
       id: Type.String({ minLength: 1, maxLength: 64, description: "Artifact ID to edit" }),
-      mode: Type.Union([
-        Type.Literal("append"),
-        Type.Literal("replace"),
-        Type.Literal("insert"),
-        Type.Literal("replaceLines"),
-      ], { description: "How to apply the change" }),
+      mode: stringEnum(["append", "replace", "insert", "replaceLines"], { description: "How to apply the change" }),
       content: Type.Optional(Type.String({ description: "New text block. Required for append, insert and replaceLines." })),
       oldString: Type.Optional(Type.String({ description: "[replace] Exact existing text to find. Must match exactly, including whitespace." })),
       newString: Type.Optional(Type.String({ description: "[replace] Replacement text. Use \"\" to delete the match." })),
       occurrence: Type.Optional(Type.Integer({ minimum: 1, description: "[replace] Which occurrence of oldString to replace when it appears more than once (default 1)." })),
       line: Type.Optional(Type.Integer({ minimum: 1, description: "[insert] 1-based anchor line." })),
-      where: Type.Optional(Type.Union([Type.Literal("before"), Type.Literal("after")], { description: "[insert] Place the block before or after the anchor line (default after)." })),
+      where: Type.Optional(stringEnum(["before", "after"], { description: "[insert] Place the block before or after the anchor line (default after)." })),
       startLine: Type.Optional(Type.Integer({ minimum: 1, description: "[replaceLines] 1-based first line of the range to replace." })),
       endLine: Type.Optional(Type.Integer({ minimum: 1, description: "[replaceLines] 1-based last line of the range to replace (default: startLine)." })),
       title: Type.Optional(Type.String({ maxLength: 200, description: "Optionally update the title in the same edit." })),
@@ -1263,15 +1244,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
     parameters: Type.Object({
       query: Type.String({ minLength: 1, description: "Text or pattern to find inside artifact content" }),
       id: Type.Optional(Type.String({ description: "Restrict the search to one artifact" })),
-      type: Type.Optional(Type.Union([
-        Type.Literal("plan"),
-        Type.Literal("spec"),
-        Type.Literal("scratchpad"),
-        Type.Literal("code"),
-        Type.Literal("review"),
-        Type.Literal("other"),
-        Type.Literal("all"),
-      ], { description: "Restrict the search to one artifact category" })),
+      type: Type.Optional(stringEnum(["plan", "spec", "scratchpad", "code", "review", "other", "all"], { description: "Restrict the search to one artifact category" })),
       caseSensitive: Type.Optional(Type.Boolean({ description: "Match case exactly (default false)" })),
       regex: Type.Optional(Type.Boolean({ description: "Treat `query` as a regular expression (default false: literal text)" })),
       contextLines: Type.Optional(Type.Integer({ minimum: 0, maximum: 10, description: "Lines of context to show around each hit (default 1)" })),

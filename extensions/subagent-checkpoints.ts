@@ -47,6 +47,7 @@ import {
   switchStateFromBranch,
 } from "../lib/delegation-switch.ts";
 import { delegationTool } from "../lib/delegation-tools.ts";
+import { stringEnum } from "../lib/schema.ts";
 
 /** Digest briefs are a starting point, not a transcript dump. */
 const PARENT_BRIEF_MAX_CHARS = 12_000;
@@ -409,7 +410,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
         query: Type.Optional(Type.String({ description: "Search terms or regex over the parent transcript (e.g. 'retry|backoff'). Omit to list the most recent parent entries." })),
         expand: Type.Optional(Type.Array(Type.Number(), { description: "Entry indices to return untruncated" })),
         page: Type.Optional(Type.Number({ description: "Page number (1-based) for paged search results" })),
-        scope: Type.Optional(Type.Union([Type.Literal("lineage"), Type.Literal("all")], { description: "Parent branch scope. Default lineage (active branch only); all includes abandoned branches." })),
+        scope: Type.Optional(stringEnum(["lineage", "all"], { description: "Parent branch scope. Default lineage (active branch only); all includes abandoned branches." })),
         newerThanSeed: Type.Optional(Type.Boolean({ description: "Only entries the parent added after your context snapshot. Defaults to true for fork children, false otherwise." })),
       }),
       async execute(_id, input) {

@@ -46,6 +46,7 @@ const LEGACY_ENTRY = "workflow-todo:v1";
 // call without importing this extension. Imported for local use and re-exported
 // because the extension is the public surface its tests drive.
 import { PLAN_TOOL, ACT_TOOL, NEXT_TOOL, LEGACY_TOOL, TODO_TOOL_NAMES, isTodoTool } from "../lib/todo-tools.ts";
+import { stringEnum } from "../lib/schema.ts";
 export { PLAN_TOOL, ACT_TOOL, NEXT_TOOL, LEGACY_TOOL, TODO_TOOL_NAMES, isTodoTool };
 
 /**
@@ -100,10 +101,7 @@ export function todoIcon(status: string): string {
 // ── Schemas ─────────────────────────────────────────────────────────────────
 
 const EvidenceSchema = Type.Object({
-  kind: Type.Union([
-    Type.Literal("file"), Type.Literal("cmd"), Type.Literal("test"),
-    Type.Literal("artifact"), Type.Literal("commit"), Type.Literal("url"),
-  ], { description: "file and test are verified by the harness; cmd, artifact, commit and url are attested" }),
+  kind: stringEnum(["file", "cmd", "test", "artifact", "commit", "url"], { description: "file and test are verified by the harness; cmd, artifact, commit and url are attested" }),
   path: Type.Optional(Type.String({ description: "kind=file: repo-relative path" })),
   line: Type.Optional(Type.Integer({ minimum: 1 })),
   cmd: Type.Optional(Type.String({ description: "kind=cmd: the command you ran" })),
@@ -124,7 +122,7 @@ export const TodoPlanParameters = Type.Object({
     resource: Type.Optional(Type.String({ description: "Exclusive work key, e.g. file:extensions/todo.ts" })),
     note: Type.Optional(Type.String({ maxLength: 1000 })),
   }), { minItems: 1, maxItems: 100 }),
-  scope: Type.Optional(Type.Union([Type.Literal("committed"), Type.Literal("scratch")], {
+  scope: Type.Optional(stringEnum(["committed", "scratch"], {
     description: "committed (default) survives the turn and is re-injected once per turn; scratch dies with this turn",
   })),
   replace: Type.Optional(Type.Boolean({ description: "Replace an existing plan for a different goal" })),
@@ -132,7 +130,7 @@ export const TodoPlanParameters = Type.Object({
 
 export const TodoActParameters = Type.Object({
   id: Type.String({ minLength: 1, description: "Task id from todo_next" }),
-  transition: Type.Union([Type.Literal("claim"), Type.Literal("done"), Type.Literal("failed"), Type.Literal("dropped")]),
+  transition: stringEnum(["claim", "done", "failed", "dropped"]),
   evidence: Type.Optional(Type.Array(EvidenceSchema, { minItems: 1, maxItems: 20, description: "Required for done" })),
   reason: Type.Optional(Type.String({ maxLength: 2000, description: "Why it failed or was dropped" })),
   note: Type.Optional(Type.String({ maxLength: 2000, description: "Free text; never used as evidence" })),
@@ -145,18 +143,12 @@ export const TodoNextParameters = Type.Object({
 
 /** v1 surface, kept so an in-flight session's model calls still work. */
 export const WorkflowTodoParameters = Type.Object({
-  action: Type.Optional(Type.Union([
-    Type.Literal("sync"), Type.Literal("skip"), Type.Literal("plan"), Type.Literal("continue"),
-    Type.Literal("add"), Type.Literal("update"), Type.Literal("modify"), Type.Literal("cancel"), Type.Literal("list"),
-  ], { description: "Deprecated. Prefer todo_plan / todo_act / todo_next." })),
+  action: Type.Optional(stringEnum(["sync", "skip", "plan", "continue", "add", "update", "modify", "cancel", "list"], { description: "Deprecated. Prefer todo_plan / todo_act / todo_next." })),
   todos: Type.Optional(Type.Array(Type.Object({
     id: Type.Optional(Type.Integer({ minimum: 1 })),
     text: Type.String({ minLength: 1, maxLength: 500 }),
     activeText: Type.Optional(Type.String({ maxLength: 500 })),
-    status: Type.Union([
-      Type.Literal("pending"), Type.Literal("in_progress"), Type.Literal("done"),
-      Type.Literal("blocked"), Type.Literal("waiting"), Type.Literal("cancelled"),
-    ]),
+    status: stringEnum(["pending", "in_progress", "done", "blocked", "waiting", "cancelled"]),
     evidence: Type.Optional(Type.String({ maxLength: 2000 })),
     reason: Type.Optional(Type.String({ maxLength: 2000 })),
   }), { minItems: 1, maxItems: 50 })),
@@ -165,10 +157,7 @@ export const WorkflowTodoParameters = Type.Object({
   text: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
   activeText: Type.Optional(Type.String({ maxLength: 500 })),
   id: Type.Optional(Type.Integer({ minimum: 1 })),
-  status: Type.Optional(Type.Union([
-    Type.Literal("pending"), Type.Literal("in_progress"), Type.Literal("done"),
-    Type.Literal("blocked"), Type.Literal("waiting"), Type.Literal("cancelled"),
-  ])),
+  status: Type.Optional(stringEnum(["pending", "in_progress", "done", "blocked", "waiting", "cancelled"])),
   evidence: Type.Optional(Type.String({ maxLength: 2000 })),
   offset: Type.Optional(Type.Integer({ minimum: 0 })),
   autoAdvance: Type.Optional(Type.Boolean()),
@@ -197,10 +186,7 @@ const detailsOf = (p: G.Plan, now: number) => ({
   tasks: p.tasks.map(task => ({ id: task.id, title: task.title, status: task.status })),
   workflowTodo: true,
 });
-export const TodoStatusSchema = Type.Union([
-  Type.Literal("open"), Type.Literal("claimed"), Type.Literal("done"),
-  Type.Literal("failed"), Type.Literal("dropped"),
-]);
+export const TodoStatusSchema = stringEnum(["open", "claimed", "done", "failed", "dropped"]);
 
 // ── Extension ───────────────────────────────────────────────────────────────
 

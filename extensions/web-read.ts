@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { closeSharedBrowser, readWebPage } from "../lib/web-read.ts";
+import { stringEnum } from "../lib/schema.ts";
 
 export default function webReadExtension(pi: ExtensionAPI): void {
   pi.registerTool({
@@ -31,7 +32,7 @@ export default function webReadExtension(pi: ExtensionAPI): void {
         }),
       ),
       format: Type.Optional(
-        Type.Union([Type.Literal("markdown"), Type.Literal("text"), Type.Literal("html")], {
+        stringEnum(["markdown", "text", "html"], {
           description: "Output format: 'markdown' (default), 'text', or 'html'.",
         }),
       ),
