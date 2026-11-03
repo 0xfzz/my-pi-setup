@@ -865,10 +865,25 @@ export class ScopeRegistry {
       this.childrenById.set(child.id, child);
       this.childrenBySession.set(child.sessionFile, child);
       this.runScopes.set(child.sessionFile, child.scope);
+      this.repairUnreportedClose(child);
     }
     for (const steer of snapshot.steers ?? []) this.steers.push(steer);
     for (const review of snapshot.reviews ?? []) this.reviews.push(review);
     for (const pane of snapshot.panes ?? []) this.knownPanes.add(pane);
+  }
+
+  /**
+   * Rows written before deliberate closes abandoned their unit still hold a slot
+   * on restore. A row closed on purpose, still pending, with no review and no
+   * terminal receipt never reported anything, so it is abandoned here. A finished
+   * child carries a receipt and keeps its review obligation.
+   */
+  private repairUnreportedClose(child: ScopedChild): void {
+    const a = child.accountability;
+    if (child.status !== "closed" || !a || a.disposition !== "pending") return;
+    if (a.reviews.length > 0 || child.receipt || !child.closeReason) return;
+    if (!DELIBERATE_CLOSES.has(child.closeReason)) return;
+    this.abandonUnreported(child, `Closed (${child.closeReason}) before any result was reported; abandoned on restore.`);
   }
 
   /** Remember a pane this parent opened, so the orphan sweep can attribute it. */

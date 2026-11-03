@@ -150,3 +150,25 @@ test("a released unit with a recorded result keeps its result and its launch", (
   assert.equal(r.getChildById("first")!.accountability!.disposition, "accepted");
   assert.equal(r.getBatch("parent").launches, 1);
 });
+
+test("restoring a row closed on purpose before it reported releases its slot", () => {
+  // Rows written before the close fix still held a slot on restore.
+  const r = new ScopeRegistry();
+  const old = child();
+  old.status = "closed";
+  old.closeReason = "user-closed";
+  old.closedAt = "2026-01-01";
+  r.loadSnapshot({ version: 1, savedAt: "now", children: [old], steers: [], reviews: [] });
+  assert.equal(r.getOccupiedChildren("parent").length, 0);
+  assert.equal(r.getChildById("first")!.accountability!.disposition, "abandoned");
+});
+
+test("restoring a finished child that was later closed keeps its pending review", () => {
+  const r = new ScopeRegistry();
+  const done = child();
+  done.status = "closed";
+  done.closeReason = "user-closed";
+  done.receipt = { verdict: "clean" } as any;
+  r.loadSnapshot({ version: 1, savedAt: "now", children: [done], steers: [], reviews: [] });
+  assert.equal(r.getPendingResults("parent").length, 1);
+});
