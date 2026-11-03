@@ -60,6 +60,7 @@ import {
 import {
   readRouteDoc, removeRoute, routeSources, routerConfigPaths, saveRoute,
 } from "../lib/provider/router-config.ts";
+import { ensureProviderInScope } from "../lib/provider/router-scope.ts";
 import { RouterSettingsPopup } from "../lib/ui/router-settings.ts";
 import { popupOverlayOptions } from "../lib/popup/frame.ts";
 import { providerModelPicker } from "../lib/provider/provider-model-picker.ts";
@@ -1039,6 +1040,25 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     } catch {}
   };
 
+  /**
+   * Put the router's virtual models in the user's scoped model list.
+   *
+   * A curated `enabledModels` hides every provider it does not name, so routes
+   * would exist but never show in `/model` or Ctrl+P. The setting is written for
+   * the next session; the live one is told how to pick it up.
+   */
+  const scopeRoutes = (ctx: ExtensionContext): void => {
+    if (!table.routes.length) return;
+    try {
+      const enabled = pi.getSettings().enabledModels;
+      if (!enabled?.length) return;
+      if (!ensureProviderInScope(join(agentDir, "settings.json"), table.provider)) return;
+      ctx.ui?.notify?.(`Added ${table.provider}/* to enabledModels so router models show in /model. Run /reload to apply.`, "info");
+    } catch {
+      // The list is a convenience; a settings file we cannot write must not break startup.
+    }
+  };
+
   // ── Events ─────────────────────────────────────────────────────────────────
 
   pi.on("session_start", (_event, ctx) => {
@@ -1049,6 +1069,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     restore(ctx);
     registerPools(ctx);
     syncRoutes();
+    scopeRoutes(ctx);
     updateSidebar();
   });
 
