@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import promptUi, {
@@ -35,7 +37,8 @@ function fakeContext(overrides: Record<string, unknown> = {}) {
     thinkingLevel: "high",
     getContextUsage: () => ({ tokens: 275_000, contextWindow: 1_000_000, percent: 27.5 }),
     sessionManager: {
-      getCwd: () => process.cwd(),
+      // Under the home directory so the footer renders it as ~/…, wherever the repo is cloned.
+      getCwd: () => join(homedir(), "projects", "pi-workflow-extensions"),
       getSessionName: () => "Popup design system",
       getEntries: () => entries,
       getLeafId: () => "leaf-1",
