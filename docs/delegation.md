@@ -246,6 +246,7 @@ tail, the transcript mtime, and the transcript's last assistant turn
 | Signal | Action |
 | --- | --- |
 | pane gone | row closed, parent told (`pane-gone`) |
+| parent closes a pane | the parent's close is recorded before the pane closes; the watcher's report of it is dropped, so it is not told the child was killed |
 | herdr unreachable | never closes; after 6 blind ticks (~3 min) the parent is told once, and probing continues |
 | tail frozen **and** transcript frozen, 3 ticks | Esc + parked, parent told (`stall-detected`) |
 | wall-clock budget spent | Esc + parked, parent told (`budget-exceeded`) |
@@ -306,7 +307,9 @@ repository yields no finding — unknown, never "clean".
 parent is not woken for any of it:
 
 1. `transient` → retry the same model, up to 3 times, backoff `15s·2ⁿ` (never below the
-   provider's stated wait, capped at 10 min).
+   provider's stated wait, capped at 10 min). A **stall** (`no response headers`,
+   `fetch failed`, timeouts, dropped connections) skips this and fails over at once when
+   another usable model exists, because retrying a silent endpoint only waits out the stall.
 2. The model is the problem (`quota`, `config`, `auth`, or `transient` that keeps
    failing) → **fail over**: resume the same session on the next usable model of the
    role's pool (`/agent-model`), skipping every model that already failed this work
@@ -353,8 +356,9 @@ nothing.
 | --- | --- |
 | `delegationReason` | required, non-empty: the concrete benefit of a separate agent. Small, tightly coupled or coordination-heavy work belongs in the parent session. |
 | Depth | a child may not spawn again (`PI_SUBAGENT_DEPTH`, default max 1). |
-| Occupancy | a slot is held by a running, blocked **or awaiting-verdict** child. Closing a pane frees nothing; a verdict does. |
-| Batch budget | a per-batch launch ceiling (default 4) that completion does not refill. `/agent batch` is the user-owned reset; a model must ask, never run it to bypass a refusal. |
+| Occupancy | a slot is held by a running, blocked **or awaiting-verdict** child. A verdict frees it. A deliberate close (`agent_close`, `agent_interrupt` with `close`, a cancelled scope) of a running child abandons its unit and frees the slot. A crash-style close (pane gone) leaves the unit pending, because a report may still exist. |
+| Batch budget | a per-batch launch ceiling (default 4) that completion does not refill. A launch whose child never produced output (no assistant text or tool call) is refunded when it is released, within the batch it was charged to. `/agent batch` is the user-owned reset; a model must ask, never run it to bypass a refusal. |
+| Credentials | a role pool rolls only among members that have credentials. A pool, or an explicit model, with none is refused before any pane or handoff exists. |
 | Duplicate work unit | an occupied work unit is steered, resumed or settled — or replaced explicitly with `replaces` and capacity. |
 | One writer per lane | a scope with a live child refuses a second spawn: two writers in one lane produce diffs nobody owns. |
 | Handoff frozen | a child cannot rewrite its `handoff-*`/`rework-*` artifact. |
