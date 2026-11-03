@@ -12,7 +12,7 @@ import { classifyChildError, isHaltedPing, parseRetryAfterMs } from "../../lib/d
 import { errorIsTerminal, readChildHealth } from "../../lib/delegation/child-health.ts";
 import { checkResult, criterionMentioned, roundOfHandoff, unresolvedBlockers } from "../../lib/delegation/result-check.ts";
 import { artifactSidecarPath } from "../../lib/artifact-state.ts";
-import agentExtension, { registry } from "../../extensions/agent.ts";
+import agentExtension, { autoResumeDelayMs, autoResumeSeams, registry } from "../../extensions/agent.ts";
 import type { ScopedChild } from "../../lib/delegation/scope-registry.ts";
 
 describe("classifyChildError", () => {
@@ -185,5 +185,24 @@ describe("agent_accept_result honours the receipt", () => {
     assert.equal(refused.details.error, "receipt-blocking");
     const ok = await run({ ...args, overrides: ["report-missing"], summary: "no report, but I verified the diff directly" });
     assert.match(String(ok.content[0].text), /dispositioned: accepted/);
+  });
+});
+
+describe("auto-resume of transient failures", () => {
+  it("backs off exponentially, honours the provider's wait, and is capped", () => {
+    assert.equal(autoResumeDelayMs(0), 15_000);
+    assert.equal(autoResumeDelayMs(1), 30_000);
+    assert.equal(autoResumeDelayMs(0, 60_000), 65_000);
+    assert.equal(autoResumeDelayMs(10), 600_000);
+  });
+
+  it("does not resume a row the parent already judged or that is no longer failed", async () => {
+    registry.resetForTests();
+    agentExtension(
+      { registerTool() {}, registerCommand() {}, on() {}, getAllTools: () => [], events: undefined } as any,
+      { client: {} as any, stream: { watch: () => () => {}, onReconcile: () => () => {} } },
+    );
+    // No row at all: the seam must be a harmless no-op, never a launch.
+    await autoResumeSeams.run!("/tmp/none.jsonl");
   });
 });

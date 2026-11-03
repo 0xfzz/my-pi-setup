@@ -168,12 +168,13 @@ This is enforced, not requested:
   with forty `find` calls. A pending escalation or an undispositioned result is
   actionable, so that case keeps the turn — terminating there would strand the
   review duty the parent still owes.
-- **A spawn does not end it.** `agent_spawn` keeps the turn so the remaining
-  independent lanes can be launched before the parent goes idle. Terminating on a
-  spawn serialised session `01a19d41`: its three lanes started at 17:23, 17:35 and
-  17:45 because each spawn ended the run and the next lane had to wait for the
-  previous child's report. Parallelism is the point of delegation; the poll loop is
-  stopped by the `agent_running` repeat and the poll guard instead.
+- **A successful spawn (and resume) ends it.** `agent_spawn`, `agent_resume` and an
+  answered escalation return `terminate: true`: the parent generates nothing while
+  children work. pi skips the follow-up model call only when **every** result in the
+  tool batch terminates, so independent lanes are launched together by issuing all
+  `agent_spawn` calls in **one assistant message** — they all run, then the run ends.
+  Session `01a19d41` serialised because lanes were spawned across separate turns. A
+  refused or failed spawn does not terminate; the parent has to react to it.
 - `lib/delegation/wait-guard.ts` refuses a `bash` command whose **purpose** is to
   wait, in a parent session **while a child is in flight**: `sleep`, `wait`, `watch`,
   `tail -f`/`--follow`, an unbounded `ping`, and never-terminating
@@ -242,6 +243,14 @@ on the row; it is printed in the completion message.
 parent names each code in `overrides` and justifies it in `summary`.
 `changes-requested` and `abandoned` are never gated. The receipt proves the result
 *could* match the handoff; whether it does remains the parent's judgment.
+
+**Auto-resume.** A `transient` failure is resumed by machinery, not by the parent: up
+to 3 attempts, backoff `15s·2ⁿ` (never less than the provider's stated wait, capped at
+10 min), each with a "continue where you left off" message. The row is `failed` while
+it waits, but the settle hook treats a pending retry as in flight, so the parent is
+**not** woken to "review" it. The parent hears about it only when the budget is
+spent or the resume cannot start. `quota`, `auth`, `config` and `unknown` are never
+retried — they wake the parent with the class remedy.
 
 ## Escalation: child → parent → user
 
@@ -417,8 +426,6 @@ that registers one is stripped from the active set and refused at call time.
 - The receipt is lexical where it must be: criterion coverage is a word-overlap check,
   not understanding, which is why it is advisory. Lane checks see `write`/`edit`-style
   tool calls only; a `bash` redirect can still write anywhere.
-- There is no automatic resume of a `transient` failure yet — the parent is told the
-  class and remedy and chooses. Auto-resume with backoff needs a context-free resume path.
 - The watchdog lives in the parent process: in a one-shot (`-p`) run the process exits
   when the run ends and takes the watchdog with it.
 - `accepted` is evidence-checked in shape, not in truth: the parent attests that it

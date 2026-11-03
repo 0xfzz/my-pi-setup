@@ -112,7 +112,7 @@ test("an undispositioned result keeps the turn: terminating would strand the rev
   resetPollFingerprints();
 });
 
-test("a spawn does NOT end the turn: independent lanes stay launchable in parallel", async () => {
+test("a successful spawn ENDS the run; lanes run in parallel when spawned in one batch", async () => {
   registry.resetForTests();
   resetPollFingerprints();
   const dir = await mkdtemp(join(tmpdir(), "terminate-spawn-"));
@@ -130,10 +130,11 @@ test("a spawn does NOT end the turn: independent lanes stay launchable in parall
     }, undefined, undefined, ctx);
 
     assert.equal(first.details?.status, "started", first.content?.[0]?.text);
-    // Terminating here is what serialised session 01a19d41: its three lanes
-    // started at 17:23, 17:35 and 17:45, each waiting for the previous report.
-    assert.equal(first.terminate, undefined, "a spawn must not end the turn");
-    assert.match(first.content[0].text, /Launch every other independent lane now/);
+    // The parent generates nothing while children work. pi skips the follow-up
+    // model call only when every result in the batch terminates, so parallel
+    // lanes are spawned together in ONE assistant message.
+    assert.equal(first.terminate, true, "a successful spawn must end the run");
+    assert.match(first.content[0].text, /Do not poll or sleep/);
 
     const second = await spawn.execute("t2", {
       name: "split",

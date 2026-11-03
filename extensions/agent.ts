@@ -251,6 +251,14 @@ export interface DelegationDeps {
  * runtime test has no deterministic way to advance it. Assigned during init and
  * `null` until then, so a test cannot silently exercise an uninitialised tick.
  */
+export const autoResumeSeams: { run: ((sessionFile: string) => Promise<void>) | null } = { run: null };
+
+/** Backoff for the Nth automatic resume: exponential from 15s, never below the provider's wait, capped at 10m. */
+export function autoResumeDelayMs(attempt: number, retryAfterMs?: number): number {
+  const exponential = 15_000 * 2 ** Math.max(0, attempt);
+  return Math.min(10 * 60_000, Math.max(exponential, (retryAfterMs ?? 0) + 5_000));
+}
+
 export const watchdogSeams: { tick: (() => Promise<void>) | null } = { tick: null };
 
 
@@ -421,6 +429,12 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
   // children and zero in the owner.
   let isChildSession = false;
   let ownerSessionId: string | null = null;
+  /**
+   * The most recent live context, kept so machinery (auto-resume) can start a
+   * pane without a tool call in flight. Refreshed by every launch/resume and by
+   * session start; cleared on shutdown so a disposed session is never reused.
+   */
+  let lastCtx: ExtensionContext | null = null;
 
   /**
    * Registry sidecar, keyed by session id.
@@ -1021,6 +1035,69 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
    * Input is `getWatchdogChildren()` (running only): a tripped or ping-paused
    * child is waiting on a decision, not on a timer.
    */
+  const MAX_AUTO_RESUMES = 3;
+  /** Failed-then-resumed attempts per session file, so the loop is bounded. */
+  const autoResumeAttempts = new Map<string, number>();
+  /** Session files with a retry pending: they are still "in flight" to every gate. */
+  const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  function scheduleAutoResume(running: RunningSubagent, scope: string, attempt: number, delayMs: number, why: string): void {
+    autoResumeAttempts.set(running.sessionFile, attempt);
+    const timer = setTimeout(() => {
+      retryTimers.delete(running.sessionFile);
+      void runAutoResume(running.sessionFile).catch(() => {});
+    }, delayMs);
+    (timer as any).unref?.();
+    retryTimers.set(running.sessionFile, timer);
+    // Visible, but it does not trigger a turn: the parent stays idle.
+    pi.sendMessage(
+      {
+        customType: "subagent_result",
+        content:
+          `Child "${running.name}" (scope: ${scope}) hit a transient model error (${why.slice(0, 120)}). `
+          + `Auto-resume ${attempt}/${MAX_AUTO_RESUMES} in ~${Math.ceil(delayMs / 1000)}s. No action needed.`,
+        display: true,
+        details: { id: running.id, name: running.name, scope, reason: "auto-resume-scheduled", attempt, delayMs },
+      },
+      { triggerTurn: false },
+    );
+  }
+
+  /** Resume a failed child after backoff. Exposed to tests via `watchdogSeams`. */
+  async function runAutoResume(sessionFile: string): Promise<void> {
+    const row = registry.getChildBySession(sessionFile);
+    const ctx = lastCtx;
+    // Only a still-failed, still-unjudged row is resumed: a parent that already
+    // closed, superseded or dispositioned it has taken the decision back.
+    if (!ctx || !row || row.status !== "failed" || row.accountability?.disposition !== "pending") {
+      autoResumeAttempts.delete(sessionFile);
+      return;
+    }
+    const attempt = autoResumeAttempts.get(sessionFile) ?? 1;
+    const result: any = await startResume(ctx, {
+      sessionPath: sessionFile,
+      message:
+        `Your previous request failed with a transient provider error (${row.failure?.message.slice(0, 160) ?? "unknown"}). `
+        + `This is automatic retry ${attempt} of ${MAX_AUTO_RESUMES}. Continue exactly where you left off; do not restart the task.`,
+      name: row.name,
+      autoExit: row.autoExit ?? true,
+    });
+    if (result?.details?.error) {
+      // Could not start (e.g. herdr unreachable): wake the parent — machinery is out of options.
+      pi.sendMessage(
+        {
+          customType: "subagent_result",
+          content: `Auto-resume of "${row.name}" (scope: ${row.scope}) could not start: ${result.details.error}. `
+            + `Its result is FAILED and pending your review; resume it yourself with agent_resume or close it.`,
+          display: true,
+          details: { id: row.id, name: row.name, scope: row.scope, reason: "auto-resume-failed", error: result.details.error },
+        },
+        { triggerTurn: true, deliverAs: "followUp" },
+      );
+    }
+  }
+  autoResumeSeams.run = runAutoResume;
+
   /** A live pane whose transcript ended on an error nothing is retrying any more. */
   async function failStuckChild(child: ScopedChild, message: string): Promise<void> {
     if (child.paneId) {
@@ -1198,6 +1275,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
   pi.on("session_start", async (_event, ctx) => {
     sessionDir = ctx.sessionManager.getSessionDir();
     ownerSessionId = ctx.sessionManager.getSessionId();
+    lastCtx = ctx;
     resetPollFingerprints();
     // A replaced session (`/new`, `/resume`, `/fork`) must not inherit the
     // previous one's inspection counts, or its first `find` would be refused.
@@ -1243,6 +1321,10 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
 
   pi.on("session_shutdown", () => {
     stopWatchdog();
+    lastCtx = null;
+    for (const timer of retryTimers.values()) clearTimeout(timer);
+    retryTimers.clear();
+    autoResumeAttempts.clear();
     resetPollFingerprints();
     // The probe closes over this session's registry; a disposed session must not
     // keep answering for the next one.
@@ -1429,6 +1511,18 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       ...(receipt ? { receipt } : {}),
     });
     persistState();
+
+    // Transient failures are handled by machinery, silently: the parent is not
+    // woken (it generates nothing) until the retry budget is spent.
+    const attempt = autoResumeAttempts.get(running.sessionFile) ?? 0;
+    if (verdict.retryable && attempt < MAX_AUTO_RESUMES && lastCtx && !isChildSession) {
+      const delay = autoResumeDelayMs(attempt, verdict.retryAfterMs);
+      scheduleAutoResume(running, scope, attempt + 1, delay, rawMessage);
+      return;
+    }
+    const exhausted = verdict.retryable && attempt >= MAX_AUTO_RESUMES
+      ? `Automatic resume gave up after ${attempt} attempt(s) with backoff. `
+      : "";
     const wait = verdict.retryAfterMs ? ` Provider asked for ~${Math.ceil(verdict.retryAfterMs / 1000)}s.` : "";
     pi.sendMessage(
       {
@@ -1438,7 +1532,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           "",
           rawMessage.slice(0, 400),
           "",
-          verdict.advice,
+          exhausted + verdict.advice,
           ...(receipt ? ["", renderReceipt(receipt)] : []),
           "",
           `This is a FAILED result pending YOUR review (resultRevision ${row?.accountability?.resultRevision ?? "n/a"}); `
@@ -1513,6 +1607,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     // Rule 3: a pane that ends without `agent_done` is `failed`, not `completed`.
     // `completed-user-exit` is exactly that case; it used to be reported as done.
     const completed = outcome.kind === "completed";
+    if (completed) autoResumeAttempts.delete(running.sessionFile);
     registry.updateStatus(running.sessionFile, completed ? "completed" : "failed", { pendingPing: false });
     // The mechanical receipt: compare the result with the handoff before the parent
     // reads a word of the child's own summary.
@@ -1684,7 +1779,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     name: "agent_spawn",
     label: "Spawn Agent",
     description:
-      "Spawn one agent: a read-only planner (research and plan creation) or a read-and-write worker (plan execution and verification). With planId/stepId the worker's lane and criteria come from one plan step. A child sees only its own ticket; its result stays YOUR responsibility to verify — record the verdict with agent_accept_result. "
+      "A successful spawn ENDS your run: you generate nothing while children work and are re-triggered by their report, question or failure. "
+      + "To run lanes in parallel, issue ALL agent_spawn calls in ONE assistant message. "
+      + "Spawn one agent: a read-only planner (research and plan creation) or a read-and-write worker (plan execution and verification). With planId/stepId the worker's lane and criteria come from one plan step. A child sees only its own ticket; its result stays YOUR responsibility to verify — record the verdict with agent_accept_result. "
       + "Admission is need-based and owned: required delegationReason, duplicate work units refused (steer/resume/settle, or replaces with capacity), 2 occupied slots and 4 launches per batch by default (the strictest explicitly configured ceiling wins), and a finished child keeps its slot until dispositioned. /agent batch is the user-owned reset.",
     parameters: Type.Object({
       name: Type.Optional(
@@ -2183,7 +2280,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         registry.recordLaunch(ownerSessionId);
       }
 
-      return text(
+      const launched = text(
         [
           `Subagent "${displayName}" launched (scope: ${scope}, ad-hoc).`,
           ...(handoffDoc
@@ -2217,14 +2314,15 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           `The scope (${scope}) is the identity: use it in agent_steer, agent_interrupt, agent_close, agent_running.`,
           `The outcome (or an agent_ping escalation) arrives automatically.`,
           `Progress arrives as agent_progress checkpoints and the child's report; do not inspect the lane to watch it.`,
-          // Deliberately NOT `RETRIGGER_CONTRACT` + `terminate`. Ending the run on a
-          // spawn serialised session 01a19d41's three lanes: each spawn terminated,
-          // and the next lane had to wait for the previous child's report — spawns
-          // at 17:23, 17:35 and 17:45 for work that was meant to run in parallel.
-          // A parent may launch every independent lane before it goes idle; the
-          // poll loop is stopped by `agent_running`'s repeat and the poll guard.
-          `Launch every other independent lane now, in this turn: a child does not have to finish before the next one starts. `,
-          `When you have nothing left to do, end your turn — the child's report or ping re-triggers you. Do not poll.`,
+          // A successful spawn ENDS the run (`terminate: true`): the parent generates
+          // nothing while children work. pi only skips the follow-up model call when
+          // EVERY result in the tool batch terminates, so independent lanes are
+          // launched together by issuing all `agent_spawn` calls in ONE assistant
+          // message — they all run, then the run ends. (Session 01a19d41 serialised
+          // because lanes were spawned across separate turns; the remedy is the
+          // single batch, not keeping the parent generating.) A refused or failed
+          // spawn does not terminate: the parent must react to it.
+          RETRIGGER_CONTRACT,
         ].join("\n"),
         {
           id: running.id,
@@ -2243,6 +2341,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           accountability: { ...accountability },
         },
       );
+      return { ...launched, terminate: true };
       } finally {
         // Always: the reservation only covers the launch window. Once the row
         // is registered the registry owns the count, and on any earlier failure
@@ -2262,6 +2361,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     ctx: ExtensionContext,
     params: { sessionPath: string; message?: string; name?: string; autoExit?: boolean },
   ) {
+    lastCtx = ctx;
     const child = registry.getChildBySession(params.sessionPath);
     const scope = child?.scope ?? "resumed";
 
@@ -2386,13 +2486,17 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         : undefined,
     );
 
-    return text(`Resumed "${running.name}" in pane ${started.paneId} (scope: ${scope}).`, {
-      id: running.id,
-      paneId: started.paneId,
-      sessionFile: running.sessionFile,
-      scope,
-      status: "started",
-    });
+    return {
+      ...text(`Resumed "${running.name}" in pane ${started.paneId} (scope: ${scope}). ${RETRIGGER_CONTRACT}`, {
+        id: running.id,
+        paneId: started.paneId,
+        sessionFile: running.sessionFile,
+        scope,
+        status: "started",
+      }),
+      // Work is running again: nothing for the parent to generate until it reports.
+      terminate: true,
+    };
   }
 
   // ── read-only research surface ─────────────────────────────────────────────
@@ -3079,6 +3183,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       : ownerSessionId;
     if (!owner) return;
     if (registry.getActiveChildren().length > 0) return;
+    // A child waiting out a backoff is in flight: it will resume by itself, and
+    // asking the parent to "review" its failed attempt now would make it generate.
+    if (retryTimers.size > 0) return;
     const fresh = registry.getPendingResults(owner).filter((child) => !settledNotified.has(child.id));
     if (fresh.length === 0) return;
     for (const child of fresh) settledNotified.add(child.id);
@@ -3226,7 +3333,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     const resumeDetails = ((resumed as any)?.details ?? {}) as { error?: string; paneId?: string };
     const resumedOk = !resumeDetails.error;
 
-    return text(
+    const delivered = text(
       [
         `Escalation ${id} is ${escalation.stage}.`,
         resumedOk
@@ -3249,6 +3356,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         ...(resumeDetails.error ? { resumeError: resumeDetails.error } : {}),
       },
     );
+    return resumedOk ? { ...delivered, terminate: true } : delivered;
   }
 
   /**
