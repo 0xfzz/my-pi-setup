@@ -28,6 +28,11 @@ jobs:
       - name: Type check
         run: npm run typecheck
 
+      # Blocking: AGENTS.md defines typecheck + lint:smell + test as the gate.
+      # Without this step a `git commit --no-verify` reaches main unlinted.
+      - name: Lint (smell gate)
+        run: npm run lint:smell
+
       - name: Test
         run: npm test -- --test-shard=${{ matrix.shard }}/3
 
