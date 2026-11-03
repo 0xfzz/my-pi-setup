@@ -167,3 +167,37 @@ test("a successful spawn ENDS the run; lanes run in parallel when spawned in one
     resetPollFingerprints();
   }
 });
+
+test("a batch spawn launches every lane in ONE call and then ends the run", async () => {
+  registry.resetForTests();
+  resetPollFingerprints();
+  const dir = await mkdtemp(join(tmpdir(), "terminate-batch-"));
+  const { tools, ctx, emit } = harness();
+  ctx.cwd = dir;
+  const spawn = tools.get("agent_spawn");
+  try {
+    const result = await spawn.execute("b1", {
+      agents: [
+        { name: "alpha", task: "summarise topic A", delegationReason: "independent research lane A", role: "planner" },
+        { name: "beta", task: "summarise topic B", delegationReason: "independent research lane B", role: "planner" },
+      ],
+    }, undefined, undefined, ctx);
+    assert.match(result.content[0].text, /2 of 2 lane\(s\) started/, result.content[0].text);
+    assert.equal(result.terminate, true, "everything started, nothing refused: the run ends");
+    assert.equal(registry.getRunningChildren().length, 2, "both lanes run at once");
+
+    // A third lane exceeds the 2-slot cap: it is refused, the parent keeps its turn.
+    const over = await spawn.execute("b2", {
+      agents: [{ name: "gamma", task: "summarise topic C", delegationReason: "a third lane over the cap", role: "planner" }],
+    }, undefined, undefined, ctx);
+    assert.match(over.content[0].text, /0 of 1 lane\(s\) started, 1 refused/);
+    assert.notEqual(over.terminate, true, "a refused lane needs the parent's decision");
+
+    const missing = await spawn.execute("b3", { agents: [{ name: "x", task: "", delegationReason: "" }] } as any, undefined, undefined, ctx);
+    assert.match(missing.content[0].text, /REFUSED/);
+  } finally {
+    await emit("session_shutdown");
+    registry.resetForTests();
+    resetPollFingerprints();
+  }
+});

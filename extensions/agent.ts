@@ -36,7 +36,7 @@
  * interrupt re-triggers it. It never sleeps or polls (RETRIGGER_CONTRACT).
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 import { chmodSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 
@@ -1775,23 +1775,21 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
   }
 
   // ── agent_spawn ─────────────────────────────────────────────────────────────
-  pi.registerTool({
-    name: "agent_spawn",
-    label: "Spawn Agent",
-    description:
+  const spawnDescription =
       "A successful spawn ENDS your run: you generate nothing while children work and are re-triggered by their report, question or failure. "
-      + "To run lanes in parallel, issue ALL agent_spawn calls in ONE assistant message; if you must spawn one lane per turn, pass moreSpawns:true on every spawn except the last. "
+      + "To run several lanes, pass them ALL in the `agents` array of ONE call (every lane starts before the run ends); if you spawn singly across turns, pass moreSpawns:true on every spawn except the last. "
       + "Spawn one agent: a read-only planner (research and plan creation) or a read-and-write worker (plan execution and verification). With planId/stepId the worker's lane and criteria come from one plan step. A child sees only its own ticket; its result stays YOUR responsibility to verify — record the verdict with agent_accept_result. "
-      + "Admission is need-based and owned: required delegationReason, duplicate work units refused (steer/resume/settle, or replaces with capacity), 2 occupied slots and 4 launches per batch by default (the strictest explicitly configured ceiling wins), and a finished child keeps its slot until dispositioned. /agent batch is the user-owned reset.",
-    parameters: Type.Object({
+      + "Admission is need-based and owned: required delegationReason, duplicate work units refused (steer/resume/settle, or replaces with capacity), 2 occupied slots and 4 launches per batch by default (the strictest explicitly configured ceiling wins), and a finished child keeps its slot until dispositioned. /agent batch is the user-owned reset.";
+
+  const spawnParams = Type.Object({
       name: Type.Optional(
         Type.String({
           description:
             "Display name. Omit to derive one from the handoff scope; a slug is replaced.",
         }),
       ),
-      task: Type.String({ description: "The specific assignment. It is delivered verbatim as the child's whole brief; changes after launch go through agent_steer, never a silent re-author." }),
-      delegationReason: Type.String({ description: "REQUIRED. The concrete benefit of a separate agent: a distinct lane, bounded substantial research, or specialised context. Small or tightly coupled tasks stay in this session. A slot frees only when the result is accepted, sent back or abandoned." }),
+      task: Type.Optional(Type.String({ description: "The specific assignment. It is delivered verbatim as the child's whole brief; changes after launch go through agent_steer, never a silent re-author. Required unless `agents` is given." })),
+      delegationReason: Type.Optional(Type.String({ description: "REQUIRED (per lane). The concrete benefit of a separate agent: a distinct lane, bounded substantial research, or specialised context. Small or tightly coupled tasks stay in this session. A slot frees only when the result is accepted, sent back or abandoned." })),
       workUnitKey: Type.Optional(Type.String({ description: "Work-unit key (default: the scope). A duplicate occupied key is refused: steer/resume that child, settle it, or pass `replaces`." })),
       reviewPlan: Type.Optional(Type.String({ description: "How you will verify the result (default: report, lane edits, criteria)." })),
       replaces: Type.Optional(Type.String({ description: "Child id this spawn replaces when its work unit is occupied." })),
@@ -1824,11 +1822,31 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       tools: Type.Optional(Type.String({ description: "Comma-separated allowed tools." })),
       cwd: Type.Optional(Type.String({ description: "Working directory for the child." })),
       budgetMinutes: Type.Optional(Type.Number({ description: "Wall-clock minutes before the watchdog interrupts the child. Default 30." })),
+      agents: Type.Optional(Type.Array(Type.Object({
+        name: Type.Optional(Type.String()),
+        task: Type.String({ description: "This lane's assignment." }),
+        delegationReason: Type.String({ description: "Why this lane needs its own agent." }),
+        workUnitKey: Type.Optional(Type.String()),
+        reviewPlan: Type.Optional(Type.String()),
+        role: Type.Optional(stringEnum(["planner", "worker", "research"])),
+        planId: Type.Optional(Type.String()),
+        stepId: Type.Optional(Type.String()),
+        laneFiles: Type.Optional(Type.Array(Type.String())),
+        acceptanceCriteria: Type.Optional(Type.Array(Type.String())),
+        agent: Type.Optional(Type.String()),
+        model: Type.Optional(Type.String()),
+        skills: Type.Optional(Type.String()),
+        tools: Type.Optional(Type.String()),
+        cwd: Type.Optional(Type.String()),
+        budgetMinutes: Type.Optional(Type.Number()),
+      }), { description: "BATCH: launch several independent lanes with ONE call. Each lane carries its own task, delegationReason, lane, criteria and model; top-level fields are shared defaults. Preferred over separate calls: every lane starts before the run ends, whatever the model does between turns." })),
       moreSpawns: Type.Optional(Type.Boolean({
         description: "Set true ONLY when you will spawn another lane in your NEXT turn (spawning one lane per turn). The run then continues instead of ending after this spawn. Omit it on the last spawn; when spawning several lanes in one message, omit it on all of them.",
       })),
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+  });
+  type SpawnParams = Omit<Static<typeof spawnParams>, "task" | "delegationReason"> & { task: string; delegationReason: string };
+
+  async function spawnOne(params: SpawnParams, ctx: ExtensionContext) {
       // ── depth and breadth are hard stops ─────────────────────────────────
       // Checked before the mode/purpose gate, so a nested or over-capacity call
       // cannot leave a row, a pane, a watcher or a ticket behind.
@@ -2353,6 +2371,58 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         // release is exactly what frees the slot for parallel or later calls.
         releaseLaunchSlot(ownerSessionId);
       }
+  }
+
+  pi.registerTool({
+    name: "agent_spawn",
+    label: "Spawn Agent",
+    description: spawnDescription,
+    parameters: spawnParams,
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const { agents, ...shared } = params;
+      const lanes = Array.isArray(agents) && agents.length > 0 ? agents : undefined;
+      const requireFields = (lane: { task?: string; delegationReason?: string }, label: string) =>
+        !String(lane.task ?? "").trim() || !String(lane.delegationReason ?? "").trim()
+          ? text(`Refused: ${label} needs a non-empty \`task\` and \`delegationReason\`. Nothing was started.`, { error: "spawn-fields-required" })
+          : undefined;
+
+      if (!lanes) {
+        const missing = requireFields(shared, "agent_spawn");
+        if (missing) return missing;
+        return spawnOne(shared as SpawnParams, ctx);
+      }
+
+      // Batch: every lane is launched by THIS call, so parallelism never depends on
+      // the model remembering to put several tool calls in one message. Lanes start
+      // in order; admission (slots, lanes, batch budget) applies to each, so a lane
+      // that does not fit is refused with its reason while the others still start.
+      const results: Array<{ index: number; name?: string; started: boolean; text: string; details: any }> = [];
+      for (const [index, lane] of lanes.entries()) {
+        const merged = { ...shared, ...lane, moreSpawns: undefined } as SpawnParams;
+        const missing = requireFields(merged, `agents[${index}]`);
+        const result: any = missing ?? await spawnOne(merged, ctx);
+        results.push({
+          index,
+          name: lane.name,
+          started: result?.details?.status === "started",
+          text: String(result?.content?.[0]?.text ?? ""),
+          details: result?.details ?? {},
+        });
+      }
+      const started = results.filter((r) => r.started).length;
+      const refused = results.length - started;
+      const body = results.map((r) =>
+        `── lane ${r.index + 1}${r.name ? ` "${r.name}"` : ""}: ${r.started ? "STARTED" : "REFUSED"} ──\n${
+          // The per-lane trailer repeats the contract once per lane; keep it once, below.
+          r.text.replace(RETRIGGER_CONTRACT, "").trim()}`).join("\n\n");
+      const summary = `${started} of ${results.length} lane(s) started${refused ? `, ${refused} refused — read the reasons below and re-plan those lanes` : ""}.`;
+      const out = text(
+        `${summary}\n\n${body}${started > 0 ? `\n\n${RETRIGGER_CONTRACT}` : ""}`,
+        { status: started > 0 ? "started" : "refused", batch: results.map((r) => ({ index: r.index, started: r.started, ...r.details })), started, refused },
+      );
+      // The run ends only if something is actually running AND nothing was refused:
+      // a refused lane needs the parent's decision, so it keeps its turn.
+      return started > 0 && refused === 0 && shared.moreSpawns !== true ? { ...out, terminate: true } : out;
     },
   });
 

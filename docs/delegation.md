@@ -171,8 +171,11 @@ This is enforced, not requested:
 - **A successful spawn (and resume) ends it.** `agent_spawn`, `agent_resume` and an
   answered escalation return `terminate: true`: the parent generates nothing while
   children work. pi skips the follow-up model call only when **every** result in the
-  tool batch terminates, so independent lanes are launched together by issuing all
-  `agent_spawn` calls in **one assistant message** — they all run, then the run ends.
+  tool batch terminates, so independent lanes are launched with **one `agent_spawn`
+  call carrying an `agents: [...]` array** (each lane has its own task, reason, lane,
+  criteria and model; a lane that does not fit admission is refused with its reason and
+  the parent keeps its turn). Parallelism therefore never depends on the model batching
+  tool calls. Separate calls in one assistant message also work — they all run, then the run ends.
   Session `01a19d41` serialised because lanes were spawned across separate turns. A
   refused or failed spawn does not terminate; the parent has to react to it. A parent
   that spawns one lane per turn passes `moreSpawns: true` on every spawn except the
