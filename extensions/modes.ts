@@ -7,7 +7,7 @@ import { childContextState, isSubagentChildSession, ownEntries } from "../lib/su
 import { readOnlyShellCommand } from "../lib/plan/plan-shell.ts";
 import { INPUT_MODE_CONTEXT_TYPE, inputModeGuidance, isPlanTool, missingPlanTools, pendingPlanDeferredTools, pendingPlanExitTools, PLAN_MODE_GUIDANCE, PLAN_MODE_TYPE, planModeFromBranch } from "../lib/plan/plan-mode.ts";
 import { reconcileLoadout, switchStateFromBranch } from "../lib/delegation-switch.ts";
-import { describeRetiredTools, isRetiredDelegationTool, stripRetiredTools } from "../lib/delegation-tools.ts";
+import { isRetiredDelegationTool, stripRetiredTools } from "../lib/delegation-tools.ts";
 import { waitCommandProblem } from "../lib/delegation/wait-guard.ts";
 import { hasLiveDelegation } from "../lib/delegation/live.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardMode } from "../lib/dashboard/integration.ts";
@@ -395,9 +395,13 @@ export default function modesExtension(pi: ExtensionAPI) {
     synchronize(ctx);
     const messages = event.messages.filter(message =>
       !(message.role === "custom" && message.customType === INPUT_MODE_CONTEXT_TYPE));
+    // A session that has never entered Plan has no stale Plan text to override,
+    // and the system prompt already states the mode. Skip the reminder there: it
+    // is uncached tail text that would otherwise be re-sent on every request.
+    if (!isPlan(ctx) && !planModeFromBranch(policyEntries(ctx))) return { messages };
     messages.push({
       role: "custom", customType: INPUT_MODE_CONTEXT_TYPE, display: false, timestamp: Date.now(),
-      content: `<current-input-mode>\nLive mode for this request, derived from the selected branch. This supersedes historical mode instructions, assistant statements and compaction summaries; it does not grant permissions beyond the current tools and normal safety rules.\n${inputModeGuidance(registry.current)}\nDelegation tools use the agent_* namespace only. Removed and unavailable: ${describeRetiredTools()}.\n</current-input-mode>`,
+      content: `<current-input-mode>\nLive mode for this request; it supersedes earlier mode instructions, assistant claims and compaction summaries.\n${inputModeGuidance(registry.current)}\n</current-input-mode>`,
     });
     return { messages };
   });

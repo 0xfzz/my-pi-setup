@@ -235,7 +235,7 @@ test("every AI run gets current-mode guidance and Normal clears stale Plan instr
       assert.ok(event.systemPromptOptions.selectedTools.every(isPlanTool));
     } else {
       assert.match(sections.input_mode!, /Plan mode is OFF/);
-      assert.match(sections.input_mode!, /historical, not the current policy/);
+      assert.match(sections.input_mode!, /are historical/);
       assert.equal(sections.plan_mode, undefined);
       assert.deepEqual(event.systemPromptOptions.selectedTools, original);
     }
@@ -310,7 +310,7 @@ test("automatic Plan briefing explains the discussion workflow without granting 
   for (const phrase of ["one at a time", "suggestions are not approval", "Stop before implementation", "Only the user can leave", "When input_mode says Plan is OFF"]) {
     assert.ok(PLAN_MODE_GUIDANCE.includes(phrase), phrase);
   }
-  assert.match(inputModeGuidance({ id: "normal", label: "Normal" }), /Normal mode supports regular AI chat/);
+  assert.match(inputModeGuidance({ id: "normal", label: "Normal" }), /implementation is allowed when requested/);
 });
 
 test("native shell submit promises prevent Plan entry without replacing other shell extensions", async () => {

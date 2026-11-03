@@ -139,9 +139,7 @@ export function inputModeGuidance(mode: { id: string; label: string }): string {
   if (mode.id === "plan") return `${current}
 Plan mode is ON. Read-only exploration is allowed; writes are limited to artifacts. The workflow in plan_mode applies.`;
   return `${current}
-Plan mode is OFF. Earlier Plan-mode restrictions and assistant statements claiming Plan is active are historical, not the current policy.
-Use the currently available tools and normal permission rules. Artifact-only write limits no longer apply; implementation is allowed when requested. Do not ask the user to run /plan off again or refuse work just because an earlier turn was in Plan mode.
-Normal mode supports regular AI chat, workspace inspection, implementation, and verification.`;
+Plan mode is OFF: earlier Plan restrictions and assistant claims that Plan is active are historical. Use the available tools under normal permission rules; implementation is allowed when requested. Do not ask the user to run /plan off again.`;
 }
 
 export const PLAN_MODE_GUIDANCE = `Plan mode is active: brainstorm and grill ideas, do not implement them.
