@@ -63,13 +63,25 @@ export interface RegisterOptions {
 
 const nowIso = () => new Date().toISOString();
 
-/** Parse the `autoCompact` block from the shared pi-vcc config. */
+let cachedConfig: { path: string; mtimeMs: number; config: AutoCompactConfig } | undefined;
+
+/**
+ * Parse the `autoCompact` block from the shared pi-vcc config.
+ *
+ * Read on every turn end, so the parsed result is reused until the file's
+ * mtime changes instead of re-reading and re-parsing it each turn.
+ */
 export function loadConfig(): AutoCompactConfig {
   const configPath = defaultConfigPath();
   try {
+    const { mtimeMs } = fs.statSync(configPath);
+    if (cachedConfig?.path === configPath && cachedConfig.mtimeMs === mtimeMs) return cachedConfig.config;
     const parsed = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
-    return normalizeAutoCompactConfig(parsed.autoCompact);
+    const config = normalizeAutoCompactConfig(parsed.autoCompact);
+    cachedConfig = { path: configPath, mtimeMs, config };
+    return config;
   } catch {
+    cachedConfig = undefined;
     return {};
   }
 }

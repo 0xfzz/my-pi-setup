@@ -33,6 +33,9 @@ const isWideCodePoint = (cp: number): boolean =>
   (cp >= 0x1f300 && cp <= 0x1faff) || // Emoji
   (cp >= 0x20000 && cp <= 0x3ffff); // CJK ext B+
 
+/** Anything below U+1100 is never wide, so a string without these is all narrow. */
+const NON_NARROW = /[\u1100-\uffff\ud800-\udfff]/;
+
 /**
  * Estimate tokens for plain text.
  * Wide code points cost one token each; everything else is chars / charsPerToken.
@@ -42,6 +45,9 @@ export function estimateTextTokens(
   charsPerToken: number = DEFAULT_CHARS_PER_TOKEN,
 ): number {
   if (!text) return 0;
+  // Most text (code, logs, JSON) has nothing above U+10FF, so one regex scan
+  // replaces a per-code-point iterator over what can be megabytes of output.
+  if (!NON_NARROW.test(text)) return Math.ceil(text.length / charsPerToken);
   let wide = 0;
   let narrow = 0;
   for (const char of text) {

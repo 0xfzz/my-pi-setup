@@ -126,3 +126,10 @@ test("estimates are conservative for wide scripts and honour the multiplier", ()
   assert.equal(estimateMessageTokens({ role: "compactionSummary", summary: "a".repeat(350) }), 100);
   assert.equal(estimateMessageTokens({ role: "toolResult", content: [{ type: "image" }] }), 1200);
 });
+
+test("estimateTextTokens fast path agrees with the code-point count", () => {
+  assert.equal(estimateTextTokens("abcdefg"), 2);
+  assert.equal(estimateTextTokens("日本語"), 3);
+  assert.equal(estimateTextTokens("日本語abcdefg"), 3 + 2);
+  assert.equal(estimateTextTokens("é".repeat(7)), 2, "Latin-1 stays narrow");
+});
