@@ -194,6 +194,18 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
   const accountsOf = (pool: PoolConfig): AccountConfig[] => poolAccounts(pool, sourceContext());
 
   /**
+   * Account each pool used earlier in the current agent run.
+   *
+   * A prompt-cache is scoped to the account that wrote it. Rotating on every
+   * request of a tool loop (round-robin, least-recently-used) sends each call
+   * to a cold account and re-bills the whole prefix. Rotation therefore happens
+   * between user prompts; within one run the pool keeps the account that
+   * answered, until it fails or cools down.
+   */
+  const runAccount = new Map<string, string>();
+  let runActive = false;
+
+  /**
    * Resolve credentials for the next request on a pool, walking accounts until
    * one yields a usable credential. Returns a display-safe error otherwise.
    */
@@ -210,7 +222,12 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     const tried = new Set<string>(exclude);
     let lastProblem = `pool "${poolName}": no usable account (accounts are cooling down, recovering, or disabled)`;
     while (tried.size < accounts.length) {
-      const picked = selectAccount(effective, state, { poolName, exclude: [...tried] });
+      const heldId = runAccount.get(poolName);
+      const held = runActive && heldId && !tried.has(heldId) && healthFor(state, poolName, heldId).failures === 0
+        ? accounts.find((account) => account.id === heldId)
+        : undefined;
+      const picked = (held && selectAccount({ ...effective, accounts: [held] }, state, { poolName }))
+        || selectAccount(effective, state, { poolName, exclude: [...tried] });
       if (!picked) break;
       if (probing.has(`${poolName}/${picked.account.id}`)) {
         tried.add(picked.account.id);
@@ -225,6 +242,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
         continue;
       }
       persistState();
+      if (runActive) runAccount.set(poolName, picked.account.id);
       return { account: picked.account, ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}) };
     }
     return { error: lastProblem };
@@ -1075,6 +1093,9 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
 
   pi.on("session_tree", (_event, ctx) => { uiCtx = ctx; sanitizeSessionEntries(ctx); restore(ctx); updateSidebar(); });
   pi.on("turn_start", () => { inFlight = undefined; updateSidebar(); });
+  // A new prompt (or the end of one) is where rotation resumes.
+  pi.on("agent_start", () => { runAccount.clear(); runActive = true; });
+  pi.on("agent_end", () => { runAccount.clear(); runActive = false; });
   pi.on("model_select", (_event, ctx) => { uiCtx = ctx; updateSidebar(); });
 
   // The request-local stream owns health updates. HTTP/message callbacks can

@@ -709,3 +709,30 @@ test("the sidebar displays all configured pools when multiple pools exist", { ti
 });
 
 
+
+test("inside one agent run a pool keeps its account so the prompt cache stays warm", { timeout: 20000 }, async () => {
+  await withSession(async ({ seen, registry, session }) => {
+    const model = registry.getModel(poolProviderId("ag"), "gemini-pro")!;
+    const ask = (text: string) => registry.completeSimple(model, {
+      messages: [{ role: "user", content: [{ type: "text", text }] }],
+    });
+    const runner = session._extensionRunner;
+    await runner.emit({ type: "agent_start" });
+    await ask("a");
+    await ask("b");
+    await runner.emit({ type: "agent_end", messages: [] });
+    await ask("c");
+    const tokens = seen.map((entry) => JSON.parse(entry.key).token);
+    assert.equal(tokens[0], tokens[1], "continuations of one run stay on one account");
+    assert.notEqual(tokens[2], tokens[1], "rotation resumes with the next prompt");
+  }, (seen) => ({
+    providers: [{
+      name: "antigravity",
+      config: fakeProvider("antigravity", ["gemini-pro"], seen).config,
+    }],
+    config: {
+      pools: { ag: { provider: "antigravity", source: "antigravity-accounts", strategy: "round-robin" } },
+      routes: [{ name: "auto", targets: [{ model: "antigravity/gemini-pro", pool: "ag" }] }],
+    },
+  }));
+});
