@@ -8,7 +8,7 @@
 | **Status** | measurement snapshot, not a policy |
 | **Detail for** | [README § Verification](../README.md) |
 | **Scope** | `extensions/`, `lib/`, `tests/`, `scripts/` (per `knip.json`) |
-| **Verified against** | `npm run lint:dead`, `npm run lint:dup` at commit `a4ec792` |
+| **Verified against** | `npm run lint:dead`, `npm run lint:dup` at the commit that adds this note (after `80f71e4`) |
 | **Related** | [Verification](verification.md) |
 
 `knip` and `jscpd` are deliberately outside the pre-commit hook: the tree still
@@ -17,11 +17,11 @@ commit. This note records where that backlog stands.
 
 - **Unused files**: 0 — the deployed VCC entry and the test fixtures are knip entries.
 - **Unused dependencies**: 2 — `@viz-js/viz` and `highlight.js`, which `scripts/build-dashboard.mjs` bundles. `tree-sitter` and `tree-sitter-bash` had no importer anywhere and were removed.
-- **Unlisted dependencies**: 15 — mostly `@earendil-works/pi-ai` in tests, plus
-  `playwright-core` and `jiti`, which are provided by the Pi runtime rather than
-  installed by this package.
+- **Unlisted dependencies**: 0 — the 15 Pi runtime and peer imports are declared in `knip.json` → `ignoreDependencies`, each with a reason (see below).
 - **Unused exports**: 0.
-- **Duplicated blocks**: 19 clones, 342 lines (0.57%) of 59,982 TypeScript lines.
+- **Duplicated blocks**: 20 clones, 356 lines (0.58%) of 61,183 TypeScript lines (advisory).
+
+`knip` is blocking in CI (`npm run lint:dead` in `.github/workflows/ci.yml`). `jscpd` stays advisory.
 
 ---
 
@@ -30,9 +30,7 @@ commit. This note records where that backlog stands.
 A non-zero `knip` count here is not automatically a bug:
 
 - **Unused exports** are the real target. `lib/` is not loaded by Pi, so an export
-  nothing imports is genuinely dead, and the 41 are spread across
-  `lib/delegation/`, `lib/vcc/` and `lib/ui/`. They should be removed file by
-  file, not in one sweep.
+  nothing imports is genuinely dead. There are none today; keep it that way.
 - **Unused dependencies** need a decision, not a reflex. `highlight.js`,
   `tree-sitter` and `tree-sitter-bash` back features the dashboard or code views
   use at runtime through a path `knip` cannot follow; verify before deleting any.
@@ -43,6 +41,17 @@ A non-zero `knip` count here is not automatically a bug:
   probe loads dynamically, so type-based reachability misses them.
 - **Duplication** is 0.57% and mostly `tests/delegation/` setup scaffolding. The
   `--threshold 12` setting already tolerates it, so this is informational.
+
+## Ignored dependencies and why
+
+`knip` cannot follow these, so each is listed in `knip.json` → `ignoreDependencies`:
+
+| Dependency | Reason |
+| --- | --- |
+| `@viz-js/viz`, `highlight.js` | Bundled by `scripts/build-dashboard.mjs` (its header says so). knip does not follow the bundle, so these look unused. Verify with the build before removing either. |
+| `@earendil-works/pi-ai` | Pi runtime peer package, imported by tests and extensions. Pi supplies it at load time. |
+| `playwright-core` | Provided by the Pi runtime, used by `lib/web-read.ts` through a runtime path. |
+| `jiti` | Pi runtime loader, used by `tests/extension-loader.test.ts`. |
 
 ## Configuration hints
 
