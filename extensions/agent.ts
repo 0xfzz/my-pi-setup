@@ -2416,9 +2416,12 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           : undefined;
 
       if (!lanes) {
-        const missing = requireFields(shared, "agent_spawn");
-        if (missing) return missing;
-        return spawnOne(shared as SpawnParams, ctx);
+        // A missing delegationReason is an admission refusal (spawnOne owns that
+        // wording and code); only a missing task is a malformed call here.
+        if (!String(shared.task ?? "").trim()) {
+          return text("Refused: agent_spawn needs a non-empty `task` (or an `agents` array). Nothing was started.", { error: "spawn-fields-required" });
+        }
+        return spawnOne({ ...shared, delegationReason: shared.delegationReason ?? "" } as SpawnParams, ctx);
       }
 
       // Batch: every lane is launched by THIS call, so parallelism never depends on
