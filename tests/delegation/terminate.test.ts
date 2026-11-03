@@ -137,6 +137,7 @@ test("a successful spawn ENDS the run; lanes run in parallel when spawned in one
     assert.match(first.content[0].text, /Do not poll or sleep/);
 
     const second = await spawn.execute("t2", {
+      moreSpawns: false,
       name: "split",
       task: "split one helper in src/unit-b/page.ts",
       delegationReason: "a second independent lane in another directory",
@@ -146,6 +147,20 @@ test("a successful spawn ENDS the run; lanes run in parallel when spawned in one
 
     assert.equal(second.details?.status, "started", second.content?.[0]?.text);
     assert.equal(registry.getRunningChildren().length, 2, "both lanes run at once");
+
+    // A parent that spawns one lane per turn opts out of the stop on all but the last.
+    registry.resetForTests();
+    const third = await spawn.execute("t3", {
+      name: "third",
+      task: "rename one helper in src/unit-c/x.ts",
+      delegationReason: "a third independent lane in another directory",
+      laneFiles: ["src/unit-c/x.ts"],
+      acceptanceCriteria: ["the helper is renamed"],
+      moreSpawns: true,
+      budgetMinutes: 5,
+    }, undefined, undefined, ctx);
+    assert.equal(third.details?.status, "started", third.content?.[0]?.text);
+    assert.notEqual(third.terminate, true, "moreSpawns keeps the run alive for the next lane");
   } finally {
     await emit("session_shutdown");
     registry.resetForTests();

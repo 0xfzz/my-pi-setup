@@ -174,7 +174,9 @@ This is enforced, not requested:
   tool batch terminates, so independent lanes are launched together by issuing all
   `agent_spawn` calls in **one assistant message** — they all run, then the run ends.
   Session `01a19d41` serialised because lanes were spawned across separate turns. A
-  refused or failed spawn does not terminate; the parent has to react to it.
+  refused or failed spawn does not terminate; the parent has to react to it. A parent
+  that spawns one lane per turn passes `moreSpawns: true` on every spawn except the
+  last, which keeps the run alive for the next lane.
 - `lib/delegation/wait-guard.ts` refuses a `bash` command whose **purpose** is to
   wait, in a parent session **while a child is in flight**: `sleep`, `wait`, `watch`,
   `tail -f`/`--follow`, an unbounded `ping`, and never-terminating

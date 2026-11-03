@@ -1780,7 +1780,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     label: "Spawn Agent",
     description:
       "A successful spawn ENDS your run: you generate nothing while children work and are re-triggered by their report, question or failure. "
-      + "To run lanes in parallel, issue ALL agent_spawn calls in ONE assistant message. "
+      + "To run lanes in parallel, issue ALL agent_spawn calls in ONE assistant message; if you must spawn one lane per turn, pass moreSpawns:true on every spawn except the last. "
       + "Spawn one agent: a read-only planner (research and plan creation) or a read-and-write worker (plan execution and verification). With planId/stepId the worker's lane and criteria come from one plan step. A child sees only its own ticket; its result stays YOUR responsibility to verify — record the verdict with agent_accept_result. "
       + "Admission is need-based and owned: required delegationReason, duplicate work units refused (steer/resume/settle, or replaces with capacity), 2 occupied slots and 4 launches per batch by default (the strictest explicitly configured ceiling wins), and a finished child keeps its slot until dispositioned. /agent batch is the user-owned reset.",
     parameters: Type.Object({
@@ -1824,6 +1824,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       tools: Type.Optional(Type.String({ description: "Comma-separated allowed tools." })),
       cwd: Type.Optional(Type.String({ description: "Working directory for the child." })),
       budgetMinutes: Type.Optional(Type.Number({ description: "Wall-clock minutes before the watchdog interrupts the child. Default 30." })),
+      moreSpawns: Type.Optional(Type.Boolean({
+        description: "Set true ONLY when you will spawn another lane in your NEXT turn (spawning one lane per turn). The run then continues instead of ending after this spawn. Omit it on the last spawn; when spawning several lanes in one message, omit it on all of them.",
+      })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       // ── depth and breadth are hard stops ─────────────────────────────────
@@ -2341,7 +2344,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           accountability: { ...accountability },
         },
       );
-      return { ...launched, terminate: true };
+      // `moreSpawns` is the explicit escape hatch for a parent that spawns one lane
+      // per turn: without it the run ends here and a second lane could never start.
+      return params.moreSpawns === true ? launched : { ...launched, terminate: true };
       } finally {
         // Always: the reservation only covers the launch window. Once the row
         // is registered the registry owns the count, and on any earlier failure
