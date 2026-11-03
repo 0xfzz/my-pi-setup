@@ -90,3 +90,24 @@ test("legacy terminal rows remain unreviewed without a retroactive review backlo
   assert.equal(r.getPendingResults().length, 0);
   assert.throws(() => r.recordDisposition("parent", "first", decision), /legacy/);
 });
+
+test("a deliberate close of a running child abandons it and releases its slot", () => {
+  // Regression: a user close left the row pending, so it held a slot forever and
+  // the parent had to fabricate verdicts to free capacity.
+  const r = new ScopeRegistry();
+  r.registerChild(child());
+  r.closeChild("/tmp/unit.jsonl", "user-closed");
+  assert.equal(r.getOccupiedChildren("parent").length, 0);
+  assert.equal(r.getPendingResults("parent").length, 0);
+  const a = r.getChildById("first")!.accountability!;
+  assert.equal(a.disposition, "abandoned");
+  assert.equal(a.reviews.at(-1)?.disposition, "abandoned");
+});
+
+test("a crash close of a running child keeps the unit pending: a report may still exist", () => {
+  const r = new ScopeRegistry();
+  r.registerChild(child());
+  r.closeChild("/tmp/unit.jsonl", "pane-gone");
+  assert.equal(r.getOccupiedChildren("parent").length, 1);
+  assert.equal(r.getChildById("first")!.accountability!.disposition, "pending");
+});

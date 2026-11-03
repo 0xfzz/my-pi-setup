@@ -27,6 +27,13 @@ export type CloseReason =
   | "paused-missing";
 
 /**
+ * Closes the parent or user chose on purpose. A running child closed this way
+ * is abandoned, releasing its slot. Crashes (pane-gone, watcher-error, ...) are
+ * not in this set: a report may still exist, so the unit stays pending.
+ */
+const DELIBERATE_CLOSES: ReadonlySet<CloseReason> = new Set<CloseReason>(["user-closed", "interrupted", "scope-cancelled"]);
+
+/**
  * Watchdog bookkeeping, persisted with the child.
  *
  * `trip` is the anti-storm guard: once a child has tripped for a reason, the
@@ -518,8 +525,9 @@ export class ScopeRegistry {
     const child = this.childrenBySession.get(sessionFile);
     if (!child) return undefined;
     if (child.status === "closed") return child;
+    const wasActive = child.status === "running" || child.status === "blocked";
     // Pane cleanup after a terminal report must not invalidate its reviewed result.
-    if (child.status === "running" || child.status === "blocked") this.invalidateResult(child);
+    if (wasActive) this.invalidateResult(child);
     child.status = "closed";
     child.pendingPing = false;
     child.stallStrikes = 0;
@@ -527,7 +535,29 @@ export class ScopeRegistry {
     child.closeReason = reason;
     child.watchdog = { trip: null, interrupts: child.watchdog?.interrupts ?? 0 };
     child.updatedAt = child.closedAt;
+    if (wasActive && DELIBERATE_CLOSES.has(reason)) this.abandonUnreported(child, reason);
     return child;
+  }
+
+  /**
+   * A deliberate close of a child that never reported is a terminal decision,
+   * so its work unit is abandoned here. Left pending, the row held its slot
+   * waiting for a verdict on output that does not exist, and the parent had to
+   * fabricate "abandoned" verdicts just to free capacity.
+   */
+  private abandonUnreported(child: ScopedChild, reason: CloseReason): void {
+    const a = child.accountability;
+    if (!a) return;
+    const at = new Date().toISOString();
+    a.reviews.push({
+      disposition: "abandoned",
+      resultRevision: a.resultRevision,
+      summary: `Closed (${reason}) while still running; no result was reported.`,
+      evidence: [],
+      integration: "Nothing to integrate. Inspect the lane files for partial writes before reusing the unit.",
+      at,
+    });
+    a.disposition = "abandoned";
   }
 
   /** Re-arm the budget clock and clear the trip after a resume. */
