@@ -46,6 +46,7 @@ import { isWaitGuardTool, waitCommandProblem } from "../lib/delegation/wait-guar
 import { hasLiveDelegation, setDelegationProbe } from "../lib/delegation/live.ts";
 import { classifyChildError, isHaltedPing, HALTED_PREFIX } from "../lib/delegation/child-error.ts";
 import { sessionHasAssistantOutput } from "../lib/delegation/child-output.ts";
+import { CloseIntents } from "../lib/delegation/close-intent.ts";
 import { decideRecovery, emptyRecovery, MAX_FAILOVERS, MAX_RETRIES_PER_MODEL, type RecoveryState } from "../lib/delegation/recovery.ts";
 import { decideBudget, HARD_CAP_MULTIPLIER } from "../lib/delegation/budget.ts";
 import { errorIsTerminal, readChildHealth } from "../lib/delegation/child-health.ts";
@@ -691,6 +692,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     }
   }
 
+  /** Sessions the parent is closing now; the watcher's report of that close is the parent's own doing. */
+  const closeIntents = new CloseIntents();
+
   async function settleChild(
     target: ScopedChild,
     reason: CloseReason,
@@ -712,6 +716,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         };
       }
       if (liveness.state === "alive") {
+        // Declared before the pane closes: the watcher sees the pane vanish during
+        // this await and would otherwise report the parent's close as a failure.
+        closeIntents.begin(target.sessionFile);
         try {
           await client.paneClose(target.paneId);
           paneState = "closed";
@@ -722,6 +729,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       }
     }
     if (closeFailed) {
+      closeIntents.end(target.sessionFile);
       // A live pane must never sit in a status the watchdog ignores (blocked and
       // ping-paused rows are not ticked). Re-arm the budget loop so it retries.
       registry.rearmForRetry(target.sessionFile, closeFailed, new Date(now()).toISOString());
@@ -732,6 +740,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     closeEscalationsFor(target, `Child closed (${reason}).`);
     const wasClosed = target.status === "closed";
     const child = registry.closeChild(target.sessionFile, reason) ?? target;
+    closeIntents.end(target.sessionFile);
     // A child that never reached a model turn must not hold a slot or spend the
     // batch: it is released (unit abandoned, launch refunded) instead of waiting
     // for a verdict on output that does not exist.
@@ -1672,6 +1681,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     // leaving its pane running unwatched.
     const current = registry.getChildById(running.id);
     if (!current || current.sessionFile !== running.sessionFile) return;
+    // The parent is closing this pane itself: its end is the parent's decision,
+    // already recorded by settleChild, not a child that died on its own.
+    if (closeIntents.has(running.sessionFile)) return;
     if (outcome.kind === "cancelled") {
       if (current.status !== "closed") registry.closeChild(running.sessionFile, "scope-cancelled");
       return;
