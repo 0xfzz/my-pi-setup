@@ -176,7 +176,6 @@ function names(tools: readonly PromptTool[]): Set<string> {
 export function capabilityFacts(tools: readonly PromptTool[]): string[] {
   const present = names(visibleTools(tools));
   const facts: string[] = [];
-  if (present.size) facts.push(`${present.size} tools are registered and callable in this session.`);
   const servers = new Set([...present].map(mcpServerOf).filter((server): server is string => Boolean(server)));
   if (servers.size) facts.push(`MCP servers connected: ${[...servers].sort().join(", ")}.`);
   if ([...present].some((name) => /^(read|grep|find|ls|ffgrep|fffind)$/.test(name))) {
@@ -264,7 +263,10 @@ export function generalPreamble(toolCount: number): string {
     "You help with whatever the user actually needs: software work, research, writing, analysis, planning, operations, or anything else. Do not assume every request is about code.",
     "You act by calling the tools available to you, and you can only act through them. When a tool is needed, call it instead of describing the call.",
     toolCount
-      ? `Exactly ${toolCount} tool${toolCount === 1 ? " is" : "s are"} registered for this session, listed below; treat that list as authoritative and do not claim capabilities outside it.`
+      // No count: it changes whenever a tool is added or removed (a Plan switch,
+      // a late MCP connect) and the preamble leads the cached prefix, so a number
+      // here would invalidate the whole prompt cache for no information gain.
+      ? "The tools listed below are the ones registered for this session; treat that list as authoritative and do not claim capabilities outside it."
       : "No tools are registered in this session, so work from the conversation alone and say what you would need to act.",
   ].join(" ");
 }

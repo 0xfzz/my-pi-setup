@@ -11,6 +11,7 @@ import { Type } from "typebox";
 import dynamicPrompt, { activeTools, applyDynamicPrompt } from "../extensions/dynamic-prompt.ts";
 import {
   DEFAULT_DYNAMIC_PROMPT_CONFIG,
+  buildDynamicSections,
   capabilityFacts,
   derivedRules,
   generalPreamble,
@@ -139,11 +140,12 @@ test("tool-declared guidelines are folded in, and can be turned off", () => {
   assert.equal(dupes.length, 1);
 });
 
-test("the preamble is general purpose and honest about the tool count", () => {
+test("the preamble is general purpose and does not vary with the tool count", () => {
   const preamble = generalPreamble(7);
   assert.match(preamble, /pi/);
   assert.match(preamble, /Do not assume every request is about code/i);
-  assert.match(preamble, /7 tools/i);
+  assert.equal(preamble, generalPreamble(12), "a count would invalidate the cached prefix on every tool change");
+  assert.equal(/\d/.test(preamble), false);
   assert.equal(/expert coding assistant/i.test(preamble), false);
   // An empty session says so rather than pretending it can act.
   assert.match(generalPreamble(0), /No tools are registered/i);
@@ -321,4 +323,17 @@ test("a real session gets a general prompt that lists every registered tool", as
     else process.env.PI_CODING_AGENT_DIR = savedConfig;
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("the rendered sections do not depend on tool registration order", () => {
+  const tools = [
+    tool("read", { promptSnippet: "Read a file." }),
+    tool("agent_spawn", { promptSnippet: "Spawn." }),
+    tool("agent_close"),
+    tool("mcp__docs__search"),
+    tool("mcp__docs__fetch"),
+  ];
+  const forward = buildDynamicSections(tools, CONFIG);
+  const reversed = buildDynamicSections([...tools].reverse(), CONFIG);
+  assert.deepEqual(reversed, forward, "registration order must not change the cached prefix");
 });
