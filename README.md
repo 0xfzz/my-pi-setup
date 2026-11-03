@@ -33,6 +33,7 @@ diff record, not documentation.
 | [Questions](docs/questions.md) | When the agent must ask, how a child routes a question to the parent, and why a cancelled dialog is never consent. |
 | [Checkpoints](docs/checkpoints.md) | What the parent records about a child, milestone sidecars, recovery limits, and VCC history reduction. |
 | [VCC compaction](docs/vcc.md) | The compaction policy, its calibration, telemetry and rollback. |
+| [Token efficiency](docs/token-efficiency.md) | Prompt-cache stability, compact schemas and per-model prompt profiles. |
 | [Artifacts](docs/artifacts.md) | Storing, recalling and editing plans, specs and scratchpads outside the chat turn, plus `@artifact` mentions. |
 | [Dashboard](docs/dashboard.md) | The local read-only graph, artifact views, and the server's bounds and trust model. |
 | [Smart timeout](docs/smart-timeout.md) | Wall-clock and idle limits for `bash`, explicit budgets, and timeout diagnostics. |
