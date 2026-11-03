@@ -144,12 +144,20 @@ export function groupTools(tools: readonly PromptTool[]): ToolFamily[] {
     .sort((a, b) => b.tools.length - a.tools.length || a.label.localeCompare(b.label));
 }
 
-/** The complete tool inventory, one line per tool. Never omits a visible tool. */
+/**
+ * The complete tool inventory, one line per tool. Never omits a visible tool.
+ *
+ * A tool that declares a `promptSnippet` gets it; any other is listed by name
+ * only. Its full description already reaches the model in the request's tool
+ * schema, so repeating a clipped copy here would pay for every tool twice.
+ */
 export function renderToolList(tools: readonly PromptTool[], maxChars: number): string {
   const families = groupTools(visibleTools(tools));
   if (!families.length) return "(no tools are registered)";
   return families.map((family) => {
-    const lines = family.tools.map((tool) => `- ${tool.name}: ${snippetFor(tool, maxChars)}`);
+    const lines = family.tools.map((tool) => (
+      tool.promptSnippet?.trim() ? `- ${tool.name}: ${snippetFor(tool, maxChars)}` : `- ${tool.name}`
+    ));
     return [`### ${family.label}`, ...lines].join("\n");
   }).join("\n\n");
 }
