@@ -10,6 +10,12 @@ const {
   attachSessionPlugins,
   checkAndSeedFixtures,
   WEB_PLUGIN_VIEW_EVENT,
+  WEB_PLUGIN_ACTION_REQUEST_EVENT,
+  relayActionRequest,
+  checkAndSetInFlightAction,
+  recordActionAudit,
+  getActionAuditLog,
+  isKnownSession,
 } = await jiti.import("./web-plugins-host.ts");
 
 test("webPluginsStore records and retrieves valid kv views", () => {
@@ -147,4 +153,92 @@ test("checkAndSeedFixtures seeds kv view with <script> string when PI_WEB_TEST_P
     if (prevEnv === undefined) delete process.env.PI_WEB_TEST_PLUGIN_VIEWS;
     else process.env.PI_WEB_TEST_PLUGIN_VIEWS = prevEnv;
   }
+});
+
+test("relayActionRequest emits on session bus and returns relayed: true", () => {
+  webPluginsStore.clear();
+
+  let emittedChannel = null;
+  let emittedData = null;
+  const mockEventBus = {
+    on() {
+      return () => {};
+    },
+    emit(channel, data) {
+      emittedChannel = channel;
+      emittedData = data;
+    },
+  };
+
+  const mockWrapper = {
+    sessionId: "sess-action-test",
+    inner: {
+      resourceLoader: {
+        eventBus: mockEventBus,
+      },
+    },
+  };
+
+  attachSessionPlugins(mockWrapper);
+  assert.equal(isKnownSession("sess-action-test"), true);
+
+  const result = relayActionRequest("sess-action-test", "dashboard", "request-sync", "custom-req-id");
+  assert.equal(result.relayed, true);
+  assert.equal(emittedChannel, WEB_PLUGIN_ACTION_REQUEST_EVENT);
+  assert.deepEqual(emittedData, {
+    requestId: "custom-req-id",
+    sessionId: "sess-action-test",
+    pluginId: "dashboard",
+    actionId: "request-sync",
+  });
+});
+
+test("relayActionRequest reports relayed: false when no bus is attached (A5)", () => {
+  webPluginsStore.clear();
+  assert.equal(isKnownSession("sess-no-bus"), false);
+
+  const result = relayActionRequest("sess-no-bus", "dashboard", "request-sync");
+  assert.equal(result.relayed, false);
+});
+
+test("checkAndSetInFlightAction bounds concurrency to one in-flight per session (A6)", () => {
+  webPluginsStore.clear();
+
+  const first = checkAndSetInFlightAction("sess-1", "req-1", 10_000);
+  assert.equal(first, true);
+
+  const secondConcurrent = checkAndSetInFlightAction("sess-1", "req-2", 10_000);
+  assert.equal(secondConcurrent, false, "Second concurrent request for same session must be rejected");
+
+  const diffSession = checkAndSetInFlightAction("sess-2", "req-3", 10_000);
+  assert.equal(diffSession, true, "Different session can run an action concurrently");
+
+  // Expired lock allows subsequent action
+  webPluginsStore.inFlightActions.set("sess-expired", {
+    requestId: "req-old",
+    expiresAt: Date.now() - 1000,
+  });
+  const expired = checkAndSetInFlightAction("sess-expired", "req-new", 10_000);
+  assert.equal(expired, true, "Expired in-flight lock can be acquired");
+});
+
+test("audit log records entries and clears with store", () => {
+  webPluginsStore.clear();
+  assert.equal(getActionAuditLog().length, 0);
+
+  recordActionAudit({
+    requestId: "req-1",
+    sessionId: "sess-1",
+    pluginId: "dashboard",
+    actionId: "request-sync",
+    timestamp: Date.now(),
+  });
+
+  const log = getActionAuditLog();
+  assert.equal(log.length, 1);
+  assert.equal(log[0].requestId, "req-1");
+  assert.equal(log[0].pluginId, "dashboard");
+
+  webPluginsStore.clear();
+  assert.equal(getActionAuditLog().length, 0);
 });
