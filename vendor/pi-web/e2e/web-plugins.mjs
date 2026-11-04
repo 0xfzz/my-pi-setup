@@ -25,7 +25,7 @@ export async function checkWebPlugins(page, base) {
 
   try {
     // 1. Visit published plugin page (seeded via PI_WEB_TEST_PLUGIN_VIEWS=1)
-    await page.goto(`${base}/plugins/cache-stats`, { waitUntil: "networkidle" });
+    await page.goto(`${base}/plugins/cache-stats`, { waitUntil: "load" });
 
     // (a) Verify page and published KV view
     const heading = page.locator(".plugin-page-title");
@@ -59,7 +59,7 @@ export async function checkWebPlugins(page, base) {
 
     // (c) Verify unpublished view shows empty state
     await page.goto(`${base}/plugins/cache-stats?session=empty_session_id`, {
-      waitUntil: "networkidle",
+      waitUntil: "load",
     });
 
     const emptyState = page.locator(".plugin-empty-state");
@@ -70,7 +70,33 @@ export async function checkWebPlugins(page, base) {
       "Unpublished session view must show the empty state",
     );
 
+    // (d) Every registered plugin gets a working page, with no per-plugin fork code.
+    // This is the pluggable guarantee: a descriptor in web-plugins/index.ts is enough.
+    const registry = await (await fetch(`${base}/api/plugins`)).json();
+    const pageSurfaces = registry.plugins.flatMap((plugin) =>
+      plugin.surfaces
+        .filter((surface) => surface.kind === "page")
+        .map((surface) => ({ plugin, path: surface.path })),
+    );
+    const registeredIds = registry.plugins.map((plugin) => plugin.id);
+    for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "dashboard"]) {
+      assert.ok(registeredIds.includes(id), `Plugin "${id}" must be registered, got: ${registeredIds.join(", ")}`);
+    }
+    assert.ok(pageSurfaces.length >= 5, `Every plugin must expose a page surface, got ${pageSurfaces.length}`);
+    for (const { plugin, path } of pageSurfaces) {
+      // Plugin pages poll /api/plugins every 3s, so "networkidle" never settles; wait for load and the content instead.
+      await page.goto(`${base}${path}`, { waitUntil: "load" });
+      const title = page.locator(".plugin-page-title");
+      await title.waitFor({ state: "visible", timeout: 15_000 });
+      assert.equal((await title.textContent())?.trim(), plugin.title, `${path} must show its descriptor title`);
+      // A plugin that has not published yet shows the empty state; one that has shows a view.
+      const body = page.locator(".plugin-empty-state, .plugin-kv-table, .plugin-list, .plugin-status-badge");
+      await body.first().waitFor({ state: "visible", timeout: 10_000 });
+    }
+    assert.equal(dialogFired, false, "No plugin page may open a dialog");
+
     // Verify navigation links
+    await page.goto(`${base}/plugins/cache-stats`, { waitUntil: "load" });
     const homeLink = page.locator(".plugin-nav-home-link");
     assert.ok(await homeLink.isVisible(), "Home link is visible on plugin page");
     assert.equal(await homeLink.getAttribute("href"), "/", "Home link points to /");
