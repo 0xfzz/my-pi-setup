@@ -9,16 +9,112 @@ Nothing here replaces Pi's system prompt, header, footer or global agent definit
 Every extension is listed explicitly in `package.json`, so helpers and tests never load as
 extensions.
 
-## Install
+## What this is
+
+A set of Pi extensions that turn one Pi session into a small, supervised team. The
+parent plans and verifies; child agents do bounded work in their own panes and hand
+back a result the parent must check before it counts.
+
+| Area | What you get |
+| --- | --- |
+| **Delegation** | `agent_spawn`, `agent_resume`, `agent_steer`, `agent_close`, `agent_accept_result` and friends: parallel child agents, each with a frozen handoff, a declared file lane, acceptance criteria, a question-and-escalation ladder, and a parent verdict before a slot is freed. |
+| **Todo** | `todo_plan` / `todo_act` / `todo_next`: a dependency graph with leases and typed evidence, so "done" needs proof. |
+| **Artifacts** | Plans, specs and scratchpads kept outside the chat turn, recalled on demand, referenced with `@artifact`. |
+| **Modes** | Normal and Plan (read-only) input modes, enforced on tools rather than by prompt. |
+| **Checkpoints and compaction** | Durable records of every child, milestone reports, and model-aware VCC auto-compaction. |
+| **Providers and routing** | `/providers` editor, multi-account pools, `/router` virtual models with ordering, triggers and per-target failure cooldowns, and linked Google (Antigravity) accounts. |
+| **Interface** | Right sidebar (`Alt+W` menu), shared popup frame, `ask_user` dialogs, Linux clipboard paste, cache stats. |
+| **Dashboard** | A local, read-only browser view of the delegation graph and artifacts. |
+| **Tools** | `web_read`, `google_search` and `generate_image` (vendored Antigravity), smart timeouts for `bash`. |
+
+Every extension is listed in [Repository layout](#repository-layout) and in
+`package.json` → `pi.extensions`. Start with [Delegation](docs/delegation.md).
+
+## Requirements
+
+| Needed | For | Notes |
+| --- | --- | --- |
+| **Node.js 22.6+** | Everything | Uses `--experimental-strip-types`; `engines` enforces it. |
+| **[Pi](https://github.com/earendil-works/pi)** | Everything | Built and tested on 1.5.0. The manifest declares peer `@earendil-works/pi-coding-agent ~1.4.0`; install the Pi you actually run and tell `npm` to ignore the peer range if it complains. |
+| **[Herdr](https://github.com/modem-dev/pi-herdr-subagents)** (terminal multiplexer) | Child agents | `agent_spawn` and friends start each child in a Herdr pane, so **run Pi inside Herdr**. Delegation needs it; I have not tested which other extensions still load without it. Developed on Herdr 0.9. |
+| **npm** | The dashboard and development | Only `npm run build:dashboard` is needed to use the dashboard. |
+| Rust + `wasm32-unknown-unknown` | Optional | Only to rebuild the sidebar animation (`npm run build:wasm`; the built `.wasm` is committed) or the no-write guard binary (`npm run build:nowrite`; the binary is not committed). |
+
+## Setup
 
 ```sh
-pi install /absolute/path/to/pi-workflow-extensions
-# restart Pi, or /reload in a session with no running children
-pi remove /absolute/path/to/pi-workflow-extensions
+# 1. Get the code and keep it where it is: Pi loads it in place.
+git clone <this repository> ~/projects/pi-workflow-extensions
+cd ~/projects/pi-workflow-extensions
+npm install --ignore-scripts --legacy-peer-deps
+
+# 2. Build the dashboard bundle (it is generated, not committed).
+npm run build:dashboard
+
+# 3. Install the companion package this workflow depends on (see below).
+pi install npm:pi-vcc
+
+# 4. Install this package.
+pi install ~/projects/pi-workflow-extensions
+
+# 5. Start Pi inside Herdr, then restart or /reload.
 ```
 
-The local package must stay where it is while installed. For install details, development
-commands and the removal checklist, see [install](docs/install.md).
+Check it worked: `/subagents`, `/router`, `/provider` and `/artifacts` should open,
+and the model can call `todo_plan` and `agent_spawn`.
+
+To remove it: `pi remove ~/projects/pi-workflow-extensions`. To disable one extension
+only, use `pi config` and untick it. Details in [install](docs/install.md).
+
+## Companion packages
+
+### Required
+
+| Package | Why |
+| --- | --- |
+| `npm:pi-vcc` | The compaction and history engine. VCC auto-compaction, child "digest" briefs and `vcc_recall` all build on it, and `lib/vcc/` imports it directly. |
+
+VCC auto-compaction is deployed as one file outside this package's manifest, on
+purpose (two controllers would fight). Mirror it once, and again after changing
+`lib/vcc/`:
+
+```sh
+node scripts/sync-vcc-auto-compact.mjs
+```
+
+It copies the entry point to `~/.pi/agent/extensions/auto-compact.ts`. See
+[VCC compaction](docs/vcc.md).
+
+### Recommended
+
+These are not imported by this package, but it detects the tools or editor slots they
+provide and is tuned around them.
+
+| Package | What it adds | How this workflow uses it |
+| --- | --- | --- |
+| `npm:@ff-labs/pi-fff` | `ffgrep` / `fffind`, fast indexed search | Allow-listed for read-only children and Plan mode, and named in the prompt guidance. Without it children fall back to `grep` / `find`. |
+| `npm:pi-paster` | Inline image paste (`[#image 1]`) | The editor wrapper and clipboard paste compose with the editor wrapper and clipboard paste instead of fighting for the single editor slot. |
+| `npm:pi-mcp-adapter` | MCP servers as tools | Independent of this package; listed because it is part of the setup this was developed with. |
+| `npm:betterwright` | A persistent browser tool | Independent of this package; useful for verifying web work a child reports. |
+| `npm:pi-antigravity` or the vendored copy | Antigravity provider | This repo already vendors it (`vendor/antigravity/`). Do not install both. |
+
+### Not needed
+
+Nothing else is required. `pi-zentui` and similar UI packages are independent; this
+workflow keeps its own sidebar, popups and prompt UI, so use one prompt/editor
+replacement at a time.
+
+## Configuration
+
+Everything works with defaults. Files you may create:
+
+| File | Purpose |
+| --- | --- |
+| `~/.pi/agent/account-router.json` (or `.pi/account-router.json` per project) | Pools and routes for `/router`. |
+| `~/.pi/agent/models.json` | Providers and models written by `/providers`. |
+| `~/.pi/agent/pi-vcc-config.json` | The `autoCompact` block that tunes compaction. |
+
+Credentials live in Pi's own stores under `~/.pi/agent/`, never in this repository.
 
 ## Documentation
 
