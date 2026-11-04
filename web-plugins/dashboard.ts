@@ -9,6 +9,13 @@ export const dashboardPlugin: WebPluginDescriptor = {
     { kind: "sidebar" },
     { kind: "page", path: "/plugins/dashboard" },
   ],
+  actions: [
+    {
+      id: "request-sync",
+      title: "Request fresh snapshot",
+      confirm: "request sync",
+    },
+  ],
 };
 
 export default dashboardPlugin;
