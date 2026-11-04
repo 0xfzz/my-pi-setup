@@ -132,6 +132,7 @@ diff record, not documentation.
 | [Token efficiency](docs/token-efficiency.md) | Prompt-cache stability, compact schemas and per-model prompt profiles. |
 | [Artifacts](docs/artifacts.md) | Storing, recalling and editing plans, specs and scratchpads outside the chat turn, plus `@artifact` mentions. |
 | [Dashboard](docs/dashboard.md) | The local read-only graph, artifact views, and the server's bounds and trust model. |
+| [Pi Web](docs/pi-web.md) | Operator guide for the vendored web UI fork: installation, dev server, plugin views, trust bounds, and resyncing. |
 | [Smart timeout](docs/smart-timeout.md) | Wall-clock and idle limits for `bash`, explicit budgets, and timeout diagnostics. |
 | [Sidebar](docs/sidebar.md) | The right rail, the `Alt+W` prefix menu, and the detail popups. |
 | [Image thumbnails](docs/image-thumbnails.md) | Why inline images lag and how every displayed image becomes a thumbnail while the original is never touched. |
