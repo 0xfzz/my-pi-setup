@@ -17,7 +17,22 @@ The tree above is upstream verbatim. The fork diff (plugin host, sidebar section
 `/plugins/[id]` page, one e2e check) is added in commits after this one and must
 stay limited to what the PRD's R9 allows. Keep every fork file listed here:
 
-- `VENDORED.md` — this file (the only new top-level file)
+- `VENDORED.md` — provenance and resync documentation
+- `lib/web-plugins-host.ts` — plugin view store on globalThis, session event subscription, and test fixture seeding
+- `lib/web-plugins-host.test.mjs` — unit tests for the plugin view store and session subscription
+- `app/api/plugins/route.ts` — modified GET to return workflow plugins and views when called without `?cwd`, preserving package manager behavior
+- `app/api/plugins/web-plugins-route.test.mjs` — route test verifying workflow plugins and views response
+- `app/plugins/[id]/page.tsx` — plugin detail page rendering latest view as plain text and handling empty state
+- `components/plugins/PluginViewRenderer.tsx` — text-only renderer components for kv, list, and status views
+- `components/plugins/PluginNav.tsx` — header and toolbar navigation links for page-enabled plugins
+- `components/plugins/plugins.css` — styles for plugin detail pages and components
+- `components/AppShell.tsx` — additive sidebar toolbar navigation entry for page-enabled plugins
+- `e2e/web-plugins.mjs` — Playwright e2e test verifying kv rendering, XSS non-execution, and empty state
+- `e2e/run.mjs` — calls checkWebPlugins during e2e suite run
+- `lib/rpc-manager.ts` — hook in registerRpcWrapper to attach web plugin listener on session creation
+- `next.config.ts` — repoRoot configuration for Turbopack root and outputFileTracingRoot
+- `proxy.ts` — matcher updated to include `/plugins/:path*` for password auth gating (R15)
+- `tsconfig.json` — allowImportingTsExtensions: true to allow importing outer workflow contracts
 
 ## Resyncing a newer upstream
 
