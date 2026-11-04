@@ -39,6 +39,7 @@ import {
 import { projectSession } from "../lib/dashboard/projection.ts";
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";
 import { publishWebView } from "../lib/web-plugins/publisher.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../lib/web-plugins/actions.ts";
 import { snapshotToWebView } from "../lib/dashboard/web-view.ts";
 import type { DashboardSnapshot } from "../lib/dashboard/protocol.ts";
 
@@ -246,10 +247,26 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
     bridge.flush();
   }
 
+  function onActionRequest(data: unknown): void {
+    if (!verifiedParent) return;
+    if (
+      !data ||
+      typeof data !== "object" ||
+      (data as Record<string, unknown>).pluginId !== "dashboard" ||
+      (data as Record<string, unknown>).actionId !== "request-sync"
+    ) {
+      return;
+    }
+    if (ctx) refreshTitle(ctx, true);
+    requestDashboardSync(pi);
+    bridge.flush();
+  }
+
   pi.events?.on(DASHBOARD_MODE_EVENT, onMode);
   pi.events?.on(DASHBOARD_STATE_EVENT, onState);
   pi.events?.on(DASHBOARD_ARTIFACTS_EVENT, onArtifacts);
   pi.events?.on(DASHBOARD_REQUEST_EVENT, onRequest);
+  pi.events?.on(WEB_PLUGIN_ACTION_REQUEST_EVENT, onActionRequest);
 
   pi.on("session_start", (_event, context) => {
     bind(context);
