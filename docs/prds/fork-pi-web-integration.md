@@ -90,7 +90,7 @@ This is the "whenever I add an extension it calls the plugin system" guarantee. 
 
 ### 6.3 pi-web fork
 
-R9. The fork lives in a new repository (`pi-web-workflow`), branched from upstream `main`. It reuses the dashboard foundation (`lib/dashboard/`, `web/dashboard/`) and adds nothing parallel to it. Its diff against upstream is limited to:
+R9. The fork is vendored inside this repository under `vendor/pi-web/` (decided), taken from upstream `main` (v0.15.0), with upstream kept as the reference remote for future syncs. It reuses the dashboard foundation (`lib/dashboard/`, `web/dashboard/`) and adds nothing parallel to it. Its diff against upstream is limited to:
 - a plugin host built on `lib/dashboard/` (protocol, validation, producer): a loader that imports `WEB_PLUGINS` from this package, a subscription to `web-plugin:view` on each hosted session, and a store for last views;
 - a sidebar section renderer and a generic `/plugins/[id]` page, built from `kv`, `list` and `status` only, using the dashboard's shell and renderers in `web/dashboard/src`;
 - a navigation entry for each plugin page.
@@ -143,7 +143,7 @@ Why events and not direct calls: pi extensions run inside pi-web's process today
 | --- | --- | --- |
 | **0. PRD** | This document, branch `feat/pi-web-integration` | Committed; reviewed |
 | **1. Contract** | `lib/web-plugins/`, `web-plugins/index.ts`, enforcement test, one reference descriptor (`cache-stats`), opt-outs for every other extension with a reason | `npm run tidy` green; the test fails when an extension is added without an entry |
-| **2. Fork + host** | `pi-web-workflow` repo: plugin host built on the reused `lib/dashboard/` and `web/dashboard/` foundation, sidebar section, `/plugins/[id]` page, one e2e check | Upstream e2e green; the cache section and page render from a real `publishWebView` call; no second copy of the dashboard protocol |
+| **2. Fork + host** | `vendor/pi-web/`: plugin host built on the reused `lib/dashboard/` and `web/dashboard/` foundation, sidebar section, `/plugins/[id]` page, one e2e check | Upstream e2e green; the cache section and page render from a real `publishWebView` call; no second copy of the dashboard protocol |
 | **3. Port surfaces** | Descriptors for `todo`, `artifacts`, `subagent-checkpoints`; the dashboard graph becomes the `dashboard` plugin page | Dashboard parity test green; the graph and artifacts render from the plugin page with the same data |
 | **4. Packaging** | Install docs, `pi-web-workflow` CLI or documented upstream install, update flow | A fresh machine can follow `docs/` and see the plugins |
 | **5. Actions (optional)** | Trusted plugin actions with explicit confirmation | Separate PRD and threat review |
@@ -162,7 +162,7 @@ Phase 1 is the only phase in this branch's current scope. Phases 2–4 need the 
 
 ## 10. Open questions and decisions
 
-1. **Fork location.** Recommended: a separate repository `pi-web-workflow` with upstream as a remote, consuming this package's `lib/web-plugins` through a git dependency. Alternative: vendor the fork under `vendor/pi-web` with a subtree. Needs your call before Phase 2.
+1. **Fork location (decided: vendored).** The fork lives at `vendor/pi-web/`, following the `vendor/antigravity/` precedent (`VENDORED.md` records provenance and how to resync). Builds stay out of git (`node_modules/`, `.next/`). Syncing a new upstream release means re-applying the fork diff, kept small per R9.
 2. **Dashboard base (decided: reuse).** The fork reuses `web/dashboard/` and `lib/dashboard/`. Open: whether the fork's Next.js app mounts the dashboard's browser bundle as a route, or the dashboard server keeps its own port and the fork links to it. Decide in a Phase 2 spike.
 3. **Actions in Phase 5.** Not decided. Needs a threat review before any plugin can mutate state from the browser.
 4. **Upstream contribution.** Whether the `web-plugin` host should be proposed upstream. Not needed for the first version.
@@ -181,7 +181,7 @@ Phase 1 is the only phase in this branch's current scope. Phases 2–4 need the 
 
 ## 12. Out of scope for this branch
 
-- Creating the `pi-web-workflow` repository (Phase 2).
+- Re-applying the fork diff to newer upstream releases (Phase 4 maintenance).
 - Any change to the TUI sidebar. `extensions/dashboard.ts`, `lib/dashboard/` and `web/dashboard/` are the fork's base, but are not modified in Phase 1.
 - Descriptors for extensions other than the reference one (Phase 3). They are opted out with reasons until then.
 
