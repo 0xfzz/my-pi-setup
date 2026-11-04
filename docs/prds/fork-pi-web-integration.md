@@ -7,7 +7,7 @@
 | **Status** | draft, Phase 0–1 in progress on `feat/pi-web-integration` |
 | **Owner** | Faiz |
 | **Upstream** | `agegr/pi-web` @ `main` (v0.15.0 at time of writing) |
-| **Scope** | `lib/web-plugins/`, `web-plugins/`, the pi-web fork (new repo), and the existing `web/dashboard/` and `lib/dashboard/` |
+| **Scope** | `lib/web-plugins/`, `web-plugins/`, the pi-web fork (new repo), reusing the existing `web/dashboard/`, `lib/dashboard/` and `extensions/dashboard.ts` as its base |
 | **Acceptance** | pi-web's own Playwright suite (`e2e/`) must stay green on the fork, plus the new plugin contract tests |
 
 ## 1. Problem
@@ -25,7 +25,7 @@ The goal is a single browser UI, based on pi-web, in which every workflow extens
 - G2. **Stay compatible with the current workflow.** Sessions, `~/.pi/agent` config, extensions, delegation and the TUI keep working unchanged. Running the web UI must not change what the TUI does, and the TUI must not depend on the web UI being present.
 - G3. **Pluggable by contract.** Adding a workflow extension means adding one descriptor file and one line in `web-plugins/index.ts`. The host renders it without any change to pi-web. A repository test fails if an extension is neither registered nor explicitly opted out.
 - G4. **Safe by default.** Plugin output is data, never HTML or script. The browser never receives transcripts, terminal tails, or producer credentials beyond what pi-web already exposes.
-- G5. **Keep the existing dashboard working** until its surface is fully covered by a plugin page, then retire it deliberately.
+- G5. **Reuse the existing dashboard as the base.** The fork builds on `web/dashboard/` and `lib/dashboard/` (wire contract, server, producer, lifecycle, browser shell, icons, build) instead of writing a second host. The dashboard keeps working throughout, and its graph becomes a plugin page.
 
 ## 3. Non-goals
 
@@ -50,6 +50,7 @@ The goal is a single browser UI, based on pi-web, in which every workflow extens
 Consequences:
 
 - pi-web already runs pi extensions. The plugin system does not need a second process; it needs a host that reads what extensions publish.
+- The dashboard already has the hard parts of a host: a versioned wire protocol (`lib/dashboard/protocol.ts`), validation, a loopback server with separate producer and browser credentials, lifecycle and projection, and a built browser bundle. The fork reuses these rather than rebuilding them.
 - The `workflow-ui:section` channel shows the pattern this repo already uses: extensions emit on `pi.events`, and a host decides how to show it. The web plugin system follows the same pattern, so extensions do not import pi-web code.
 
 ## 5. Users and stories
@@ -89,9 +90,9 @@ This is the "whenever I add an extension it calls the plugin system" guarantee. 
 
 ### 6.3 pi-web fork
 
-R9. The fork lives in a new repository (`pi-web-workflow`), branched from upstream `main`. Its diff against upstream is limited to:
-- a plugin host: a loader that imports `WEB_PLUGINS` from this package, a subscription to `web-plugin:view` on each hosted session, and a store for last views;
-- a sidebar section renderer and a generic `/plugins/[id]` page, built from `kv`, `list` and `status` only;
+R9. The fork lives in a new repository (`pi-web-workflow`), branched from upstream `main`. It reuses the dashboard foundation (`lib/dashboard/`, `web/dashboard/`) and adds nothing parallel to it. Its diff against upstream is limited to:
+- a plugin host built on `lib/dashboard/` (protocol, validation, producer): a loader that imports `WEB_PLUGINS` from this package, a subscription to `web-plugin:view` on each hosted session, and a store for last views;
+- a sidebar section renderer and a generic `/plugins/[id]` page, built from `kv`, `list` and `status` only, using the dashboard's shell and renderers in `web/dashboard/src`;
 - a navigation entry for each plugin page.
 
 R10. The fork does not change pi-web's existing behaviour, routes, storage or settings. Its Playwright suite (`e2e/run.mjs`) must pass unchanged, plus one new e2e check for a plugin page.
@@ -102,7 +103,7 @@ R11. The fork keeps upstream's CLI (`pi-web`, `npx @agegr/pi-web`) working. Pack
 
 R12. The TUI is unaffected. `workflow-ui:section` and the existing `dashboard:*` events keep their shapes. `web-plugin:view` is a new channel and nothing listens to it in the TUI.
 
-R13. The existing dashboard (`extensions/dashboard.ts`) keeps running during Phases 1–3. It is retired only when a `dashboard` plugin page shows the same delegation graph and artifacts, and a test pins that parity.
+R13. The existing dashboard (`extensions/dashboard.ts`, `lib/dashboard/`, `web/dashboard/`) is the base of the fork, not a separate app to retire. Its delegation graph and artifact views become a `dashboard` plugin page. A parity test pins that the page shows the same children, handoffs, reviews and artifacts before the standalone route is removed.
 
 R14. The web host does not start a second copy of any extension. It reads what the sessions it already hosts publish. A session that pi-web does not host (for example, a TUI session) is visible only through its persisted state, as upstream does now.
 
@@ -113,6 +114,8 @@ R15. Authentication is unchanged: pi-web's password and Basic auth gate the plug
 R16. A view publish is at most 64 KB and must not block the agent turn. Publishing is synchronous and cheap; the host coalesces updates.
 R17. The plugin layer adds no runtime dependency to this package. The contract module is pure TypeScript with no pi or Next.js import, so it is loadable by both.
 R18. Every new file passes `npm run tidy` (typecheck, oxlint with the smell gate, the tiered test runner).
+
+R19. The dashboard's wire contract is not forked. Plugin views travel over the dashboard protocol in `lib/dashboard/protocol.ts`. `DASHBOARD_PROTOCOL` is bumped only when a shape the browser depends on changes, so an open tab from the previous version is rejected loudly rather than rendering stale data.
 
 ## 7. Architecture
 
@@ -130,7 +133,7 @@ R18. Every new file passes `npm run tidy` (typecheck, oxlint with the smell gate
 - **Contract** (`lib/web-plugins/`): types, validation, registry, the publisher and the view limits. Pure TypeScript.
 - **Descriptors** (`web-plugins/*.ts`): one per extension; declares surfaces only.
 - **Index** (`web-plugins/index.ts`): the list the host imports and the list the enforcement test reads.
-- **Host** (fork): loads the index, owns the store, renders three view types.
+- **Host** (fork): reuses the dashboard foundation: `lib/dashboard/` for the wire contract, validation, producer and lifecycle, and `web/dashboard/` for the browser shell, renderers, icons and bundle. It loads the index, owns the store, and renders the three view types.
 
 Why events and not direct calls: pi extensions run inside pi-web's process today, but a TUI session runs in a different process with no web host. An event on `pi.events` works in both, and it is the channel this repo already uses for the sidebar.
 
@@ -140,8 +143,8 @@ Why events and not direct calls: pi extensions run inside pi-web's process today
 | --- | --- | --- |
 | **0. PRD** | This document, branch `feat/pi-web-integration` | Committed; reviewed |
 | **1. Contract** | `lib/web-plugins/`, `web-plugins/index.ts`, enforcement test, one reference descriptor (`cache-stats`), opt-outs for every other extension with a reason | `npm run tidy` green; the test fails when an extension is added without an entry |
-| **2. Fork + host** | `pi-web-workflow` repo: plugin host, sidebar section, `/plugins/[id]` page, one e2e check | Upstream e2e green; the cache section and page render from a real `publishWebView` call |
-| **3. Port surfaces** | Descriptors for `todo`, `artifacts`, `subagent-checkpoints`, `dashboard` (graph parity test) | Dashboard parity test green; the standalone dashboard can be switched off without loss |
+| **2. Fork + host** | `pi-web-workflow` repo: plugin host built on the reused `lib/dashboard/` and `web/dashboard/` foundation, sidebar section, `/plugins/[id]` page, one e2e check | Upstream e2e green; the cache section and page render from a real `publishWebView` call; no second copy of the dashboard protocol |
+| **3. Port surfaces** | Descriptors for `todo`, `artifacts`, `subagent-checkpoints`; the dashboard graph becomes the `dashboard` plugin page | Dashboard parity test green; the graph and artifacts render from the plugin page with the same data |
 | **4. Packaging** | Install docs, `pi-web-workflow` CLI or documented upstream install, update flow | A fresh machine can follow `docs/` and see the plugins |
 | **5. Actions (optional)** | Trusted plugin actions with explicit confirmation | Separate PRD and threat review |
 
@@ -155,11 +158,12 @@ Phase 1 is the only phase in this branch's current scope. Phases 2–4 need the 
 - AC4. An invalid view (unknown type, non-string cell) is rejected with a warning and does not throw inside the publisher.
 - AC5. Once the fork exists: upstream `e2e/run.mjs` passes unchanged, and a plugin page renders a published view.
 - AC6. No plugin output reaches the browser as HTML or script. Verified by a test that a `<script>` cell renders as text.
+- AC7. The fork imports the dashboard's protocol and producer from `lib/dashboard/`. A search finds no second definition of `DASHBOARD_PROTOCOL` or of the wire types in the fork.
 
 ## 10. Open questions and decisions
 
 1. **Fork location.** Recommended: a separate repository `pi-web-workflow` with upstream as a remote, consuming this package's `lib/web-plugins` through a git dependency. Alternative: vendor the fork under `vendor/pi-web` with a subtree. Needs your call before Phase 2.
-2. **Dashboard retirement.** Recommended: keep it until Phase 3 parity is proven. Alternative: retire it now and accept a short gap.
+2. **Dashboard base (decided: reuse).** The fork reuses `web/dashboard/` and `lib/dashboard/`. Open: whether the fork's Next.js app mounts the dashboard's browser bundle as a route, or the dashboard server keeps its own port and the fork links to it. Decide in a Phase 2 spike.
 3. **Actions in Phase 5.** Not decided. Needs a threat review before any plugin can mutate state from the browser.
 4. **Upstream contribution.** Whether the `web-plugin` host should be proposed upstream. Not needed for the first version.
 
@@ -172,12 +176,13 @@ Phase 1 is the only phase in this branch's current scope. Phases 2–4 need the 
 | Plugin views become a back door for untrusted content | Views are data with fixed types and limits; no HTML rendering path exists (AC6) |
 | An extension is added and nobody registers it | Enforcement test (R8, AC2) fails the build |
 | Two dashboards disagree during the transition | Parity test before retirement (R13) |
+| The dashboard server (`lib/dashboard/server.ts`, ~1,400 lines) is inherited with its loopback and token model | Reuse its auth and projection unchanged; any change must keep `tests/dashboard-*.test.ts` green; never widen its allow-list silently |
 | Next.js build interferes with dev server (upstream AGENTS.md warns) | Phase 2 work happens in its own checkout; never run `next build` in the dev checkout |
 
 ## 12. Out of scope for this branch
 
 - Creating the `pi-web-workflow` repository (Phase 2).
-- Any change to the TUI sidebar or to `extensions/dashboard.ts`.
+- Any change to the TUI sidebar. `extensions/dashboard.ts`, `lib/dashboard/` and `web/dashboard/` are the fork's base, but are not modified in Phase 1.
 - Descriptors for extensions other than the reference one (Phase 3). They are opted out with reasons until then.
 
 ## Related
