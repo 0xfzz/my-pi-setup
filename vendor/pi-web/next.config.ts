@@ -4,6 +4,7 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
 const configDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(configDir, "../..");
 const { version } = JSON.parse(readFileSync(join(configDir, "package.json"), "utf8")) as { version: string };
 let piVersion = "unknown";
 try {
@@ -17,7 +18,7 @@ try {
 const gfmAutolinkEmailLoader = join(configDir, "lib/gfm-autolink-email-loader.cjs");
 
 const nextConfig: NextConfig = {
-  outputFileTracingRoot: configDir,
+  outputFileTracingRoot: repoRoot,
   experimental: {
     // proxy.ts matches /api/:path*, and Next buffers the request body whenever
     // a proxy is present, capped at 10 MB by default. The upload route accepts
@@ -30,6 +31,7 @@ const nextConfig: NextConfig = {
   images: { unoptimized: true },
   // `next dev` runs Turbopack and `npm run build` runs webpack.
   turbopack: {
+    root: repoRoot,
     rules: {
       "**/mdast-util-gfm-autolink-literal/lib/index.js": { loaders: [gfmAutolinkEmailLoader] },
     },

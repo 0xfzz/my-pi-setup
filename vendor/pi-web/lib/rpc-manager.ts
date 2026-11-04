@@ -22,6 +22,7 @@ import { computeLiveSessionTotalActiveMs } from "./session-timing";
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
 import { notifySessionComplete } from "./web-push";
 import { hasActiveSessionLivenessProvider } from "./session-liveness";
+import { attachSessionPlugins } from "./web-plugins-host";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "./pi-types";
 import type {
@@ -2525,6 +2526,7 @@ function registerRpcWrapper(wrapper: AgentSessionWrapper): void {
   }
   recordSessionStart(sessionId);
   registry.set(sessionId, wrapper);
+  attachSessionPlugins(wrapper);
   wrapper.start();
   if (!wrapper.isChatOnly()) wrapper.beginExtensionBinding();
 }
