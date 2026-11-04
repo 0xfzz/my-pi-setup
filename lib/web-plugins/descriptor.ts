@@ -1,3 +1,7 @@
+import { validateActions, type ActionDescriptor } from "./actions.ts";
+
+export type { ActionDescriptor } from "./actions.ts";
+
 export type WebPluginSurface =
   | { kind: "sidebar" }
   | { kind: "page"; path: string };
@@ -8,6 +12,7 @@ export interface WebPluginDescriptor {
   title: string;
   surfaces: WebPluginSurface[];
   description?: string;
+  actions?: ActionDescriptor[];
 }
 
 export type ValidatePluginResult =
@@ -112,12 +117,25 @@ export function validatePlugin(
       };
     }
 
+    let cleanActions: ActionDescriptor[] | undefined;
+    if (raw.actions !== undefined) {
+      const actionsResult = validateActions(raw.actions);
+      if (!actionsResult.ok) {
+        return {
+          ok: false,
+          error: `Plugin "${pluginName}": ${actionsResult.error}`,
+        };
+      }
+      cleanActions = actionsResult.actions;
+    }
+
     const plugin: WebPluginDescriptor = {
       id: raw.id,
       extension: raw.extension,
       title: raw.title,
       surfaces: cleanSurfaces,
       ...(typeof raw.description === "string" ? { description: raw.description } : {}),
+      ...(cleanActions !== undefined ? { actions: cleanActions } : {}),
     };
 
     return { ok: true, plugin };

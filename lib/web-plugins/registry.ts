@@ -3,6 +3,12 @@ import { join } from "node:path";
 import { validatePlugin, type WebPluginDescriptor } from "./descriptor.ts";
 
 export { WEB_PLUGIN_VIEW_EVENT } from "./view.ts";
+export {
+  WEB_PLUGIN_ACTION_REQUEST_EVENT,
+  type ActionDescriptor,
+  type ActionRequestPayload,
+  validateActions,
+} from "./actions.ts";
 export type { WebPluginDescriptor, WebPluginSurface } from "./descriptor.ts";
 
 function getDefaultExtensions(): string[] {
@@ -56,6 +62,19 @@ export function validateRegistry(
             errors.push(`Duplicate page path: "${surface.path}"`);
           } else {
             seenPaths.add(surface.path);
+          }
+        }
+      }
+    }
+
+    if (plugin && Array.isArray(plugin.actions)) {
+      const seenActionIds = new Set<string>();
+      for (const action of plugin.actions) {
+        if (action && typeof action.id === "string") {
+          if (seenActionIds.has(action.id)) {
+            errors.push(`Plugin "${plugin.id}": duplicate action id "${action.id}"`);
+          } else {
+            seenActionIds.add(action.id);
           }
         }
       }
