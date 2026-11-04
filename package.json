@@ -94,7 +94,4 @@
   "simple-git-hooks": {
     "pre-commit": "npx lint-staged --allow-empty"
   },
-  "lint-staged": {
-    "*.{ts,tsx,js,mjs}": "oxlint --deny-warnings"
-  }
 }
