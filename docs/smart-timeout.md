@@ -8,8 +8,10 @@ Tool: wraps **`bash`** (including nested/codemode calls). Command: **`/smart-tim
 - Default: terminate after **180 seconds total** or **90 seconds without stdout/stderr**, whichever comes first. Continuous output cannot keep a command running forever.
 - An explicit bash `timeout` disables the silence cutoff for legitimate quiet tasks, but is limited to **1800 seconds**. Invalid/over-ceiling values fail before execution.
 - The result retains command output and Pi's truncation/full-output handling, returns error status/exit code **124**, and adds an agent-visible diagnostic: `fix-first` for possible prompts/watch processes/errors, `inspect-first` for ambiguous silence, or `consider-increase` for recent output at the wall limit. It includes elapsed/silent time and retry guidance. The existing agent decides what to do; no extra model call or automatic rerun occurs.
+- **Termination is graceful.** A timeout sends `SIGTERM` to the command's whole process group, then `SIGKILL` after `killGraceSeconds` (default 5s) if it is still running, like GNU `timeout --kill-after`. A command can therefore remove lock files, temp directories and containers. Pi's own backend only has the immediate `SIGKILL`. The diagnostic says which one happened.
+- **Silent is not stuck.** When the silence limit expires and the command's process group has used CPU since the last check (Linux, via `/proc`), the limit is waived for another window instead of killing a quiet compile or link. The wall limit still applies and still ends it. A silent command that is also idle is killed as before. Where `/proc` is unavailable, or with `activityAware: false`, only output counts.
 - Uses Pi's local shell backend for process-group termination, cancellation, streaming, session environment and shell settings. Each call owns independent timers, cleaned up on completion/abort; shutdown aborts active calls. Escape remains cancellation, not a timeout.
-- Killing a command does **not** undo partial effects. Advice explicitly warns against blindly repeating mutations. Output activity is not proof of progress, and silence is not proof of a hang. Diagnosis uses bounded recent output and simple heuristics, not CPU/process deadlock detection.
+- Killing a command does **not** undo partial effects. Advice explicitly warns against blindly repeating mutations. Output activity is not proof of progress, and silence is not proof of a hang. Diagnosis uses bounded recent output and simple heuristics, and watch-process detection matches whole commands (`npm run dev`, `tail -f`), not substrings such as `/dev/null`. Only the idle check looks at CPU; there is no deadlock detection.
 
 Optional user configuration: `~/.pi/agent/smart-timeout.json` (or the configured Pi agent directory):
 
@@ -17,11 +19,17 @@ Optional user configuration: `~/.pi/agent/smart-timeout.json` (or the configured
 {
   "defaultSeconds": 180,
   "idleSeconds": 90,
-  "maxSeconds": 1800
+  "maxSeconds": 1800,
+  "killGraceSeconds": 5,
+  "activityAware": true
 }
 ```
 
-All fields are optional positive numeric seconds, at most 86400, with `idleSeconds <= defaultSeconds <= maxSeconds`. Invalid config falls back to safe defaults and warns in interactive mode. Restart or `/reload` **after all children finish** to activate or apply changes. This package is already installed; no additional install is needed. New/resumed child processes receive the extension when they load this package. Existing running children are not hot-patched.
+All fields are optional. The seconds fields are positive numbers, at most 86400, with `idleSeconds <= defaultSeconds <= maxSeconds`. Invalid config falls back to safe defaults and warns in interactive mode. Restart or `/reload` **after all children finish** to activate or apply changes. This package is already installed; no additional install is needed. New/resumed child processes receive the extension when they load this package. Existing running children are not hot-patched.
+
+`killGraceSeconds` is the time between `SIGTERM` and `SIGKILL`; `activityAware` turns the CPU check on or off.
+
+To signal the group, each call writes the shell's pid to a private temp file via a one-line prefix on the command. If that file is missing, the call falls back to an immediate kill with no grace period and no CPU check.
 
 Limits: agent `bash` only, not user `!` shell commands, powershell, browser operations, or arbitrary subprocesses launched inside other tools. Deliberately detached/reparented processes may escape Pi's process-group cleanup; uninterruptible OS I/O cannot be reliably terminated by any userspace timer. Another extension overriding `bash` can conflict; only one implementation should own it. Disable `extensions/smart-timeout.ts` using `pi config` to restore ordinary bash behavior.
 

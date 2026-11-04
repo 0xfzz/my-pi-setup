@@ -7,12 +7,12 @@ import {
 import { Text } from "@earendil-works/pi-tui";
 import {
   DEFAULT_TIMEOUT_CONFIG, formatBashCallWithTimeout, formatTimeoutStamp, smartOperations,
-  validateConfig, type TimeoutReport,
+  validateConfig, type TimeoutConfig, type TimeoutReport,
 } from "../lib/smart-timeout.ts";
 
 export default function smartTimeoutExtension(pi: ExtensionAPI) {
   const path = join(getAgentDir(), "smart-timeout.json");
-  let config = { ...DEFAULT_TIMEOUT_CONFIG };
+  let config: TimeoutConfig = { ...DEFAULT_TIMEOUT_CONFIG };
   let configError: string | undefined;
   try {
     config = validateConfig(JSON.parse(readFileSync(path, "utf8")));
@@ -23,7 +23,7 @@ export default function smartTimeoutExtension(pi: ExtensionAPI) {
   const definition = createBashToolDefinition(process.cwd());
   pi.registerTool({
     ...definition,
-    description: `${definition.description} Smart timeout: default ${config.defaultSeconds}s total and ${config.idleSeconds}s without output. An explicit timeout disables the silence cutoff, but cannot exceed ${config.maxSeconds}s. Timeouts terminate the command and report diagnostics; inspect partial side effects before retrying.`,
+    description: `${definition.description} Smart timeout: default ${config.defaultSeconds}s total and ${config.idleSeconds}s without output. An explicit timeout disables the silence cutoff, but cannot exceed ${config.maxSeconds}s. Timeouts send SIGTERM, then SIGKILL after ${config.killGraceSeconds}s, and report diagnostics; inspect partial side effects before retrying.`,
     promptGuidelines: [
       ...(definition.promptGuidelines ?? []),
       "On smart-timeout, use the output and diagnostic recommendation to decide whether to fix a stuck command or increase its timeout. Silence/output activity are not proof of a hang/progress. Do not blindly retry mutations or run endless servers/watch commands in foreground bash.",

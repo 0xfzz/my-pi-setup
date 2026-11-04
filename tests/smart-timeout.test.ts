@@ -8,11 +8,12 @@ import {
   type TimeoutReport,
 } from "../lib/smart-timeout.ts";
 
-const config = { defaultSeconds: 0.4, idleSeconds: 0.15, maxSeconds: 2 };
-async function run(command: string, timeout?: number, signal?: AbortSignal) {
+const config = { defaultSeconds: 0.4, idleSeconds: 0.15, maxSeconds: 2, killGraceSeconds: 0.4 };
+const linux = { skip: process.platform !== "linux" };
+async function run(command: string, timeout?: number, signal?: AbortSignal, overrides: Partial<typeof config> & { activityAware?: boolean } = {}) {
   let report: TimeoutReport | undefined;
   const tool = createBashToolDefinition(process.cwd(), {
-    operations: smartOperations(createLocalBashOperations(), config, value => { report = value; }),
+    operations: smartOperations(createLocalBashOperations(), { ...config, ...overrides }, value => { report = value; }),
   });
   const result = await tool.execute("test", { command, timeout }, signal, undefined, {
     cwd: process.cwd(), sessionManager: { getSessionId: () => "test", getSessionFile: () => undefined },
@@ -179,4 +180,58 @@ test("extension registers a compatible bash override, command and cleanup hooks"
   }, ctx);
   await assert.rejects(running, /Command aborted/);
   await hooks.get("session_shutdown")!();
+});
+
+test("a timeout sends SIGTERM first so the command can clean up", linux, async () => {
+  const value = await run("trap 'echo CLEANED; exit 0' TERM; sleep 10 & wait");
+  assert.equal(value.report?.reason, "idle");
+  assert.equal(value.report?.termination, "graceful");
+  assert.match(value.text, /CLEANED/, "the TERM trap ran before the process died");
+  assert.match(value.text, /exited after SIGTERM/);
+});
+
+test("a command that ignores SIGTERM is SIGKILLed after the grace period", linux, async () => {
+  const started = Date.now();
+  const value = await run("trap '' TERM; while true; do sleep 0.05; done", undefined, undefined, { idleSeconds: 0.1, defaultSeconds: 0.2 });
+  assert.equal(value.report?.termination, "killed");
+  assert.match(value.text, /ignored SIGTERM/);
+  assert.ok(Date.now() - started < 3000, "escalation is bounded by the grace period");
+});
+
+test("a silent command that is still using CPU is not killed as idle", linux, async () => {
+  // Burns CPU without printing: idle by output, working by CPU. Only the wall limit may stop it.
+  const value = await run("while :; do :; done", undefined, undefined, { idleSeconds: 0.3, defaultSeconds: 1.2, maxSeconds: 2 });
+  assert.equal(value.report?.reason, "wall");
+  assert.ok((value.report?.busyExtensions ?? 0) >= 1, "idle windows were extended because CPU advanced");
+});
+
+test("a silent and idle command is still killed as idle with activity awareness on", linux, async () => {
+  const value = await run("sleep 10", undefined, undefined, { idleSeconds: 0.3, defaultSeconds: 1.2, maxSeconds: 2 });
+  assert.equal(value.report?.reason, "idle");
+  assert.equal(value.report?.busyExtensions, undefined);
+});
+
+test("activityAware:false restores output-only idle detection", linux, async () => {
+  const value = await run("while :; do :; done", undefined, undefined, { idleSeconds: 0.3, defaultSeconds: 1.2, maxSeconds: 2, activityAware: false });
+  assert.equal(value.report?.reason, "idle");
+});
+
+test("watch-process detection matches commands, not substrings like /dev/null", () => {
+  const report = { reason: "idle" as const, elapsedSeconds: 90, silentSeconds: 90, limitSeconds: 90 };
+  const rec = (command: string, tail = "") => diagnose(command, tail, report, 1800).recommendation;
+  for (const command of ["make build > /dev/null 2>&1", "head -c 1M /dev/urandom | sha256sum", "cargo build --release"]) {
+    assert.equal(rec(command), "inspect-first", command);
+  }
+  for (const command of ["npm run dev", "pnpm dev", "next dev", "tail -f app.log", "vitest --watch", "python3 -m http.server"]) {
+    assert.equal(rec(command), "fix-first", command);
+  }
+  assert.equal(rec("cargo build", "Compiling x\nfinished with no error found"), "inspect-first");
+  assert.equal(rec("cargo build", "error: could not compile `x`"), "fix-first");
+});
+
+test("the new settings validate", () => {
+  assert.equal(validateConfig({ killGraceSeconds: 2 }).killGraceSeconds, 2);
+  assert.equal(validateConfig({}).activityAware, true);
+  assert.throws(() => validateConfig({ activityAware: "yes" }), /activityAware/);
+  assert.throws(() => validateConfig({ killGraceSeconds: 0 }), /killGraceSeconds/);
 });
