@@ -6,6 +6,16 @@ sessions/
 .pi/
 auth.json
 models-store.json
+account-router-state.json
+antigravity-accounts.json
+
+# Secrets: never commit credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.npmrc
 *.jsonl
 !tests/**/*.jsonl
 
