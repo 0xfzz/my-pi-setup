@@ -564,9 +564,14 @@ test("publisher: throwing or stub-less pi never causes publishWebView to throw",
 test("phase 3 descriptors: validatePlugin accepts todo, artifacts, and subagent-checkpoints", async () => {
   const diskFiles = (await readdir(join(root, "extensions"))).filter((f) => f.endsWith(".ts"));
 
-  assert.equal(WEB_PLUGINS.length, 4);
-  assert.equal(Object.keys(WEB_PLUGIN_OPT_OUT).length, 17);
+  // No hard-coded plugin/opt-out counts: they broke on every newly registered
+  // plugin, which is the exact flow this system exists to make cheap. Coverage
+  // is pinned by the sum (every extension in exactly one list) plus membership.
   assert.equal(WEB_PLUGINS.length + Object.keys(WEB_PLUGIN_OPT_OUT).length, diskFiles.length);
+  for (const id of ["todo", "artifacts", "subagent-checkpoints"]) {
+    assert.ok(WEB_PLUGINS.some((plugin) => plugin.id === id), `${id} must be a registered plugin`);
+    assert.equal(id in WEB_PLUGIN_OPT_OUT, false, `${id} must not also be opted out`);
+  }
 
   for (const descriptor of [todoPlugin, artifactsPlugin, subagentCheckpointsPlugin]) {
     const result = validatePlugin(descriptor, diskFiles);
