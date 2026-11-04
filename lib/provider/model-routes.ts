@@ -323,6 +323,26 @@ export function orderTargets(
   }
 }
 
+/** How long a route target that just failed is skipped, by failure class. */
+export function targetCooldownMs(failedClass: RouteFailureClass | undefined): number {
+  // A quota wall lasts far longer than a transient error. Overflow says the
+  // conversation is too large for that model, not that the model is unhealthy.
+  if (failedClass === "overflow") return 0;
+  return failedClass === "quota" ? 5 * 60_000 : 60_000;
+}
+
+/**
+ * Move targets that are cooling down behind the healthy ones, keeping order.
+ *
+ * When every target is cooling the chain is returned unchanged: a request must
+ * still go somewhere, and the least-bad head is the declared one.
+ */
+export function deprioritizeCooling<T>(chain: readonly T[], isCooling: (target: T) => boolean): T[] {
+  const healthy = chain.filter((target) => !isCooling(target));
+  if (!healthy.length || healthy.length === chain.length) return [...chain];
+  return [...healthy, ...chain.filter(isCooling)];
+}
+
 /** Total price per token, or `Infinity` when the catalog does not know it. */
 function targetPrice(facts: TargetFacts | undefined): number {
   const input = facts?.cost?.input;

@@ -560,58 +560,51 @@ test("the /router command reports routes and pool health without a UI", { timeou
   }));
 });
 
-test("the sidebar displays the active account and cycles across requests", { timeout: 20000 }, async () => {
+test("the right sidebar no longer shows an Account section", { timeout: 20000 }, async () => {
   const accountOffers: any[] = [];
   await withSession(async ({ registry, eventBus }) => {
     eventBus.on(SECTION_EVENT, (offer: SectionOffer) => {
-      if (offer.section.id === "account") {
-        accountOffers.push(structuredClone(offer.section));
-        offer.handled = true;
-      }
+      if (offer.section.id === "account") accountOffers.push(structuredClone(offer.section));
     });
-
     const model = registry.getModel(poolProviderId("ag"), "gemini-pro")!;
-    assert.ok(model);
-
     eventBus.emit("workflow-ui:refresh", undefined);
-    assert.ok(accountOffers.length > 0);
-    const initial = accountOffers[accountOffers.length - 1];
-    assert.equal(initial.title, "Account (ag)");
-    assert.match(initial.rows[0], /one@x\.com \(1\/3\)/);
-
-    // Turn 1: uses account 1
     await registry.completeSimple(model, {
-      messages: [{ role: "user", content: [{ type: "text", text: "turn 1" }] }],
+      messages: [{ role: "user", content: [{ type: "text", text: "turn" }] }],
     });
-    const afterTurn1 = accountOffers[accountOffers.length - 1];
-    assert.match(afterTurn1.rows[0], /one@x\.com \(1\/3\)/);
-
-    // Turn 2: rotates to account 2
-    await registry.completeSimple(model, {
-      messages: [{ role: "user", content: [{ type: "text", text: "turn 2" }] }],
-    });
-    const afterTurn2 = accountOffers[accountOffers.length - 1];
-    assert.match(afterTurn2.rows[0], /two@x\.com \(2\/3\)/);
-
-    // Turn 3: rotates to account 3
-    await registry.completeSimple(model, {
-      messages: [{ role: "user", content: [{ type: "text", text: "turn 3" }] }],
-    });
-    const afterTurn3 = accountOffers[accountOffers.length - 1];
-    assert.match(afterTurn3.rows[0], /three@x\.com \(3\/3\)/);
-
-    // Turn 4: wraps around back to account 1
-    await registry.completeSimple(model, {
-      messages: [{ role: "user", content: [{ type: "text", text: "turn 4" }] }],
-    });
-    const afterTurn4 = accountOffers[accountOffers.length - 1];
-    assert.match(afterTurn4.rows[0], /one@x\.com \(1\/3\)/);
+    assert.ok(accountOffers.length > 0, "the section is still cleared so a stale one disappears");
+    assert.ok(accountOffers.every((section) => section.rows.length === 0), "no account rows are ever offered");
   }, (seen) => ({
     providers: [{ name: "antigravity", config: fakeProvider("antigravity", ["gemini-pro"], seen).config }],
     config: {
       pools: { ag: { provider: "antigravity", source: "antigravity-accounts", strategy: "round-robin" } },
       routes: [{ name: "auto", targets: [{ model: "antigravity/gemini-pro", pool: "ag" }] }],
     },
+  }));
+});
+
+test("a route that just failed on its head target starts the next turn on a working one", { timeout: 20000 }, async () => {
+  // Without a failure memory every user turn began at the head target again, so
+  // each turn paid a failed request plus Pi's retry backoff before it reached a
+  // model that works.
+  await withSession(async ({ registry }) => {
+    const virtual = registry.getModel("router", "auto")!;
+    const messages: any = [{ role: "user", content: [{ type: "text", text: "go" }] }];
+    const pick = async (extra: object = {}) =>
+      (await (registry as any).resolveModel(virtual, messages, { reason: "user", thinkingLevel: "off", ...extra })).model.provider;
+    assert.equal(await pick(), "primary", "healthy route starts at the head");
+    const failed = {
+      api: "scripted", provider: "primary", model: "main-model", content: [], timestamp: Date.now(),
+      stopReason: "error", errorMessage: "429 quota exceeded",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
+    };
+    assert.equal(await pick({ reason: "retry", failed }), "secondary", "the retry moves past the failed target");
+    assert.equal(await pick(), "secondary", "the next user turn does not return to the cooling head");
+  }, (seen) => ({
+    providers: [
+      { name: "primary", config: fakeProvider("primary", ["main-model"], seen).config },
+      { name: "secondary", config: fakeProvider("secondary", ["backup-model"], seen).config },
+    ],
+    config: { routes: [{ name: "auto", targets: ["primary/main-model", "secondary/backup-model"] }] },
   }));
 });
 
@@ -676,39 +669,6 @@ test("pools automatically discover accounts from models.json and rotate across t
     },
   }));
 });
-
-test("the sidebar displays all configured pools when multiple pools exist", { timeout: 20000 }, async () => {
-  const accountOffers: any[] = [];
-  await withSession(async ({ eventBus }) => {
-    eventBus.on(SECTION_EVENT, (offer: SectionOffer) => {
-      if (offer.section.id === "account") {
-        accountOffers.push(structuredClone(offer.section));
-        offer.handled = true;
-      }
-    });
-
-    eventBus.emit("workflow-ui:refresh", undefined);
-    assert.ok(accountOffers.length > 0);
-    const offer = accountOffers[accountOffers.length - 1];
-    assert.equal(offer.title, "Router Pools (2)");
-    assert.equal(offer.rows.length, 2);
-    assert.match(offer.rows.find((r: string) => r.includes("p1"))!, /p1: acc-a \(1\/2\)/);
-    assert.match(offer.rows.find((r: string) => r.includes("p2"))!, /p2: acc-c \(1\/1\)/);
-  }, (seen) => ({
-    providers: [
-      { name: "b1", config: fakeProvider("b1", ["chat"], seen).config },
-      { name: "b2", config: fakeProvider("b2", ["chat"], seen).config },
-    ],
-    config: {
-      pools: {
-        p1: { provider: "b1", strategy: "round-robin", accounts: [{ id: "acc-a" }, { id: "acc-b" }] },
-        p2: { provider: "b2", strategy: "priority", accounts: [{ id: "acc-c" }] },
-      },
-    },
-  }));
-});
-
-
 
 test("inside one agent run a pool keeps its account so the prompt cache stays warm", { timeout: 20000 }, async () => {
   await withSession(async ({ seen, registry, session }) => {
