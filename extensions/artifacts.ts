@@ -10,6 +10,7 @@ import {
 } from "../lib/popup/frame.ts";
 import { PopupList } from "../lib/ui/shell.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
+import { publishWebView } from "../lib/web-plugins/publisher.ts";
 import { markVolatileTail } from "../lib/cache-anchor.ts";
 import { createArtifactAutocompleteProvider, expandArtifactMentions } from "../lib/artifact-mentions.ts";
 import {
@@ -467,8 +468,21 @@ export default function artifactsExtension(pi: ExtensionAPI) {
   function widget() {
     if (!ctx?.hasUI || isChild) return;
     const items = ordered(artifacts);
-    if (offerSection(pi, { id: "artifacts", title: `Artifacts ${items.length}`,
-      rows: items.length ? items.map(art => `󰈙 ${art.title}`) : ["None yet"], hint: "/artifacts" })) {
+    const title = `Artifacts ${items.length}`;
+    const artRows = items.length ? items.map(art => `󰈙 ${art.title}`) : ["None yet"];
+
+    try {
+      publishWebView(pi, "artifacts", {
+        type: "list",
+        title,
+        items: artRows,
+      });
+    } catch {
+      // Never throw into extension flow
+    }
+
+    if (offerSection(pi, { id: "artifacts", title,
+      rows: artRows, hint: "/artifacts" })) {
       ctx.ui.setWidget("artifacts", undefined);
       return;
     }

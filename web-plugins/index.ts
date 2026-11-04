@@ -1,3 +1,4 @@
+import { artifactsPlugin } from "./artifacts.ts";
 import { cacheStatsPlugin } from "./cache-stats.ts";
 import { todoPlugin } from "./todo.ts";
 import type { WebPluginDescriptor } from "../lib/web-plugins/descriptor.ts";
@@ -5,6 +6,7 @@ import type { WebPluginDescriptor } from "../lib/web-plugins/descriptor.ts";
 export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [
   cacheStatsPlugin,
   todoPlugin,
+  artifactsPlugin,
 ];
 
 export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {
@@ -14,8 +16,6 @@ export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {
     "Parent delegation engine, tool dispatch, and child lifecycle tracking; no persistent web view",
   "antigravity-accounts":
     "Multi-account provider registration for Google accounts; credential management without a web view",
-  artifacts:
-    "Persisted workspace artifacts catalog and editor; ported in Phase 3",
   "ask-user":
     "Interactive clarification dialog; ephemeral interaction with no persistent view",
   "bubbly-spinner":
