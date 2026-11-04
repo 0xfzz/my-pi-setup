@@ -34,14 +34,7 @@ test("real Pi loads subagent-v2 with zero extension errors", async () => {
     for (const t of ["agent_spawn", "agent_escalate", "agent_running", "agent_steer"]) {
       assert.ok(names.includes(t), `${t} must be registered and active`);
     }
-    // `agent_route` is deferred on purpose: undeclared, but findable by `tool_search`
-    // because the extension registered it with `exposure: "deferred"`. That is the
-    // only kind of tool a mode may withhold — a `direct` tool removed from the
-    // active set is unreachable for the rest of the session.
-    const route = (session as any).getAllTools().find((tool: any) => tool.name === "agent_route");
-    assert.ok(route, "agent_route must be registered");
-    assert.equal(route.exposure, "deferred", "agent_route must be deferred, or tool_search cannot return it");
-    assert.equal(names.includes("agent_route"), false, "a deferred tool is not declared");
+    assert.equal(names.includes("agent_route"), false, "agent_route is retired; /steer owns text routing");
     const commands = session.extensionRunner.getRegisteredCommands?.() ?? [];
     console.log("COMMANDS:", JSON.stringify((commands as any[]).map((c) => c.name).filter((n: string) => n === "agent" || n === "steer")));
     console.log("ERRORS:", JSON.stringify(errors.map(String)));

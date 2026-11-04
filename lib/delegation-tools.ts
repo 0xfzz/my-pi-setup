@@ -48,8 +48,6 @@ export interface DelegationTool {
   readonly role: DelegationRole;
   /** Whether Plan mode may keep it active (parent read-only surface). */
   readonly planSafe: boolean;
-  /** Declared through `tool_search` instead of directly, when set. */
-  readonly exposure?: "deferred";
   readonly verb: DelegationVerb;
 }
 
@@ -63,7 +61,6 @@ const TOOLS: readonly DelegationTool[] = [
   { name: "agent_interrupt", role: "parent", planSafe: true, verb: "interrupt" },
   { name: "agent_close", role: "parent", planSafe: true, verb: "close" },
   { name: "agent_steer", role: "parent", planSafe: true, verb: "steer" },
-  { name: "agent_route", role: "parent", planSafe: true, verb: "route", exposure: "deferred" },
   { name: "agent_running", role: "parent", planSafe: true, verb: "list" },
   // The parent's verdict on a child's result: accepted (with checked evidence),
   // changes-requested, or abandoned. Recording it is what releases the child's
@@ -151,7 +148,6 @@ function namesWhere(predicate: (tool: DelegationTool) => boolean): ReadonlySet<s
 export const PARENT_DELEGATION_TOOLS: ReadonlySet<string> = namesWhere(tool => tool.role === "parent");
 export const CHILD_DELEGATION_TOOLS: ReadonlySet<string> = namesWhere(tool => tool.role === "child");
 export const PLAN_SAFE_DELEGATION_TOOLS: ReadonlySet<string> = namesWhere(tool => tool.planSafe);
-export const DEFERRED_DELEGATION_TOOLS: ReadonlySet<string> = namesWhere(tool => tool.exposure === "deferred");
 
 /** Canonical delegation name, or undefined for a non-delegation name. */
 export function delegationTool(name: string): DelegationTool | undefined {

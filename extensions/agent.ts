@@ -3126,51 +3126,6 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     },
   });
 
-  // ── agent_route ─────────────────────────────────────────────────────────────
-  pi.registerTool({
-    name: "agent_route",
-    label: "Route Steering v2",
-    // Declared in no request; `tool_search` can return it because it is deferred
-    // on purpose. Deferring is only safe for tools this package registers — a
-    // host tool un-declared elsewhere is undiscoverable, not deferred.
-    exposure: "deferred",
-    description:
-      "Deterministically resolve which work unit owns an update (scope token, declared lane, milestone file, artifact id) and optionally deliver it. Never guesses: ambiguous or unmatched updates escalate.",
-    parameters: Type.Object({
-      update: Type.String({ description: "The correction or instruction text." }),
-      id: Type.Optional(Type.String({ description: "Explicit target child id." })),
-      name: Type.Optional(Type.String({ description: "Explicit target child name." })),
-      scope: Type.Optional(Type.String({ description: "Explicit target scope." })),
-      origin: Type.Optional(
-        stringEnum(["user", "parent"], {
-          description: "'user' may interrupt; 'parent' may only queue and may not change scope.",
-        }),
-      ),
-      queue: Type.Optional(Type.Boolean({ description: "Force soft queue even for a user-origin update." })),
-      apply: Type.Optional(Type.Boolean({ description: "Deliver immediately when resolved (default true)." })),
-    }),
-    async execute(_toolCallId, params) {
-      const origin = params.origin ?? "user";
-      const apply = params.apply ?? true;
-
-      const resolution = await routeUpdate(
-        registry,
-        {
-          update: params.update,
-          id: params.id,
-          name: params.name,
-          scope: params.scope,
-          origin,
-          queue: params.queue,
-          apply,
-        },
-        client as any,
-      );
-
-      return text(formatResolution(resolution), resolution);
-    },
-  });
-
   // ── agent_running ───────────────────────────────────────────────────────────
   pi.registerTool({
     name: "agent_running",

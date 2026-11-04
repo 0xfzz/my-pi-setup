@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import {
   CHILD_DELEGATION_TOOLS,
   DELEGATION_TOOLS,
-  DEFERRED_DELEGATION_TOOLS,
   MAX_DELEGATION_DEPTH,
   PARENT_DELEGATION_TOOLS,
   PLAN_SAFE_DELEGATION_TOOLS,
@@ -12,7 +11,6 @@ import {
   canonicalDelegationName,
   describeRetiredTools,
   childControlToolNames,
-  delegationTool,
   isDelegationTool,
   isRetiredDelegationTool,
   mayUseDelegationTool,
@@ -43,11 +41,6 @@ test("child tools are never plan-safe", () => {
   for (const name of PLAN_SAFE_DELEGATION_TOOLS) {
     assert.equal(PARENT_DELEGATION_TOOLS.has(name), true, `${name} is a parent tool`);
   }
-});
-
-test("only agent_route is deferred", () => {
-  assert.deepEqual([...DEFERRED_DELEGATION_TOOLS], ["agent_route"]);
-  assert.equal(delegationTool("agent_route")?.exposure, "deferred");
 });
 
 test("retired names are disjoint from the canonical surface", () => {

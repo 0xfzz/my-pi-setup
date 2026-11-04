@@ -490,7 +490,7 @@ are the durable channel; scratch is disposable.
 ## Tool surface
 
 Parent-only: `agent_spawn`, `agent_resume`, `agent_interrupt`, `agent_close`,
-`agent_steer`, `agent_route`, `agent_running`, `agent_accept_result`,
+`agent_steer`, `agent_running`, `agent_accept_result`,
 `agent_escalate`, `agent_history`.
 
 Child-only: `agent_progress`, `agent_done`, `agent_ping`, `agent_parent_recall`,
