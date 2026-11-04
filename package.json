@@ -93,5 +93,5 @@
   },
   "simple-git-hooks": {
     "pre-commit": "npx lint-staged --allow-empty"
-  },
+  }
 }
