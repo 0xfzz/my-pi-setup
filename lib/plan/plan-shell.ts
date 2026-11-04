@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const READ_COMMANDS = new Set(["pwd", "ls", "cat", "head", "tail", "wc", "stat", "du", "df", "readlink", "realpath", "basename", "dirname", "uname", "whoami", "id", "printenv", "echo"]);
 const FIND_FLAGS = new Set(["-L", "-P", "-H", "-name", "-iname", "-path", "-ipath", "-regex", "-iregex", "-type", "-size", "-mtime", "-mmin", "-maxdepth", "-mindepth", "-print", "-print0", "-ls", "-empty", "-readable", "-writable", "-executable", "-not", "-and", "-or", "-o", "-a", "-true", "-false", "-follow"]);
+const ENV_FLAGS = new Set(["-i", "--ignore-environment", "-0", "--null"]);
 const GIT_COMMANDS = new Set(["status", "log", "diff", "show", "ls-files", "ls-tree", "rev-parse"]);
 
 interface CommandSegment {
@@ -87,7 +88,9 @@ export function readOnlyShellCommand(command: unknown): string | undefined {
       // `env` with no arguments prints the environment, exactly like the already-
       // allowed `printenv`. With a non-flag argument it becomes a launcher
       // (`env FOO=1 ./x`), so only flags are accepted.
-      if (args.some(arg => !arg.startsWith("-"))) return;
+      // Option forms such as `--split-string` and `-S` re-parse a command string,
+      // so only the environment-clearing flags that never launch anything pass.
+      if (args.some(arg => !ENV_FLAGS.has(arg))) return;
     } else if (name === "git") {
       // `git -C <path> <cmd>` is how a reviewer inspects another worktree or repo;
       // the path stays a quoted literal, so no expansion is introduced.

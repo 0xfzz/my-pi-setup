@@ -15,7 +15,7 @@ const allowed = [
   // Reviewer shapes recorded in real sessions: a read-only chain joined with `;`,
   // a repo inspected from outside its worktree, the environment dumped, a probe.
   "ls -la /tmp; ls -la /var; wc -l /etc/hosts", "git -C /tmp/repo status --short",
-  "git -C /tmp/repo diff --stat", "env", "env -i", "echo test",
+  "git -C /tmp/repo diff --stat", "env", "env -i", "env -0", "echo test",
 ];
 const blocked = [
   "", "touch new", "cat file > copy", "cat file >> copy", "cat file 2>/tmp/error", "cat file; touch copy",
@@ -39,6 +39,8 @@ const blocked = [
   // `-C` accepts a path, not a config override or a `-c` escape.
   "git -C /tmp/repo -c alias.x='!touch copy' status", "git -C /tmp/repo commit -m x",
   "git -C -c status",
+  // `env` option forms that re-parse a command string or launch a program.
+  "env --split-string=touch copy", "env -Stouch copy", "env -S touch copy", "env -i touch copy",
 ];
 test("Plan shell parses and normalizes supported read-only commands", () => {
   for (const command of allowed) assert.equal(typeof readOnlyShellCommand(command), "string", command);
