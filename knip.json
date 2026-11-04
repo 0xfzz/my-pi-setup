@@ -18,7 +18,7 @@
     "@viz-js/viz",
     "highlight.js",
     "@earendil-works/pi-ai",
-    "playwright-core",
+    "pi-vcc",
     "jiti"
   ]
 }

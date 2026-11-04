@@ -77,6 +77,8 @@
     "knip": "^6.43.0",
     "lint-staged": "^17.6.0",
     "oxlint": "^1.90.0",
+    "pi-vcc": "^0.4.1",
+    "playwright-core": "^1.64.1",
     "simple-git-hooks": "^2.14.0",
     "typebox": "1.4.3",
     "typescript": "^5.7.3"

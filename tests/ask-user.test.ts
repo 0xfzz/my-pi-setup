@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 // Use Pi's existing loader/dependencies; no package installation is necessary.
 // Run: node --experimental-strip-types --test tests/ask-user.test.ts
 const install = join(homedir(), ".pi/agent/install");
-const piRoot = process.env.PI_PACKAGE_DIR || join(
-  install, "releases", readFileSync(join(install, "current-version"), "utf8").trim(),
-  "node_modules/@earendil-works/pi-coding-agent",
-);
+const installedVersion = join(install, "current-version");
+// PI_PACKAGE_DIR wins; otherwise the user's installed Pi; otherwise the
+// devDependency, so a clean checkout (CI) needs no Pi installation.
+const piRoot = process.env.PI_PACKAGE_DIR || (existsSync(installedVersion)
+  ? join(install, "releases", readFileSync(installedVersion, "utf8").trim(), "node_modules/@earendil-works/pi-coding-agent")
+  : join(process.cwd(), "node_modules/@earendil-works/pi-coding-agent"));
 const piRequire = createRequire(join(piRoot, "package.json"));
 const { createJiti } = piRequire("jiti");
 const jiti = createJiti(import.meta.url, { alias: { typebox: piRequire.resolve("typebox") } });

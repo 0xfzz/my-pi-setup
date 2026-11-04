@@ -50,7 +50,8 @@ A non-zero `knip` count here is not automatically a bug:
 | --- | --- |
 | `@viz-js/viz`, `highlight.js` | Bundled by `scripts/build-dashboard.mjs` (its header says so). knip does not follow the bundle, so these look unused. Verify with the build before removing either. |
 | `@earendil-works/pi-ai` | Pi runtime peer package, imported by tests and extensions. Pi supplies it at load time. |
-| `playwright-core` | Provided by the Pi runtime, used by `lib/web-read.ts` through a runtime path. |
+| `pi-vcc` | Resolved at runtime by `lib/vcc-subagent-adapter.ts` (`VCC_ROOT`, the agent npm dir or `node_modules`); a devDependency only so CI can run the VCC tests. |
+| `playwright-core` | A devDependency so CI can run the web-read tests; `lib/web-read.ts` falls back to the agent's npm directory at runtime. |
 | `jiti` | Pi runtime loader, used by `tests/extension-loader.test.ts`. |
 
 ## Configuration hints
