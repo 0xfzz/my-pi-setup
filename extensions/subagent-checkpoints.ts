@@ -116,8 +116,8 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
   // resolving it needs a synchronous read of the child's own seed record.
   //
   // A spec-only reviewer never resolves one. Its whole value is that it judges a
-  // document without the author's reasoning, so the pull channel (`agent_parent_recall`,
-  // `agent_parent_digest`) and the digest brief are not registered and not injected.
+  // document without the author's reasoning, so the pull channel (`agent_parent_recall`)
+  // and the digest brief are not registered and not injected.
   // Absence, not instruction, is what makes that hold.
   const specOnlyReviewer = process.env.PI_SUBAGENT_REVIEW_POLICY === "spec-only";
   const parentContext = childSession && !specOnlyReviewer ? resolveParentContext(childSession) : undefined;
@@ -391,7 +391,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
           ? "You are an independent reviewer with no parent history. Judge only the pinned document in your ticket and the permitted paths. Missing context is a finding, not a reason to reconstruct the author's intent."
           : "",
         parentContext
-          ? `Your parent session is ${parentContext.sessionFile} (your context: ${parentContext.provenance?.mode ?? "unknown"}). When you need context you do not have — a decision your parent made, a file it touched, or parent work newer than your snapshot — use agent_parent_recall (search) or agent_parent_digest (structured brief) instead of guessing or re-reading the repository. Both are read-only and never modify the parent session.`
+          ? `Your parent session is ${parentContext.sessionFile} (your context: ${parentContext.provenance?.mode ?? "unknown"}). When you need context you do not have — a decision your parent made, a file it touched, or parent work newer than your snapshot — use agent_parent_recall instead of guessing or re-reading the repository. It is read-only and never modifies the parent session.`
           : "",
       ].filter(Boolean).join(" "),
     },
@@ -428,26 +428,6 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
         return {
           content: [{ type: "text", text: bounded.text }],
           details: { parent: parentContext.sessionFile, count: result.count, totalPages: result.totalPages, newerThanSeed, truncated: bounded.truncated },
-        };
-      },
-    });
-
-    pi.registerTool({
-      name: "agent_parent_digest", label: "Parent Digest",
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-      description:
-        "Get a compact structured brief of your PARENT's session (goal, files and changes, commits, key signals) compiled without any model call. " +
-        "Cheaper than agent_parent_recall when you need the shape of the parent's work rather than a specific detail. Read-only.",
-      parameters: Type.Object({}),
-      async execute() {
-        const brief = await compileSubagentSession(parentContext.sessionFile);
-        if (!brief) {
-          throw new Error("Could not compile a parent brief (pi-vcc unavailable or the parent session is unreadable). Use agent_parent_recall instead, or proceed with your own context.");
-        }
-        const bounded = boundPull(`${parentPullHeader(parentContext, false)}\n\n${clip(brief, PARENT_BRIEF_MAX_CHARS)}`);
-        return {
-          content: [{ type: "text", text: bounded.text }],
-          details: { parent: parentContext.sessionFile, mode: "digest", truncated: bounded.truncated },
         };
       },
     });

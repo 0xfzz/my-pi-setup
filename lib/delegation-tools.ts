@@ -38,8 +38,7 @@ export type DelegationVerb =
   | "done"
   | "ping"
   | "accept-result"
-  | "parent-recall"
-  | "parent-digest";
+  | "parent-recall";
 
 export interface DelegationTool {
   /** Canonical name. Always `agent_`-prefixed. */
@@ -74,7 +73,6 @@ const TOOLS: readonly DelegationTool[] = [
   { name: "agent_done", role: "child", planSafe: false, verb: "done" },
   { name: "agent_ping", role: "child", planSafe: false, verb: "ping" },
   { name: "agent_parent_recall", role: "child", planSafe: false, verb: "parent-recall" },
-  { name: "agent_parent_digest", role: "child", planSafe: false, verb: "parent-digest" },
 ];
 
 export const DELEGATION_TOOLS: readonly DelegationTool[] = Object.freeze(
@@ -123,7 +121,7 @@ const RETIRED_TARGETS = new Map<string, string>([
   ["subagent_done", "agent_done"],
   ["caller_ping", "agent_ping"],
   ["parent_recall", "agent_parent_recall"],
-  ["parent_digest", "agent_parent_digest"],
+  ["parent_digest", "agent_parent_recall"],
 ]);
 
 /**

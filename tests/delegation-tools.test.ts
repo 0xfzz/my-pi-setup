@@ -109,7 +109,6 @@ test("the derived name lists match the table", () => {
   assert.deepEqual(planSafeDelegationToolNames(), [...PLAN_SAFE_DELEGATION_TOOLS].sort());
   assert.deepEqual(childControlToolNames(), [
     "agent_done",
-    "agent_parent_digest",
     "agent_parent_recall",
     "agent_ping",
     "agent_progress",

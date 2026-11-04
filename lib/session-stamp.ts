@@ -156,7 +156,6 @@ export function readSessionFacts(text: string): SessionFacts {
  */
 const WRAPPER_PATTERNS = [
   /call agent_parent_recall/i,
-  /call agent_parent_digest/i,
   /Never modify the parent session/i,
   /Your FINAL assistant message/i,
   /The user can interact with you at any time/i,

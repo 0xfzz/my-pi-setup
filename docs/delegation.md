@@ -493,8 +493,7 @@ Parent-only: `agent_spawn`, `agent_resume`, `agent_interrupt`, `agent_close`,
 `agent_steer`, `agent_running`, `agent_accept_result`,
 `agent_escalate`, `agent_history`.
 
-Child-only: `agent_progress`, `agent_done`, `agent_ping`, `agent_parent_recall`,
-`agent_parent_digest`.
+Child-only: `agent_progress`, `agent_done`, `agent_ping`, `agent_parent_recall`.
 
 A child session never holds a parent-role tool at any depth, and a parent-role call
 from a child is refused with the reporting tools named instead. The v1 names
