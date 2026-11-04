@@ -1,7 +1,11 @@
 import { cacheStatsPlugin } from "./cache-stats.ts";
+import { todoPlugin } from "./todo.ts";
 import type { WebPluginDescriptor } from "../lib/web-plugins/descriptor.ts";
 
-export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [cacheStatsPlugin];
+export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [
+  cacheStatsPlugin,
+  todoPlugin,
+];
 
 export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {
   "account-router":
@@ -40,8 +44,6 @@ export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {
     "Bash execution timeout and idle process watchdog; background execution policy",
   "subagent-checkpoints":
     "Child agent checkpointing, milestone sidecars, and state recovery; ported in Phase 3",
-  todo:
-    "Task intent graph and dependency enforcement engine; ported in Phase 3",
   "web-read":
     "Headless browser page reader tool for web retrieval; tool-only execution",
 };

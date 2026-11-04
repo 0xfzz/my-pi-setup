@@ -32,6 +32,7 @@ import {
   type PopupRow,
 } from "../lib/popup/frame.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
+import { publishWebView } from "../lib/web-plugins/publisher.ts";
 import { markVolatileTail } from "../lib/cache-anchor.ts";
 import { TODO_DETAILS_HINT } from "../lib/workflow-actions.ts";
 import { planModeFromBranch } from "../lib/plan/plan-mode.ts";
@@ -287,11 +288,23 @@ export default function todoExtension(pi: ExtensionAPI) {
     const tag = mode === "plan" ? " [Plan]" : "";
     const used = plan ? G.doneCount(plan) : 0;
     const total = plan?.tasks.length ?? 0;
+    const title = `Todo${tag} ${used}/${total}`;
+    const rowList = rows(now);
+
+    try {
+      publishWebView(pi, "todo", {
+        type: "list",
+        title,
+        items: rowList,
+      });
+    } catch {
+      // Never throw into extension flow
+    }
 
     if (offerSection(pi, {
       id: "todo",
-      title: `Todo${tag} ${used}/${total}`,
-      rows: rows(now),
+      title,
+      rows: rowList,
       hint: TODO_DETAILS_HINT,
     })) {
       ctx.ui.setWidget("workflow-todos", undefined);
