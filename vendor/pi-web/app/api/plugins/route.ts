@@ -418,6 +418,7 @@ export async function GET(req: Request) {
       title: plugin.title,
       ...(plugin.description ? { description: plugin.description } : {}),
       surfaces: plugin.surfaces,
+      ...(plugin.actions ? { actions: plugin.actions } : {}),
     }));
     const views = webPluginsStore.getAllViews();
     return NextResponse.json(
