@@ -95,6 +95,38 @@ export async function checkWebPlugins(page, base) {
     }
     assert.equal(dialogFired, false, "No plugin page may open a dialog");
 
+    // (e) Action confirmation and execution flow (AC5)
+    await page.goto(`${base}/plugins/dashboard`, { waitUntil: "load" });
+    const dashboardTitle = page.locator(".plugin-page-title");
+    await dashboardTitle.waitFor({ state: "visible", timeout: 15_000 });
+    assert.equal((await dashboardTitle.textContent())?.trim(), "Delegated work graph");
+
+    const actionButton = page.locator(".plugin-action-button").filter({ hasText: "Request fresh snapshot" });
+    await actionButton.waitFor({ state: "visible", timeout: 10_000 });
+    assert.equal(await actionButton.isDisabled(), true, "Button must be disabled before confirmation");
+
+    const actionInput = page.locator(".plugin-action-input");
+    await actionInput.waitFor({ state: "visible", timeout: 10_000 });
+
+    // Fill exact confirm string and submit
+    await actionInput.fill("request sync");
+    assert.equal(await actionButton.isEnabled(), true, "Button must be enabled when confirm string matches");
+
+    await actionButton.click();
+
+    // Verify feedback with accepted requestId surfaces in UI
+    const feedback = page.locator(".plugin-action-feedback.feedback-success");
+    await feedback.waitFor({ state: "visible", timeout: 10_000 });
+    const feedbackText = await feedback.textContent();
+    assert.match(
+      feedbackText || "",
+      /request ID: [0-9a-f-]{36}/i,
+      "Accepted requestId must surface in UI feedback message",
+    );
+
+    // Verify dialog was never fired
+    assert.equal(dialogFired, false, "Plugin action must execute without opening any dialog (AC5)");
+
     // Verify navigation links
     await page.goto(`${base}/plugins/cache-stats`, { waitUntil: "load" });
     const homeLink = page.locator(".plugin-nav-home-link");
