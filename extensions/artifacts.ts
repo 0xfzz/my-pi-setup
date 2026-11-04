@@ -21,6 +21,7 @@ import {
   formatBytes, clip, lookupArtifact, type Artifact, type ArtifactType,
   applyArtifactEdit, artifactLineCount, renderArtifactSlice, searchArtifactText, sliceArtifactContent,
 } from "../lib/artifact-state.ts";
+import { recordsFromBranch as childRecordsFromBranch } from "../lib/subagent-state.ts";
 import { isSubagentChildProcess } from "../lib/subagent-context.ts";
 import { isChildReadOnlyArtifact } from "../lib/delegation/handoff-artifact.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardArtifacts } from "../lib/dashboard/integration.ts";
@@ -453,6 +454,8 @@ export default function artifactsExtension(pi: ExtensionAPI) {
   const childScope = verifiedChild && process.env.PI_SUBAGENT_SCOPE ? sanitizeScope(process.env.PI_SUBAGENT_SCOPE) : undefined;
   const isChild = Boolean(childSession && childRun);
   const runScopes = new Map<string, string>();
+  /** Every child session file a launch result named in this process, scoped or not. */
+  const launchedChildFiles = new Set<string>();
   const REMOVALS_SUFFIX = ".artifact-removals.json";
   /**
    * Last catalog signature published to the dashboard. Artifact content changes
@@ -635,8 +638,25 @@ export default function artifactsExtension(pi: ExtensionAPI) {
     return { staged: false, sidecarOnly: false };
   }
 
+  /**
+   * Session files of the children THIS session launched.
+   *
+   * Children write sidecars into the shared session directory, next to every
+   * other session's sidecars. Ingesting the whole directory copied 26 unrelated
+   * artifacts (about 244 KB) from other sessions into one parent's branch at its
+   * first spawn (session 01a1a46d), inflating its context and catalog.
+   */
+  function knownChildSessions(): Set<string> {
+    const known = new Set<string>([...runScopes.keys(), ...launchedChildFiles]);
+    try {
+      for (const record of childRecordsFromBranch(ctx?.sessionManager.getBranch() ?? []).values()) known.add(record.sessionFile);
+    } catch { /* branch unavailable: fall back to launches seen this process */ }
+    return new Set([...known].map(file => basename(file)));
+  }
+
   async function ingestChildDirectory(dir: string): Promise<number> {
     let ingestedCount = 0;
+    const ownChildren = knownChildSessions();
     // A tombstone (or the session removal marker) is final: re-ingesting the
     // child's sidecar must not bring the artifact back into the parent catalog.
     const removed = ctx ? pendingRemovalIds(ctx) : new Set<string>();
@@ -644,6 +664,8 @@ export default function artifactsExtension(pi: ExtensionAPI) {
       const files = readdirSync(dir);
       for (const file of files) {
         if (file.includes(ARTIFACT_SIDECAR_PREFIX) && file.endsWith(ARTIFACT_SIDECAR_SUFFIX)) {
+          const owner = file.slice(0, file.indexOf(ARTIFACT_SIDECAR_PREFIX));
+          if (!ownChildren.has(owner)) continue;
           const fullPath = `${dir}/${file}`;
           const art = await readSidecarArtifact(fullPath);
           if (art) {
@@ -844,6 +866,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
       const file = d?.sessionFile ?? d?.sessionPath;
       const scope = d?.scope ? sanitizeScope(d.scope) : undefined;
       if (typeof file === "string") {
+        launchedChildFiles.add(file);
         if (scope) runScopes.set(file, scope);
         const dir = dirname(file);
         attachDirectoryWatcher(dir);

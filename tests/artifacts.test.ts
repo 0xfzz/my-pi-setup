@@ -310,3 +310,27 @@ test("non-TUI sessions resolve mentions without installing terminal UI", async (
     await h.emit("session_shutdown");
   }
 });
+
+test("a parent does not ingest sidecars that belong to other sessions in the shared directory", async () => {
+  const tmp = await mkdtemp(join(tmpdir(), "pi-artifact-foreign-"));
+  try {
+    const mine = join(tmp, "mine.jsonl");
+    const foreign = join(tmp, "someone-else.jsonl");
+    for (const [file, id] of [[mine, "mine-report"], [foreign, "foreign-handoff"]] as const) {
+      const child = harness({ isChild: true, childSession: file, childRun: `run-${id}`, childName: id });
+      await child.tools.get("artifact_save").execute(id, {
+        id, title: id, type: "scratchpad", content: `content of ${id}`,
+      }, undefined, undefined, child.context);
+    }
+    const parent = harness();
+    await parent.emit("session_start");
+    await parent.emit("tool_execution_end", {
+      toolName: "agent_spawn",
+      isError: false,
+      result: { details: { sessionFile: mine } },
+    });
+    assert.deepEqual(parent.entries.map((entry: any) => entry.data.id), ["mine-report"]);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
