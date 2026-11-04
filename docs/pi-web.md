@@ -90,7 +90,9 @@ All cell contents and labels render as plain text nodes. HTML tags (such as `<sc
 
 #### Plugin actions
 
-On the current branch, plugin views are strictly read-only data projections. Trusted browser-initiated plugin actions (such as a dashboard button to request a fresh snapshot) are specified in [`docs/prds/plugin-actions.md`](prds/plugin-actions.md). When enabled, actions require explicit single-use request tokens, loopback authorization, and mutual confirmation before dispatching to the session event bus.
+#### Plugin actions
+
+The dashboard plugin ships one trusted, read-only action — **Request fresh snapshot** — rendered on `/plugins/dashboard`. Submitting it requires typing the exact confirmation string (`request sync`); the fork validates it server-side (403 otherwise), enforces one in-flight action per session, and relays a single-use, audited request to the owning extension over the session event bus. The web server never executes anything itself: the extension re-checks the request and republishes its view through the normal channel. Other plugins ship no actions, and mutation actions are out of scope pending a follow-up PRD. The contract and threat review live in [`docs/prds/plugin-actions.md`](prds/plugin-actions.md).
 
 ### Updating and resyncing
 
