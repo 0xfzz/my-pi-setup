@@ -59,10 +59,15 @@ export function milestoneOf(value: any): Milestone | undefined {
 
 export function launched(details: any, input: any = {}, previous?: ChildRecord, timestamp = new Date().toISOString()): ChildRecord | undefined {
   const sessionFile = details?.sessionFile ?? details?.sessionPath;
-  if (details?.status !== "started" || typeof sessionFile !== "string" || !sessionFile) return;
-  if (previous && previous.runId && previous.runId === details.id) return previous;
+  // A resume driven by an answered escalation reports its escalation stage as
+  // `status`, so the new run id travels separately. Without it the record kept
+  // the ended run's id, and every milestone of the resumed child was dropped.
+  const viaEscalation = details?.resumed === true && typeof details.resumeRunId === "string" && details.resumeRunId;
+  const runId = viaEscalation || (details?.status === "started" ? details.id : undefined);
+  if (!runId || typeof sessionFile !== "string" || !sessionFile) return;
+  if (previous && previous.runId && previous.runId === runId) return previous;
   return {
-    sessionFile, runId: clip(details.id, 200), name: clip(details.name || input.name || "Subagent", 200),
+    sessionFile, runId: clip(runId, 200), name: clip(details.name || input.name || "Subagent", 200),
     agent: clip(details.agent || input.agent || previous?.agent, 200) || undefined,
     task: clip(details.task || input.task || input.message || previous?.task || "Resumed session", 2000),
     paneId: clip(details.paneId, 200) || undefined, status: "running", ended: false, updatedAt: timestamp,
@@ -119,7 +124,7 @@ export function recordsFromBranch(entries: readonly any[]): Map<string, ChildRec
     if (msg?.role === "assistant" && Array.isArray(msg.content)) {
       for (const part of msg.content) if (part.type === "toolCall") inputs.set(part.id, part.arguments);
     }
-    if (msg?.role === "toolResult" && ["agent_spawn", "agent_resume"].includes(msg.toolName)) {
+    if (msg?.role === "toolResult" && ["agent_spawn", "agent_resume", "agent_escalate"].includes(msg.toolName)) {
       const path = msg.details?.sessionFile ?? msg.details?.sessionPath;
       const record = launched(msg.details, inputs.get(msg.toolCallId), records.get(path), entry.timestamp);
       if (record) records.set(record.sessionFile, record);

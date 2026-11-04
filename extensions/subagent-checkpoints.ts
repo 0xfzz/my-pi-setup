@@ -317,7 +317,8 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
 
   const isLaunchTool = (name: string) => {
     const verb = delegationTool(name)?.verb;
-    return verb === "spawn" || verb === "resume";
+    // An answered escalation resumes the child too; its result carries the new run id.
+    return verb === "spawn" || verb === "resume" || name === "agent_escalate";
   };
 
   pi.on("tool_execution_start", event => {

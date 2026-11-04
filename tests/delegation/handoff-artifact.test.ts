@@ -143,3 +143,17 @@ test("a rework ticket restates the defects so they cannot be missed", () => {
   assert.match(ticket, /1\. the budget is still a constant/);
   assert.match(ticket, /report-api-2/, "each round reports into its own artifact");
 });
+
+test("criteria that name files are detected, negative ones are not", async () => {
+  const { criteriaRequireFileWrites } = await import("../../lib/delegation/handoff-artifact.ts");
+  assert.deepEqual(
+    criteriaRequireFileWrites([
+      "docs/console-contract.md covers every message",
+      "no changes under web/dashboard/src, lib/dashboard, or package.json",
+      "git status shows no changes under lib/dashboard",
+      "npm run typecheck passes",
+    ]),
+    ["docs/console-contract.md covers every message"],
+  );
+  assert.deepEqual(criteriaRequireFileWrites(undefined), []);
+});

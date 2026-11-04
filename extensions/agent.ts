@@ -56,6 +56,7 @@ import { checkResult, renderReceipt, unresolvedBlockers } from "../lib/delegatio
 import { noteInspection, POLL_GUARD_REASON, resetInspectionCounts } from "../lib/delegation/poll-guard.ts";
 import {
   buildHandoffTicket,
+  criteriaRequireFileWrites,
   handoffArtifactId,
   renderHandoffDocument,
   reportArtifactId,
@@ -664,7 +665,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     try {
       pi.appendEntry(CHECKPOINT_TYPE, {
         sessionFile: child.sessionFile,
-        runId: "",
+        // The registry row id IS the run id (armWatcher registers running.id). An
+        // empty string made the closed record match any later run's sidecars.
+        runId: child.id,
         name: child.name,
         ...(child.agent ? { agent: child.agent } : {}),
         task: child.task ?? "",
@@ -1935,14 +1938,14 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       stepId: Type.Optional(Type.String({ description: "Worker steps: which plan step to execute. Required when the plan has more than one step." })),
       handoffId: Type.Optional(Type.String({ description: "Removed; passing an id is refused. Describe the work in `task`." })),
       purpose: Type.Optional(
-        stringEnum(["spec", "adhoc", "research", "review", "implementation"], {
+        stringEnum(["adhoc", "research"], {
             description:
-              "Legacy. Only 'adhoc' (worker) and 'research' (planner) are admitted.",
+              "'adhoc' (worker) or 'research' (planner). The removed pipeline purposes are not accepted.",
           }),
       ),
       laneFiles: Type.Optional(
         Type.Array(Type.String(), {
-          description: "Ad-hoc only: files this child owns. Omit for no lane.",
+          description: "Ad-hoc only: files this child owns and may modify. REQUIRED for a worker that must create or edit files: with no lane the child is told NOT to modify files.",
         }),
       ),
       acceptanceCriteria: Type.Optional(
@@ -2152,7 +2155,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           { error: "handoff-removed" },
         );
       }
-      if (params.purpose === "review" || params.purpose === "spec" || params.purpose === "implementation") {
+      // The schema no longer offers these, but a caller bypassing validation still gets a clear refusal.
+      const legacyPurpose: string | undefined = params.purpose;
+      if (legacyPurpose === "review" || legacyPurpose === "spec" || legacyPurpose === "implementation") {
         return text(
           "The handoff/spec-review/QA pipeline was removed. Use purpose \"adhoc\" for a worker, or \"research\" for a read-only reader.",
           { error: "pipeline-removed" },
@@ -2206,6 +2211,17 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         }
         laneFiles = [...new Set([...laneFiles, ...planStep.files])];
         acceptanceCriteria = planStep.acceptanceCriteria.length ? [...planStep.acceptanceCriteria] : acceptanceCriteria;
+      }
+      if (role === "worker" && !laneFiles.length) {
+        const writes = criteriaRequireFileWrites(acceptanceCriteria);
+        if (writes.length) {
+          return text(
+            "Refused: this worker has no laneFiles, and a child with no lane is told NOT to modify files — "
+              + "but its acceptance criteria require files:\n- " + writes.slice(0, 5).join("\n- ")
+              + "\nPass laneFiles listing every path the worker may create or edit, or use role \"research\" if it should only report.",
+            { error: "lane-required", criteria: writes },
+          );
+        }
       }
       const plannerPlanId = role === "planner" ? `plan-${scope}` : undefined;
 
@@ -2261,7 +2277,12 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       // A rework is the same work unit one round older. The ORIGINAL handoff id
       // is what the child's defect list points at, and the original is never
       // rewritten -- that is the whole point of re-spawning instead of re-editing.
-      const handoffRound = reworkSource ? (reworkSource.accountability?.reworkRound ?? 0) + 2 : 1;
+      let handoffRound = reworkSource ? (reworkSource.accountability?.reworkRound ?? 0) + 2 : 1;
+      // A handoff is frozen: a second launch of the same scope (a respawn after
+      // an abandoned child) must get a fresh round instead of re-saving the
+      // existing document under the same id with different text.
+      const takenArtifacts = recordsFromBranch(branchOf(ctx));
+      while (takenArtifacts.has(handoffArtifactId(scope, handoffRound))) handoffRound++;
       const originalHandoffId = reworkSource?.handoffId ?? (reworkSource ? handoffArtifactId(scope, 1) : undefined);
       const handoffId = handoffArtifactId(scope, handoffRound);
       const usesPlanTicket = Boolean(
@@ -2467,7 +2488,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           `Review duty: when it finishes, the result waits for YOUR verification (plan: ${accountability.reviewPlan}) — accept, request changes or abandon it with agent_accept_result; the slot stays occupied until then.`,
           `Check agent_running for the row's resultRevision before judging: a verdict on a superseded result is refused.`,
           `Rework: steer or resume THIS child instead of spawning a replacement; a replacement needs \`replaces\` plus capacity.`,
-          `Batch budget: ${registry.getBatch(ownerSessionId).launches}/${budgets.launchesPerBatch} launch(es), ${admissionOccupied.length + 1}/${budgets.concurrent} slot(s) occupied.`,
+          `Batch budget: ${registry.getBatch(ownerSessionId).launches}/${budgets.launchesPerBatch} launch(es), ${Math.max(admissionOccupied.length + 1, registry.getOccupiedChildren(ownerSessionId).length)}/${budgets.concurrent} slot(s) occupied.`,
           ...(reworkSource
             ? [`Rework: \`${reworkSource.id}\` handed the work unit over — it no longer holds a slot, and this launch was not charged to the batch.`]
             : []),
@@ -2704,7 +2725,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       scope,
       child?.laneFiles ?? [],
       child?.handoffId,
-      undefined,
+      // A resume keeps the budget the child was launched with; omitting it fell
+      // back to the 30 minute default (40m became 30m on the resumed row).
+      child?.budgetMs,
       child?.frozenCriteria?.length
         ? { criteria: child.frozenCriteria, revision: child.handoffRevision ?? 1 }
         : undefined,
@@ -3635,7 +3658,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
       name: child?.name ?? escalation.childName,
       autoExit: child?.autoExit ?? true,
     });
-    const resumeDetails = ((resumed as any)?.details ?? {}) as { error?: string; paneId?: string };
+    const resumeDetails = ((resumed as any)?.details ?? {}) as { error?: string; paneId?: string; id?: string };
     const resumedOk = !resumeDetails.error;
 
     const delivered = text(
@@ -3658,6 +3681,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         resumeMessage: message,
         resumed: resumedOk,
         ...(resumeDetails.paneId ? { paneId: resumeDetails.paneId } : {}),
+        ...(resumedOk && resumeDetails.id ? { resumeRunId: resumeDetails.id } : {}),
         ...(resumeDetails.error ? { resumeError: resumeDetails.error } : {}),
       },
     );

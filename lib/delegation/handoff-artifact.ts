@@ -100,6 +100,23 @@ export interface HandoffDocumentInput {
   };
 }
 
+/** A path-shaped token: `dir/file.ext` or a bare `file.ext` with a known extension. */
+const PATH_TOKEN = /(?:[\w.-]+\/)+[\w.-]+\.\w{1,8}\b|\b[\w-]+\.(?:ts|tsx|mjs|cjs|js|jsx|md|json|css|html|ans|sh|py|toml|ya?ml)\b/;
+/** A criterion that forbids or merely checks a path does not ask for a write. */
+const NEGATIVE_CRITERION = /^\s*(?:no |do not|don't|never|unchanged|git status shows no|nothing )/i;
+
+/**
+ * Acceptance criteria that name files a worker must produce.
+ *
+ * An undeclared lane tells the child "do not modify files", so a worker whose
+ * own criteria require a file is handed a brief that contradicts itself and
+ * correctly does nothing (session 01a1a46d: two workers "completed" with no
+ * deliverables). The spawn refuses that combination instead of launching it.
+ */
+export function criteriaRequireFileWrites(criteria: readonly string[] | undefined): string[] {
+  return (criteria ?? []).filter(item => !NEGATIVE_CRITERION.test(item) && PATH_TOKEN.test(item));
+}
+
 /**
  * Render the handoff document.
  *
