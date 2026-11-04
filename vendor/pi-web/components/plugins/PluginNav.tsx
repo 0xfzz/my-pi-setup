@@ -1,13 +1,48 @@
-import React from "react";
-import type { WebPluginDescriptor } from "@/lib/web-plugins-host";
+"use client";
+
+import React, { useEffect, useState } from "react";
+
+export interface WebPluginSurface {
+  kind: "sidebar" | "page";
+  path?: string;
+}
+
+export interface WebPluginDescriptor {
+  id: string;
+  extension: string;
+  title: string;
+  description?: string;
+  surfaces: readonly WebPluginSurface[];
+}
 
 interface PluginNavProps {
-  plugins: readonly WebPluginDescriptor[];
+  plugins?: readonly WebPluginDescriptor[];
   currentPluginId?: string;
   variant?: "toolbar" | "header" | "list";
 }
 
-export function PluginNav({ plugins, currentPluginId, variant = "toolbar" }: PluginNavProps) {
+export function PluginNav({ plugins: initialPlugins, currentPluginId, variant = "toolbar" }: PluginNavProps) {
+  const [plugins, setPlugins] = useState<readonly WebPluginDescriptor[]>(initialPlugins ?? []);
+
+  useEffect(() => {
+    if (initialPlugins && initialPlugins.length > 0) {
+      setPlugins(initialPlugins);
+      return;
+    }
+    let mounted = true;
+    void fetch("/api/plugins")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { plugins?: WebPluginDescriptor[] } | null) => {
+        if (mounted && data?.plugins) {
+          setPlugins(data.plugins);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, [initialPlugins]);
+
   const pagePlugins = plugins.filter((p) =>
     p.surfaces.some((s) => s.kind === "page"),
   );

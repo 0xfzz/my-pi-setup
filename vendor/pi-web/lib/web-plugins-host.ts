@@ -1,13 +1,28 @@
-import { WEB_PLUGINS } from "../../../web-plugins/index.ts";
-import {
-  WEB_PLUGIN_VIEW_EVENT,
-  validateView,
-  type WebView,
-  type KvWebView,
-  type ListWebView,
-  type StatusWebView,
-} from "../../../lib/web-plugins/view.ts";
+import { createJiti } from "jiti";
+import { resolve } from "node:path";
 import type { WebPluginDescriptor } from "../../../lib/web-plugins/descriptor.ts";
+import type {
+  WebView,
+  KvWebView,
+  ListWebView,
+  StatusWebView,
+  ValidateViewResult,
+} from "../../../lib/web-plugins/view.ts";
+
+const jiti = createJiti(process.cwd());
+
+const webPluginsIndex = resolve(process.cwd(), "../../web-plugins/index.ts");
+const webPluginsView = resolve(process.cwd(), "../../lib/web-plugins/view.ts");
+
+const loadedIndex = jiti(webPluginsIndex) as { WEB_PLUGINS: readonly WebPluginDescriptor[] };
+const loadedView = jiti(webPluginsView) as {
+  WEB_PLUGIN_VIEW_EVENT: string;
+  validateView: (input: unknown) => ValidateViewResult;
+};
+
+export const WEB_PLUGINS: readonly WebPluginDescriptor[] = loadedIndex.WEB_PLUGINS;
+export const WEB_PLUGIN_VIEW_EVENT: string = loadedView.WEB_PLUGIN_VIEW_EVENT;
+export const validateView = loadedView.validateView;
 
 export const WEB_PLUGINS_STORE_KEY = "@pi-workflow-extensions/web-plugins-store/v1";
 
@@ -225,12 +240,10 @@ export function attachSessionPlugins(wrapper: unknown): () => void {
 }
 
 export {
-  WEB_PLUGINS,
-  WEB_PLUGIN_VIEW_EVENT,
-  validateView,
   type WebView,
   type KvWebView,
   type ListWebView,
   type StatusWebView,
   type WebPluginDescriptor,
+  type ValidateViewResult,
 };
