@@ -14,6 +14,8 @@ import {
 } from "../lib/dashboard/protocol.ts";
 import { projectSnapshot } from "../lib/dashboard/projection.ts";
 import { validateView, type KvWebView } from "../lib/web-plugins/view.ts";
+import { validateRegistry } from "../lib/web-plugins/registry.ts";
+import { WEB_PLUGINS } from "../web-plugins/index.ts";
 
 function findRow(view: KvWebView, label: string) {
   return view.rows.find((r) => r.label === label);
@@ -383,4 +385,13 @@ test("dashboard-web-view: (f) views always pass validateView({ok: true})", () =>
     const result = validateView(view);
     assert.equal(result.ok, true);
   }
+});
+
+test("web-plugins registry: WEB_PLUGINS contains id 'dashboard' and passes validateRegistry", () => {
+  const dashboard = WEB_PLUGINS.find((p) => p.id === "dashboard");
+  assert.ok(dashboard, "WEB_PLUGINS must contain id 'dashboard'");
+  assert.equal(dashboard.extension, "dashboard");
+
+  const errors = validateRegistry(WEB_PLUGINS);
+  assert.deepEqual(errors, [], `Registry validation failed: ${errors.join(", ")}`);
 });

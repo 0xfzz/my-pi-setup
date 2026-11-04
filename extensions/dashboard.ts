@@ -38,6 +38,9 @@ import {
 } from "../lib/dashboard/integration.ts";
 import { projectSession } from "../lib/dashboard/projection.ts";
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";
+import { publishWebView } from "../lib/web-plugins/publisher.ts";
+import { snapshotToWebView } from "../lib/dashboard/web-view.ts";
+import type { DashboardSnapshot } from "../lib/dashboard/protocol.ts";
 
 export interface DashboardExtensionOptions {
   /**
@@ -82,8 +85,26 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
    */
   let registeredForWork = false;
 
+  const baseFactory = options.producerFactory ?? defaultDashboardProducerFactory;
+  const producerFactory: DashboardProducerFactory = async (producerOpts) => {
+    const producer = await baseFactory(producerOpts);
+    return {
+      publish(snapshot: DashboardSnapshot) {
+        try {
+          publishWebView(pi, "dashboard", snapshotToWebView(snapshot));
+        } catch {
+          // guarded by try/catch so nothing thrown can reach the dashboard flow
+        }
+        producer.publish(snapshot);
+      },
+      close() {
+        return producer.close?.();
+      },
+    };
+  };
+
   const bridge = new DashboardBridge({
-    producerFactory: options.producerFactory ?? defaultDashboardProducerFactory,
+    producerFactory,
     coalesceMs: options.coalesceMs,
     runtimeDir: options.runtimeDir,
     heartbeatMs: options.heartbeatMs,

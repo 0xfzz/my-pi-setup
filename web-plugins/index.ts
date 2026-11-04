@@ -1,5 +1,6 @@
 import { artifactsPlugin } from "./artifacts.ts";
 import { cacheStatsPlugin } from "./cache-stats.ts";
+import { dashboardPlugin } from "./dashboard.ts";
 import { subagentCheckpointsPlugin } from "./subagent-checkpoints.ts";
 import { todoPlugin } from "./todo.ts";
 import type { WebPluginDescriptor } from "../lib/web-plugins/descriptor.ts";
@@ -9,6 +10,7 @@ export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [
   todoPlugin,
   artifactsPlugin,
   subagentCheckpointsPlugin,
+  dashboardPlugin,
 ];
 
 export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {
@@ -28,8 +30,6 @@ export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {
     "Opt-in diagnostic logging cache prefix sharing to JSONL; no persistent view",
   "clipboard-paste":
     "Terminal clipboard paste handler across Linux protocols; input-only tool",
-  dashboard:
-    "Provides its own web surface via lib/dashboard; ported in Phase 3",
   "dynamic-prompt":
     "Registry-driven system prompt builder; background prompt middleware",
   "image-thumbnails":
