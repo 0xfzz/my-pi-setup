@@ -66,6 +66,17 @@ export function popupOverlayOptions(
   return { anchor: "center" as const, width, minWidth, maxHeight, margin: POPUP_MARGIN };
 }
 
+/**
+ * Terminal rows a popup may actually use when its overlay is capped at
+ * `maxHeightPercent` of the screen. A list sized to the full terminal but shown
+ * in a shorter overlay is clipped at the bottom: the selected row scrolls out of
+ * view and the list looks overflowed instead of scrollable.
+ */
+export function overlayRows(terminalRows: number, maxHeightPercent: number): number {
+  const rows = Number.isFinite(terminalRows) ? terminalRows : 24;
+  return Math.max(8, Math.floor((rows * maxHeightPercent) / 100));
+}
+
 /** Overlay options sized so a popup of `contentRows` rows fits the terminal. */
 export function popupHeight(rows: number): number {
   return Math.max(8, rows + POPUP_FRAME_ROWS + 2 * POPUP_MARGIN);

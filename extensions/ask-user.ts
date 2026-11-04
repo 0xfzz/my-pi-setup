@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { isSubagentChildSession } from "../lib/subagent-context.ts";
 import { AskUserPopup, type AskAnswer } from "../lib/ui/ask.ts";
-import { popupOverlayOptions } from "../lib/popup/frame.ts";
+import { overlayRows, popupOverlayOptions } from "../lib/popup/frame.ts";
 
 type AskResult = {
   status: "answered" | "cancelled" | "forwarded" | "unavailable";
@@ -142,7 +142,7 @@ export default function askUser(pi: ExtensionAPI) {
             component = new AskUserPopup({
               question, context, options, recommended,
               theme,
-              terminalRows: () => tui.terminal.rows,
+              terminalRows: () => overlayRows(tui.terminal.rows, 90),
               onDone: done,
             });
             return component;

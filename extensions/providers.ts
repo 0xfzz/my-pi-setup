@@ -10,7 +10,7 @@ import { discoverModelDetails, discoveryAuth, DiscoveryError, modelsEndpoint, ty
 import { providerKeyInput } from "../lib/provider/provider-key-input.ts";
 import { providerModelPicker } from "../lib/provider/provider-model-picker.ts";
 import { accountPlan, apiKeyFromInput, draftToProvider, withAccount, withoutModel } from "../lib/provider/provider-settings.ts";
-import { popupOverlayOptions } from "../lib/popup/frame.ts";
+import { overlayRows, popupOverlayOptions } from "../lib/popup/frame.ts";
 import { isSubagentChildSession } from "../lib/subagent-context.ts";
 import {
   ProviderSettingsPopup,
@@ -289,7 +289,7 @@ async function openEditor(ctx: ExtensionCommandContext): Promise<void> {
     const result = await ctx.ui.custom<ProviderPopupResult>((tui, theme, _keys, done) => new ProviderSettingsPopup({
       view: () => ({ path: snapshot?.path ?? path, providers: snapshot?.config.providers ?? {}, errors, known }),
       theme,
-      terminalRows: () => tui.terminal.rows,
+      terminalRows: () => overlayRows(tui.terminal.rows, 92),
       notice,
       startAt: focus,
       onDone: done,

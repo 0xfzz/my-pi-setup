@@ -6,7 +6,7 @@ import { open, writeFile, rm, mkdtemp } from "node:fs/promises";
 import { dirname, basename, join, delimiter } from "node:path";
 import { tmpdir } from "node:os";
 import {
-  MarkdownPopup, popupOverlayOptions, PLAIN_THEME, type PopupTheme,
+  MarkdownPopup, overlayRows, popupOverlayOptions, PLAIN_THEME, type PopupTheme,
 } from "../lib/popup/frame.ts";
 import { PopupList } from "../lib/ui/shell.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
@@ -357,7 +357,7 @@ export async function showArtifactDetail(
           title: `[${current.id}] ${current.title}`,
           hint: "Esc close · / search · o nvim",
           rows: 20,
-          terminalRows: () => tuiRef?.terminal?.rows ?? 24,
+          terminalRows: () => overlayRows(tuiRef?.terminal?.rows ?? 24, 90),
           onClose: (action) => done(action),
           onOpenExternal: () => true,
         });
@@ -408,7 +408,7 @@ export async function showArtifactPicker(
           hint: "Enter open · 1-9 jump · Esc close",
           items,
           numbered: true,
-          terminalRows: () => tui.terminal?.rows ?? 24,
+          terminalRows: () => overlayRows(tui.terminal?.rows ?? 24, 80),
           renderItem: (art, { selected }) => {
             const marker = selected ? pTheme.fg("accent", "→") : " ";
             const icon = artifactTypeIcon(art.type);

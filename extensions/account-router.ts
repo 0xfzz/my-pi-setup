@@ -62,7 +62,7 @@ import {
 } from "../lib/provider/router-config.ts";
 import { ensureProviderInScope } from "../lib/provider/router-scope.ts";
 import { RouterSettingsPopup } from "../lib/ui/router-settings.ts";
-import { popupOverlayOptions } from "../lib/popup/frame.ts";
+import { overlayRows, popupOverlayOptions } from "../lib/popup/frame.ts";
 import { providerModelPicker } from "../lib/provider/provider-model-picker.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
 
@@ -1331,7 +1331,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
         view: routerView,
         apply: (action) => applyRouterAction(action, ctx),
         theme,
-        terminalRows: () => tui.terminal.rows,
+        terminalRows: () => overlayRows(tui.terminal.rows, 90),
         onDone: done,
       }), { overlay: true, overlayOptions: popupOverlayOptions("86%", 56, "90%") as never });
       if (!result || result.kind !== "pick-models") return;

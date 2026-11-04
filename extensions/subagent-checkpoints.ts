@@ -5,6 +5,7 @@ import { Type } from "typebox";
 import {
   PopupPanel,
   popupOverlayOptions,
+  overlayRows,
   popupHeight,
   isPopupCloseKey,
   type PopupRow,
@@ -546,7 +547,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
         title: panelTitle,
         hint,
         items: options,
-        terminalRows: () => tui?.terminal?.rows ?? 24,
+        terminalRows: () => overlayRows(tui?.terminal?.rows ?? 24, 85),
         header: headerLines.length ? [...headerLines.map(line => theme.fg("dim", line)), ""] : [],
         renderItem: (option, { selected }) =>
           `${selected ? theme.fg("accent", "→ ") : "  "}${option}`,
