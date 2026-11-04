@@ -4,6 +4,7 @@ import { useEffect, useState, use } from "react";
 import { useSearchParams } from "next/navigation";
 import { PluginViewRenderer } from "@/components/plugins/PluginViewRenderer";
 import { PluginNav } from "@/components/plugins/PluginNav";
+import { PluginActions } from "@/components/plugins/PluginActions";
 import type { WebPluginDescriptor, WebView } from "@/lib/web-plugins-host";
 import "@/components/plugins/plugins.css";
 
@@ -21,6 +22,7 @@ export default function PluginPage({ params }: PageProps) {
   const [plugins, setPlugins] = useState<readonly WebPluginDescriptor[]>([]);
   const [currentPlugin, setCurrentPlugin] = useState<WebPluginDescriptor | null>(null);
   const [view, setView] = useState<WebView | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(sessionParam);
 
   useEffect(() => {
     let mounted = true;
@@ -47,6 +49,7 @@ export default function PluginPage({ params }: PageProps) {
 
         // Find view for this plugin
         let foundView: WebView | null = null;
+        let activeSession: string | null = sessionParam;
         if (data.views) {
           if (sessionParam) {
             foundView = data.views[sessionParam]?.[pluginId] ?? null;
@@ -55,11 +58,16 @@ export default function PluginPage({ params }: PageProps) {
             for (const sessId of Object.keys(data.views)) {
               if (data.views[sessId]?.[pluginId]) {
                 foundView = data.views[sessId][pluginId];
+                activeSession = sessId;
               }
+            }
+            if (!activeSession && Object.keys(data.views).length > 0) {
+              activeSession = Object.keys(data.views)[0];
             }
           }
         }
         setView(foundView);
+        setSelectedSessionId(activeSession);
       } catch (err) {
         console.error("Failed to load plugin data:", err);
       } finally {
@@ -117,6 +125,13 @@ export default function PluginPage({ params }: PageProps) {
             <p className="plugin-page-description">{currentPlugin.description}</p>
           )}
         </div>
+        {currentPlugin.actions && currentPlugin.actions.length > 0 && (
+          <PluginActions
+            pluginId={currentPlugin.id}
+            sessionId={selectedSessionId}
+            actions={currentPlugin.actions}
+          />
+        )}
         <div className="plugin-view-card">
           <PluginViewRenderer view={view} />
         </div>
