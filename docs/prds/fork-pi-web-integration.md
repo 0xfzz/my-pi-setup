@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | draft, Phase 0–1 in progress on `feat/pi-web-integration` |
+| **Status** | implemented: Phases 0–5 complete on `feat/pi-web-integration` (Phase 5 shipped the read-only `request-sync` reference action per [plugin-actions](plugin-actions.md)) |
 | **Owner** | Faiz |
 | **Upstream** | `agegr/pi-web` @ `main` (v0.15.0 at time of writing) |
 | **Scope** | `lib/web-plugins/`, `web-plugins/`, the pi-web fork (new repo), reusing the existing `web/dashboard/`, `lib/dashboard/` and `extensions/dashboard.ts` as its base |
