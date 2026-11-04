@@ -22,6 +22,7 @@ import {
 } from "../lib/subagent-state.ts";
 import { contextModeLabel } from "../lib/subagent-context.ts";
 import { offerSection } from "../lib/sidebar/sidebar-channel.ts";
+import { publishWebView } from "../lib/web-plugins/publisher.ts";
 import { markVolatileTail } from "../lib/cache-anchor.ts";
 import { isTodoTool } from "../lib/todo-tools.ts";
 import { SUBAGENT_DETAILS_HINT } from "../lib/workflow-actions.ts";
@@ -140,6 +141,15 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
     if (!ctx?.hasUI) return;
     const rows = ordered(records);
     if (!rows.length) {
+      try {
+        publishWebView(pi, "subagent-checkpoints", {
+          type: "list",
+          title: "Delegated work",
+          items: [],
+        });
+      } catch {
+        // Never throw into extension flow
+      }
       offerSection(pi, { id: "subagents", title: "Delegated work", rows: [], hint: "/subagents" });
       ctx.ui.setWidget("subagent-checkpoints", undefined);
       return;
@@ -155,11 +165,22 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
       return `${icon} ${r.name} · ${state}${mode}`;
     });
     const hint = SUBAGENT_DETAILS_HINT;
+    const title = `Delegated (${rows.length})`;
+
+    try {
+      publishWebView(pi, "subagent-checkpoints", {
+        type: "list",
+        title,
+        items: sidebarRows,
+      });
+    } catch {
+      // Never throw into extension flow
+    }
 
     // First offer to the right sidebar:
     if (offerSection(pi, {
       id: "subagents",
-      title: `Delegated (${rows.length})`,
+      title,
       tone: activeCount > 0 ? "accent" : undefined,
       rows: sidebarRows,
       hint,
