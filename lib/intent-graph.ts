@@ -437,7 +437,14 @@ export function injectionLine(plan: Plan | undefined, now: number): string | und
 export const renderTask = (plan: Plan, task: Task, now: number): string => {
   const flags: string[] = [];
   if (isReady(plan, task, now)) flags.push("ready");
-  if (isBlocked(plan, task)) flags.push(`blocked by ${task.deps.filter(dep => taskById(plan, dep)?.status !== "done").join(",")}`);
+  if (isBlocked(plan, task)) {
+    const unmet = task.deps.filter(dep => taskById(plan, dep)?.status !== "done");
+    // A dropped or failed dependency never becomes done by waiting: say so, or
+    // the task looks merely queued while it is permanently stuck.
+    const dead = unmet.filter(dep => { const status = taskById(plan, dep)?.status; return status === "dropped" || status === "failed"; });
+    flags.push(`blocked by ${unmet.join(",")}`
+      + (dead.length ? ` (${dead.join(",")} ${dead.length === 1 ? "is" : "are"} dropped/failed and will never finish: re-add it with todo_plan, or drop this task)` : ""));
+  }
   if (isLiveClaim(task, now)) flags.push(`claimed by ${task.claim?.owner}`);
   if (isExpiredClaim(task, now)) flags.push("claim expired");
   if (task.resource) flags.push(task.resource);
