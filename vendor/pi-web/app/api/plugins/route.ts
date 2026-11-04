@@ -14,6 +14,11 @@ import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security"
 import { getProjectTrustStatus } from "@/lib/project-trust";
 import { isPluginSourceCheckable } from "@/lib/plugin-updates";
 import { invalidateModelRuntimeWithExtensions } from "@/lib/model-runtime";
+import {
+  checkAndSeedFixtures,
+  getRegisteredPlugins,
+  webPluginsStore,
+} from "@/lib/web-plugins-host";
 import type {
   PluginDiagnostic,
   PluginPackageInfo,
@@ -406,7 +411,20 @@ function readScope(scope: unknown): PluginScope {
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const cwd = searchParams.get("cwd");
-  if (!cwd) return NextResponse.json({ error: "cwd required" }, { status: 400 });
+  if (!cwd) {
+    checkAndSeedFixtures();
+    const plugins = getRegisteredPlugins().map((plugin) => ({
+      id: plugin.id,
+      title: plugin.title,
+      ...(plugin.description ? { description: plugin.description } : {}),
+      surfaces: plugin.surfaces,
+    }));
+    const views = webPluginsStore.getAllViews();
+    return NextResponse.json(
+      { plugins, views },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  }
 
   try {
     const allowedRoots = await getAllowedFileRoots();
