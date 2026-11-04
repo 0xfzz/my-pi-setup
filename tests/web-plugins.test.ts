@@ -25,6 +25,9 @@ import {
 } from "../lib/web-plugins/registry.ts";
 import { publishWebView } from "../lib/web-plugins/publisher.ts";
 import { cacheStatsPlugin } from "../web-plugins/cache-stats.ts";
+import { todoPlugin } from "../web-plugins/todo.ts";
+import { artifactsPlugin } from "../web-plugins/artifacts.ts";
+import { subagentCheckpointsPlugin } from "../web-plugins/subagent-checkpoints.ts";
 import { WEB_PLUGINS, WEB_PLUGIN_OPT_OUT } from "../web-plugins/index.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -556,4 +559,134 @@ test("publisher: throwing or stub-less pi never causes publishWebView to throw",
       assert.equal(res.ok, true);
     });
   }
+});
+
+test("phase 3 descriptors: validatePlugin accepts todo, artifacts, and subagent-checkpoints", async () => {
+  const diskFiles = (await readdir(join(root, "extensions"))).filter((f) => f.endsWith(".ts"));
+
+  assert.equal(WEB_PLUGINS.length, 4);
+  assert.equal(Object.keys(WEB_PLUGIN_OPT_OUT).length, 17);
+  assert.equal(WEB_PLUGINS.length + Object.keys(WEB_PLUGIN_OPT_OUT).length, diskFiles.length);
+
+  for (const descriptor of [todoPlugin, artifactsPlugin, subagentCheckpointsPlugin]) {
+    const result = validatePlugin(descriptor, diskFiles);
+    assert.equal(result.ok, true, `Descriptor "${descriptor.id}" failed: ${!result.ok ? result.error : ""}`);
+    assert.deepEqual(descriptor.surfaces, [
+      { kind: "sidebar" },
+      { kind: "page", path: `/plugins/${descriptor.id}` },
+    ]);
+  }
+});
+
+test("phase 3 views: representative view fixtures for todo, artifacts, and subagent-checkpoints pass validateView", () => {
+  // todo: list view mirroring TUI task status and titles
+  const todoView = {
+    type: "list" as const,
+    title: "Todo [Plan] 2/5",
+    items: [
+      "✔ Initialize database",
+      "✔ Set up server routes",
+      "⟳ Implement auth endpoints",
+      "○ Write integration tests",
+      "○ Polish API documentation",
+    ],
+  };
+  const todoResult = validateView(todoView);
+  assert.equal(todoResult.ok, true);
+  if (todoResult.ok) {
+    assert.equal(todoResult.view.type, "list");
+    assert.equal(todoResult.view.title, "Todo [Plan] 2/5");
+    assert.equal(todoResult.view.items.length, 5);
+  }
+
+  // artifacts: list view mirroring workspace artifact icons and titles
+  const artifactsView = {
+    type: "list" as const,
+    title: "Artifacts 3",
+    items: [
+      "󰈙 Architecture Specification",
+      "󰈙 API Design Document",
+      "󰈙 Migration Plan",
+    ],
+  };
+  const artifactsResult = validateView(artifactsView);
+  assert.equal(artifactsResult.ok, true);
+  if (artifactsResult.ok) {
+    assert.equal(artifactsResult.view.type, "list");
+    assert.equal(artifactsResult.view.title, "Artifacts 3");
+    assert.equal(artifactsResult.view.items.length, 3);
+  }
+
+  // subagent-checkpoints: list view mirroring delegated children state
+  const subagentsView = {
+    type: "list" as const,
+    title: "Delegated (2)",
+    items: [
+      "● research-worker · running · fork",
+      "✔ test-runner · completed · digest",
+    ],
+  };
+  const subagentsResult = validateView(subagentsView);
+  assert.equal(subagentsResult.ok, true);
+  if (subagentsResult.ok) {
+    assert.equal(subagentsResult.view.type, "list");
+    assert.equal(subagentsResult.view.title, "Delegated (2)");
+    assert.equal(subagentsResult.view.items.length, 2);
+  }
+
+  // subagent-checkpoints: empty state
+  const subagentsEmptyView = {
+    type: "list" as const,
+    title: "Delegated work",
+    items: [],
+  };
+  const emptyResult = validateView(subagentsEmptyView);
+  assert.equal(emptyResult.ok, true);
+});
+
+test("phase 3 publisher: publishWebView successfully emits views for phase 3 plugins", () => {
+  const emitted: Array<{ channel: string; data: unknown }> = [];
+  const stubPi = {
+    events: {
+      emit(channel: string, data: unknown) {
+        emitted.push({ channel, data });
+      },
+    },
+  };
+
+  const todoView = {
+    type: "list" as const,
+    title: "Todo 1/2",
+    items: ["✔ First task", "○ Second task"],
+  };
+  const r1 = publishWebView(stubPi, "todo", todoView);
+  assert.equal(r1.ok, true);
+  assert.deepEqual(emitted[0], {
+    channel: WEB_PLUGIN_VIEW_EVENT,
+    data: { pluginId: "todo", view: todoView },
+  });
+
+  const artifactsView = {
+    type: "list" as const,
+    title: "Artifacts 1",
+    items: ["󰈙 Spec v1"],
+  };
+  const r2 = publishWebView(stubPi, "artifacts", artifactsView);
+  assert.equal(r2.ok, true);
+  assert.deepEqual(emitted[1], {
+    channel: WEB_PLUGIN_VIEW_EVENT,
+    data: { pluginId: "artifacts", view: artifactsView },
+  });
+
+  const subagentsView = {
+    type: "list" as const,
+    title: "Delegated (1)",
+    items: ["● worker-1 · running"],
+  };
+  const r3 = publishWebView(stubPi, "subagent-checkpoints", subagentsView);
+  assert.equal(r3.ok, true);
+  assert.deepEqual(emitted[2], {
+    channel: WEB_PLUGIN_VIEW_EVENT,
+    data: { pluginId: "subagent-checkpoints", view: subagentsView },
+  });
 });
