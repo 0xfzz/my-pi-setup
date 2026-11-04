@@ -81,6 +81,8 @@ import { createSideChat, deleteSideChat } from "@/lib/side-chat-client";
 import { getAgentsBadge, getSessionFamily, isHiddenRelation, sideChatTitle } from "@/lib/session-family";
 import { getLastSettingsSection, settingsSectionRequiresProject, type SettingsSection } from "@/lib/settings-navigation";
 import { focusIfLost } from "@/lib/stacked-dialog";
+import { PluginNav } from "@/components/plugins/PluginNav";
+import { getRegisteredPlugins } from "@/lib/web-plugins-host";
 
 type SessionCopyField = "file" | "id" | "projectDir" | "gitBranch" | "gitWorktree";
 type AutoNameStatus =
@@ -1623,6 +1625,7 @@ export function AppShell() {
         onRunningSessionIdsChange={handleRunningSessionIdsChange}
         onSessionsChange={handleSessionsChange}
       />
+      <PluginNav plugins={getRegisteredPlugins()} variant="toolbar" />
       <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
         {([
           ["models", translate("common.models")],
