@@ -39,7 +39,7 @@ The goal is a single browser UI, based on pi-web, in which every workflow extens
 
 | Area | This repo (`pi-workflow-extensions`) | pi-web (`agegr/pi-web`) |
 | --- | --- | --- |
-| Runtime | pi extensions, loaded by pi through `package.json` → `pi.extensions` (21 entries) | Next.js 16 app that hosts pi `AgentSession`s in-process (`lib/rpc-manager.ts`) |
+| Runtime | pi extensions, loaded by pi through `package.json` → `pi.extensions` (21 files in `extensions/`) | Next.js 16 app that hosts pi `AgentSession`s in-process (`lib/rpc-manager.ts`) |
 | Extension loading | Explicit list in `package.json`, pinned by `tests/extension-loader.test.ts` | Loads the same pi packages, so pi extensions already run inside the web server |
 | Existing browser UI | `extensions/dashboard.ts` + `web/dashboard/` + `lib/dashboard/`: read-only graph, artifacts, loopback, separate producer and browser tokens | Full workspace: sessions, files, Git, models, MCP, skills, terminals |
 | Existing event seam | `pi.events` channels `workflow-ui:section`, `workflow-ui:refresh`, `dashboard:*` | `window` event `pi-web:session-row-contextmenu`; `globalThis[Symbol.for("@agegr/pi-web/session-liveness/v1")]` |
