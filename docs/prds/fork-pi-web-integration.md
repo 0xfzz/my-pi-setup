@@ -163,7 +163,7 @@ Phase 1 is the only phase in this branch's current scope. Phases 2–4 need the 
 ## 10. Open questions and decisions
 
 1. **Fork location (decided: vendored).** The fork lives at `vendor/pi-web/`, following the `vendor/antigravity/` precedent (`VENDORED.md` records provenance and how to resync). Builds stay out of git (`node_modules/`, `.next/`). Syncing a new upstream release means re-applying the fork diff, kept small per R9.
-2. **Dashboard base (decided: reuse).** The fork reuses `web/dashboard/` and `lib/dashboard/`. Open: whether the fork's Next.js app mounts the dashboard's browser bundle as a route, or the dashboard server keeps its own port and the fork links to it. Decide in a Phase 2 spike.
+2. **Dashboard base (decided: reuse; Phase 2 spike result).** The fork reuses `web/dashboard/` and `lib/dashboard/`. The spike resolved the open route question: the fork does NOT mount the dashboard's Graphviz browser bundle. Phase 2 established a generic data renderer in the fork (kv/list/status text views), and mounting the WASM graph bundle would break R10's minimal-diff rule and duplicate rendering paths. Instead the dashboard extension publishes a compact delegation snapshot (children, handoffs, reviews, escalations, artifact catalog) as plugin views, reusing `lib/dashboard/projection.ts`. R13 parity is therefore **data parity**: the plugin page's rows must equal the dashboard projection's children, handoffs, reviews and artifacts for the same session, pinned by a test.
 3. **Actions in Phase 5.** Not decided. Needs a threat review before any plugin can mutate state from the browser.
 4. **Upstream contribution.** Whether the `web-plugin` host should be proposed upstream. Not needed for the first version.
 
