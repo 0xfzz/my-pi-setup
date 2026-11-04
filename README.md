@@ -134,6 +134,7 @@ diff record, not documentation.
 | [Dashboard](docs/dashboard.md) | The local read-only graph, artifact views, and the server's bounds and trust model. |
 | [Smart timeout](docs/smart-timeout.md) | Wall-clock and idle limits for `bash`, explicit budgets, and timeout diagnostics. |
 | [Sidebar](docs/sidebar.md) | The right rail, the `Alt+W` prefix menu, and the detail popups. |
+| [Image thumbnails](docs/image-thumbnails.md) | Why inline images lag and how every displayed image becomes a thumbnail while the original is never touched. |
 | [Clipboard](docs/clipboard.md) | Pasting in every Linux terminal: Wayland, X11, tmux and Termux backends, and why plain `Ctrl+V` used to do nothing. |
 | [UI](docs/ui.md) | The shared popup frame, list, markdown viewer, ask popup, keys and responsive rules. |
 | [Providers](docs/providers.md) | A walkable editor for providers and their models in the TUI, plus dialog commands, including compatibility flags. |

@@ -30,6 +30,7 @@
       "./extensions/cache-breakpoints.ts",
       "./extensions/prompt-ui.ts",
       "./extensions/clipboard-paste.ts",
+      "./extensions/image-thumbnails.ts",
       "./extensions/providers.ts",
       "./extensions/antigravity-accounts.ts",
       "./extensions/account-router.ts",
