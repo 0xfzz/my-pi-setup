@@ -41,8 +41,14 @@ export default function modesExtension(pi: ExtensionAPI) {
       : undefined;
   const allowedPlanTool = (name: string) => isPlanTool(name, pi.getAllTools().find(tool => tool.name === name));
 
-  const restrictPlanTools = () => pi.setActiveTools(pi.getAllTools()
-    .filter(tool => isPlanTool(tool.name, tool) && tool.exposure !== "hidden").map(tool => tool.name));
+  // `/subagents off` is a branch decision. Plan must honour it when it rebuilds
+  // the loadout, or entering Plan silently re-enables delegation.
+  const restrictPlanTools = (ctx: ExtensionContext) => {
+    const disabled = switchStateFromBranch(policyEntries(ctx)).disabled;
+    pi.setActiveTools(pi.getAllTools()
+      .filter(tool => isPlanTool(tool.name, tool) && tool.exposure !== "hidden" && !disabled.has(tool.name))
+      .map(tool => tool.name));
+  };
   /**
    * Declare everything the mode permits, except tools registered as deferred.
    *
@@ -196,7 +202,7 @@ export default function modesExtension(pi: ExtensionAPI) {
       previousTools = [...new Set([...pi.getActiveTools(), ...pendingTools])];
       pendingTools.clear();
       pi.appendEntry(PLAN_MODE_TYPE, { enabled: true, previousTools });
-      restrictPlanTools();
+      restrictPlanTools(ctx);
     } else if (leavingRestricted) {
       restoreTools(previousTools ?? [], ctx);
       pi.appendEntry(PLAN_MODE_TYPE, { enabled: false, previousTools: previousTools ?? [], pendingTools: [...pendingTools] });
@@ -229,7 +235,7 @@ export default function modesExtension(pi: ExtensionAPI) {
     if (planState?.enabled) {
       previousTools = planState.previousTools;
       registry.select("plan");
-      restrictPlanTools();
+      restrictPlanTools(ctx);
     } else {
       // Pi already restored the destination transcript before session_tree/start.
       // Never overwrite it with the outgoing branch's Plan snapshot. The sole
@@ -359,7 +365,7 @@ export default function modesExtension(pi: ExtensionAPI) {
    */
   function reconcileTools(ctx: ExtensionContext) {
     stripRetiredDelegationTools(ctx);
-    if (isPlan(ctx)) restrictPlanTools();
+    if (isPlan(ctx)) restrictPlanTools(ctx);
     else restoreConnectedTools(ctx);
   }
 
@@ -378,7 +384,7 @@ export default function modesExtension(pi: ExtensionAPI) {
     // override another extension's explicit per-request selection in Normal.
     event.systemPromptOptions.sections["input_mode"] = inputModeGuidance(registry.current);
     if (planActive) {
-      restrictPlanTools();
+      restrictPlanTools(ctx);
       event.systemPromptOptions.selectedTools = pi.getActiveTools().filter(allowedPlanTool);
       event.systemPromptOptions.sections["plan_mode"] = PLAN_MODE_GUIDANCE;
       return;

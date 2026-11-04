@@ -98,6 +98,12 @@ async function fixture(before: ExtensionFactory[] = []) {
     host, errors, notices, starts, requests,
     session: () => host.session,
     registerLate() { api.registerTool(lateTool); },
+    registerAgentTools(names: string[]) {
+      for (const name of names) api.registerTool({
+        name, label: name, description: "Inert delegation fixture", parameters: Type.Object({}),
+        async execute() { return { content: [{ type: "text", text: "fixture" }], details: undefined }; },
+      });
+    },
     lateAtLoad(value: boolean) { registerLateAtLoad = value; },
     widget() {
       assert.equal(typeof widgetFactory, "function");
@@ -315,6 +321,20 @@ test("real Pi native reload restores a late deferred declaration without Plan", 
     assert.deepEqual(f.session().getActiveToolNames(), ["read", "late_tool"]);
     await f.prompt("Confirm the native pending declaration control.");
     assert.deepEqual(f.requests.at(-1)!.tools, ["read", "late_tool"]);
+    assert.deepEqual(f.errors, []);
+  } finally { await f.cleanup(); }
+});
+
+test("Plan entry honours a persisted /subagents off decision", async () => {
+  const f = await fixture();
+  try {
+    const agentTools = ["agent_spawn", "agent_running", "agent_history"];
+    f.registerAgentTools(agentTools);
+    f.session().setActiveToolsByName(["read", ...agentTools]);
+    f.session().sessionManager.appendCustomEntry("subagent-switch:v1", { disabled: agentTools });
+    f.session().setActiveToolsByName(["read"]);
+    await enterPlan(f);
+    assert.deepEqual(f.session().getActiveToolNames().filter(n => n.startsWith("agent_")), []);
     assert.deepEqual(f.errors, []);
   } finally { await f.cleanup(); }
 });
