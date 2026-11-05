@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import extension from "../extensions/stream-recovery.ts";
-import { completeLines, isStreamDisconnect, MAX_DRAFT_BYTES, recoveryContext } from "../lib/stream-recovery.ts";
+import { completeLines, interruptedArguments, isStreamDisconnect, MAX_DRAFT_BYTES, recoveryContext } from "../lib/stream-recovery.ts";
 
 function harness(cwd: string, branch: any[] = []) {
   const hooks = new Map<string, Function>();
@@ -86,6 +86,60 @@ test("another cut during recovery advances the saved draft without executing or 
   await h.run({ id, version: 3, suffix: "last", finish: true });
   assert.equal(await readFile(join(dir, "a"), "utf8"), "first\nsecond\nthird\nlast");
 }));
+
+test("output-limit rejection keeps its error status but directs only captured calls to suffix recovery", () => withDirectory(async dir => {
+  const h = harness(dir);
+  await h.interrupted("write", { path: "a", content: "saved\ncut" }, { stopReason: "length" });
+  const rejection = { role: "toolResult", toolCallId: "partial", toolName: "write", isError: true, timestamp: 42, content: [{ type: "text", text: "Re-issue the tool call with complete arguments." }] };
+  const patched = await h.emit("message_end", { message: rejection });
+  assert.equal(patched.message.isError, true);
+  assert.equal(patched.message.timestamp, 42);
+  assert.match(patched.message.content[0].text, /output token limit.*Saved prefix:/);
+  assert.match(patched.message.content[0].text, /recover_stream/);
+  assert.doesNotMatch(patched.message.content[0].text, /Re-issue the tool call with complete arguments/);
+  assert.equal(await h.emit("message_end", { message: { ...rejection, toolCallId: "unrelated" } }), undefined);
+  assert.equal(h.executed.length, 0);
+  await assert.rejects(readFile(join(dir, "a")), /ENOENT/);
+}));
+
+test("another output limit can salvage malformed recovery arguments and advance the version", () => withDirectory(async dir => {
+  const h = harness(dir);
+  await h.interrupted("write", { path: "a", content: "first\ncut" }, { stopReason: "length" });
+  const id = h.latest().id;
+  const raw = JSON.stringify({ id, version: 1, finish: true, suffix: "second\nthird cut" }).slice(0, -2);
+  await h.emit("message_start", { message: { role: "assistant" } });
+  await h.interrupted("recover_stream", {}, {
+    stopReason: "length", timestamp: 2,
+    content: [{ type: "toolCall", id: "second-cut", name: "recover_stream", arguments: {}, argumentsError: `Unexpected end of JSON input\n\nReceived arguments:\n${raw}` }],
+  });
+  assert.equal(h.latest().prefix, "first\nsecond\n");
+  assert.equal(h.latest().version, 2);
+  assert.equal(h.executed.length, 0);
+  const warning = await h.emit("message_end", { message: { role: "toolResult", toolCallId: "second-cut", toolName: "recover_stream", isError: true, content: [] } });
+  assert.match(warning.message.content[0].text, /version 2/);
+  await h.run({ id, version: 2, finish: true, suffix: "third" });
+  assert.equal(await readFile(join(dir, "a"), "utf8"), "first\nsecond\nthird");
+}));
+
+test("aborted streamed arguments are discarded, not resurrected by a later length failure", () => withDirectory(async dir => {
+  const h = harness(dir);
+  const call = { type: "toolCall", id: "partial", name: "write", arguments: {}, argumentsError: "Unexpected end of JSON input" };
+  await h.emit("message_start", { message: { role: "assistant" } });
+  await h.emit("message_update", { message: { role: "assistant", content: [call] }, assistantMessageEvent: {
+    type: "toolcall_delta", contentIndex: 0, delta: '{"path":"a","content":"saved\\ncut',
+  } });
+  await h.interrupted("write", {}, { stopReason: "aborted", content: [call] });
+  await h.interrupted("write", {}, { stopReason: "length", content: [call] });
+  assert.equal(h.latest(), undefined);
+  assert.equal(h.executed.length, 0);
+}));
+
+test("argument salvage rejects malformed or over-budget data and prefers finalized diagnostics", () => {
+  assert.equal(interruptedArguments({ arguments: {}, argumentsError: "invalid" }), undefined);
+  assert.equal(interruptedArguments({ arguments: {} }, '"not an object"'), undefined);
+  assert.equal(interruptedArguments({ arguments: {} }, " ".repeat(8 * MAX_DRAFT_BYTES + 1)), undefined);
+  assert.deepEqual(interruptedArguments({ arguments: {}, argumentsError: 'invalid\n\nReceived arguments:\n{"path":"a","content":"kept\\ncut' }, '{"path":"wrong"'), { path: "a", content: "kept\ncut" });
+});
 
 test("parallel finalizers cannot consume the same write draft twice", () => withDirectory(async dir => {
   const h = harness(dir);

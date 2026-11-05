@@ -1,13 +1,15 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
-  RECOVERY_ENTRY, MAX_PENDING_DRAFTS, MAX_AUTO_RECOVERIES,
-  checkSize, completeLines, digest, draftPath, fileBaseline, isStreamDisconnect, recoveryContext,
+  RECOVERY_ENTRY, MAX_DRAFT_BYTES, MAX_PENDING_DRAFTS, MAX_AUTO_RECOVERIES,
+  checkSize, completeLines, digest, draftPath, fileBaseline, interruptedArguments, isStreamDisconnect, recoveryContext,
   type StreamDraft,
 } from "../lib/stream-recovery.ts";
 
 export default function streamRecoveryExtension(pi: ExtensionAPI) {
   const drafts = new Map<string, StreamDraft>();
+  const streamedArguments = new Map<string, { json: string; bytes: number } | null>();
+  const lengthCalls = new Map<string, string>();
   let enabled = true;
   let attempts = 0;
   let disconnect = false;
@@ -29,6 +31,8 @@ export default function streamRecoveryExtension(pi: ExtensionAPI) {
   function restore(ctx: ExtensionContext) {
     cancelTimer();
     drafts.clear();
+    streamedArguments.clear();
+    lengthCalls.clear();
     enabled = true;
     attempts = 0;
     disconnect = false;
@@ -44,13 +48,15 @@ export default function streamRecoveryExtension(pi: ExtensionAPI) {
     if (message.role !== "assistant" || !["error", "length"].includes(message.stopReason ?? "") || !Array.isArray(message.content)) return;
     let captured = false;
     for (const call of message.content) {
-      if (call.type !== "toolCall" || call.argumentsError || !call.arguments || typeof call.arguments !== "object") continue;
-      const args = call.arguments as Record<string, unknown>;
+      if (call.type !== "toolCall" || !["write", "bash", "recover_stream"].includes(call.name)) continue;
+      const args = interruptedArguments(call, streamedArguments.get(call.id)?.json);
+      if (!args) continue;
       try {
         if (call.name === "recover_stream") {
           const draft = typeof args.id === "string" ? drafts.get(args.id) : undefined;
           if (!draft || draft.status !== "pending" || args.version !== draft.version || typeof args.suffix !== "string") continue;
           captured = true;
+          if (message.stopReason === "length") lengthCalls.set(call.id, draft.id);
           const suffix = completeLines(args.suffix);
           if (!suffix) continue;
           const prefix = draft.prefix + suffix;
@@ -64,7 +70,13 @@ export default function streamRecoveryExtension(pi: ExtensionAPI) {
           if (pending().length >= MAX_PENDING_DRAFTS) throw new Error("At most 8 pending recovery drafts are retained; discard obsolete drafts first.");
           checkSize(prefix);
           const id = `draft-${digest(`${message.timestamp}:${call.id}`).slice(0, 12)}`;
-          if (drafts.has(id)) { captured ||= drafts.get(id)?.status === "pending"; continue; }
+          if (drafts.has(id)) {
+            if (drafts.get(id)?.status === "pending") {
+              captured = true;
+              if (message.stopReason === "length") lengthCalls.set(call.id, id);
+            }
+            continue;
+          }
           const path = call.name === "write" ? args.path as string : undefined;
           save({
             id, version: 1, tool: call.name, cwd: ctx.cwd, path, prefix, status: "pending",
@@ -72,6 +84,7 @@ export default function streamRecoveryExtension(pi: ExtensionAPI) {
             ...(typeof args.timeout === "number" ? { timeout: args.timeout } : {}),
           });
           captured = true;
+          if (message.stopReason === "length") lengthCalls.set(call.id, id);
         }
       } catch (error) {
         if (ctx.hasUI) ctx.ui.notify(`Could not checkpoint interrupted ${call.name}: ${String(error)}`, "warning");
@@ -82,7 +95,30 @@ export default function streamRecoveryExtension(pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => restore(ctx));
   pi.on("session_tree", (_event, ctx) => restore(ctx));
-  pi.on("session_shutdown", () => cancelTimer());
+  pi.on("session_shutdown", () => {
+    cancelTimer();
+    streamedArguments.clear();
+    lengthCalls.clear();
+  });
+  pi.on("message_start", event => {
+    if (event.message.role === "assistant") {
+      streamedArguments.clear();
+      lengthCalls.clear();
+    }
+  });
+  pi.on("message_update", event => {
+    const update = event.assistantMessageEvent;
+    if (update.type !== "toolcall_delta" || event.message.role !== "assistant") return;
+    const call = event.message.content[update.contentIndex];
+    if (call?.type !== "toolCall" || !["write", "bash", "recover_stream"].includes(call.name)) return;
+    if (!streamedArguments.has(call.id) && streamedArguments.size >= MAX_PENDING_DRAFTS) return;
+    const previous = streamedArguments.get(call.id);
+    // Keep raw deltas: providers can mutate partial.arguments to {} before hooks drain.
+    // Bound memory independently of parsed drafts; overflowing calls are not salvaged.
+    if (previous === null) return;
+    const bytes = (previous?.bytes ?? 0) + Buffer.byteLength(update.delta, "utf8");
+    streamedArguments.set(call.id, bytes > 8 * MAX_DRAFT_BYTES ? null : { json: (previous?.json ?? "") + update.delta, bytes });
+  });
   pi.on("input", event => {
     if (event.source !== "extension") {
       cancelTimer();
@@ -91,9 +127,27 @@ export default function streamRecoveryExtension(pi: ExtensionAPI) {
     }
   });
   pi.on("message_end", async (event, ctx) => {
+    if (event.message.role === "toolResult") {
+      const id = lengthCalls.get(event.message.toolCallId);
+      lengthCalls.delete(event.message.toolCallId);
+      const draft = id ? drafts.get(id) : undefined;
+      // Pi's length-limit failures bypass tool_result. Keep the failure, but replace
+      // its generic "re-issue complete arguments" advice with the saved-draft route.
+      if (event.message.isError && draft?.status === "pending") return {
+        message: {
+          ...event.message,
+          content: [{ type: "text", text: `Tool call "${event.message.toolName}" was not executed: the response hit the output token limit. Saved prefix: ${draft.id}, version ${draft.version}, ${draft.prefix.length} characters. Do NOT re-issue the full original arguments. Continue with recover_stream using this id/version and only the missing suffix. Stage small newline-terminated chunks with finish=false; use finish=true only when the entire file/command is complete. The partial final line was discarded; no target was changed and no command ran.` }],
+        },
+      };
+      return;
+    }
     if (event.message.role !== "assistant") return;
-    const captured = await capture(event.message, ctx);
-    disconnect = event.message.stopReason === "error" && isStreamDisconnect(event.message.errorMessage) && captured === true;
+    try {
+      const captured = await capture(event.message, ctx);
+      disconnect = event.message.stopReason === "error" && isStreamDisconnect(event.message.errorMessage) && captured === true;
+    } finally {
+      streamedArguments.clear();
+    }
   });
   pi.on("tool_result", (event, ctx) => {
     // A model can elect to regenerate instead. Retire drafts whose target was actually written.

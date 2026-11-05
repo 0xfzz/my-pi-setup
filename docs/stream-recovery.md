@@ -3,7 +3,8 @@
 > Part of [pi-workflow-extensions](../README.md).
 
 `extensions/stream-recovery.ts` saves generated text when an endpoint disconnects
-while the model is still emitting a `write` or multiline `bash` tool call. The
+or reaches its output-token limit while the model is still emitting a `write` or
+multiline `bash` tool call. The
 `recover_stream` tool continues from the saved prefix instead of making the model
 regenerate the entire file or command.
 
@@ -19,6 +20,31 @@ This extension preserves that work separately from model context. It does **not*
 repair the endpoint, resume the original HTTP stream, or guarantee zero wasted
 tokens. Only complete lines are retained: the final partial line is regenerated
 to avoid trusting a streaming JSON parser's repaired trailing escape.
+
+## Output-token-limit failures
+
+Pi may report:
+
+```text
+Tool call "write" was not executed: the response hit the output token limit,
+so its arguments may be truncated. Re-issue the tool call with complete arguments.
+```
+
+The extension keeps the safety failure but replaces the full-reissue advice with
+an actionable draft ID/version and `recover_stream` instructions, **only when a
+recoverable prefix was saved**. Pi's natural next turn receives the same draft
+hint and generates only new suffix text, using small staged chunks as needed.
+There is no extra retry timer for length-limit failures; this also works headless.
+
+Some providers replace partial arguments with `{}` and an `argumentsError` during
+final JSON validation. Raw tool-call deltas are retained in memory for the current
+response so the prefix survives that finalization. A persisted diagnostic's
+`Received arguments` JSON is also supported, including explicit imports of old
+failures. Interrupted `recover_stream` suffixes follow the same recovery path.
+The final incomplete line is still discarded, and truncated calls never execute.
+
+This does not increase the model's output budget. Calls without a safe saved
+prefix keep Pi's original warning; the model must use smaller complete calls.
 
 ## Enable
 
@@ -52,7 +78,7 @@ or consumed drafts stay retired.
   `finish: true` combines prefix and suffix, then calls the original `write` or
   `bash` through `ctx.executeTool`. Existing permission hooks, tool overrides,
   smart timeouts, rendering data, and nested-call accounting still apply.
-- A second disconnect while generating `recover_stream` checkpoints the completed
+- A second disconnect or output limit while generating `recover_stream` checkpoints the completed
   lines of that suffix too. The version changes so stale retries cannot append a
   chunk twice.
 - After native retries settle, an interactive/RPC stream disconnect can trigger
@@ -94,8 +120,10 @@ anything. Larger drafts are not printed in full.
 - Successful ordinary writes retire pending drafts for that target, so an agent
   that elects to regenerate will not also replay the saved draft later.
 - Up to 8 pending drafts, each at most 1 MiB. No recovery for `edit`, unsupported
-  tools, malformed arguments, single-line output without a complete newline, or
-  manually aborted generation. Over-limit drafts are skipped with a UI warning.
+  tools, malformed arguments without a recoverable streamed/diagnostic prefix,
+  single-line output without a complete newline, or manually aborted generation.
+  Over-limit drafts are skipped with a UI warning. Raw JSON buffering is bounded
+  to 8 MiB per call for up to 8 calls and cleared at response/session boundaries.
 - No auto-resume on startup: drafts restore on `/reload`, `/resume`, and `/tree`,
   but resuming old work is explicit. Branching before an execution marker is an
   alternative history, not a rollback of filesystem or command effects.
@@ -110,5 +138,7 @@ anything. Larger drafts are not printed in full.
 `tests/stream-recovery.test.ts` covers checkpoint boundaries, repeated cuts,
 versions, branch restore, cancellation, stale files, and at-most-once dispatch.
 `tests/stream-recovery-runtime.test.ts` drives a real Pi runtime with a scripted
-endpoint: native retries and the exact motivating error both recover with only a
-suffix, and the original tools execute through the normal nested tool pipeline.
+endpoint: native retries, the exact motivating error, and output-token limits
+(including finalization that erases parsed arguments) recover with only a suffix.
+The original tools execute through the normal nested tool pipeline. Tests also
+check replacement guidance, repeated length failures, and abort-buffer cleanup.

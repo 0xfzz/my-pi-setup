@@ -8,8 +8,13 @@ import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsMana
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import extension from "../extensions/stream-recovery.ts";
 
-for (const [tool, native, blocked] of [["write", true, false], ["bash", true, false], ["write", false, false], ["bash", true, true]] as const) {
-  test(`real Pi ${native ? "native retry" : "automatic recovery"} ${blocked ? "blocks" : "continues"} an interrupted ${tool} through original hooks`, async () => {
+for (const [tool, native, blocked, length, malformed] of [
+  ["write", true, false, false, false], ["bash", true, false, false, false],
+  ["write", false, false, false, false], ["bash", true, true, false, false],
+  ["write", true, false, true, false], ["write", true, false, true, "stream"],
+  ["bash", true, false, true, "diagnostic"],
+] as const) {
+  test(`real Pi ${length ? `output limit (${malformed || "parsed"})` : native ? "native retry" : "automatic recovery"} ${blocked ? "blocks" : "continues"} an interrupted ${tool} through original hooks`, async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-stream-runtime-"));
     let session: any;
     let requests = 0;
@@ -42,28 +47,50 @@ for (const [tool, native, blocked] of [["write", true, false], ["bash", true, fa
             streamSimple: (_model: any, context: any) => {
               requests++;
               let content: any[];
+              let raw: string | undefined;
               if (requests === 1) {
                 content = [{ type: "toolCall", id: "cut", name: tool, arguments: tool === "write"
                   ? { path: "prd.md", content: prefix + "unfinished final line" }
                   : { command: prefix + "unfinished" } }];
+                if (malformed) {
+                  raw = JSON.stringify(content[0].arguments).slice(0, -2);
+                  content[0].arguments = {};
+                  content[0].argumentsError = malformed === "diagnostic"
+                    ? `Unexpected end of JSON input\n\nReceived arguments:\n${raw}`
+                    : "Unexpected end of JSON input";
+                }
               } else if (requests === 2) {
                 assert.equal(existsSync(join(dir, tool === "write" ? "prd.md" : "command-result.txt")), false, "partial generation must not mutate targets");
                 const hint = context.messages.map((m: any) => typeof m.content === "string" ? m.content : (m.content ?? []).map((c: any) => c.text ?? "").join("\n"))
                   .find((text: string) => text.includes("[Stream recovery:"));
                 assert.ok(hint, "checkpoint must reach the next native retry even though Pi omits the failed attempt");
                 assert.ok(hint.length < 3000);
+                if (length) {
+                  const failure = context.messages.find((m: any) => m.role === "toolResult" && m.toolCallId === "cut");
+                  assert.equal(failure.isError, true);
+                  const text = failure.content.map((c: any) => c.text ?? "").join("\n");
+                  assert.match(text, /output token limit.*Saved prefix:/);
+                  assert.match(text, /recover_stream/);
+                  assert.doesNotMatch(text, /Re-issue the tool call with complete arguments/);
+                }
                 const data = JSON.parse(hint.split("\n").find((line: string) => line.startsWith('{"id":')));
                 content = [{ type: "toolCall", id: "recovered", name: "recover_stream", arguments: { id: data.id, version: data.version, finish: true, suffix } }];
               } else content = [{ type: "text", text: "done" }];
               const message: any = {
                 role: "assistant", api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), content,
-                stopReason: requests === 1 ? "error" : requests === 2 ? "toolUse" : "stop",
-                ...(requests === 1 ? { errorMessage: `${native ? "upstream_stream_read_error: " : ""}upstream stream ended before completion` } : {}),
+                stopReason: requests === 1 ? length ? "length" : "error" : requests === 2 ? "toolUse" : "stop",
+                ...(requests === 1 && !length ? { errorMessage: `${native ? "upstream_stream_read_error: " : ""}upstream stream ended before completion` } : {}),
                 usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
               };
               const stream = createAssistantMessageEventStream();
               stream.push({ type: "start", partial: message });
-              if (requests === 1) stream.push({ type: "error", reason: "error", error: message });
+              if (raw && malformed === "stream") {
+                const middle = Math.floor(raw.length / 2);
+                for (const delta of [raw.slice(0, middle), raw.slice(middle)]) {
+                  stream.push({ type: "toolcall_delta", contentIndex: 0, delta, partial: message });
+                }
+              }
+              if (requests === 1 && !length) stream.push({ type: "error", reason: "error", error: message });
               else stream.push({ type: "done", reason: message.stopReason, message });
               return stream;
             },
