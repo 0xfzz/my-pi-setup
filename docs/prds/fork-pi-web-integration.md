@@ -65,9 +65,12 @@ Consequences:
 
 R1. A plugin is a descriptor with `id`, `extension`, `title` and at least one **surface**. `id` matches `^[a-z][a-z0-9-]*$`. `extension` must name an existing file `extensions/<extension>.ts`.
 
-R2. Surfaces (Phase 1 set):
-- `sidebar`: a titled section with a view, shown in the web sidebar. Mirrors `SidebarSection` so the same data can feed both the TUI and the web.
-- `page`: a route `/plugins/<id>` (or a sub-path), with the title shown in navigation.
+R2. Surfaces:
+- `slot`: an inline placement in the main UI, `slot: "top" | "center" | "bottom" | "floating"`. The fork renders each region through a slot adapter; multiple plugins may target one slot and stack in descriptor order. Slots are for glanceable, always-available views.
+- `page`: a dedicated route `/plugins/<id>`, for settings-type plugins or plugins that change whole-pi behaviour. This is NOT the default placement — it is the full-page surface.
+- `sidebar`: a navigation entry so page-surface plugins are reachable.
+
+Placement philosophy: a plugin appears wherever its descriptor says, by editing one descriptor line — never by changing the fork.
 
 R3. Views are data. Phase 1 view types: `kv` (label/value rows), `list` (strings), `status` (tone plus one line). Each has size limits: at most 200 rows, 500 characters per cell, and a total of 64 KB serialised. Anything over the limit is truncated with a visible `…` marker, not dropped silently.
 
@@ -146,7 +149,8 @@ Why events and not direct calls: pi extensions run inside pi-web's process today
 | **2. Fork + host** | `vendor/pi-web/`: plugin host built on the reused `lib/dashboard/` and `web/dashboard/` foundation, sidebar section, `/plugins/[id]` page, one e2e check | Upstream e2e green; the cache section and page render from a real `publishWebView` call; no second copy of the dashboard protocol |
 | **3. Port surfaces** | Descriptors for `todo`, `artifacts`, `subagent-checkpoints`; the dashboard graph becomes the `dashboard` plugin page | Dashboard parity test green; the graph and artifacts render from the plugin page with the same data |
 | **4. Packaging** | Install docs, `pi-web-workflow` CLI or documented upstream install, update flow | A fresh machine can follow `docs/` and see the plugins |
-| **5. Actions (optional)** | Trusted plugin actions with explicit confirmation | Separate PRD and threat review |
+| **5. Actions (optional)** | Trusted plugin actions with explicit confirmation | Shipped: `request-sync` reference action, threat-reviewed (see [plugin-actions](plugin-actions.md)) |
+| **6. Frontend slots** | Slot surfaces (top/center/bottom/floating) with host-side slot adapters; page surface reserved for settings-type plugins | Every slot region renders declared plugin views; placements changed by editing one descriptor line; e2e proves slot content on the home view |
 
 Phase 1 is the only phase in this branch's current scope. Phases 2–4 need the fork repository, which is a decision for you (see §10).
 
