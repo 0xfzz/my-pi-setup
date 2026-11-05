@@ -120,7 +120,21 @@ Plugin views present structured data in three formats:
 
 All cell contents and labels render as plain text nodes. HTML tags (such as `<script>alert('xss')</script>`) are never interpreted or executed as code. If a session has not published a view yet, or if an unauthenticated request is received, the page displays an empty state banner (`No view published yet`).
 
-#### Plugin actions
+#### Realtime updates
+
+Plugin data updates are push-based using Server-Sent Events (SSE). The server exposes `GET /api/plugins/events` streaming `{type:"changed",revision}` notifications whenever any plugin view is recorded or updated. The host store maintains a monotonically increasing revision counter and immediately pushes events to connected browser clients, including 15-second `: ping` heartbeats to maintain connectivity through proxies.
+
+Clients consume a single shared `usePluginData` reactive hook that subscribes to `/api/plugins/events` via browser-native `EventSource`. When a `"changed"` event is received, the client deduplicates in-flight fetches and re-queries `/api/plugins`. If the EventSource encounters repeated connection failures, it automatically falls back to slow 30-second polling until connectivity is restored.
+
+#### Session status markers
+
+The `GET /api/plugins` endpoint provides an authoritative snapshot of session execution states sourced from pi-web's session registry (`rpc-manager`). For each session present in the views store, the API reports `{ running: boolean; awaitingInput?: boolean }`. Sessions without active registry processes strictly report idle (never inferred or guessed).
+
+The UI renders visual status markers next to session-scoped views:
+- **Running session**: Green status dot (`.plugin-status-dot.plugin-status-running`) indicating an active agent turn or background task.
+- **Idle session**: Muted gray status dot (`.plugin-status-dot.plugin-status-idle`) indicating a settled or inactive session.
+
+Status markers are rendered in all slot adapters (top/bottom single-row strips, center panels, and floating widget chips) as well as beside the session identifier on plugin detail pages (`/plugins/[id]`). The text-only rule strictly applies to view contents; status markers are rendered as styled UI indicators separate from view payload text.
 
 #### Plugin actions
 

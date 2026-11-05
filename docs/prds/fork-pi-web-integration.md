@@ -66,7 +66,7 @@ Consequences:
 R1. A plugin is a descriptor with `id`, `extension`, `title` and at least one **surface**. `id` matches `^[a-z][a-z0-9-]*$`. `extension` must name an existing file `extensions/<extension>.ts`.
 
 R2. Surfaces:
-- `slot`: an inline placement in the main UI, `slot: "top" | "center" | "bottom" | "floating"`. The fork renders each region through a slot adapter; multiple plugins may target one slot and stack in descriptor order. Slots are for glanceable, always-available views.
+- `slot`: an inline placement in the main UI, `slot: "top" | "center" | "bottom" | "floating"`. The fork renders each region through a slot adapter; multiple plugins may target one slot and stack in descriptor order. Slots are for glanceable, always-available views. Realtime view updates are pushed to slot adapters via SSE (`/api/plugins/events`), replacing client-side interval polling.
 - `page`: a dedicated route `/plugins/<id>`, for settings-type plugins or plugins that change whole-pi behaviour. This is NOT the default placement — it is the full-page surface.
 - `sidebar`: a navigation entry so page-surface plugins are reachable.
 
@@ -114,7 +114,7 @@ R15. Authentication is unchanged: pi-web's password and Basic auth gate the plug
 
 ### 6.5 Non-functional
 
-R16. A view publish is at most 64 KB and must not block the agent turn. Publishing is synchronous and cheap; the host coalesces updates.
+R16. A view publish is at most 64 KB and must not block the agent turn. Publishing is synchronous and cheap; the host coalesces updates. SSE push notifications on `/api/plugins/events` replace client polling, notifying browsers whenever a view is published.
 R17. The plugin layer adds no runtime dependency to this package. The contract module is pure TypeScript with no pi or Next.js import, so it is loadable by both.
 R18. Every new file passes `npm run tidy` (typecheck, oxlint with the smell gate, the tiered test runner).
 
@@ -151,6 +151,7 @@ Why events and not direct calls: pi extensions run inside pi-web's process today
 | **4. Packaging** | Install docs, `pi-web-workflow` CLI or documented upstream install, update flow | A fresh machine can follow `docs/` and see the plugins |
 | **5. Actions (optional)** | Trusted plugin actions with explicit confirmation | Shipped: `request-sync` reference action, threat-reviewed (see [plugin-actions](plugin-actions.md)) |
 | **6. Frontend slots** | Slot surfaces (top/center/bottom/floating) with host-side slot adapters; page surface reserved for settings-type plugins | Every slot region renders declared plugin views; placements changed by editing one descriptor line; e2e proves slot content on the home view |
+| **7. Realtime + status markers** | SSE change channel (`/api/plugins/events`), live/idle status markers per session in slot adapters and plugin pages, shared client hook replacing 3s polling | SSE stream pushes changes without page reload; status dot reflects running session state; e2e verifies realtime update and markers |
 
 Phase 1 is the only phase in this branch's current scope. Phases 2–4 need the fork repository, which is a decision for you (see §10).
 
