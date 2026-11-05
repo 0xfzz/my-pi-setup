@@ -55,6 +55,12 @@ export interface DashboardExtensionOptions {
   /** Optional override passed through to the producer. */
   runtimeDir?: string;
   heartbeatMs?: number;
+  /**
+   * Standalone dashboard HTTP server opt-in.
+   * When false (default unless PI_DASHBOARD_SERVER === "1"), no standalone HTTP
+   * server starts and only web plugin views are published.
+   */
+  server?: boolean;
 }
 
 function childGuard(context: ExtensionContext): boolean {
@@ -86,9 +92,13 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
    */
   let registeredForWork = false;
 
-  const baseFactory = options.producerFactory ?? defaultDashboardProducerFactory;
+  const serverEnabled = options.server ?? (process.env.PI_DASHBOARD_SERVER === "1");
+  const serverFactory = options.server === false
+    ? undefined
+    : (options.producerFactory ?? (serverEnabled ? defaultDashboardProducerFactory : undefined));
+
   const producerFactory: DashboardProducerFactory = async (producerOpts) => {
-    const producer = await baseFactory(producerOpts);
+    const producer = serverFactory ? await serverFactory(producerOpts) : undefined;
     return {
       publish(snapshot: DashboardSnapshot) {
         try {
@@ -96,10 +106,10 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
         } catch {
           // guarded by try/catch so nothing thrown can reach the dashboard flow
         }
-        producer.publish(snapshot);
+        producer?.publish(snapshot);
       },
       close() {
-        return producer.close?.();
+        return producer?.close?.();
       },
     };
   };
