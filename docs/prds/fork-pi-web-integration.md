@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | implemented: Phases 0–5 complete on `feat/pi-web-integration` (Phase 5 shipped the read-only `request-sync` reference action per [plugin-actions](plugin-actions.md)) |
+| **Status** | implemented: Phases 0–8 complete on `feat/pi-web-integration` (Phase 5 shipped the read-only `request-sync` reference action per [plugin-actions](plugin-actions.md); Phase 6 added slot surfaces, Phase 7 the realtime SSE channel and status markers, Phase 8 the sidebar running markers and the bubbly status chip) |
 | **Owner** | Faiz |
 | **Upstream** | `agegr/pi-web` @ `main` (v0.15.0 at time of writing) |
 | **Scope** | `lib/web-plugins/`, `web-plugins/`, the pi-web fork (new repo), reusing the existing `web/dashboard/`, `lib/dashboard/` and `extensions/dashboard.ts` as its base |
@@ -152,8 +152,9 @@ Why events and not direct calls: pi extensions run inside pi-web's process today
 | **5. Actions (optional)** | Trusted plugin actions with explicit confirmation | Shipped: `request-sync` reference action, threat-reviewed (see [plugin-actions](plugin-actions.md)) |
 | **6. Frontend slots** | Slot surfaces (top/center/bottom/floating) with host-side slot adapters; page surface reserved for settings-type plugins | Every slot region renders declared plugin views; placements changed by editing one descriptor line; e2e proves slot content on the home view |
 | **7. Realtime + status markers** | SSE change channel (`/api/plugins/events`), live/idle status markers per session in slot adapters and plugin pages, shared client hook replacing 3s polling | SSE stream pushes changes without page reload; status dot reflects running session state; e2e verifies realtime update and markers |
+| **8. Sidebar markers + bubbly** | Running/idle dot on every left-sidebar session row; the bubbly working message published as a `status` view and rendered as a compact chip in the top slot | Each sidebar row shows a green dot while running and gray while idle; the bubbly chip renders in the top slot from a real `publishWebView` call; e2e asserts both |
 
-Phase 1 is the only phase in this branch's current scope. Phases 2–4 need the fork repository, which is a decision for you (see §10).
+Phases 0–8 are complete on `feat/pi-web-integration`. Phase 5 shipped as the optional actions phase; Phases 6–8 followed once the fork and its slot adapters existed.
 
 ## 9. Acceptance criteria
 
@@ -169,7 +170,7 @@ Phase 1 is the only phase in this branch's current scope. Phases 2–4 need the 
 
 1. **Fork location (decided: vendored).** The fork lives at `vendor/pi-web/`, following the `vendor/antigravity/` precedent (`VENDORED.md` records provenance and how to resync). Builds stay out of git (`node_modules/`, `.next/`). Syncing a new upstream release means re-applying the fork diff, kept small per R9.
 2. **Dashboard base (decided: reuse; Phase 2 spike result).** The fork reuses `web/dashboard/` and `lib/dashboard/`. The spike resolved the open route question: the fork does NOT mount the dashboard's Graphviz browser bundle. Phase 2 established a generic data renderer in the fork (kv/list/status text views), and mounting the WASM graph bundle would break R10's minimal-diff rule and duplicate rendering paths. Instead the dashboard extension publishes a compact delegation snapshot (children, handoffs, reviews, escalations, artifact catalog) as plugin views, reusing `lib/dashboard/projection.ts`. R13 parity is therefore **data parity**: the plugin page's rows must equal the dashboard projection's children, handoffs, reviews and artifacts for the same session, pinned by a test.
-3. **Actions in Phase 5.** Not decided. Needs a threat review before any plugin can mutate state from the browser.
+3. **Actions in Phase 5 (decided: shipped, read-only only).** The `request-sync` reference action shipped with the threat review in [plugin-actions](plugin-actions.md). Mutating actions stay out of scope pending a follow-up PRD.
 4. **Upstream contribution.** Whether the `web-plugin` host should be proposed upstream. Not needed for the first version.
 5. **Single-UI decision (decided: pi-web is THE web UI).** The vendored `pi-web` fork (`vendor/pi-web`) is the unified web interface for workflow extensions. The standalone dashboard HTTP server is opt-in via `PI_DASHBOARD_SERVER=1` (by default no standalone server starts, but delegation snapshots still publish as web plugin views). The `/web` command (`/web start`, `/web stop`, `/web status`) serves as the operator interface, enforcing single-instance execution, refusal when already healthy, and automatic takeover of stale state.
 
