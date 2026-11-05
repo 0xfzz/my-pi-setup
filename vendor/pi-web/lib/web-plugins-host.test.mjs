@@ -16,6 +16,8 @@ const {
   recordActionAudit,
   getActionAuditLog,
   isKnownSession,
+  getPluginsRevision,
+  subscribePluginChanges,
 } = await jiti.import("./web-plugins-host.ts");
 
 test("webPluginsStore records and retrieves valid kv views", () => {
@@ -241,4 +243,45 @@ test("audit log records entries and clears with store", () => {
 
   webPluginsStore.clear();
   assert.equal(getActionAuditLog().length, 0);
+});
+
+test("webPluginsStore tracks monotonic revision and notifies subscribers on recordView", () => {
+  webPluginsStore.clear();
+
+  const initialRev = getPluginsRevision();
+  assert.equal(typeof initialRev, "number");
+
+  const seenRevisions = [];
+  const unsubscribe = subscribePluginChanges((rev) => {
+    seenRevisions.push(rev);
+  });
+
+  const ok = webPluginsStore.recordView("sess-rev-1", "cache-stats", {
+    type: "status",
+    tone: "success",
+    text: "Revision test",
+  });
+  assert.equal(ok, true);
+
+  const newRev = getPluginsRevision();
+  assert.ok(newRev > initialRev);
+  assert.equal(seenRevisions.length, 1);
+  assert.equal(seenRevisions[0], newRev);
+
+  // Invalid view should NOT bump revision or notify
+  const badOk = webPluginsStore.recordView("sess-rev-1", "cache-stats", { type: "bad" });
+  assert.equal(badOk, false);
+  assert.equal(getPluginsRevision(), newRev);
+  assert.equal(seenRevisions.length, 1);
+
+  // Unsubscribe stops notifications
+  unsubscribe();
+  const unsubOk = webPluginsStore.recordView("sess-rev-1", "cache-stats", {
+    type: "status",
+    tone: "neutral",
+    text: "Unsubscribed test",
+  });
+  assert.equal(unsubOk, true);
+  assert.equal(getPluginsRevision(), newRev + 1);
+  assert.equal(seenRevisions.length, 1, "Unsubscribed listener receives no further calls");
 });

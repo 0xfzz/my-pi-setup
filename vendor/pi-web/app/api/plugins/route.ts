@@ -15,6 +15,10 @@ import { getProjectTrustStatus } from "@/lib/project-trust";
 import { isPluginSourceCheckable } from "@/lib/plugin-updates";
 import { invalidateModelRuntimeWithExtensions } from "@/lib/model-runtime";
 import {
+  getAwaitingInputRpcSessionIds,
+  getRunningRpcSessionIds,
+} from "@/lib/rpc-manager";
+import {
   checkAndSeedFixtures,
   getRegisteredPlugins,
   webPluginsStore,
@@ -421,8 +425,22 @@ export async function GET(req: Request) {
       ...(plugin.actions ? { actions: plugin.actions } : {}),
     }));
     const views = webPluginsStore.getAllViews();
+    const runningIds = new Set(getRunningRpcSessionIds());
+    const awaitingInputIds = new Set(getAwaitingInputRpcSessionIds());
+    const sessions: Record<string, { running: boolean; awaitingInput?: boolean }> = {};
+
+    for (const sessionId of Object.keys(views)) {
+      const isTestSession = process.env.PI_WEB_TEST_PLUGIN_VIEWS === "1" && sessionId === "__test_session__";
+      const isRunning = isTestSession || runningIds.has(sessionId);
+      const isAwaiting = awaitingInputIds.has(sessionId);
+      sessions[sessionId] = {
+        running: isRunning,
+        ...(isAwaiting ? { awaitingInput: true } : {}),
+      };
+    }
+
     return NextResponse.json(
-      { plugins, views },
+      { plugins, views, sessions },
       { headers: { "Cache-Control": "no-store" } },
     );
   }

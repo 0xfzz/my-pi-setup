@@ -61,6 +61,8 @@ export interface MinimalEventBus {
 
 export interface WebPluginsState {
   version: 1;
+  revision: number;
+  changeListeners: Set<(revision: number) => void>;
   // sessionId -> pluginId -> WebView
   views: Map<string, Map<string, WebView>>;
   // pluginId -> { sessionId, view, timestamp }
@@ -73,10 +75,13 @@ export interface WebPluginsState {
   getView(sessionId: string, pluginId: string): WebView | undefined;
   getLatestView(pluginId: string): WebView | undefined;
   getAllViews(): Record<string, Record<string, WebView>>;
+  getRevision(): number;
+  subscribeChanges(cb: (revision: number) => void): () => void;
   clear(): void;
 }
 
 function createStore(): WebPluginsState {
+  const changeListeners = new Set<(revision: number) => void>();
   const views = new Map<string, Map<string, WebView>>();
   const latestByPlugin = new Map<string, { sessionId: string; view: WebView; timestamp: number }>();
   const sessionBuses = new Map<string, MinimalEventBus>();
@@ -84,73 +89,102 @@ function createStore(): WebPluginsState {
   const auditLog: ActionAuditEntry[] = [];
   const inFlightActions = new Map<string, InFlightAction>();
 
-  function recordView(sessionId: string, pluginId: string, rawView: unknown): boolean {
-    if (!sessionId || typeof sessionId !== "string") return false;
-    if (!pluginId || typeof pluginId !== "string") return false;
-
-    const validation = validateView(rawView);
-    if (!validation.ok) {
-      return false;
-    }
-
-    let sessionMap = views.get(sessionId);
-    if (!sessionMap) {
-      sessionMap = new Map();
-      views.set(sessionId, sessionMap);
-    }
-    sessionMap.set(pluginId, validation.view);
-    latestByPlugin.set(pluginId, {
-      sessionId,
-      view: validation.view,
-      timestamp: Date.now(),
-    });
-    return true;
-  }
-
-  function getView(sessionId: string, pluginId: string): WebView | undefined {
-    return views.get(sessionId)?.get(pluginId);
-  }
-
-  function getLatestView(pluginId: string): WebView | undefined {
-    const entry = latestByPlugin.get(pluginId);
-    return entry?.view;
-  }
-
-  function getAllViews(): Record<string, Record<string, WebView>> {
-    const result: Record<string, Record<string, WebView>> = {};
-    for (const [sessionId, sessionMap] of views.entries()) {
-      const sessionObj: Record<string, WebView> = {};
-      for (const [pluginId, view] of sessionMap.entries()) {
-        sessionObj[pluginId] = view;
-      }
-      result[sessionId] = sessionObj;
-    }
-    return result;
-  }
-
-  function clear(): void {
-    views.clear();
-    latestByPlugin.clear();
-    sessionBuses.clear();
-    knownSessions.clear();
-    auditLog.length = 0;
-    inFlightActions.clear();
-  }
-
-  return {
+  const state: WebPluginsState = {
     version: 1,
+    revision: 0,
+    changeListeners,
     views,
     latestByPlugin,
     sessionBuses,
     knownSessions,
     auditLog,
     inFlightActions,
-    recordView,
-    getView,
-    getLatestView,
-    getAllViews,
-    clear,
+
+    recordView(sessionId: string, pluginId: string, rawView: unknown): boolean {
+      if (!sessionId || typeof sessionId !== "string") return false;
+      if (!pluginId || typeof pluginId !== "string") return false;
+
+      const validation = validateView(rawView);
+      if (!validation.ok) {
+        return false;
+      }
+
+      let sessionMap = this.views.get(sessionId);
+      if (!sessionMap) {
+        sessionMap = new Map();
+        this.views.set(sessionId, sessionMap);
+      }
+      sessionMap.set(pluginId, validation.view);
+      this.latestByPlugin.set(pluginId, {
+        sessionId,
+        view: validation.view,
+        timestamp: Date.now(),
+      });
+
+      this.revision += 1;
+      const currentRev = this.revision;
+      for (const listener of this.changeListeners) {
+        try {
+          listener(currentRev);
+        } catch {
+          // Best effort
+        }
+      }
+      return true;
+    },
+
+    getView(sessionId: string, pluginId: string): WebView | undefined {
+      return this.views.get(sessionId)?.get(pluginId);
+    },
+
+    getLatestView(pluginId: string): WebView | undefined {
+      const entry = this.latestByPlugin.get(pluginId);
+      return entry?.view;
+    },
+
+    getAllViews(): Record<string, Record<string, WebView>> {
+      const result: Record<string, Record<string, WebView>> = {};
+      for (const [sessionId, sessionMap] of this.views.entries()) {
+        const sessionObj: Record<string, WebView> = {};
+        for (const [pluginId, view] of sessionMap.entries()) {
+          sessionObj[pluginId] = view;
+        }
+        result[sessionId] = sessionObj;
+      }
+      return result;
+    },
+
+    getRevision(): number {
+      return this.revision;
+    },
+
+    subscribeChanges(cb: (revision: number) => void): () => void {
+      this.changeListeners.add(cb);
+      return () => {
+        this.changeListeners.delete(cb);
+      };
+    },
+
+    clear(): void {
+      this.views.clear();
+      this.latestByPlugin.clear();
+      this.sessionBuses.clear();
+      this.knownSessions.clear();
+      this.auditLog.length = 0;
+      this.inFlightActions.clear();
+      this.revision += 1;
+      const currentRev = this.revision;
+      for (const listener of this.changeListeners) {
+        try {
+          listener(currentRev);
+        } catch {
+          // Best effort
+        }
+      }
+    },
   };
+
+  return state;
 }
 
 function getStore(): WebPluginsState {
@@ -167,6 +201,13 @@ function getStore(): WebPluginsState {
     if (!existing.knownSessions) existing.knownSessions = new Set();
     if (!existing.auditLog) existing.auditLog = [];
     if (!existing.inFlightActions) existing.inFlightActions = new Map();
+    if (typeof existing.revision !== "number") existing.revision = 0;
+    if (!(existing.changeListeners instanceof Set)) existing.changeListeners = new Set();
+    const fresh = createStore();
+    existing.recordView = fresh.recordView.bind(existing);
+    existing.getRevision = () => existing.revision;
+    existing.subscribeChanges = fresh.subscribeChanges.bind(existing);
+    existing.clear = fresh.clear.bind(existing);
     return existing;
   }
   const created = createStore();
@@ -175,6 +216,14 @@ function getStore(): WebPluginsState {
 }
 
 export const webPluginsStore = getStore();
+
+export function getPluginsRevision(): number {
+  return webPluginsStore.getRevision();
+}
+
+export function subscribePluginChanges(cb: (revision: number) => void): () => void {
+  return webPluginsStore.subscribeChanges(cb);
+}
 
 /**
  * Seed fixture views for tests when PI_WEB_TEST_PLUGIN_VIEWS is enabled.
@@ -186,7 +235,19 @@ export function checkAndSeedFixtures(store = webPluginsStore): void {
     if (!store.sessionBuses.has(testSessionId)) {
       store.sessionBuses.set(testSessionId, {
         on: () => () => {},
-        emit: () => {},
+        emit: (ch: string, data: unknown) => {
+          if (ch === WEB_PLUGIN_ACTION_REQUEST_EVENT) {
+            const d = data as { requestId?: string };
+            store.recordView(testSessionId, "dashboard", {
+              type: "kv",
+              title: "Delegated work snapshot",
+              rows: [
+                { label: "Status", value: "Synchronized" },
+                { label: "Last Request", value: d?.requestId || "synced" },
+              ],
+            });
+          }
+        },
       });
     }
     if (!store.getView(testSessionId, "cache-stats")) {
