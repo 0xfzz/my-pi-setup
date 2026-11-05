@@ -1,4 +1,5 @@
 import { artifactsPlugin } from "./artifacts.ts";
+import { bubblySpinnerPlugin } from "./bubbly-spinner.ts";
 import { cacheStatsPlugin } from "./cache-stats.ts";
 import { dashboardPlugin } from "./dashboard.ts";
 import { subagentCheckpointsPlugin } from "./subagent-checkpoints.ts";
@@ -11,6 +12,7 @@ export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [
   artifactsPlugin,
   subagentCheckpointsPlugin,
   dashboardPlugin,
+  bubblySpinnerPlugin,
 ];
 
 export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {
@@ -22,8 +24,6 @@ export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {
     "Multi-account provider registration for Google accounts; credential management without a web view",
   "ask-user":
     "Interactive clarification dialog; ephemeral interaction with no persistent view",
-  "bubbly-spinner":
-    "Animated working message indicator; TUI-only chrome",
   "cache-breakpoints":
     "Prompt-cache breakpoint injection on volatile message tails; invisible background middleware",
   "cache-trace":

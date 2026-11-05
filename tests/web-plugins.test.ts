@@ -27,6 +27,7 @@ import { publishWebView } from "../lib/web-plugins/publisher.ts";
 import { cacheStatsPlugin } from "../web-plugins/cache-stats.ts";
 import { todoPlugin } from "../web-plugins/todo.ts";
 import { artifactsPlugin } from "../web-plugins/artifacts.ts";
+import { bubblySpinnerPlugin } from "../web-plugins/bubbly-spinner.ts";
 import { subagentCheckpointsPlugin } from "../web-plugins/subagent-checkpoints.ts";
 import { dashboardPlugin } from "../web-plugins/dashboard.ts";
 import { WEB_PLUGINS, WEB_PLUGIN_OPT_OUT } from "../web-plugins/index.ts";
@@ -591,7 +592,7 @@ test("phase 6 placements: WEB_PLUGINS declared with exact slot and page placemen
   // plugin, which is the exact flow this system exists to make cheap. Coverage
   // is pinned by the sum (every extension in exactly one list) plus membership.
   assert.equal(WEB_PLUGINS.length + Object.keys(WEB_PLUGIN_OPT_OUT).length, diskFiles.length);
-  for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "dashboard"]) {
+  for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "dashboard", "bubbly-spinner"]) {
     assert.ok(WEB_PLUGINS.some((plugin) => plugin.id === id), `${id} must be a registered plugin`);
     assert.equal(id in WEB_PLUGIN_OPT_OUT, false, `${id} must not also be opted out`);
   }
@@ -602,6 +603,10 @@ test("phase 6 placements: WEB_PLUGINS declared with exact slot and page placemen
     { kind: "slot", slot: "bottom" },
   ]);
   assert.deepEqual(todoPlugin.surfaces, [
+    { kind: "sidebar" },
+    { kind: "slot", slot: "top" },
+  ]);
+  assert.deepEqual(bubblySpinnerPlugin.surfaces, [
     { kind: "sidebar" },
     { kind: "slot", slot: "top" },
   ]);
@@ -738,5 +743,17 @@ test("phase 3 publisher: publishWebView successfully emits views for phase 3 plu
   assert.deepEqual(emitted[2], {
     channel: WEB_PLUGIN_VIEW_EVENT,
     data: { pluginId: "subagent-checkpoints", view: subagentsView },
+  });
+
+  const bubblyView = {
+    type: "status" as const,
+    tone: "accent" as const,
+    text: "Ratiocinating...",
+  };
+  const r4 = publishWebView(stubPi, "bubbly-spinner", bubblyView);
+  assert.equal(r4.ok, true);
+  assert.deepEqual(emitted[3], {
+    channel: WEB_PLUGIN_VIEW_EVENT,
+    data: { pluginId: "bubbly-spinner", view: bubblyView },
   });
 });
