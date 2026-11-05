@@ -46,4 +46,6 @@ export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {
     "Bash execution timeout and idle process watchdog; background execution policy",
   "web-read":
     "Headless browser page reader tool for web retrieval; tool-only execution",
+  web:
+    "Web UI process management and single-instance server launcher; control command with no persistent view",
 };

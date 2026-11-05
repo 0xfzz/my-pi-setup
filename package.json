@@ -38,6 +38,7 @@
       "./extensions/bubbly-spinner.ts",
       "./extensions/web-read.ts",
       "./extensions/dashboard.ts",
+      "./extensions/web.ts",
       "./vendor/antigravity/index.ts",
       "./vendor/antigravity/features/google-search.ts",
       "./vendor/antigravity/features/generate-image.ts"
