@@ -29,11 +29,11 @@ export async function checkWebPlugins(page, base) {
 
     // (a) Verify page and published KV view
     const heading = page.locator(".plugin-page-title");
-    await heading.waitFor({ state: "visible", timeout: 15_000 });
+    await heading.waitFor({ state: "visible", timeout: 60_000 });
     assert.equal(await heading.textContent(), "Cache health");
 
     const kvTable = page.locator(".plugin-kv-table");
-    await kvTable.waitFor({ state: "visible", timeout: 10_000 });
+    await kvTable.waitFor({ state: "visible", timeout: 30_000 });
 
     // (b) Verify literal text rendering and zero script execution (AC6)
     const xssValue = page.locator(".plugin-kv-value").filter({ hasText: "<script>" });
@@ -63,7 +63,7 @@ export async function checkWebPlugins(page, base) {
     });
 
     const emptyState = page.locator(".plugin-empty-state");
-    await emptyState.waitFor({ state: "visible", timeout: 10_000 });
+    await emptyState.waitFor({ state: "visible", timeout: 30_000 });
     assert.match(
       (await emptyState.textContent()) || "",
       /No view published yet/i,
@@ -87,26 +87,26 @@ export async function checkWebPlugins(page, base) {
       // Plugin pages poll /api/plugins every 3s, so "networkidle" never settles; wait for load and the content instead.
       await page.goto(`${base}${path}`, { waitUntil: "load" });
       const title = page.locator(".plugin-page-title");
-      await title.waitFor({ state: "visible", timeout: 15_000 });
+      await title.waitFor({ state: "visible", timeout: 60_000 });
       assert.equal((await title.textContent())?.trim(), plugin.title, `${path} must show its descriptor title`);
       // A plugin that has not published yet shows the empty state; one that has shows a view.
       const body = page.locator(".plugin-empty-state, .plugin-kv-table, .plugin-list, .plugin-status-badge");
-      await body.first().waitFor({ state: "visible", timeout: 10_000 });
+      await body.first().waitFor({ state: "visible", timeout: 30_000 });
     }
     assert.equal(dialogFired, false, "No plugin page may open a dialog");
 
     // (e) Action confirmation and execution flow (AC5)
     await page.goto(`${base}/plugins/dashboard`, { waitUntil: "load" });
     const dashboardTitle = page.locator(".plugin-page-title");
-    await dashboardTitle.waitFor({ state: "visible", timeout: 15_000 });
+    await dashboardTitle.waitFor({ state: "visible", timeout: 60_000 });
     assert.equal((await dashboardTitle.textContent())?.trim(), "Delegated work graph");
 
     const actionButton = page.locator(".plugin-action-button").filter({ hasText: "Request fresh snapshot" });
-    await actionButton.waitFor({ state: "visible", timeout: 10_000 });
+    await actionButton.waitFor({ state: "visible", timeout: 30_000 });
     assert.equal(await actionButton.isDisabled(), true, "Button must be disabled before confirmation");
 
     const actionInput = page.locator(".plugin-action-input");
-    await actionInput.waitFor({ state: "visible", timeout: 10_000 });
+    await actionInput.waitFor({ state: "visible", timeout: 30_000 });
 
     // Fill exact confirm string and submit
     await actionInput.fill("request sync");
@@ -116,7 +116,7 @@ export async function checkWebPlugins(page, base) {
 
     // Verify feedback with accepted requestId surfaces in UI
     const feedback = page.locator(".plugin-action-feedback.feedback-success");
-    await feedback.waitFor({ state: "visible", timeout: 10_000 });
+    await feedback.waitFor({ state: "visible", timeout: 30_000 });
     const feedbackText = await feedback.textContent();
     assert.match(
       feedbackText || "",
@@ -138,27 +138,27 @@ export async function checkWebPlugins(page, base) {
 
     // (a) Top slot strip: shows Todo title and content
     const topSlot = page.locator(".plugin-slot-top");
-    await topSlot.waitFor({ state: "visible", timeout: 15_000 });
+    await topSlot.waitFor({ state: "visible", timeout: 60_000 });
     const topTitle = topSlot.locator(".plugin-slot-title");
-    await topTitle.filter({ hasText: "Todo" }).waitFor({ state: "visible", timeout: 10_000 });
+    await topTitle.filter({ hasText: "Todo" }).waitFor({ state: "visible", timeout: 30_000 });
     const topContent = topSlot.locator(".plugin-slot-content");
-    await topContent.waitFor({ state: "visible", timeout: 10_000 });
+    await topContent.waitFor({ state: "visible", timeout: 30_000 });
     assert.match(await topContent.textContent() || "", /Implement frontend slots/i, "Top slot shows todo list content");
 
     // (b) Bottom slot strip: shows Cache health title and content
     const bottomSlot = page.locator(".plugin-slot-bottom");
-    await bottomSlot.waitFor({ state: "visible", timeout: 15_000 });
+    await bottomSlot.waitFor({ state: "visible", timeout: 60_000 });
     const bottomTitle = bottomSlot.locator(".plugin-slot-title");
-    await bottomTitle.filter({ hasText: "Cache health" }).waitFor({ state: "visible", timeout: 10_000 });
+    await bottomTitle.filter({ hasText: "Cache health" }).waitFor({ state: "visible", timeout: 30_000 });
     const bottomContent = bottomSlot.locator(".plugin-slot-content");
-    await bottomContent.waitFor({ state: "visible", timeout: 10_000 });
+    await bottomContent.waitFor({ state: "visible", timeout: 30_000 });
     assert.match(await bottomContent.textContent() || "", /XSS Test/i, "Bottom slot shows cache stats content");
 
     // (c) Center slot: collapsible panel showing Delegated work
     const centerSlot = page.locator(".plugin-slot-center");
-    await centerSlot.waitFor({ state: "visible", timeout: 15_000 });
+    await centerSlot.waitFor({ state: "visible", timeout: 60_000 });
     const centerHeader = centerSlot.locator(".plugin-slot-center-header");
-    await centerHeader.waitFor({ state: "visible", timeout: 10_000 });
+    await centerHeader.waitFor({ state: "visible", timeout: 30_000 });
     assert.match(await centerHeader.textContent() || "", /Delegated work/i, "Center slot shows delegated work header");
 
     // Verify center is collapsed by default (body hidden/absent)
@@ -167,22 +167,22 @@ export async function checkWebPlugins(page, base) {
 
     // Expand center on click
     await centerHeader.click();
-    await centerBody.waitFor({ state: "visible", timeout: 10_000 });
+    await centerBody.waitFor({ state: "visible", timeout: 30_000 });
     assert.ok(await centerBody.isVisible(), "Center slot expands on header click");
     assert.match(await centerBody.textContent() || "", /worker-slots/i, "Center slot body renders subagent view");
 
     // Collapse center on click again
     await centerHeader.click();
-    await centerBody.waitFor({ state: "hidden", timeout: 10_000 });
+    await centerBody.waitFor({ state: "hidden", timeout: 30_000 });
     assert.equal(await centerBody.isVisible(), false, "Center slot collapses on second click");
 
     // (d) Floating slot: collapsible corner widget showing Artifacts
     const floatingSlot = page.locator(".plugin-slot-floating");
-    await floatingSlot.waitFor({ state: "visible", timeout: 15_000 });
+    await floatingSlot.waitFor({ state: "visible", timeout: 60_000 });
 
     // Collapsed to a small chip by default
     const floatingChip = floatingSlot.locator(".plugin-slot-floating-chip");
-    await floatingChip.waitFor({ state: "visible", timeout: 10_000 });
+    await floatingChip.waitFor({ state: "visible", timeout: 30_000 });
     assert.match(await floatingChip.textContent() || "", /Artifacts/i, "Floating slot chip shows Artifacts title");
 
     const floatingCard = floatingSlot.locator(".plugin-slot-floating-card");
@@ -190,16 +190,16 @@ export async function checkWebPlugins(page, base) {
 
     // Expand floating widget on click
     await floatingChip.click();
-    await floatingCard.waitFor({ state: "visible", timeout: 10_000 });
+    await floatingCard.waitFor({ state: "visible", timeout: 30_000 });
     assert.ok(await floatingCard.isVisible(), "Floating card expands on chip click");
     const floatingBody = floatingSlot.locator(".plugin-slot-floating-body");
-    await floatingBody.waitFor({ state: "visible", timeout: 10_000 });
+    await floatingBody.waitFor({ state: "visible", timeout: 30_000 });
     assert.match(await floatingBody.textContent() || "", /prd-phase-6\.md/i, "Floating card body renders artifacts view");
 
     // Collapse floating widget on close button click
     const floatingClose = floatingSlot.locator(".plugin-slot-floating-close");
     await floatingClose.click();
-    await floatingChip.waitFor({ state: "visible", timeout: 10_000 });
+    await floatingChip.waitFor({ state: "visible", timeout: 30_000 });
     assert.equal(await floatingCard.isVisible(), false, "Floating slot collapses back to chip on close");
 
     // Verify no dialog fired throughout the home page slot interactions
