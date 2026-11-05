@@ -290,6 +290,13 @@ export function checkAndSeedFixtures(store = webPluginsStore): void {
         ],
       });
     }
+    if (!store.getView(testSessionId, "bubbly-spinner")) {
+      store.recordView(testSessionId, "bubbly-spinner", {
+        type: "status",
+        tone: "accent",
+        text: "Ratiocinating...",
+      });
+    }
   }
 }
 

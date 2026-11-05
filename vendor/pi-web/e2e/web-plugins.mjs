@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { createWriteStream, existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -148,7 +148,7 @@ export async function checkWebPlugins(page, base) {
         .map((surface) => ({ plugin, path: surface.path })),
     );
     const registeredIds = registry.plugins.map((plugin) => plugin.id);
-    for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "dashboard"]) {
+    for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "dashboard", "bubbly-spinner"]) {
       assert.ok(registeredIds.includes(id), `Plugin "${id}" must be registered, got: ${registeredIds.join(", ")}`);
     }
     assert.ok(pageSurfaces.length >= 1, `At least one plugin must expose a page surface, got ${pageSurfaces.length}`);
@@ -177,6 +177,16 @@ export async function checkWebPlugins(page, base) {
     const topContent = topSlot.locator(".plugin-slot-content");
     await topContent.waitFor({ state: "visible", timeout: 30_000 });
     assert.match(await topContent.textContent() || "", /Implement frontend slots/i, "Top slot shows todo list content");
+
+    // Top slot: shows bubbly status chip (Phase 8)
+    const bubblyChip = topSlot.locator(".plugin-bubbly-chip, .plugin-status-chip").filter({ hasText: "Ratiocinating" });
+    await bubblyChip.waitFor({ state: "visible", timeout: 30_000 });
+    assert.ok(await bubblyChip.isVisible(), "Bubbly chip renders in top slot");
+
+    // Left sidebar: shows green running marker dot next to running session row (Phase 8)
+    const sidebarRunningRow = page.locator(".session-tree-session").filter({ has: page.locator(".plugin-status-dot.plugin-status-running") });
+    await sidebarRunningRow.first().waitFor({ state: "visible", timeout: 30_000 });
+    assert.ok(await sidebarRunningRow.first().isVisible(), "Sidebar row shows running status marker dot");
 
     // (b) Bottom slot strip: shows Cache health title and content + literal text rendering & zero script execution (AC6)
     const bottomSlot = page.locator(".plugin-slot-bottom");
@@ -266,6 +276,11 @@ if (isDirectRun) {
   const workspace = join(artifacts, "workspace");
   mkdirSync(join(agentDir, "sessions", "test"), { recursive: true });
   mkdirSync(workspace);
+  writeFileSync(
+    join(agentDir, "sessions", "test", "2026-11-05T00-00-00-000Z___test_session__.jsonl"),
+    `{"type":"session","id":"__test_session__","timestamp":"2026-11-05T00:00:00.000Z","cwd":"${workspace}"}\n` +
+    `{"type":"message","id":"m1","parentId":null,"message":{"role":"user","content":[{"type":"text","text":"Test session for web plugins"}]}}\n`,
+  );
 
   const probe = createServer();
   probe.listen(0, "127.0.0.1");
@@ -312,6 +327,26 @@ if (isDirectRun) {
     });
     const page = await context.newPage();
     page.setDefaultTimeout(30_000);
+
+    // Prewarm in the browser before the assertions run. Next dev compiles a route
+    // on first request; navigating straight into that compile makes the page
+    // reload mid-compile, and the run then fails on a title that never settles.
+    // Visiting every route once, without asserting, absorbs that first compile.
+    const warmRegistry = await (await fetch(`${base}/api/plugins`)).json();
+    const warmPaths = new Set(["/"]);
+    for (const plugin of warmRegistry.plugins ?? []) {
+      for (const surface of plugin.surfaces ?? []) {
+        if (surface.kind === "page" && surface.path) warmPaths.add(surface.path);
+      }
+    }
+    for (const path of warmPaths) {
+      try {
+        await page.goto(`${base}${path}`, { waitUntil: "load", timeout: 120_000 });
+      } catch {
+        // Warm-up only: a slow first compile here must not fail the run.
+      }
+    }
+    console.log(`[web-plugins e2e] Prewarmed ${warmPaths.size} route(s).`);
 
     console.log("[web-plugins e2e] Running plugin view checks...");
     await checkWebPlugins(page, base);
