@@ -597,4 +597,50 @@
   color: var(--text);
 }
 
+/* Sidebar session row status dot */
+.session-tree-session .plugin-status-dot {
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+/* Compact status chip for top slot */
+.plugin-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.plugin-status-chip.tone-accent {
+  background: rgba(189, 147, 249, 0.15);
+  color: var(--accent, #bd93f9);
+  border: 1px solid rgba(189, 147, 249, 0.3);
+}
+
+.plugin-status-chip.tone-neutral {
+  background: var(--bg-hover, rgba(127, 127, 127, 0.1));
+  color: var(--text-muted, #9ca3af);
+  border: 1px solid var(--border);
+}
+
+.plugin-bubbly-chip.tone-accent {
+  animation: bubbly-pulse 2s ease-in-out infinite;
+}
+
+@keyframes bubbly-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.02);
+  }
+}
+
 

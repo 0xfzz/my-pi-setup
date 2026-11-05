@@ -35,6 +35,7 @@ import { skillExpansionToCommand } from "@/lib/slash-display";
 import { useGroupDrag, type GroupDragHandlers } from "@/hooks/useGroupDrag";
 import { useI18n } from "@/hooks/useI18n";
 import { useScrollbarVisibility } from "@/hooks/useScrollbarVisibility";
+import { usePluginData } from "@/components/plugins/PluginViewRenderer";
 import type { SidebarMenuAnchor } from "./SidebarMenu";
 import {
   ArchiveIcon,
@@ -515,8 +516,10 @@ const SessionRowView = memo(function SessionRowView({
   handlers: Handlers;
 }) {
   const { locale, t } = useI18n();
+  const pluginsData = usePluginData();
   const { family, context, status } = row;
   const root = family.root;
+  const isSessionRunning = Boolean(status.running || pluginsData.sessions?.[root.id]?.running);
   const title = sessionRowTitle(root);
   const nowDate = new Date(now);
   const className = [
@@ -641,6 +644,10 @@ const SessionRowView = memo(function SessionRowView({
       onClick={() => handlers.current.onSelectFamily(family)}
       onContextMenu={(event) => handlers.current.onRowContextMenu(row, event)}
     >
+      <span
+        className={`plugin-status-dot ${isSessionRunning ? "plugin-status-running" : "plugin-status-idle"}`}
+        aria-hidden="true"
+      />
       {status.transient ? (
         // No file yet: a link would open a session no other tab can load.
         <button type="button" className="session-tree-main" title={tooltip} aria-current={status.selected ? "true" : undefined}>

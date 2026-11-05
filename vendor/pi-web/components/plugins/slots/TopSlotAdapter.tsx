@@ -27,7 +27,7 @@ function formatCompactView(view: WebView): string {
     return countText;
   }
   if (view.type === "status") {
-    return `[${view.tone}] ${view.text}`;
+    return view.text;
   }
   return "";
 }
@@ -40,6 +40,27 @@ export function TopSlotAdapter({ pluginsWithViews }: TopSlotAdapterProps) {
       {pluginsWithViews.map(({ plugin, view }) => {
         const pageSurface = plugin.surfaces.find((s) => s.kind === "page");
         const pagePath = pageSurface && "path" in pageSurface ? (pageSurface.path as string) : null;
+
+        if (view.type === "status") {
+          return (
+            <div key={plugin.id} className="plugin-slot-row plugin-slot-top-row" data-plugin-id={plugin.id}>
+              <span className="plugin-slot-title">{plugin.title}</span>
+              <span className="plugin-slot-sep">: </span>
+              <span
+                className={`plugin-slot-chip plugin-status-chip ${plugin.id === "bubbly-spinner" ? "plugin-bubbly-chip" : ""} tone-${view.tone}`}
+                data-testid={plugin.id === "bubbly-spinner" ? "bubbly-chip" : undefined}
+              >
+                {view.text}
+              </span>
+              {pagePath && (
+                <a href={pagePath} className="plugin-slot-page-link" title={`Open ${plugin.title} page`}>
+                  Open
+                </a>
+              )}
+            </div>
+          );
+        }
+
         const summary = formatCompactView(view);
 
         return (
