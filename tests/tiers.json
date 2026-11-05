@@ -22,6 +22,7 @@
     "tests/plan-native-shell.test.ts",
     "tests/provider/provider-discovery.test.ts",
     "tests/runtime.test.ts",
+    "tests/stream-recovery-runtime.test.ts",
     "tests/subagent-runtime.test.ts"
   ]
 }

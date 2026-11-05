@@ -23,6 +23,7 @@
       "./extensions/subagent-checkpoints.ts",
       "./extensions/artifacts.ts",
       "./extensions/smart-timeout.ts",
+      "./extensions/stream-recovery.ts",
       "./extensions/modes.ts",
       "./extensions/dynamic-prompt.ts",
       "./extensions/sidebar.ts",

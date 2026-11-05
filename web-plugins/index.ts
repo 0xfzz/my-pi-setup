@@ -44,6 +44,8 @@ export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {
     "TUI-only sidebar layout, chrome, aquarium animation, and split rendering",
   "smart-timeout":
     "Bash execution timeout and idle process watchdog; background execution policy",
+  "stream-recovery":
+    "Interrupted tool-generation checkpoints and suffix recovery; background middleware with command/tool output, no dedicated web view",
   "web-read":
     "Headless browser page reader tool for web retrieval; tool-only execution",
   web:

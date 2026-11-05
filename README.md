@@ -134,6 +134,7 @@ diff record, not documentation.
 | [Dashboard](docs/dashboard.md) | The local read-only graph, artifact views, and the server's bounds and trust model. |
 | [Pi Web](docs/pi-web.md) | Operator guide for the vendored web UI fork: installation, production build and dev server, plugin views, trust bounds, and resyncing. |
 | [Smart timeout](docs/smart-timeout.md) | Wall-clock and idle limits for `bash`, explicit budgets, and timeout diagnostics. |
+| [Stream recovery](docs/stream-recovery.md) | Save interrupted write/command prefixes and continue with only the missing suffix, without replaying executed tools. |
 | [Sidebar](docs/sidebar.md) | The right rail, the `Alt+W` prefix menu, and the detail popups. |
 | [Image thumbnails](docs/image-thumbnails.md) | Why inline images lag and how every displayed image becomes a thumbnail while the original is never touched. |
 | [Clipboard](docs/clipboard.md) | Pasting in every Linux terminal: Wayland, X11, tmux and Termux backends, and why plain `Ctrl+V` used to do nothing. |
