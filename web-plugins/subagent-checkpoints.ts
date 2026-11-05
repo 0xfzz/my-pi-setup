@@ -7,7 +7,7 @@ export const subagentCheckpointsPlugin: WebPluginDescriptor = {
   description: "Child agent checkpointing, milestone sidecars, and state recovery.",
   surfaces: [
     { kind: "sidebar" },
-    { kind: "page", path: "/plugins/subagent-checkpoints" },
+    { kind: "slot", slot: "center" },
   ],
 };
 

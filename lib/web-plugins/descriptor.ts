@@ -2,9 +2,19 @@ import { validateActions, type ActionDescriptor } from "./actions.ts";
 
 export type { ActionDescriptor } from "./actions.ts";
 
+export type WebPluginSlot = "top" | "center" | "bottom" | "floating";
+
+export const VALID_SLOTS: readonly WebPluginSlot[] = [
+  "top",
+  "center",
+  "bottom",
+  "floating",
+];
+
 export type WebPluginSurface =
   | { kind: "sidebar" }
-  | { kind: "page"; path: string };
+  | { kind: "page"; path: string }
+  | { kind: "slot"; slot: WebPluginSlot };
 
 export interface WebPluginDescriptor {
   id: string;
@@ -102,6 +112,17 @@ export function validatePlugin(
           };
         }
         cleanSurfaces.push({ kind: "page", path: s.path });
+      } else if (s.kind === "slot") {
+        if (
+          typeof s.slot !== "string" ||
+          !VALID_SLOTS.includes(s.slot as WebPluginSlot)
+        ) {
+          return {
+            ok: false,
+            error: `Plugin "${pluginName}": invalid slot "${String(s.slot)}"`,
+          };
+        }
+        cleanSurfaces.push({ kind: "slot", slot: s.slot as WebPluginSlot });
       } else {
         return {
           ok: false,

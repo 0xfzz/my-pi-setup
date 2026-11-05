@@ -281,3 +281,57 @@ test("AC4: dashboard extension ignores unrecognised action requests and guards p
   });
   assert.equal(syncEmitted, true, "Must trigger requestDashboardSync on valid match");
 });
+
+test("phase 6 slot surfaces: validation and placement mapping", () => {
+  const known = ["cache-stats.ts", "todo.ts", "artifacts.ts", "subagent-checkpoints.ts", "dashboard.ts"];
+
+  // Valid slot surfaces
+  for (const slot of ["top", "center", "bottom", "floating"] as const) {
+    const res = validatePlugin(
+      {
+        id: "test-plugin",
+        extension: "cache-stats",
+        title: "Test",
+        surfaces: [{ kind: "slot", slot }],
+      },
+      known,
+    );
+    assert.equal(res.ok, true);
+  }
+
+  // Invalid slot value rejected
+  const badSlotRes = validatePlugin(
+    {
+      id: "test-plugin",
+      extension: "cache-stats",
+      title: "Test",
+      surfaces: [{ kind: "slot", slot: "sidebar" as never }],
+    },
+    known,
+  );
+  assert.equal(badSlotRes.ok, false);
+  assert.match(badSlotRes.error, /invalid slot/);
+
+  // Placements match the intended Phase 6 mapping
+  const expectedPlacements: Record<string, string> = {
+    "cache-stats": "bottom",
+    todo: "top",
+    artifacts: "floating",
+    "subagent-checkpoints": "center",
+  };
+
+  for (const [id, expectedSlot] of Object.entries(expectedPlacements)) {
+    const plugin = WEB_PLUGINS.find((p) => p.id === id);
+    assert.ok(plugin, `Plugin ${id} must exist in WEB_PLUGINS`);
+    const slotSurface = plugin.surfaces.find((s) => s.kind === "slot");
+    assert.ok(slotSurface && slotSurface.kind === "slot", `${id} must have a slot surface`);
+    assert.equal(slotSurface.slot, expectedSlot, `${id} must be in slot ${expectedSlot}`);
+  }
+
+  // Dashboard keeps its page surface
+  const dashboard = WEB_PLUGINS.find((p) => p.id === "dashboard");
+  assert.ok(dashboard, "dashboard must exist in WEB_PLUGINS");
+  const pageSurface = dashboard.surfaces.find((s) => s.kind === "page");
+  assert.ok(pageSurface && pageSurface.kind === "page", "dashboard must keep its page surface");
+  assert.equal(pageSurface.path, "/plugins/dashboard");
+});

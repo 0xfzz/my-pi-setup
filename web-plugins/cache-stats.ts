@@ -7,7 +7,7 @@ export const cacheStatsPlugin: WebPluginDescriptor = {
   description: "Monitor prompt cache hit rates and token efficiency across models.",
   surfaces: [
     { kind: "sidebar" },
-    { kind: "page", path: "/plugins/cache-stats" },
+    { kind: "slot", slot: "bottom" },
   ],
 };
 

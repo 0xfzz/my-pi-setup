@@ -28,6 +28,7 @@ import { cacheStatsPlugin } from "../web-plugins/cache-stats.ts";
 import { todoPlugin } from "../web-plugins/todo.ts";
 import { artifactsPlugin } from "../web-plugins/artifacts.ts";
 import { subagentCheckpointsPlugin } from "../web-plugins/subagent-checkpoints.ts";
+import { dashboardPlugin } from "../web-plugins/dashboard.ts";
 import { WEB_PLUGINS, WEB_PLUGIN_OPT_OUT } from "../web-plugins/index.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -196,6 +197,28 @@ test("descriptor validation: enforces id regex, title, extension check, surfaces
   );
   assert.equal(badPathCharsResult.ok, false);
   assert.match(badPathCharsResult.error, /invalid page path/);
+
+  for (const slot of ["top", "center", "bottom", "floating"] as const) {
+    const validSlotResult = validatePlugin(
+      { ...cacheStatsPlugin, surfaces: [{ kind: "slot", slot }] },
+      known,
+    );
+    assert.equal(validSlotResult.ok, true);
+  }
+
+  const badSlotResult = validatePlugin(
+    { ...cacheStatsPlugin, surfaces: [{ kind: "slot", slot: "invalid-slot" }] },
+    known,
+  );
+  assert.equal(badSlotResult.ok, false);
+  assert.match(badSlotResult.error, /invalid slot/);
+
+  const nonStringSlotResult = validatePlugin(
+    { ...cacheStatsPlugin, surfaces: [{ kind: "slot", slot: 123 }] },
+    known,
+  );
+  assert.equal(nonStringSlotResult.ok, false);
+  assert.match(nonStringSlotResult.error, /invalid slot/);
 });
 
 test("registry validation: detects duplicate plugin ids and duplicate page paths", () => {
@@ -561,26 +584,48 @@ test("publisher: throwing or stub-less pi never causes publishWebView to throw",
   }
 });
 
-test("phase 3 descriptors: validatePlugin accepts todo, artifacts, and subagent-checkpoints", async () => {
+test("phase 6 placements: WEB_PLUGINS declared with exact slot and page placements", async () => {
   const diskFiles = (await readdir(join(root, "extensions"))).filter((f) => f.endsWith(".ts"));
 
   // No hard-coded plugin/opt-out counts: they broke on every newly registered
   // plugin, which is the exact flow this system exists to make cheap. Coverage
   // is pinned by the sum (every extension in exactly one list) plus membership.
   assert.equal(WEB_PLUGINS.length + Object.keys(WEB_PLUGIN_OPT_OUT).length, diskFiles.length);
-  for (const id of ["todo", "artifacts", "subagent-checkpoints"]) {
+  for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "dashboard"]) {
     assert.ok(WEB_PLUGINS.some((plugin) => plugin.id === id), `${id} must be a registered plugin`);
     assert.equal(id in WEB_PLUGIN_OPT_OUT, false, `${id} must not also be opted out`);
   }
 
-  for (const descriptor of [todoPlugin, artifactsPlugin, subagentCheckpointsPlugin]) {
+  // Exact Phase 6 placement assertions (R2 amended in 23b66e5)
+  assert.deepEqual(cacheStatsPlugin.surfaces, [
+    { kind: "sidebar" },
+    { kind: "slot", slot: "bottom" },
+  ]);
+  assert.deepEqual(todoPlugin.surfaces, [
+    { kind: "sidebar" },
+    { kind: "slot", slot: "top" },
+  ]);
+  assert.deepEqual(artifactsPlugin.surfaces, [
+    { kind: "sidebar" },
+    { kind: "slot", slot: "floating" },
+  ]);
+  assert.deepEqual(subagentCheckpointsPlugin.surfaces, [
+    { kind: "sidebar" },
+    { kind: "slot", slot: "center" },
+  ]);
+  assert.deepEqual(dashboardPlugin.surfaces, [
+    { kind: "sidebar" },
+    { kind: "page", path: "/plugins/dashboard" },
+  ]);
+  assert.ok(dashboardPlugin.actions && dashboardPlugin.actions.length > 0, "dashboard keeps actions");
+
+  for (const descriptor of WEB_PLUGINS) {
     const result = validatePlugin(descriptor, diskFiles);
     assert.equal(result.ok, true, `Descriptor "${descriptor.id}" failed: ${!result.ok ? result.error : ""}`);
-    assert.deepEqual(descriptor.surfaces, [
-      { kind: "sidebar" },
-      { kind: "page", path: `/plugins/${descriptor.id}` },
-    ]);
   }
+
+  const regErrors = validateRegistry(WEB_PLUGINS, diskFiles);
+  assert.deepEqual(regErrors, [], `validateRegistry failed: ${regErrors.join("; ")}`);
 });
 
 test("phase 3 views: representative view fixtures for todo, artifacts, and subagent-checkpoints pass validateView", () => {

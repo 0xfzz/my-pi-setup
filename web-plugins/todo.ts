@@ -7,7 +7,7 @@ export const todoPlugin: WebPluginDescriptor = {
   description: "Task intent graph, dependencies, and execution state.",
   surfaces: [
     { kind: "sidebar" },
-    { kind: "page", path: "/plugins/todo" },
+    { kind: "slot", slot: "top" },
   ],
 };
 

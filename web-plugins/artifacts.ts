@@ -7,7 +7,7 @@ export const artifactsPlugin: WebPluginDescriptor = {
   description: "Persisted workspace artifacts catalog and editor.",
   surfaces: [
     { kind: "sidebar" },
-    { kind: "page", path: "/plugins/artifacts" },
+    { kind: "slot", slot: "floating" },
   ],
 };
 
