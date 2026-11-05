@@ -28,9 +28,14 @@ stay limited to what the PRD's R9 allows. Keep every fork file listed here:
 - `components/plugins/PluginActions.tsx` — client component rendering confirmed action buttons without dialogs
 - `components/plugins/PluginViewRenderer.tsx` — text-only renderer components for kv, list, and status views
 - `components/plugins/PluginNav.tsx` — header and toolbar navigation links for page-enabled plugins
-- `components/plugins/plugins.css` — styles for plugin detail pages, views, and action components
-- `components/AppShell.tsx` — additive sidebar toolbar navigation entry for page-enabled plugins
-- `e2e/web-plugins.mjs` — Playwright e2e test verifying kv rendering, XSS non-execution, empty state, and dashboard action confirm flow (AC5)
+- `components/plugins/slots/SlotHost.tsx` — coordinator component dispatching declared plugins and session views to slot adapters
+- `components/plugins/slots/TopSlotAdapter.tsx` — compact single-row top strip below header rendering descriptor-ordered plugin summaries
+- `components/plugins/slots/BottomSlotAdapter.tsx` — compact single-row bottom strip above chat input rendering descriptor-ordered plugin summaries
+- `components/plugins/slots/CenterSlotAdapter.tsx` — collapsible panel above chat area rendering descriptor-ordered plugin views
+- `components/plugins/slots/FloatingSlotAdapter.tsx` — collapsible corner widget chip/card at bottom-right rendering descriptor-ordered plugin views
+- `components/plugins/plugins.css` — styles for plugin detail pages, views, action components, and slot regions
+- `components/AppShell.tsx` — additive sidebar toolbar navigation entry for page plugins and slot regions for top/bottom/center/floating surfaces
+- `e2e/web-plugins.mjs` — Playwright e2e test verifying kv rendering, XSS non-execution, empty state, dashboard action flow, and home page slot regions (top/bottom/center/floating)
 - `e2e/run.mjs` — calls checkWebPlugins during e2e suite run
 - `lib/rpc-manager.ts` — hook in registerRpcWrapper to attach web plugin listener on session creation
 - `next.config.ts` — outputFileTracingRoot kept at configDir; agentRules disabled so next dev stops regenerating AGENTS.md; `turbopack.root` REMOVED: widening the watch root to the repo made Turbopack watch its own .next output, causing recompile/hot-reload loops under page traffic (outer contracts load via jiti at runtime instead)

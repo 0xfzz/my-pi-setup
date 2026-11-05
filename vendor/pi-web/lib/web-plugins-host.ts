@@ -199,6 +199,36 @@ export function checkAndSeedFixtures(store = webPluginsStore): void {
         ],
       });
     }
+    if (!store.getView(testSessionId, "todo")) {
+      store.recordView(testSessionId, "todo", {
+        type: "list",
+        title: "Active tasks",
+        items: [
+          "Implement frontend slots",
+          "Verify e2e test suite",
+        ],
+      });
+    }
+    if (!store.getView(testSessionId, "artifacts")) {
+      store.recordView(testSessionId, "artifacts", {
+        type: "list",
+        title: "Artifacts",
+        items: [
+          "prd-phase-6.md",
+          "slot-architecture.png",
+        ],
+      });
+    }
+    if (!store.getView(testSessionId, "subagent-checkpoints")) {
+      store.recordView(testSessionId, "subagent-checkpoints", {
+        type: "kv",
+        title: "Delegated work",
+        rows: [
+          { label: "Active child", value: "worker-slots" },
+          { label: "Status", value: "In progress" },
+        ],
+      });
+    }
   }
 }
 

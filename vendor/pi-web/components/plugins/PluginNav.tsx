@@ -3,8 +3,9 @@
 import React, { useEffect, useState } from "react";
 
 export interface WebPluginSurface {
-  kind: "sidebar" | "page";
+  kind: "sidebar" | "page" | "slot";
   path?: string;
+  slot?: "top" | "center" | "bottom" | "floating";
 }
 
 export interface WebPluginDescriptor {
@@ -25,7 +26,7 @@ export function PluginNav({ plugins: initialPlugins, currentPluginId, variant = 
   const [plugins, setPlugins] = useState<readonly WebPluginDescriptor[]>(initialPlugins ?? []);
 
   useEffect(() => {
-    if (initialPlugins && initialPlugins.length > 0) {
+    if (initialPlugins !== undefined) {
       setPlugins(initialPlugins);
       return;
     }

@@ -82,6 +82,8 @@ import { getAgentsBadge, getSessionFamily, isHiddenRelation, sideChatTitle } fro
 import { getLastSettingsSection, settingsSectionRequiresProject, type SettingsSection } from "@/lib/settings-navigation";
 import { focusIfLost } from "@/lib/stacked-dialog";
 import { PluginNav } from "@/components/plugins/PluginNav";
+import { SlotHost } from "@/components/plugins/slots/SlotHost";
+import type { WebPluginDescriptor, WebView } from "@/lib/web-plugins-host";
 
 type SessionCopyField = "file" | "id" | "projectDir" | "gitBranch" | "gitWorktree";
 type AutoNameStatus =
@@ -145,6 +147,41 @@ export function AppShell() {
     }
   }, []);
   const notifiedAttentionRequestIdsRef = useRef(new Set<string>());
+  const [pluginsData, setPluginsData] = useState<{
+    plugins: readonly WebPluginDescriptor[];
+    views: Record<string, Record<string, WebView>>;
+  }>({ plugins: [], views: {} });
+
+  useEffect(() => {
+    let mounted = true;
+    async function fetchPlugins() {
+      try {
+        const res = await fetch("/api/plugins", { cache: "no-store" });
+        if (res.ok) {
+          const data = (await res.json()) as {
+            plugins?: WebPluginDescriptor[];
+            views?: Record<string, Record<string, WebView>>;
+          };
+          if (mounted && data) {
+            setPluginsData({
+              plugins: data.plugins ?? [],
+              views: data.views ?? {},
+            });
+          }
+        }
+      } catch {
+        // Best effort
+      }
+    }
+    void fetchPlugins();
+    const interval = setInterval(() => {
+      void fetchPlugins();
+    }, 3000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, []);
   // Sessions that finished while the tab was out of sight (#1484): the browser
   // Notification fires for the selected session, which the sidebar's unread
   // markers exclude ("already looking" — false while hidden). The favicon keeps
@@ -1624,7 +1661,7 @@ export function AppShell() {
         onRunningSessionIdsChange={handleRunningSessionIdsChange}
         onSessionsChange={handleSessionsChange}
       />
-      <PluginNav variant="toolbar" />
+      <PluginNav variant="toolbar" plugins={pluginsData.plugins} />
       <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
         {([
           ["models", translate("common.models")],
@@ -2812,8 +2849,25 @@ export function AppShell() {
         {isMobile && renderProjectTrustWarning(true)}
         </div>
 
+        {/* Top slot strip: directly below the header */}
+        <SlotHost
+          slot="top"
+          plugins={pluginsData.plugins}
+          views={pluginsData.views}
+          preferredSessionId={selectedSession?.id}
+        />
+
+        {/* Center: collapsible panel above the chat area */}
+        <SlotHost
+          slot="center"
+          plugins={pluginsData.plugins}
+          views={pluginsData.views}
+          preferredSessionId={selectedSession?.id}
+        />
+
         {/* Chat content */}
-        <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+        <div style={{ flex: 1, overflow: "hidden", position: "relative", display: "flex", flexDirection: "column" }}>
+          <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
           {showChat ? (
             <ChatWindow
               key={sessionKey}
@@ -2896,7 +2950,24 @@ export function AppShell() {
               </div>
             )
           ) : null}
+          </div>
+
+          {/* Bottom slot strip: above chat input / at bottom */}
+          <SlotHost
+            slot="bottom"
+            plugins={pluginsData.plugins}
+            views={pluginsData.views}
+            preferredSessionId={selectedSession?.id}
+          />
         </div>
+
+        {/* Floating slot widget: collapsible corner widget */}
+        <SlotHost
+          slot="floating"
+          plugins={pluginsData.plugins}
+          views={pluginsData.views}
+          preferredSessionId={selectedSession?.id}
+        />
       </div>
 
       <div
