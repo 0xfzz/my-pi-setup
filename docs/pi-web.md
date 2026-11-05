@@ -48,9 +48,15 @@ cd ../..
 
 Build outputs (`vendor/pi-web/.next`) and installed packages (`vendor/pi-web/node_modules`) are excluded from version control and must never be committed.
 
+### Serving the build (default)
+
+`/web start` serves the **production build**, not the dev server. It runs the fork's `next build` when there is no build output to serve (or when `/web start --rebuild` is passed), then launches `next start` detached on the loopback interface. A fresh checkout pays the build cost once; later starts reuse `vendor/pi-web/.next/BUILD_ID`.
+
+Build output and dev cache are separate (`\.next/` for the production build, `.next/dev/` for the dev server), but never run a build while a dev server is serving: `/web start` refuses to start when an instance is already healthy, and a manual `npm run build` under a live dev server can still disrupt it.
+
 ### Running the dev server
 
-Start the Next.js development server from inside `vendor/pi-web`:
+Development mode remains available for working on the fork itself. Start the Next.js development server from inside `vendor/pi-web`:
 
 ```sh
 cd vendor/pi-web
@@ -76,7 +82,8 @@ The vendored `pi-web` fork (`vendor/pi-web`) is the unified web interface for wo
 The `/web` command manages the detached `pi-web` server lifecycle directly from within Pi sessions:
 
 ```text
-/web start   - Launch pi-web if not running; denies if an instance is already healthy
+/web start   - Build if needed, then serve the production build; denies if an instance is already healthy
+/web start --rebuild - Force a fresh production build before serving
 /web stop    - Stop the managed instance, or provide manual pkill instructions if unmanaged
 /web status  - Report health, URL, owner session, start timestamp, and state file agreement
 ```
@@ -85,7 +92,7 @@ The `/web` command manages the detached `pi-web` server lifecycle directly from 
 - **Single-instance denial (managed)**: If loopback health (`GET http://127.0.0.1:30141/api/plugins`) returns HTTP 200 and a valid state file exists (`<agent dir>/web-ui-state.json`), startup is denied with a refusal notice identifying who started it (`startedBy`), when (`startedAt`), and the active URL. No duplicate instance is spawned.
 - **Single-instance denial (unmanaged)**: If the health check passes but the state file is missing or corrupt, startup is denied as an unmanaged instance (still serving, but owner cannot be attributed).
 - **Stale takeover**: If a state file exists but the health check fails, the stale state file is removed and a fresh instance takes over.
-- **Detached launch**: When starting, `pi-web` spawns detached from `vendor/pi-web` (`node_modules/next/dist/bin/next dev -H 127.0.0.1 -p 30141`) so it survives the Pi process. It polls health for up to 30 seconds; upon readiness, it writes the state file (`{pid, port, url, startedBy, startedAt}`) and reports the URL. On timeout, the spawned PID is killed and cleaned up. If `vendor/pi-web` is missing, it refuses with `"fork not vendored"`.
+- **Production serve**: When starting, `pi-web` first checks for build output (`vendor/pi-web/.next/BUILD_ID`). If it is missing — or `--rebuild` was passed — it runs the fork's production build and, if that build fails, reports the build error and starts nothing. It then spawns detached from `vendor/pi-web` (`node_modules/next/dist/bin/next start -H 127.0.0.1 -p 30141`) so the server survives the Pi process. It polls health for up to 30 seconds; upon readiness, it writes the state file (`{pid, port, url, startedBy, startedAt}`) and reports the URL. On timeout, the spawned PID is killed and cleaned up. If `vendor/pi-web` is missing, it refuses with `"fork not vendored"`.
 
 #### `/web stop` rules
 - **Managed shutdown**: If the state file has a live PID, it sends `SIGTERM` (`process.kill(pid)`), deletes the state file, and confirms stoppage.
@@ -175,7 +182,7 @@ npm run tidy
 
 ### Troubleshooting
 
-- **Never run `next build` in a dev checkout**: Executing `npm run build` or `next build` inside `vendor/pi-web/` compiles production bundles into `.next/`, clobbering development server cache artifacts and causing runtime conflicts with active `next dev` instances. Always use `npm run dev` for local development.
+- **Separate build and dev artifacts**: `/web start` serves a production build and writes it to `vendor/pi-web/.next/`; the dev server writes its own cache under `.next/dev/`. Do not run a build while a dev server is serving — stop the dev server first, or use `/web start` (which refuses when an instance is already healthy) so the two modes never overlap. If a build fails, `/web start` reports the compiler output tail and starts no server.
 - **`.next/dev/lock` contention**: If a previous development server was terminated abruptly (e.g., `kill -9`), Next.js may leave a stale lock file at `vendor/pi-web/.next/dev/lock`. If the dev server or E2E runner refuses to start with lock contention errors, verify that no `next dev` process is running (`pgrep -f "next dev"`), then remove the lock file:
   ```sh
   rm -f vendor/pi-web/.next/dev/lock
