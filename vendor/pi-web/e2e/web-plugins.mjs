@@ -95,11 +95,32 @@ export async function checkWebPlugins(page, base) {
     }
     assert.equal(dialogFired, false, "No plugin page may open a dialog");
 
-    // (e) Action confirmation and execution flow (AC5)
+    // (e) Action confirmation and execution flow (AC5) + Realtime SSE update & Status marker (Phase 7)
     await page.goto(`${base}/plugins/dashboard`, { waitUntil: "load" });
     const dashboardTitle = page.locator(".plugin-page-title");
     await dashboardTitle.waitFor({ state: "visible", timeout: 60_000 });
     assert.equal((await dashboardTitle.textContent())?.trim(), "Delegated work graph");
+
+    // Status marker assertion: seeded session (__test_session__) reports running (Phase 7)
+    const dashboardStatusDot = page.locator(".plugin-status-dot.plugin-status-running");
+    await dashboardStatusDot.first().waitFor({ state: "visible", timeout: 30_000 });
+    assert.ok(await dashboardStatusDot.first().isVisible(), "Status dot renders for running seeded session");
+
+    // Setup client-side EventSource listener and document navigation counter to prove push-based update without reload
+    await page.evaluate(() => {
+      window.__sseEvents = [];
+      window.__initialNavCount = performance.getEntriesByType("navigation").length;
+      const es = new EventSource("/api/plugins/events");
+      es.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(event.data);
+          if (parsed.type === "changed") {
+            window.__sseEvents.push(parsed);
+          }
+        } catch {}
+      };
+      window.__testEs = es;
+    });
 
     const actionButton = page.locator(".plugin-action-button").filter({ hasText: "Request fresh snapshot" });
     await actionButton.waitFor({ state: "visible", timeout: 30_000 });
@@ -124,6 +145,22 @@ export async function checkWebPlugins(page, base) {
       "Accepted requestId must surface in UI feedback message",
     );
 
+    // Verify that the view updated to "Synchronized" via realtime SSE push without a manual reload
+    const syncRow = page.locator(".plugin-kv-value").filter({ hasText: "Synchronized" });
+    await syncRow.waitFor({ state: "visible", timeout: 30_000 });
+    assert.ok(await syncRow.isVisible(), "View content updated to Synchronized via realtime SSE");
+
+    const realtimeProof = await page.evaluate(() => {
+      window.__testEs?.close();
+      return {
+        navCount: performance.getEntriesByType("navigation").length,
+        initialNavCount: window.__initialNavCount,
+        sseEventsCount: window.__sseEvents?.length ?? 0,
+      };
+    });
+    assert.equal(realtimeProof.navCount, realtimeProof.initialNavCount, "Realtime update occurred without a page reload");
+    assert.ok(realtimeProof.sseEventsCount >= 1, "At least one SSE changed event was received");
+
     // Verify dialog was never fired
     assert.equal(dialogFired, false, "Plugin action must execute without opening any dialog (AC5)");
 
@@ -139,6 +176,10 @@ export async function checkWebPlugins(page, base) {
     // (a) Top slot strip: shows Todo title and content
     const topSlot = page.locator(".plugin-slot-top");
     await topSlot.waitFor({ state: "visible", timeout: 60_000 });
+    const topRunningDot = topSlot.locator(".plugin-status-dot.plugin-status-running");
+    await topRunningDot.first().waitFor({ state: "visible", timeout: 30_000 });
+    assert.ok(await topRunningDot.first().isVisible(), "Status dot renders for running session in top slot region");
+
     const topTitle = topSlot.locator(".plugin-slot-title");
     await topTitle.filter({ hasText: "Todo" }).waitFor({ state: "visible", timeout: 30_000 });
     const topContent = topSlot.locator(".plugin-slot-content");

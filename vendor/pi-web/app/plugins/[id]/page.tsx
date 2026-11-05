@@ -1,11 +1,15 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { use } from "react";
 import { useSearchParams } from "next/navigation";
-import { PluginViewRenderer } from "@/components/plugins/PluginViewRenderer";
+import {
+  PluginViewRenderer,
+  SessionStatusDot,
+  usePluginData,
+} from "@/components/plugins/PluginViewRenderer";
 import { PluginNav } from "@/components/plugins/PluginNav";
 import { PluginActions } from "@/components/plugins/PluginActions";
-import type { WebPluginDescriptor, WebView } from "@/lib/web-plugins-host";
+import type { WebView } from "@/lib/web-plugins-host";
 import "@/components/plugins/plugins.css";
 
 interface PageProps {
@@ -18,73 +22,28 @@ export default function PluginPage({ params }: PageProps) {
   const searchParams = useSearchParams();
   const sessionParam = searchParams.get("session");
 
-  const [loading, setLoading] = useState(true);
-  const [plugins, setPlugins] = useState<readonly WebPluginDescriptor[]>([]);
-  const [currentPlugin, setCurrentPlugin] = useState<WebPluginDescriptor | null>(null);
-  const [view, setView] = useState<WebView | null>(null);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(sessionParam);
+  const { plugins, views, sessions, loading } = usePluginData();
+  const currentPlugin = plugins.find((p) => p.id === pluginId) ?? null;
 
-  useEffect(() => {
-    let mounted = true;
-
-    async function loadPluginData() {
-      try {
-        const res = await fetch("/api/plugins", { cache: "no-store" });
-        if (!res.ok) {
-          if (mounted) setLoading(false);
-          return;
+  // Find view and active session for this plugin
+  let foundView: WebView | null = null;
+  let activeSession: string | null = sessionParam;
+  if (views) {
+    if (sessionParam) {
+      foundView = views[sessionParam]?.[pluginId] ?? null;
+    } else {
+      // Pick latest published across sessions
+      for (const sessId of Object.keys(views)) {
+        if (views[sessId]?.[pluginId]) {
+          foundView = views[sessId][pluginId];
+          activeSession = sessId;
         }
-        const data = await res.json() as {
-          plugins?: WebPluginDescriptor[];
-          views?: Record<string, Record<string, WebView>>;
-        };
-
-        if (!mounted) return;
-
-        const allPlugins = data.plugins ?? [];
-        setPlugins(allPlugins);
-
-        const target = allPlugins.find((p) => p.id === pluginId) ?? null;
-        setCurrentPlugin(target);
-
-        // Find view for this plugin
-        let foundView: WebView | null = null;
-        let activeSession: string | null = sessionParam;
-        if (data.views) {
-          if (sessionParam) {
-            foundView = data.views[sessionParam]?.[pluginId] ?? null;
-          } else {
-            // Pick latest published across sessions
-            for (const sessId of Object.keys(data.views)) {
-              if (data.views[sessId]?.[pluginId]) {
-                foundView = data.views[sessId][pluginId];
-                activeSession = sessId;
-              }
-            }
-            if (!activeSession && Object.keys(data.views).length > 0) {
-              activeSession = Object.keys(data.views)[0];
-            }
-          }
-        }
-        setView(foundView);
-        setSelectedSessionId(activeSession);
-      } catch (err) {
-        console.error("Failed to load plugin data:", err);
-      } finally {
-        if (mounted) setLoading(false);
+      }
+      if (!activeSession && Object.keys(views).length > 0) {
+        activeSession = Object.keys(views)[0];
       }
     }
-
-    void loadPluginData();
-    const interval = setInterval(() => {
-      void loadPluginData();
-    }, 3000);
-
-    return () => {
-      mounted = false;
-      clearInterval(interval);
-    };
-  }, [pluginId, sessionParam]);
+  }
 
   if (loading && !currentPlugin) {
     return (
@@ -113,6 +72,8 @@ export default function PluginPage({ params }: PageProps) {
     );
   }
 
+  const sessionInfo = activeSession ? sessions?.[activeSession] : undefined;
+
   return (
     <div className="plugin-page-container">
       <header className="plugin-page-header">
@@ -120,7 +81,20 @@ export default function PluginPage({ params }: PageProps) {
       </header>
       <main className="plugin-page-main">
         <div className="plugin-heading-area">
-          <h1 className="plugin-page-title">{currentPlugin.title}</h1>
+          <div className="plugin-title-row">
+            <h1 className="plugin-page-title">{currentPlugin.title}</h1>
+            {activeSession && (
+              <div className="plugin-session-status" data-testid="plugin-session-status">
+                <SessionStatusDot
+                  running={sessionInfo?.running}
+                  awaitingInput={sessionInfo?.awaitingInput}
+                  sessionId={activeSession}
+                  showLabel
+                />
+                <span className="plugin-session-name">{activeSession}</span>
+              </div>
+            )}
+          </div>
           {currentPlugin.description && (
             <p className="plugin-page-description">{currentPlugin.description}</p>
           )}
@@ -128,12 +102,12 @@ export default function PluginPage({ params }: PageProps) {
         {currentPlugin.actions && currentPlugin.actions.length > 0 && (
           <PluginActions
             pluginId={currentPlugin.id}
-            sessionId={selectedSessionId}
+            sessionId={activeSession}
             actions={currentPlugin.actions}
           />
         )}
         <div className="plugin-view-card">
-          <PluginViewRenderer view={view} />
+          <PluginViewRenderer view={foundView} />
         </div>
       </main>
     </div>

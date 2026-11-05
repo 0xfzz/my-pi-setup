@@ -539,3 +539,62 @@
   background: var(--bg);
 }
 
+/* Session status marker */
+.plugin-status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  vertical-align: middle;
+}
+
+.plugin-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.plugin-status-dot.plugin-status-running {
+  background-color: var(--accent, #10b981);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.25);
+}
+
+.plugin-status-dot.plugin-status-idle {
+  background-color: var(--text-muted, #9ca3af);
+  opacity: 0.6;
+}
+
+.plugin-status-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.plugin-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.plugin-session-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: var(--bg-hover, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.plugin-session-name {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  color: var(--text);
+}
+
+

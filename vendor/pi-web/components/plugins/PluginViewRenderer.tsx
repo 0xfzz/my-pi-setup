@@ -1,5 +1,197 @@
-import React from "react";
-import type { WebView, KvWebView, ListWebView, StatusWebView } from "@/lib/web-plugins-host";
+import React, { useEffect, useState } from "react";
+import type {
+  WebView,
+  KvWebView,
+  ListWebView,
+  StatusWebView,
+  WebPluginDescriptor,
+} from "@/lib/web-plugins-host";
+
+export interface PluginSessionState {
+  running: boolean;
+  awaitingInput?: boolean;
+}
+
+export interface PluginDataState {
+  plugins: readonly WebPluginDescriptor[];
+  views: Record<string, Record<string, WebView>>;
+  sessions: Record<string, PluginSessionState>;
+  loading: boolean;
+}
+
+let sharedState: PluginDataState = {
+  plugins: [],
+  views: {},
+  sessions: {},
+  loading: true,
+};
+
+const subscribers = new Set<() => void>();
+let activeEventSource: EventSource | null = null;
+let errorCount = 0;
+let fallbackInterval: ReturnType<typeof setInterval> | null = null;
+let inFlightFetch: Promise<PluginDataState> | null = null;
+
+async function fetchPluginData(): Promise<PluginDataState> {
+  if (inFlightFetch) return inFlightFetch;
+  inFlightFetch = (async () => {
+    try {
+      const res = await fetch("/api/plugins", { cache: "no-store" });
+      if (res.ok) {
+        const data = (await res.json()) as {
+          plugins?: WebPluginDescriptor[];
+          views?: Record<string, Record<string, WebView>>;
+          sessions?: Record<string, PluginSessionState>;
+        };
+        sharedState = {
+          plugins: data.plugins ?? [],
+          views: data.views ?? {},
+          sessions: data.sessions ?? {},
+          loading: false,
+        };
+      }
+    } catch (err) {
+      console.error("[usePluginData] fetch failed:", err);
+    } finally {
+      inFlightFetch = null;
+      notifySubscribers();
+    }
+    return sharedState;
+  })();
+  return inFlightFetch;
+}
+
+function notifySubscribers() {
+  for (const sub of subscribers) {
+    try {
+      sub();
+    } catch {
+      // Best effort
+    }
+  }
+}
+
+function startFallbackPolling() {
+  if (fallbackInterval) return;
+  fallbackInterval = setInterval(() => {
+    void fetchPluginData();
+  }, 30_000);
+}
+
+function stopFallbackPolling() {
+  if (fallbackInterval) {
+    clearInterval(fallbackInterval);
+    fallbackInterval = null;
+  }
+}
+
+function setupEventSource() {
+  if (typeof window === "undefined") return;
+  if (activeEventSource) return;
+
+  try {
+    const es = new EventSource("/api/plugins/events");
+    activeEventSource = es;
+
+    es.onopen = () => {
+      errorCount = 0;
+      stopFallbackPolling();
+    };
+
+    es.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data) as { type?: string; revision?: number };
+        if (payload && payload.type === "changed") {
+          void fetchPluginData();
+        }
+      } catch {
+        // Comment or unparseable event
+      }
+    };
+
+    es.onerror = () => {
+      errorCount++;
+      if (errorCount >= 2) {
+        startFallbackPolling();
+      }
+    };
+  } catch (err) {
+    console.error("[usePluginData] EventSource initialization failed:", err);
+    startFallbackPolling();
+  }
+}
+
+function teardownEventSource() {
+  if (activeEventSource) {
+    activeEventSource.close();
+    activeEventSource = null;
+  }
+  stopFallbackPolling();
+  errorCount = 0;
+}
+
+/**
+ * Shared reactive hook for workflow web plugin data.
+ * Opens a single EventSource on /api/plugins/events and triggers refetches on change.
+ * Falls back to 30s slow polling if EventSource encounters errors.
+ */
+export function usePluginData(): PluginDataState & { refetch: () => Promise<PluginDataState> } {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    const onUpdate = () => setTick((t) => t + 1);
+    subscribers.add(onUpdate);
+
+    if (subscribers.size === 1) {
+      setupEventSource();
+      void fetchPluginData();
+    }
+
+    return () => {
+      subscribers.delete(onUpdate);
+      if (subscribers.size === 0) {
+        teardownEventSource();
+      }
+    };
+  }, []);
+
+  return {
+    ...sharedState,
+    refetch: fetchPluginData,
+  };
+}
+
+export interface SessionStatusDotProps {
+  running?: boolean;
+  awaitingInput?: boolean;
+  sessionId?: string;
+  showLabel?: boolean;
+  className?: string;
+}
+
+export function SessionStatusDot({
+  running,
+  awaitingInput,
+  sessionId,
+  showLabel = false,
+  className = "",
+}: SessionStatusDotProps) {
+  const isRunning = Boolean(running);
+  const statusClass = isRunning ? "plugin-status-running" : "plugin-status-idle";
+  const label = isRunning ? (awaitingInput ? "awaiting input" : "running") : "idle";
+  const title = sessionId ? `${sessionId} (${label})` : label;
+
+  return (
+    <span
+      className={`plugin-status-indicator ${className}`}
+      title={title}
+      aria-label={title}
+    >
+      <span className={`plugin-status-dot ${statusClass}`} data-testid="plugin-status-dot" />
+      {showLabel && <span className="plugin-status-label">{label}</span>}
+    </span>
+  );
+}
 
 interface PluginViewRendererProps {
   view: WebView | null | undefined;
