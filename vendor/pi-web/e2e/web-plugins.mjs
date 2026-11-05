@@ -24,41 +24,21 @@ export async function checkWebPlugins(page, base) {
   page.on("dialog", onDialog);
 
   try {
-    // 1. Visit published plugin page (seeded via PI_WEB_TEST_PLUGIN_VIEWS=1)
-    await page.goto(`${base}/plugins/cache-stats`, { waitUntil: "load" });
+    // 1. Visit published plugin page: /plugins/dashboard is the only declared page surface
+    await page.goto(`${base}/plugins/dashboard`, { waitUntil: "load" });
 
-    // (a) Verify page and published KV view
+    // (a) Verify page heading and descriptor title
     const heading = page.locator(".plugin-page-title");
     await heading.waitFor({ state: "visible", timeout: 60_000 });
-    assert.equal(await heading.textContent(), "Cache health");
+    assert.equal(await heading.textContent(), "Delegated work graph");
 
-    const kvTable = page.locator(".plugin-kv-table");
-    await kvTable.waitFor({ state: "visible", timeout: 30_000 });
-
-    // (b) Verify literal text rendering and zero script execution (AC6)
-    const xssValue = page.locator(".plugin-kv-value").filter({ hasText: "<script>" });
-    await xssValue.waitFor({ state: "visible", timeout: 5_000 });
-    assert.equal(await xssValue.count(), 1, "Exactly one cell with script tag text exists");
-
-    const textContent = await xssValue.textContent();
-    assert.equal(
-      textContent?.trim(),
-      "<script>alert('xss')</script>",
-      "Cell must render exact script text as a plain text node",
-    );
-
-    // Verify dialog was NOT triggered
-    assert.equal(dialogFired, false, "Script string must not execute or open a dialog");
-
-    // Double-check no executable <script> element contains the payload
-    const scriptTagContents = await page.locator("script").allTextContents();
-    assert.ok(
-      !scriptTagContents.some((content) => content.includes("alert('xss')")),
-      "XSS payload must never reach the DOM as an executable script element",
-    );
+    // (b) Verify status marker: seeded session (__test_session__) reports running (Phase 7)
+    const dashboardStatusDot = page.locator(".plugin-status-dot.plugin-status-running");
+    await dashboardStatusDot.first().waitFor({ state: "visible", timeout: 30_000 });
+    assert.ok(await dashboardStatusDot.first().isVisible(), "Status dot renders for running seeded session");
 
     // (c) Verify unpublished view shows empty state
-    await page.goto(`${base}/plugins/cache-stats?session=empty_session_id`, {
+    await page.goto(`${base}/plugins/dashboard?session=empty_session_id`, {
       waitUntil: "load",
     });
 
@@ -70,43 +50,17 @@ export async function checkWebPlugins(page, base) {
       "Unpublished session view must show the empty state",
     );
 
-    // (d) Every registered plugin gets a working page, with no per-plugin fork code.
-    // This is the pluggable guarantee: a descriptor in web-plugins/index.ts is enough.
-    const registry = await (await fetch(`${base}/api/plugins`)).json();
-    const pageSurfaces = registry.plugins.flatMap((plugin) =>
-      plugin.surfaces
-        .filter((surface) => surface.kind === "page")
-        .map((surface) => ({ plugin, path: surface.path })),
-    );
-    const registeredIds = registry.plugins.map((plugin) => plugin.id);
-    for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "dashboard"]) {
-      assert.ok(registeredIds.includes(id), `Plugin "${id}" must be registered, got: ${registeredIds.join(", ")}`);
-    }
-    assert.ok(pageSurfaces.length >= 1, `At least one plugin must expose a page surface, got ${pageSurfaces.length}`);
-    for (const { plugin, path } of pageSurfaces) {
-      // Plugin pages poll /api/plugins every 3s, so "networkidle" never settles; wait for load and the content instead.
-      await page.goto(`${base}${path}`, { waitUntil: "load" });
-      const title = page.locator(".plugin-page-title");
-      await title.waitFor({ state: "visible", timeout: 60_000 });
-      assert.equal((await title.textContent())?.trim(), plugin.title, `${path} must show its descriptor title`);
-      // A plugin that has not published yet shows the empty state; one that has shows a view.
-      const body = page.locator(".plugin-empty-state, .plugin-kv-table, .plugin-list, .plugin-status-badge");
-      await body.first().waitFor({ state: "visible", timeout: 30_000 });
-    }
-    assert.equal(dialogFired, false, "No plugin page may open a dialog");
-
-    // (e) Action confirmation and execution flow (AC5) + Realtime SSE update & Status marker (Phase 7)
+    // Return to /plugins/dashboard for action execution and navigation verification
     await page.goto(`${base}/plugins/dashboard`, { waitUntil: "load" });
-    const dashboardTitle = page.locator(".plugin-page-title");
-    await dashboardTitle.waitFor({ state: "visible", timeout: 60_000 });
-    assert.equal((await dashboardTitle.textContent())?.trim(), "Delegated work graph");
+    await heading.waitFor({ state: "visible", timeout: 60_000 });
 
-    // Status marker assertion: seeded session (__test_session__) reports running (Phase 7)
-    const dashboardStatusDot = page.locator(".plugin-status-dot.plugin-status-running");
-    await dashboardStatusDot.first().waitFor({ state: "visible", timeout: 30_000 });
-    assert.ok(await dashboardStatusDot.first().isVisible(), "Status dot renders for running seeded session");
+    // (d) Navigation links: verify Home link points to /
+    const homeLink = page.locator(".plugin-nav-home-link");
+    await homeLink.waitFor({ state: "visible", timeout: 10_000 });
+    assert.equal(await homeLink.getAttribute("href"), "/", "Home link points to /");
 
-    // Setup client-side EventSource listener and document navigation counter to prove push-based update without reload
+    // (e) Action confirmation, execution flow (AC5), and Realtime SSE push update without reload (Phase 7)
+    // Setup client-side EventSource listener and document navigation counter in page context
     await page.evaluate(() => {
       window.__sseEvents = [];
       window.__initialNavCount = performance.getEntriesByType("navigation").length;
@@ -121,6 +75,13 @@ export async function checkWebPlugins(page, base) {
       };
       window.__testEs = es;
     });
+
+    // Wait for initial connection event (revision: N)
+    await page.waitForFunction(
+      () => Boolean(window.__sseEvents && window.__sseEvents.length >= 1),
+      null,
+      { timeout: 15_000 },
+    );
 
     const actionButton = page.locator(".plugin-action-button").filter({ hasText: "Request fresh snapshot" });
     await actionButton.waitFor({ state: "visible", timeout: 30_000 });
@@ -139,10 +100,15 @@ export async function checkWebPlugins(page, base) {
     const feedback = page.locator(".plugin-action-feedback.feedback-success");
     await feedback.waitFor({ state: "visible", timeout: 30_000 });
     const feedbackText = await feedback.textContent();
-    assert.match(
-      feedbackText || "",
-      /request ID: [0-9a-f-]{36}/i,
-      "Accepted requestId must surface in UI feedback message",
+    const reqMatch = (feedbackText || "").match(/request ID: ([0-9a-f-]{36})/i);
+    assert.ok(reqMatch, "Accepted requestId must surface in UI feedback message");
+    const acceptedRequestId = reqMatch[1];
+
+    // Wait for subsequent SSE "changed" event triggered by the server-side view publish
+    await page.waitForFunction(
+      () => Boolean(window.__sseEvents && window.__sseEvents.length >= 2),
+      null,
+      { timeout: 15_000 },
     );
 
     // Verify that the view updated to "Synchronized" via realtime SSE push without a manual reload
@@ -150,25 +116,51 @@ export async function checkWebPlugins(page, base) {
     await syncRow.waitFor({ state: "visible", timeout: 30_000 });
     assert.ok(await syncRow.isVisible(), "View content updated to Synchronized via realtime SSE");
 
+    // Verify the view contains the exact accepted requestId published by the server
+    const reqRow = page.locator(".plugin-kv-value").filter({ hasText: acceptedRequestId });
+    await reqRow.waitFor({ state: "visible", timeout: 30_000 });
+    assert.ok(await reqRow.isVisible(), "View contains exact accepted requestId pushed over SSE");
+
     const realtimeProof = await page.evaluate(() => {
       window.__testEs?.close();
+      const events = window.__sseEvents ?? [];
       return {
         navCount: performance.getEntriesByType("navigation").length,
         initialNavCount: window.__initialNavCount,
-        sseEventsCount: window.__sseEvents?.length ?? 0,
+        events,
       };
     });
     assert.equal(realtimeProof.navCount, realtimeProof.initialNavCount, "Realtime update occurred without a page reload");
-    assert.ok(realtimeProof.sseEventsCount >= 1, "At least one SSE changed event was received");
+    assert.ok(realtimeProof.events.length >= 2, "EventSource received both initial and change events");
+    assert.ok(
+      realtimeProof.events[1].revision > realtimeProof.events[0].revision,
+      `New revision (${realtimeProof.events[1].revision}) must exceed initial (${realtimeProof.events[0].revision})`,
+    );
 
     // Verify dialog was never fired
     assert.equal(dialogFired, false, "Plugin action must execute without opening any dialog (AC5)");
 
-    // Verify navigation links
-    await page.goto(`${base}/plugins/cache-stats`, { waitUntil: "load" });
-    const homeLink = page.locator(".plugin-nav-home-link");
-    assert.ok(await homeLink.isVisible(), "Home link is visible on plugin page");
-    assert.equal(await homeLink.getAttribute("href"), "/", "Home link points to /");
+    // (f) Every registered plugin descriptor check
+    const registry = await (await fetch(`${base}/api/plugins`)).json();
+    const pageSurfaces = registry.plugins.flatMap((plugin) =>
+      plugin.surfaces
+        .filter((surface) => surface.kind === "page")
+        .map((surface) => ({ plugin, path: surface.path })),
+    );
+    const registeredIds = registry.plugins.map((plugin) => plugin.id);
+    for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "dashboard"]) {
+      assert.ok(registeredIds.includes(id), `Plugin "${id}" must be registered, got: ${registeredIds.join(", ")}`);
+    }
+    assert.ok(pageSurfaces.length >= 1, `At least one plugin must expose a page surface, got ${pageSurfaces.length}`);
+    for (const { plugin, path } of pageSurfaces) {
+      await page.goto(`${base}${path}`, { waitUntil: "load" });
+      const title = page.locator(".plugin-page-title");
+      await title.waitFor({ state: "visible", timeout: 60_000 });
+      assert.equal((await title.textContent())?.trim(), plugin.title, `${path} must show its descriptor title`);
+      const body = page.locator(".plugin-empty-state, .plugin-kv-table, .plugin-list, .plugin-status-badge");
+      await body.first().waitFor({ state: "visible", timeout: 30_000 });
+    }
+    assert.equal(dialogFired, false, "No plugin page may open a dialog");
 
     // 2. Visit home page ("/") and verify slot surfaces (Phase 6)
     await page.goto(`${base}/`, { waitUntil: "load" });
@@ -186,14 +178,23 @@ export async function checkWebPlugins(page, base) {
     await topContent.waitFor({ state: "visible", timeout: 30_000 });
     assert.match(await topContent.textContent() || "", /Implement frontend slots/i, "Top slot shows todo list content");
 
-    // (b) Bottom slot strip: shows Cache health title and content
+    // (b) Bottom slot strip: shows Cache health title and content + literal text rendering & zero script execution (AC6)
     const bottomSlot = page.locator(".plugin-slot-bottom");
     await bottomSlot.waitFor({ state: "visible", timeout: 60_000 });
     const bottomTitle = bottomSlot.locator(".plugin-slot-title");
     await bottomTitle.filter({ hasText: "Cache health" }).waitFor({ state: "visible", timeout: 30_000 });
     const bottomContent = bottomSlot.locator(".plugin-slot-content");
     await bottomContent.waitFor({ state: "visible", timeout: 30_000 });
-    assert.match(await bottomContent.textContent() || "", /XSS Test/i, "Bottom slot shows cache stats content");
+    const bottomText = (await bottomContent.textContent()) || "";
+    assert.match(bottomText, /XSS Test/i, "Bottom slot shows cache stats content");
+    assert.match(bottomText, /<script>alert\('xss'\)<\/script>/, "Cell must render exact script text as a plain text node");
+
+    // Double-check no executable <script> element contains the payload
+    const scriptTagContents = await page.locator("script").allTextContents();
+    assert.ok(
+      !scriptTagContents.some((content) => content.includes("alert('xss')")),
+      "XSS payload must never reach the DOM as an executable script element",
+    );
 
     // (c) Center slot: collapsible panel showing Delegated work
     const centerSlot = page.locator(".plugin-slot-center");
