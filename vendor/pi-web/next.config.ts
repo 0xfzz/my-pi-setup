@@ -4,7 +4,6 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
 const configDir = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(configDir, "../..");
 const { version } = JSON.parse(readFileSync(join(configDir, "package.json"), "utf8")) as { version: string };
 let piVersion = "unknown";
 try {
@@ -35,7 +34,6 @@ const nextConfig: NextConfig = {
   images: { unoptimized: true },
   // `next dev` runs Turbopack and `npm run build` runs webpack.
   turbopack: {
-    root: repoRoot,
     rules: {
       "**/mdast-util-gfm-autolink-literal/lib/index.js": { loaders: [gfmAutolinkEmailLoader] },
     },
