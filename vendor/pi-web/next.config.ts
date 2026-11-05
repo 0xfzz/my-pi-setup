@@ -18,6 +18,10 @@ try {
 const gfmAutolinkEmailLoader = join(configDir, "lib/gfm-autolink-email-loader.cjs");
 
 const nextConfig: NextConfig = {
+  // Vendored fork: `next dev` otherwise regenerates the nextjs-agent-rules
+  // block into AGENTS.md on every startup, dirtying the tree with generated
+  // noise (upstream documents this switch in its own startup log).
+  agentRules: false,
   outputFileTracingRoot: configDir,
   experimental: {
     // proxy.ts matches /api/:path*, and Next buffers the request body whenever

@@ -33,7 +33,7 @@ stay limited to what the PRD's R9 allows. Keep every fork file listed here:
 - `e2e/web-plugins.mjs` — Playwright e2e test verifying kv rendering, XSS non-execution, empty state, and dashboard action confirm flow (AC5)
 - `e2e/run.mjs` — calls checkWebPlugins during e2e suite run
 - `lib/rpc-manager.ts` — hook in registerRpcWrapper to attach web plugin listener on session creation
-- `next.config.ts` — repoRoot configuration for Turbopack root; outputFileTracingRoot kept at configDir
+- `next.config.ts` — repoRoot configuration for Turbopack root; outputFileTracingRoot kept at configDir; agentRules disabled so next dev stops regenerating AGENTS.md into the tree
 - `proxy.ts` — matcher updated to include `/plugins/:path*` for password auth gating (R15)
 - `tsconfig.json` — allowImportingTsExtensions: true to allow importing outer workflow contracts
 
