@@ -106,6 +106,7 @@ Opening `http://127.0.0.1:30141` displays the main application shell with toolba
 | --- | --- | --- |
 | Top strip | Cache health | Prompt cache token savings, hit/miss ratios (compact row) |
 | Top strip | Intent graph | Active, claimed, and settled tasks (compact row) |
+| Top strip | Bubbly spinner | Animated session activity verb rendered as a compact status chip |
 | Center panel | Subagent checkpoints | Delegated worker milestones and checkpoint history (collapsible) |
 | Floating widget | Artifact catalog | Plans, specifications, and scratchpads (collapsible corner card) |
 | Bottom strip | Cache health | Compact summary row above the chat input |
@@ -130,11 +131,11 @@ Clients consume a single shared `usePluginData` reactive hook that subscribes to
 
 The `GET /api/plugins` endpoint provides an authoritative snapshot of session execution states sourced from pi-web's session registry (`rpc-manager`). For each session present in the views store, the API reports `{ running: boolean; awaitingInput?: boolean }`. Sessions without active registry processes strictly report idle (never inferred or guessed).
 
-The UI renders visual status markers next to session-scoped views:
+The UI renders visual status markers next to session-scoped views and sidebar rows:
 - **Running session**: Green status dot (`.plugin-status-dot.plugin-status-running`) indicating an active agent turn or background task.
 - **Idle session**: Muted gray status dot (`.plugin-status-dot.plugin-status-idle`) indicating a settled or inactive session.
 
-Status markers are rendered in all slot adapters (top/bottom single-row strips, center panels, and floating widget chips) as well as beside the session identifier on plugin detail pages (`/plugins/[id]`). The text-only rule strictly applies to view contents; status markers are rendered as styled UI indicators separate from view payload text.
+Status markers are rendered in all slot adapters (top/bottom single-row strips, center panels, and floating widget chips), beside the session identifier on plugin detail pages (`/plugins/[id]`), and next to each session in the left sidebar list (`SessionRowView` in `SessionTree.tsx`). The text-only rule strictly applies to view contents; status markers are rendered as styled UI indicators separate from view payload text. Bubbly spinner working messages render in the top slot as a compact text-only status chip with CSS-only animation.
 
 #### Plugin actions
 
