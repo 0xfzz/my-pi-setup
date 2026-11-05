@@ -9,7 +9,10 @@
  * 3. Takeover: if state exists but the server is not healthy, state is removed
  *    and a fresh server takes over.
  * 4. Detached lifecycle: servers spawn detached so they survive the parent Pi session.
- * 5. Complete testability: IO (health check, state persistence, process spawning,
+ * 5. Production serving: `/web start` serves the production build (`next start`), running
+ *    the fork's build first only when no build output exists or a rebuild is asked for.
+ *    Dev mode is never used by the command.
+ * 6. Complete testability: IO (health check, state persistence, process spawning,
  *    clocks, pid probing) is injectable; tests never bind real ports or modify production files.
  */
 import { spawn } from "node:child_process";
@@ -25,6 +28,8 @@ export const DEFAULT_WEB_UI_URL = `http://${DEFAULT_WEB_UI_HOST}:${DEFAULT_WEB_U
 export const DEFAULT_HEALTH_ENDPOINT = `${DEFAULT_WEB_UI_URL}/api/plugins`;
 export const DEFAULT_PKILL_COMMAND = `pkill -f "next.*${DEFAULT_WEB_UI_PORT}"`;
 export const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
+export const DEFAULT_BUILD_TIMEOUT_MS = 600_000;
+export const DEFAULT_BUILD_MARKER = ".next/BUILD_ID";
 export const DEFAULT_POLL_INTERVAL_MS = 250;
 
 export interface WebUiState {
@@ -75,6 +80,9 @@ export interface WebUiDeps {
   fetchHealth: (url: string) => Promise<boolean>;
   checkVendorDir: (dir: string) => boolean;
   spawnServer: (cwd: string) => { pid?: number; unref?: () => void };
+  hasBuild: (cwd: string) => boolean;
+  buildServer: (cwd: string) => Promise<{ ok: boolean; error?: string }>;
+  rebuild: boolean;
   killProcess: (pid: number) => void;
   removeState: (path: string) => Promise<void>;
   readState: (path: string) => Promise<WebUiStateStatus>;
@@ -237,18 +245,64 @@ export function defaultKillProcess(pid: number): void {
   }
 }
 
-/** Spawn detached next dev server from vendor directory. */
+/** Arguments for serving the production build: never `dev`. */
+export function nextServeArgs(): string[] {
+  return ["start", "-H", DEFAULT_WEB_UI_HOST, "-p", String(DEFAULT_WEB_UI_PORT)];
+}
+
+/** True when the fork has production build output to serve. */
+export function defaultHasBuild(cwd: string): boolean {
+  return existsSync(join(cwd, DEFAULT_BUILD_MARKER));
+}
+
+/** Run the fork's production build; resolve with the failure tail on error. */
+export function defaultBuildServer(
+  cwd: string,
+  timeoutMs = DEFAULT_BUILD_TIMEOUT_MS,
+): Promise<{ ok: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const nextBin = "node_modules/next/dist/bin/next";
+    const child = spawn(process.execPath, [nextBin, "build", "--webpack"], {
+      cwd,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString("utf8")).slice(-4000);
+    });
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      resolve({ ok: false, error: `build timed out after ${Math.round(timeoutMs / 1000)}s` });
+    }, timeoutMs);
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      resolve({ ok: false, error: error.message });
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve({ ok: true });
+        return;
+      }
+      const tail = stderr
+        .trim()
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .slice(-6)
+        .join(" / ");
+      resolve({ ok: false, error: `exit ${code}${tail ? `: ${tail}` : ""}` });
+    });
+  });
+}
+
+/** Spawn the detached production server from the vendor directory. */
 export function defaultSpawnServer(cwd: string): { pid?: number; unref?: () => void } {
   const nextBin = "node_modules/next/dist/bin/next";
-  const child = spawn(
-    process.execPath,
-    [nextBin, "dev", "-H", DEFAULT_WEB_UI_HOST, "-p", String(DEFAULT_WEB_UI_PORT)],
-    {
-      cwd,
-      detached: true,
-      stdio: "ignore",
-    },
-  );
+  const child = spawn(process.execPath, [nextBin, ...nextServeArgs()], {
+    cwd,
+    detached: true,
+    stdio: "ignore",
+  });
   child.unref();
   return { pid: child.pid, unref: () => child.unref() };
 }
@@ -301,6 +355,9 @@ function resolveDeps(overrides: Partial<WebUiDeps> = {}): WebUiDeps {
     fetchHealth: overrides.fetchHealth ?? defaultFetchHealth,
     checkVendorDir: overrides.checkVendorDir ?? existsSync,
     spawnServer: overrides.spawnServer ?? defaultSpawnServer,
+    hasBuild: overrides.hasBuild ?? defaultHasBuild,
+    buildServer: overrides.buildServer ?? defaultBuildServer,
+    rebuild: overrides.rebuild ?? false,
     killProcess: overrides.killProcess ?? defaultKillProcess,
     removeState: overrides.removeState ?? defaultRemoveState,
     readState: overrides.readState ?? defaultReadState,
@@ -352,6 +409,19 @@ export async function startWebUi(options: Partial<WebUiDeps> = {}): Promise<WebU
       status: "error",
       message: `pi-web fork not vendored: directory not found at ${deps.vendorDir}.`,
     };
+  }
+
+  // Serve the production build. Build only when there is no output to serve, or
+  // when the caller explicitly asks for a rebuild: `next start` cannot serve a
+  // missing or stale build, and dev mode is not what this command runs.
+  if (deps.rebuild || !deps.hasBuild(deps.vendorDir)) {
+    const built = await deps.buildServer(deps.vendorDir);
+    if (!built.ok) {
+      return {
+        status: "error",
+        message: `pi-web production build failed: ${built.error ?? "unknown error"}. No server was started.`,
+      };
+    }
   }
 
   let spawned: { pid?: number; unref?: () => void };

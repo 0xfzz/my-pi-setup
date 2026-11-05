@@ -2,7 +2,7 @@
  * web — management commands for the vendored pi-web fork.
  *
  * Implements:
- *   /web start  - Launch pi-web if not serving; refuses if already running
+ *   /web start  - Build if needed, then serve the production build; refuses if already running
  *   /web stop   - Stop running pi-web instance if managed, or provide pkill guidance
  *   /web status - Report serving status, owner, URL, and state file agreement
  */
@@ -15,14 +15,16 @@ export interface WebExtensionOptions {
 
 export default function webExtension(pi: ExtensionAPI, options: WebExtensionOptions = {}) {
   pi.registerCommand("web", {
-    description: "Manage pi-web UI server: /web start | stop | status",
+    description: "Manage pi-web UI server (production build): /web start [--rebuild] | stop | status",
     getArgumentCompletions(prefix) {
       const subcommands = ["start", "stop", "status"];
       const matching = subcommands.filter((sub) => sub.startsWith(prefix.trim().toLowerCase()));
       return matching.map((sub) => ({ value: sub, label: sub }));
     },
     handler: async (args, ctx) => {
-      const sub = (args ?? "").trim().split(/\s+/)[0]?.toLowerCase() || "status";
+      const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
+      const sub = parts[0]?.toLowerCase() || "status";
+      const rebuild = parts.slice(1).some((flag) => flag === "--rebuild" || flag === "--build");
       const sessionId =
         (ctx as any)?.sessionManager?.getSessionId?.() ??
         (ctx as any)?.sessionManager?.getHeader?.()?.id ??
@@ -34,7 +36,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       };
 
       if (sub === "start") {
-        const result = await startWebUi(deps);
+        const result = await startWebUi({ ...deps, rebuild });
         const level = result.status === "denied" ? "warning" : result.status === "error" ? "error" : "info";
         ctx.ui?.notify(result.message, level);
         return;
