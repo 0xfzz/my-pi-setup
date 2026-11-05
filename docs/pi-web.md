@@ -67,6 +67,37 @@ The server binds strictly to the loopback interface on port `30141`:
 
 To allow access across a trusted local area network, use `npm run dev:lan`, which binds to `0.0.0.0:30141`. LAN access exposes session views to any host on your subnet; use only on trusted private networks.
 
+### Single-UI decision
+
+The vendored `pi-web` fork (`vendor/pi-web`) is the unified web interface for workflow extensions. To prevent redundant web servers and port confusion, the old standalone dashboard HTTP server (`lib/dashboard/server.ts`, port 9177) is opt-in (`PI_DASHBOARD_SERVER=1`) and disabled by default. The dashboard extension continues publishing its live delegation views directly into `pi-web` via `publishWebView`, preserving complete data parity.
+
+### Process management via `/web`
+
+The `/web` command manages the detached `pi-web` server lifecycle directly from within Pi sessions:
+
+```text
+/web start   - Launch pi-web if not running; denies if an instance is already healthy
+/web stop    - Stop the managed instance, or provide manual pkill instructions if unmanaged
+/web status  - Report health, URL, owner session, start timestamp, and state file agreement
+```
+
+#### `/web start` decision rules
+- **Single-instance denial (managed)**: If loopback health (`GET http://127.0.0.1:30141/api/plugins`) returns HTTP 200 and a valid state file exists (`<agent dir>/web-ui-state.json`), startup is denied with a refusal notice identifying who started it (`startedBy`), when (`startedAt`), and the active URL. No duplicate instance is spawned.
+- **Single-instance denial (unmanaged)**: If the health check passes but the state file is missing or corrupt, startup is denied as an unmanaged instance (still serving, but owner cannot be attributed).
+- **Stale takeover**: If a state file exists but the health check fails, the stale state file is removed and a fresh instance takes over.
+- **Detached launch**: When starting, `pi-web` spawns detached from `vendor/pi-web` (`node_modules/next/dist/bin/next dev -H 127.0.0.1 -p 30141`) so it survives the Pi process. It polls health for up to 30 seconds; upon readiness, it writes the state file (`{pid, port, url, startedBy, startedAt}`) and reports the URL. On timeout, the spawned PID is killed and cleaned up. If `vendor/pi-web` is missing, it refuses with `"fork not vendored"`.
+
+#### `/web stop` rules
+- **Managed shutdown**: If the state file has a live PID, it sends `SIGTERM` (`process.kill(pid)`), deletes the state file, and confirms stoppage.
+- **Unmanaged notice**: If the server is healthy but unmanaged (no state file or dead PID in state), it prunes any stale file and instructs the user to kill it manually with the exact command:
+  ```sh
+  pkill -f "next.*30141"
+  ```
+- **Not running**: If the server is not responding and no live PID exists, it confirms `pi-web` is not running.
+
+#### `/web status` rules
+- Inspects health and the state file, reporting whether the server is serving, who started it, when it started, its URL, and whether the state file matches reality.
+
 ### What you see
 
 Opening `http://127.0.0.1:30141` displays the main application shell with toolbar navigation and sidebar links to registered workflow plugin pages:

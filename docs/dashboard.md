@@ -13,13 +13,26 @@
 ## Summary
 
 - A local, read-only view of the parent session's graph, its child agents and the workspace artifacts.
-- One detached server per OS user; later sessions join the same page instead of starting another.
+- Standalone server is **opt-in** (`PI_DASHBOARD_SERVER=1`); by default, only web plugin views are published to `pi-web`.
+- One detached server per OS user when enabled; later sessions join the same page instead of starting another.
 - Loopback only, separate producer/browser credentials, no mutation endpoints, projection allowlist (no transcripts, paths or tails).
 - Delivery is best-effort and coalesced, so a dead browser cannot block orchestration.
 
 A local, read-only dashboard for the parent session, its child agents, and workspace artifacts.
 
-## Start
+## Standalone server opt-in
+
+By default, the standalone dashboard HTTP server does **not** start. Under the single-UI architecture, the vendored `pi-web` fork is the primary web interface, and the dashboard extension publishes its delegation graph snapshot directly as web plugin views (see [`docs/pi-web.md`](pi-web.md)).
+
+To run the standalone dashboard HTTP server on port `9177`:
+
+```sh
+export PI_DASHBOARD_SERVER=1
+```
+
+When `PI_DASHBOARD_SERVER=1` (or `options.server: true`) is configured, the first delegated child launches the standalone background server and Pi displays the dashboard URL as before. Regardless of whether the standalone server is enabled, web plugin views continue to publish seamlessly.
+
+## Start (standalone server)
 
 Install the package dependencies and build the local browser assets:
 
