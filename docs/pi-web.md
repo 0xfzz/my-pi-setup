@@ -100,15 +100,16 @@ The `/web` command manages the detached `pi-web` server lifecycle directly from 
 
 ### What you see
 
-Opening `http://127.0.0.1:30141` displays the main application shell with toolbar navigation and sidebar links to registered workflow plugin pages:
+Opening `http://127.0.0.1:30141` displays the main application shell with toolbar navigation, sidebar links, and workflow plugin views placed in frontend slots:
 
-| Page Route | Plugin | Displays |
+| Placement | Plugin | Displays |
 | --- | --- | --- |
-| `/plugins/cache-stats` | Cache health | Prompt cache token savings, cache-control breakpoints, and hit/miss ratios |
-| `/plugins/todo` | Intent graph | Active, claimed, and settled tasks with leases, dependencies, and verified evidence |
-| `/plugins/artifacts` | Artifact catalog | Workspace plans, specifications, and scratchpads with metadata and text rendering |
-| `/plugins/subagent-checkpoints` | Subagent checkpoints | Delegated worker milestones, active child tasks, and checkpoint history |
-| `/plugins/dashboard` | Delegation dashboard | Parent and child agents, handoffs, reviews, and escalations (data parity with standalone dashboard) |
+| Top strip | Cache health | Prompt cache token savings, hit/miss ratios (compact row) |
+| Top strip | Intent graph | Active, claimed, and settled tasks (compact row) |
+| Center panel | Subagent checkpoints | Delegated worker milestones and checkpoint history (collapsible) |
+| Floating widget | Artifact catalog | Plans, specifications, and scratchpads (collapsible corner card) |
+| Bottom strip | Cache health | Compact summary row above the chat input |
+| Page `/plugins/dashboard` | Delegation dashboard | Parent/child agents, handoffs, reviews, escalations — the settings/whole-pi surface (data parity with standalone dashboard) |
 
 #### Read-only data presentation
 
@@ -179,9 +180,9 @@ Documentation consistency and plugin host behavior are covered by the following 
   - KV table rendering and label display.
   - XSS script payload rendering as inert plain text (AC6).
   - Empty state handling for unpublished sessions.
-  - Route availability and page titles for all five registered plugins (`cache-stats`, `todo`, `artifacts`, `subagent-checkpoints`, `dashboard`).
+  - Slot placement rendering for all five registered plugins (top/center/floating/bottom on the home view; dashboard on its page).
   - Home toolbar navigation.
-- Dev server smoke test: HTTP `GET http://127.0.0.1:30141/api/plugins` and `GET http://127.0.0.1:30141/plugins/cache-stats` returning HTTP 200.
+- Dev server smoke test: HTTP `GET http://127.0.0.1:30141/api/plugins` and `GET http://127.0.0.1:30141/plugins/dashboard` returning HTTP 200.
 
 What these tests do **not** cover: They do not test production deployment behind a reverse proxy, public WAN routing, multi-user concurrency under remote network latency, or browser engines older than those listed in the prerequisites.
 
