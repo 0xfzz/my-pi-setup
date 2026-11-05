@@ -17,6 +17,7 @@ import {
   DEFAULT_WEB_UI_PORT,
   DEFAULT_WEB_UI_URL,
   DEFAULT_PKILL_COMMAND,
+  nextServeArgs,
   type WebUiState,
   type WebUiDeps,
 } from "../lib/web-ui.ts";
@@ -310,6 +311,7 @@ test("/web start: takes over stale state when health check fails and spawns fres
       statePath,
       sessionId: "new-session",
       checkVendorDir: () => true,
+      hasBuild: () => true,
       fetchHealth: async () => {
         healthCallCount++;
         // 1st call before spawn: unhealthy
@@ -348,6 +350,7 @@ test("/web start: successful start writes state file and reports URL", async () 
       statePath,
       sessionId: "my-session-id",
       checkVendorDir: () => true,
+      hasBuild: () => true,
       fetchHealth: async () => {
         healthCallCount++;
         return healthCallCount > 1;
@@ -382,6 +385,7 @@ test("/web start: timeout kills spawned process and cleans up state", async () =
     const result = await startWebUi({
       statePath,
       checkVendorDir: () => true,
+      hasBuild: () => true,
       fetchHealth: async () => false, // never becomes healthy
       spawnServer: () => ({ pid: 8888, unref: () => {} }),
       killProcess: (pid) => {
@@ -654,4 +658,141 @@ test("webExtension: command registration, subcommands, and notifications", async
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0]?.level, "warning");
   assert.match(notifications[0]?.message ?? "", /Unknown subcommand/);
+});
+
+test("nextServeArgs: serves the production build, never dev mode", () => {
+  const args = nextServeArgs();
+  assert.equal(args[0], "start", "must run next start, not next dev");
+  assert.ok(!args.includes("dev"), "dev mode must never be used by /web start");
+  assert.deepEqual(args, ["start", "-H", "127.0.0.1", "-p", "30141"]);
+  assert.ok(!args.includes("build"), "build is a separate step, not a server flag");
+});
+
+test("/web start: builds when no production build exists, then serves it", async () => {
+  const tmp = await createTempDir();
+  try {
+    const statePath = join(tmp, "state.json");
+    const calls: string[] = [];
+    let healthCallCount = 0;
+
+    const result = await startWebUi({
+      statePath,
+      checkVendorDir: () => true,
+      hasBuild: () => false,
+      buildServer: async () => {
+        calls.push("build");
+        return { ok: true };
+      },
+      fetchHealth: async () => {
+        healthCallCount++;
+        return healthCallCount > 1;
+      },
+      spawnServer: () => {
+        calls.push("spawn");
+        return { pid: 5555, unref: () => {} };
+      },
+      pollIntervalMs: 1,
+      startupTimeoutMs: 1000,
+      sleep: async () => {},
+    });
+
+    assert.equal(result.status, "started");
+    assert.deepEqual(calls, ["build", "spawn"], "build must finish before the server starts");
+  } finally {
+    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("/web start: an existing build is served without rebuilding", async () => {
+  const tmp = await createTempDir();
+  try {
+    const statePath = join(tmp, "state.json");
+    let builds = 0;
+    let healthCallCount = 0;
+
+    const result = await startWebUi({
+      statePath,
+      checkVendorDir: () => true,
+      hasBuild: () => true,
+      buildServer: async () => {
+        builds++;
+        return { ok: true };
+      },
+      fetchHealth: async () => {
+        healthCallCount++;
+        return healthCallCount > 1;
+      },
+      spawnServer: () => ({ pid: 6666, unref: () => {} }),
+      pollIntervalMs: 1,
+      startupTimeoutMs: 1000,
+      sleep: async () => {},
+    });
+
+    assert.equal(result.status, "started");
+    assert.equal(builds, 0, "an up-to-date build must not be rebuilt on every start");
+  } finally {
+    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("/web start: a failed build reports the error and starts nothing", async () => {
+  const tmp = await createTempDir();
+  try {
+    const statePath = join(tmp, "state.json");
+    let spawned = false;
+
+    const result = await startWebUi({
+      statePath,
+      checkVendorDir: () => true,
+      hasBuild: () => false,
+      buildServer: async () => ({ ok: false, error: "exit 1: Type error in components/plugins/SlotHost.tsx" }),
+      fetchHealth: async () => false,
+      spawnServer: () => {
+        spawned = true;
+        return { pid: 7777 };
+      },
+    });
+
+    assert.equal(result.status, "error");
+    assert.match(result.message, /production build failed/);
+    assert.match(result.message, /Type error in components\/plugins\/SlotHost\.tsx/);
+    assert.match(result.message, /No server was started/);
+    assert.equal(spawned, false, "a failed build must not leave a server half-started");
+    assert.equal(await defaultReadState(statePath), null, "no state file may be written");
+  } finally {
+    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("/web start: rebuild forces a build even when output exists", async () => {
+  const tmp = await createTempDir();
+  try {
+    const statePath = join(tmp, "state.json");
+    let builds = 0;
+    let healthCallCount = 0;
+
+    const result = await startWebUi({
+      statePath,
+      checkVendorDir: () => true,
+      hasBuild: () => true,
+      rebuild: true,
+      buildServer: async () => {
+        builds++;
+        return { ok: true };
+      },
+      fetchHealth: async () => {
+        healthCallCount++;
+        return healthCallCount > 1;
+      },
+      spawnServer: () => ({ pid: 8889, unref: () => {} }),
+      pollIntervalMs: 1,
+      startupTimeoutMs: 1000,
+      sleep: async () => {},
+    });
+
+    assert.equal(result.status, "started");
+    assert.equal(builds, 1, "--rebuild must rebuild even when a build marker exists");
+  } finally {
+    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+  }
 });
