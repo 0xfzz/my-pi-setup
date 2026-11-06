@@ -963,7 +963,10 @@ export class AgentSessionWrapper {
   }
 
   private emit(event: AgentEvent): void {
-    recordExtensionUi(this.sessionId, event as unknown as Record<string, unknown>, this.cwd);
+    // Test mocks may lack a session manager; project attribution is optional.
+    let project: string | undefined;
+    try { project = this.cwd; } catch { project = undefined; }
+    recordExtensionUi(this.sessionId, event as unknown as Record<string, unknown>, project);
     for (const listener of this.listeners) {
       try {
         listener(event);
