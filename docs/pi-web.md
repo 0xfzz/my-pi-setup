@@ -200,6 +200,12 @@ ctx.ui.setWorkingIndicator();
 
 Its descriptor declares `component: "ui.working-indicator.v1"`, `scope: "session"`, `strategy: "compact"`, `placement: { kind: "anchor", anchor: "chat.working" }`, and `override: { target: "ui.working-indicator.v1", mode: "wrap", fallback: "builtin" }`. Use `replace` for a host-owned alternate strategy or `hide` for suppression; no React bundle, HTML, CSS, or arbitrary callback may be supplied. Component keys are experimental v1 schemas; changing a key's major version requires host support, otherwise validation rejects it.
 
+##### Developer diagnostics
+
+Open `/plugins` for a read-only view of the current epoch/revision, accepted/rejected/coalesced/dropped counts, eligible contributions, deterministic override resolution, disabled renderer circuit breakers, and named host/browser diagnostics. It uses the same shared UI subscription and the ordinary pi-web signed-session/loopback authentication boundary. Browser renderer health is local to the current tab and resets with a reload; host event diagnostics are retained in the bounded snapshot.
+
+The route is available in development. In production it returns 404 unless the operator explicitly sets `PI_WEB_UI_DIAGNOSTICS=1`; enabling it does not bypass authentication or add any mutation capability.
+
 #### Plugin actions
 
 The dashboard plugin ships one trusted, read-only action — **Request fresh snapshot** — rendered on `/plugins/dashboard`. Submitting it requires typing the exact confirmation string (`request sync`); the fork validates it server-side (403 otherwise), enforces one in-flight action per session, and relays a single-use, audited request to the owning extension over the session event bus. The web server never executes anything itself: the extension re-checks the request and republishes its view through the normal channel. Other plugins ship no actions, and mutation actions are out of scope pending a follow-up PRD. The contract and threat review live in [`docs/prds/plugin-actions.md`](prds/plugin-actions.md).

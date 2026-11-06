@@ -33,6 +33,13 @@ test("redirects page navigation to the login page and preserves its query", () =
   assert.equal(response.headers.get("location"), "http://localhost/login?next=%2F%3Fsession%3Dabc");
 });
 
+test("plugin diagnostics use the same signed-session boundary as plugin pages", () => {
+  assert.equal(proxy(request("/plugins")).status, 307);
+  assert.equal(proxy(request("/plugins/dashboard")).status, 307);
+  const token = createWebSessionToken("secret");
+  assert.equal(proxy(request("/plugins", { Cookie: `pi_web_session=${token}` })).status, 200);
+});
+
 test("accepts a signed session for pages", () => {
   const token = createWebSessionToken("secret");
   const response = proxy(request("/", { Cookie: `pi_web_session=${token}` }));

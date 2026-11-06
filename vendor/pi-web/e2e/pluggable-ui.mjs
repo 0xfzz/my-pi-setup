@@ -180,7 +180,12 @@ export async function checkPluggableUi(page, base) {
     await node("overlay").getByRole("button", { name: "Close UI fixture" }).click();
     await node("overlay").waitFor({ state: "hidden" });
     assert.equal(await page.locator('[data-web-ui-anchor="viewport.overlay"]').evaluate(element => document.activeElement === element), true);
-    console.log("[pluggable-ui e2e] RPC working updates, anchors, runtime placement, session isolation, reconnect, override fallback and mobile layout passed.");
+    await page.goto(`${base}/plugins`, { waitUntil: "load", timeout: 120_000 });
+    await page.getByRole("heading", { name: "Plugin UI diagnostics" }).waitFor();
+    await expectText(page.getByRole("list", { name: "Host UI diagnostics" }), "ui.layout.changed placement: unknown anchor");
+    await expectText(page.getByRole("table"), "ui.working-indicator.v1");
+    assert.match(await page.getByRole("definition").allTextContents().then(values => values.join(" ")), /[0-9]+/);
+    console.log("[pluggable-ui e2e] RPC working updates, anchors, runtime placement, session isolation, reconnect, override fallback, mobile layout and diagnostics passed.");
   } finally {
     await page.evaluate(() => { if (window.__fixtureClone) window.structuredClone = window.__fixtureClone; }).catch(() => {});
     await page.unroute(snapshots);

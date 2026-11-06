@@ -345,7 +345,7 @@ if (isDirectRun) {
     // reload mid-compile, and the run then fails on a title that never settles.
     // Visiting every route once, without asserting, absorbs that first compile.
     const warmRegistry = await (await fetch(`${base}/api/plugins`)).json();
-    const warmPaths = new Set(["/"]);
+    const warmPaths = new Set(["/", "/plugins"]);
     for (const plugin of warmRegistry.plugins ?? []) {
       for (const surface of plugin.surfaces ?? []) {
         if (surface.kind === "page" && surface.path) warmPaths.add(surface.path);

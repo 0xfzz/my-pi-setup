@@ -25,6 +25,9 @@ const localDiagnostics: string[] = [];
 export function reportUiFailure(owner: string, message: string): void {
   localDiagnostics.push(`${owner}: ${message}`);
   if (localDiagnostics.length > 100) localDiagnostics.shift();
+  // Renderer failures can be reported during React recovery. Notify after the
+  // current render, without opening another transport or polling the panel.
+  queueMicrotask(notify);
 }
 export function getUiDiagnostics(): readonly string[] { return [...localDiagnostics]; }
 function notify() { for (const listener of subscribers) listener(); }
@@ -60,7 +63,7 @@ export function validateUiSnapshot(raw: unknown): WebUiSnapshot | null {
     sessions[sessionId] = copy;
   }
   return { version: 1, epoch: input.epoch, revision: input.revision, sessions,
-    diagnostics: Array.isArray(input.diagnostics) ? input.diagnostics.slice(-100).filter(d => d && typeof d.message === "string" && typeof d.sourceKey === "string" && typeof d.sessionId === "string" && typeof d.timestamp === "number") : [],
+    diagnostics: Array.isArray(input.diagnostics) ? input.diagnostics.slice(-100).filter(d => d && typeof d.message === "string" && typeof d.sourceKey === "string" && typeof d.sessionId === "string" && Number.isFinite(d.timestamp) && d.timestamp >= 0 && d.timestamp <= 8640000000000000) : [],
     metrics: { accepted: Number(input.metrics?.accepted) || 0, rejected: Number(input.metrics?.rejected) || 0, coalesced: Number(input.metrics?.coalesced) || 0, dropped: Number(input.metrics?.dropped) || 0 },
   };
 }

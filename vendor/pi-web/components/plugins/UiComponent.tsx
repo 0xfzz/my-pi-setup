@@ -16,6 +16,9 @@ function disabledFor(sessionId: string): Set<string> {
   }
   return disabled.get(sessionId)!;
 }
+export function getDisabledUiContributions(sessionId: string): readonly string[] {
+  return [...(disabled.get(sessionId) ?? [])].sort();
+}
 function freeze<T>(value: T): T {
   if (value && typeof value === "object") { Object.freeze(value); for (const v of Object.values(value)) freeze(v); }
   return value;
@@ -72,6 +75,10 @@ class RendererBoundary extends Component<{ fallback: ReactNode; owner: string; s
 }
 function OverrideTree({ component, model, entries, fallback, userChoice, sessionId }: { component: WebUiComponent; model: UiModel; entries: OwnedContribution[]; fallback: ReactNode; userChoice?: string; sessionId: string }) {
   const resolution = resolveOverrides(component, entries, disabledFor(sessionId), userChoice);
+  // Once every faulty override is disabled, keep the already validated builtin
+  // outside the failing override/model path. Diagnostics notifications may
+  // rerender this boundary before the producer has changed its model again.
+  if (!resolution.replacement && !resolution.wrappers.length) return <span data-ui-component={component} data-ui-replacement="builtin">{fallback}</span>;
   const immutable = checkedModel(component, model);
   let rendered = resolution.hidden ? null : resolution.replacement ? strategy(immutable, resolution.replacement.contribution.strategy ?? "default") : fallback;
   // Highest priority wrapper is outermost. All wrappers receive only this validated model.
