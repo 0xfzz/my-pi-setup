@@ -27,19 +27,23 @@ stay limited to what the PRD's R9 allows. Keep every fork file listed here:
 - `app/api/plugins/action/route.test.mjs` — route unit tests for action endpoint covering AC1, AC2, and AC3
 - `app/plugins/[id]/page.tsx` — plugin detail page rendering latest view as plain text, session status markers, handling empty state, and reactive updates via `usePluginData`
 - `components/plugins/PluginActions.tsx` — client component rendering confirmed action buttons without dialogs
-- `components/plugins/PluginViewRenderer.tsx` — text-only renderer components for kv, list, and status views, shared reactive `usePluginData` hook with SSE and 30s fallback polling, and `SessionStatusDot` component
+- `components/plugins/PluginViewRenderer.tsx` — text-only renderer components for kv, list, and status views, `SessionStatusDot` component, and re-export of the shared `useWebUiState` hook as `usePluginData` for compatibility
 - `components/plugins/PluginNav.tsx` — header and toolbar navigation links for page-enabled plugins
-- `components/plugins/slots/SlotHost.tsx` — coordinator component dispatching declared plugins and session views to slot adapters with session status markers and status chips
-- `components/plugins/slots/TopSlotAdapter.tsx` — compact single-row top strip below header rendering descriptor-ordered plugin summaries and status chips (bubbly spinner)
+- `components/plugins/slots/SlotHost.tsx` — legacy slot API as a compatibility adapter over the shared layout coordinator; session-aware view resolution without cross-session borrowing
+- `components/plugins/slots/TopSlotAdapter.tsx` — compact single-row top strip below header rendering descriptor-ordered plugin summaries and status chips
 - `components/plugins/slots/BottomSlotAdapter.tsx` — compact single-row bottom strip above chat input rendering descriptor-ordered plugin summaries
 - `components/plugins/slots/CenterSlotAdapter.tsx` — collapsible panel above chat area rendering descriptor-ordered plugin views
 - `components/plugins/slots/FloatingSlotAdapter.tsx` — collapsible corner widget chip/card at bottom-right rendering descriptor-ordered plugin views
-- `components/plugins/plugins.css` — styles for plugin detail pages, views, action components, slot regions, session status dots, and bubbly top-slot chip
+- `components/plugins/plugins.css` — styles for plugin detail pages, views, action components, slot regions, session status dots, and the shared web-ui anchor/overlay/working-indicator layout
 - `components/AppShell.tsx` — additive sidebar toolbar navigation entry for page plugins and slot regions for top/bottom/center/floating surfaces, using shared `usePluginData` hook
 - `components/SessionTree.tsx` — additive sidebar session running/idle dot marker next to session row sourced from `usePluginData` and upstream running state without changing row behaviour
-- `e2e/web-plugins.mjs` — Playwright e2e test verifying kv rendering, XSS non-execution, empty state, dashboard action flow, slot regions, session status markers, bubbly top-slot chip, sidebar running marker, and realtime view push without page reload
+- `e2e/web-plugins.mjs` — Playwright e2e test verifying kv rendering, XSS non-execution, empty state, dashboard action flow, slot regions, session status markers, unified ui snapshot working state, sidebar running marker, and realtime view push without page reload
 - `e2e/run.mjs` — calls checkWebPlugins during e2e suite run
-- `lib/rpc-manager.ts` — hook in registerRpcWrapper to attach web plugin listener on session creation
+- `lib/rpc-manager.ts` — hook in registerRpcWrapper to attach web plugin listener on session creation; extension UI context projects `setWorkingMessage`/`setWorkingVisible`/`setWorkingIndicator` and all display requests into the unified session UI store instead of no-ops
+- `lib/web-ui-bridge.test.mjs` — bridge test proving the RPC working methods emit validated working state with reset defaults (PRD AC1)
+- `hooks/useWebUiState.ts` — shared reactive UI snapshot hook: validated snapshot adoption, single EventSource on `/api/plugins/events` with epoch/revision recovery, online refetch, named local diagnostics; the only transport owner
+- `components/plugins/UiComponent.tsx` — registry-driven renderer: deterministic replace/wrap/hide resolution over validated immutable models, error boundaries disabling failed contributions back to the builtin renderer, host-owned strategies (default/compact/card), chat working indicator consuming `ui.working.changed`
+- `components/plugins/PluginLayout.tsx` — layout coordinator: verified anchors (`app.header`, `session.*`, `chat.*`, `file-panel.header`, `viewport.overlay`) and legacy regions render validated contributions in declared order with bounded overlays, responsive mobile fallback, collision behavior, and session/project/global scoping
 - `next.config.ts` — outputFileTracingRoot kept at configDir; agentRules disabled so next dev stops regenerating AGENTS.md; `turbopack.root` REMOVED: widening the watch root to the repo made Turbopack watch its own .next output, causing recompile/hot-reload loops under page traffic (outer contracts load via jiti at runtime instead)
 - `proxy.ts` — matcher updated to include `/plugins/:path*` for password auth gating (R15)
 - `tsconfig.json` — allowImportingTsExtensions: true to allow importing outer workflow contracts

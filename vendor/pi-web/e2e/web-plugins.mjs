@@ -141,7 +141,6 @@ export async function checkWebPlugins(page, base) {
     assert.equal(dialogFired, false, "Plugin action must execute without opening any dialog (AC5)");
 
     // (f) Every registered plugin descriptor check
-    const registry = await (await fetch(`${base}/api/plugins`)).json();
     const pageSurfaces = registry.plugins.flatMap((plugin) =>
       plugin.surfaces
         .filter((surface) => surface.kind === "page")
@@ -178,10 +177,15 @@ export async function checkWebPlugins(page, base) {
     await topContent.waitFor({ state: "visible", timeout: 30_000 });
     assert.match(await topContent.textContent() || "", /Implement frontend slots/i, "Top slot shows todo list content");
 
-    // Top slot: shows bubbly status chip (Phase 8)
-    const bubblyChip = topSlot.locator(".plugin-bubbly-chip, .plugin-status-chip").filter({ hasText: "Ratiocinating" });
-    await bubblyChip.waitFor({ state: "visible", timeout: 30_000 });
-    assert.ok(await bubblyChip.isVisible(), "Bubbly chip renders in top slot");
+    // Top slot strips carry no plugin-specific branches (PRD AC3): Bubbly's
+    // working message reaches the browser through the unified ui snapshot.
+    const registry = await (await fetch(`${base}/api/plugins`)).json();
+    const working = registry.ui?.sessions?.__test_session__?.working;
+    assert.ok(working, "Unified ui snapshot must be published beside legacy views");
+    assert.match(String(working.message), /Ratiocinating/i, "Working message state flows through the unified ui snapshot");
+    assert.equal(typeof working.visible, "boolean");
+    assert.ok(Array.isArray(working.frames));
+    assert.ok(registry.ui.epoch, "ui snapshot carries an epoch for replay recovery");
 
     // Left sidebar: shows green running marker dot next to running session row (Phase 8)
     const sidebarRunningRow = page.locator(".session-tree-session").filter({ has: page.locator(".plugin-status-dot.plugin-status-running") });

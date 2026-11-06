@@ -304,12 +304,10 @@ export function checkAndSeedFixtures(store = webPluginsStore): void {
         ],
       });
     }
-    if (!store.getView(testSessionId, "bubbly-spinner")) {
-      store.recordView(testSessionId, "bubbly-spinner", {
-        type: "status",
-        tone: "accent",
-        text: "Ratiocinating...",
-      });
+    // Reference working UI state (PRD phase 6): Bubbly's standard ctx.ui
+    // working message flows through the unified stream, not a special view.
+    if (webUiStore.snapshot().sessions[testSessionId]?.working.message === undefined) {
+      recordWorkingUi(testSessionId, { message: "Ratiocinating..." });
     }
   }
 }

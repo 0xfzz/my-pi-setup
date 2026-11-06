@@ -608,8 +608,11 @@ test("phase 6 placements: WEB_PLUGINS declared with exact slot and page placemen
   ]);
   assert.deepEqual(bubblySpinnerPlugin.surfaces, [
     { kind: "sidebar" },
-    { kind: "slot", slot: "top" },
   ]);
+  // Reference migration (PRD phase 6/R19): the working UI flows through the
+  // event contract; the descriptor declares the override instead of a slot view.
+  assert.equal(bubblySpinnerPlugin.ui?.length, 1);
+  assert.equal(bubblySpinnerPlugin.ui?.[0]?.override?.target, "ui.working-indicator.v1");
   assert.deepEqual(artifactsPlugin.surfaces, [
     { kind: "sidebar" },
     { kind: "slot", slot: "floating" },

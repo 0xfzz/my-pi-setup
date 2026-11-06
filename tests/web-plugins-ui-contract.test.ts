@@ -45,3 +45,15 @@ test("UI registry: conflicting exclusive replacements name both owners", () => {
   const plugins = ["first", "second"].map(id => ({ id, title: id, extension: "fixture", surfaces: [], ui: [contribution] }));
   assert.match(validateRegistry(plugins, ["fixture"]).join("\n"), /second.*working.*first\/working/);
 });
+test("PRD AC3: no pi-web UI source contains a plugin-ID-specific renderer branch", async () => {
+  const { readdir, readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const roots = ["vendor/pi-web/components", "vendor/pi-web/hooks"];
+  for (const root of roots) {
+    for (const entry of await readdir(root, { recursive: true })) {
+      if (!entry.endsWith(".tsx") && !entry.endsWith(".ts")) continue;
+      const source = await readFile(join(root, entry), "utf8");
+      assert.doesNotMatch(source, /bubbly/i, `${entry} must not branch on a plugin id`);
+    }
+  }
+});

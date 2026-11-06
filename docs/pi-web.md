@@ -113,7 +113,7 @@ Opening `http://127.0.0.1:30141` displays the main application shell with toolba
 | --- | --- | --- |
 | Top strip | Cache health | Prompt cache token savings, hit/miss ratios (compact row) |
 | Top strip | Intent graph | Active, claimed, and settled tasks (compact row) |
-| Top strip | Bubbly spinner | Animated session activity verb rendered as a compact status chip |
+| Chat working indicator | Any extension (e.g. Bubbly spinner) | `ctx.ui.setWorkingMessage` / `setWorkingIndicator` state rendered through the unified UI event stream |
 | Center panel | Subagent checkpoints | Delegated worker milestones and checkpoint history (collapsible) |
 | Floating widget | Artifact catalog | Plans, specifications, and scratchpads (collapsible corner card) |
 | Bottom strip | Cache health | Compact summary row above the chat input |
@@ -142,7 +142,17 @@ The UI renders visual status markers next to session-scoped views and sidebar ro
 - **Running session**: Green status dot (`.plugin-status-dot.plugin-status-running`) indicating an active agent turn or background task.
 - **Idle session**: Muted gray status dot (`.plugin-status-dot.plugin-status-idle`) indicating a settled or inactive session.
 
-Status markers are rendered in all slot adapters (top/bottom single-row strips, center panels, and floating widget chips), beside the session identifier on plugin detail pages (`/plugins/[id]`), and next to each session in the left sidebar list (`SessionRowView` in `SessionTree.tsx`). The text-only rule strictly applies to view contents; status markers are rendered as styled UI indicators separate from view payload text. Bubbly spinner working messages render in the top slot as a compact text-only status chip with CSS-only animation.
+Status markers are rendered in all slot adapters (top/bottom single-row strips, center panels, and floating widget chips), beside the session identifier on plugin detail pages (`/plugins/[id]`), and next to each session in the left sidebar list (`SessionRowView` in `SessionTree.tsx`). The text-only rule strictly applies to view contents; status markers are rendered as styled UI indicators separate from view payload text.
+
+#### Unified UI event stream and declarative placement
+
+All standard `ctx.ui` display calls (`setWorkingMessage`, `setWorkingVisible`, `setWorkingIndicator`, `setStatus`, `setWidget`, `setTitle`, editor text, custom panels) are normalized into validated, session-scoped `WebUiEvent` envelopes in `lib/web-plugins/ui-events.ts` and applied by a bounded, revisioned store in `lib/web-plugins/ui-store.ts`. ANSI/OSC control sequences are stripped to structured plain text; markup, script URLs, oversized or flooded payloads are rejected with named diagnostics recorded in the snapshot's `diagnostics` and `metrics` fields. State is asynchronous from the producer's perspective (publishing never blocks an agent turn) and coalesced per session/component/source with monotonic ordering, retention, and snapshot recovery by `epoch`/`revision` over the single SSE channel.
+
+The browser consumes one snapshot plus one SSE stream through `hooks/useWebUiState.ts`. The chat's working indicator renders `ui.working.changed` through the component registry (`components/plugins/UiComponent.tsx`); the layout coordinator (`components/plugins/PluginLayout.tsx`) mounts descriptor contributions at verified anchors (`app.header`, `session.header`, `session.sidebar`, `chat.before`, `chat.after`, `chat.composer`, `chat.working`, `file-panel.header`, `viewport.overlay`) or legacy regions (`top`, `center`, `bottom`, `floating`, `sidebar`), honoring declared order, responsive bounds, mobile fallback, z-index class, collision behavior, and `session`/`project`/`global` scoping. A selected session only ever shows its own state. Runtime placement updates arrive as validated `ui.layout.changed` events for declared contributions and revert to the last valid placement on failure.
+
+Plugins declare UI through the optional `ui` field on their descriptor (`WebPluginUiContribution` in `lib/web-plugins/ui-contract.ts`): a stable component key (e.g. `ui.working-indicator.v1`), an optional view key, a validated placement, an explicit scope, and — only for allowlisted components — an override with `replace`/`wrap`/`hide` mode and a `builtin` fallback. Resolution is deterministic (enabled user choice, then highest-priority replacement, then wrapper chain, then the built-in renderer); a renderer that throws or exceeds its render budget is disabled for that session and the built-in renderer returns. Legacy `slot` surfaces remain supported and are normalized into equivalent region contributions. Host code never branches on a plugin id (enforced by test).
+
+Bubbly Spinner is the reference implementation: it calls only the standard `ctx.ui.setWorkingIndicator`/`setWorkingMessage`, which reach the web working indicator through the event stream; its descriptor wraps `ui.working-indicator.v1` with a compact strategy instead of publishing a duplicate status view.
 
 #### Plugin actions
 

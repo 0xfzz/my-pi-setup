@@ -4,26 +4,11 @@ import {
   BUBBLY_TEXT_INTERVAL_MS,
   BubblyWordAnimator,
 } from "../lib/bubbly-spinner.ts";
-import { publishWebView } from "../lib/web-plugins/publisher.ts";
 
 export default function bubblySpinnerExtension(pi: ExtensionAPI) {
   const animator = new BubblyWordAnimator();
   let waveTimer: NodeJS.Timeout | null = null;
   let activeContext: ExtensionContext | null = null;
-  let isWorking = false;
-
-  function publishStatusView(working: boolean) {
-    isWorking = working;
-    try {
-      publishWebView(pi, "bubbly-spinner", {
-        type: "status",
-        tone: working ? "accent" : "neutral",
-        text: `${animator.word}...`,
-      });
-    } catch {
-      // Guarded: never touch TUI render path or throw into caller
-    }
-  }
 
   function renderCurrentFrame(ctx: ExtensionContext) {
     ctx.ui.setWorkingMessage(animator.getCurrentText());
@@ -52,11 +37,12 @@ export default function bubblySpinnerExtension(pi: ExtensionAPI) {
     activeContext = null;
   }
 
-  // Set the bubbly indicator and initial verb on startup
+  // Set the bubbly indicator and initial verb on startup.
+  // The web working UI consumes these standard ctx.ui events through the
+  // unified ui.working.changed stream; no second web publication is needed.
   pi.on("session_start", async (_event, ctx) => {
     ctx.ui.setWorkingIndicator(BUBBLY_INDICATOR_OPTIONS);
     renderCurrentFrame(ctx);
-    publishStatusView(false);
   });
 
   // Animate the bubble wave across the words while the agent is running
@@ -64,14 +50,12 @@ export default function bubblySpinnerExtension(pi: ExtensionAPI) {
     animator.advanceWord();
     renderCurrentFrame(ctx);
     startWaveAnimation(ctx);
-    publishStatusView(true);
   });
 
   // Switch to a fresh word immediately on each new turn
   pi.on("turn_start", async (_event, ctx) => {
     animator.advanceWord();
     renderCurrentFrame(ctx);
-    publishStatusView(true);
   });
 
   // Stop wave animation when agent finishes and stage next word
@@ -79,13 +63,11 @@ export default function bubblySpinnerExtension(pi: ExtensionAPI) {
     stopWaveAnimation();
     animator.advanceWord();
     renderCurrentFrame(ctx);
-    publishStatusView(false);
   });
 
   // Clean up all timers when session shuts down
   pi.on("session_shutdown", async () => {
     stopWaveAnimation();
-    publishStatusView(false);
   });
 
   // Informational / preview command
@@ -96,7 +78,6 @@ export default function bubblySpinnerExtension(pi: ExtensionAPI) {
       if (sub === "next") {
         animator.advanceWord();
         renderCurrentFrame(ctx);
-        publishStatusView(isWorking);
         ctx.ui.notify(`Advanced to next bubbly verb: ${animator.word}`, "info");
         return;
       }

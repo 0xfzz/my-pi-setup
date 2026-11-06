@@ -7,7 +7,17 @@ export const bubblySpinnerPlugin: WebPluginDescriptor = {
   description: "Animated working message indicator and session activity status.",
   surfaces: [
     { kind: "sidebar" },
-    { kind: "slot", slot: "top" },
+  ],
+  ui: [
+    {
+      id: "working",
+      component: "ui.working-indicator.v1",
+      strategy: "compact",
+      scope: "session",
+      placement: { kind: "anchor", anchor: "chat.working" },
+      priority: 5,
+      override: { target: "ui.working-indicator.v1", mode: "wrap", fallback: "builtin" },
+    },
   ],
 };
 
