@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { createWriteStream, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { checkPluggableUi } from "./pluggable-ui.mjs";
 
 /**
  * Playwright assertions for workflow web plugins.
@@ -286,6 +287,12 @@ if (isDirectRun) {
     `{"type":"message","id":"m1","parentId":null,"message":{"role":"user","content":[{"type":"text","text":"Test session for web plugins"}]}}\n`,
   );
 
+  writeFileSync(
+    join(agentDir, "sessions", "test", "2026-11-05T00-00-01-000Z___ui_other_session__.jsonl"),
+    JSON.stringify({ type: "session", id: "__ui_other_session__", timestamp: "2026-11-05T00:00:01.000Z", cwd: workspace }) + "\n" +
+    JSON.stringify({ type: "message", id: "m2", parentId: null, message: { role: "user", content: [{ type: "text", text: "Second UI fixture session" }] } }) + "\n",
+  );
+
   const probe = createServer();
   probe.listen(0, "127.0.0.1");
   await once(probe, "listening");
@@ -301,6 +308,7 @@ if (isDirectRun) {
     [join(root, "node_modules/next/dist/bin/next"), "dev", "-H", "127.0.0.1", "-p", String(port)],
     {
       cwd: root,
+      detached: process.platform !== "win32",
       env: {
         ...process.env,
         PI_CODING_AGENT_DIR: agentDir,
@@ -354,9 +362,26 @@ if (isDirectRun) {
 
     console.log("[web-plugins e2e] Running plugin view checks...");
     await checkWebPlugins(page, base);
+    await checkPluggableUi(page, base);
     console.log("[web-plugins e2e] All checks passed successfully!");
   } finally {
-    server.kill("SIGTERM");
     await browser?.close().catch(() => {});
+    const closed = once(server, "close");
+    const stop = signal => {
+      try {
+        if (process.platform !== "win32") process.kill(-server.pid, signal);
+        else server.kill(signal);
+      } catch (error) { if (error.code !== "ESRCH") throw error; }
+    };
+    stop("SIGTERM");
+    await Promise.race([closed, delay(10_000, undefined, { ref: false })]);
+    if (server.exitCode === null && server.signalCode === null) {
+      stop("SIGKILL");
+      await closed;
+    }
+    // Next leaves its dev lock after signal shutdown. Only remove metadata
+    // belonging to this run, after the entire process group has been stopped.
+    const lock = join(root, ".next/dev/lock");
+    if (existsSync(lock) && JSON.parse(readFileSync(lock, "utf8")).port === port) unlinkSync(lock);
   }
 }

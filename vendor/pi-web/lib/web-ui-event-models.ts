@@ -79,8 +79,10 @@ export function validateWebUiEvent(input: unknown): UiValidation {
         break;
       }
       case "ui.layout.changed": {
-        const placement = validatePlacement(p.placement); valid = key(p.pluginId) && key(p.contributionId) && placement.ok;
-        if (placement.ok) p.placement = placement.value;
+        const placement = validatePlacement(p.placement);
+        if (!placement.ok) throw new Error(`invalid ui.layout.changed placement: ${placement.error}`);
+        valid = key(p.pluginId) && key(p.contributionId);
+        p.placement = placement.value;
         break;
       }
       case "ui.session.lifecycle": valid = typeof p.running === "boolean" && (p.closed === undefined || typeof p.closed === "boolean") && (p.project === undefined || text(p.project, 4096)); break;

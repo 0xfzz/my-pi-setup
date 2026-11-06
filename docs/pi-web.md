@@ -260,9 +260,19 @@ Documentation consistency and plugin host behavior are covered by the following 
   - Empty state handling for unpublished sessions.
   - Slot placement rendering for all five registered plugins (top/center/floating/bottom on the home view; dashboard on its page).
   - Home toolbar navigation.
+  - The standalone runner additionally calls `e2e/pluggable-ui.mjs`: actual `AgentSessionWrapper.createExtensionUiContext()` working calls feed an isolated host store and real SSE connection into the app's shared hook. It asserts live message/frames/visibility without reload, two-session isolation, composer/header/overlay placements, responsive mobile fallback and keyboard close focus, runtime moves/rejection, reconnect recovery, stale snapshot rejection, deterministic replacement/wrapping, disablement, and injected renderer-failure fallback. The fixture uses local session files and stub SDK internals; it does not contact a model provider or install a production test endpoint.
 - Dev server smoke test: HTTP `GET http://127.0.0.1:30141/api/plugins` and `GET http://127.0.0.1:30141/plugins/dashboard` returning HTTP 200.
 
-What these tests do **not** cover: They do not test production deployment behind a reverse proxy, public WAN routing, multi-user concurrency under remote network latency, or browser engines older than those listed in the prerequisites.
+For a resource-bounded run of the complete vendored upstream suite (same test globs as `npm test`):
+
+```sh
+cd vendor/pi-web
+node --experimental-strip-types --test --test-concurrency=4 --test-timeout=120000 \
+  'app/**/*.test.mjs' 'components/**/*.test.mjs' 'hooks/**/*.test.mjs' \
+  'lib/**/*.test.mjs' 'public/**/*.test.mjs'
+```
+
+What these tests do **not** cover: They do not test production deployment behind a reverse proxy, public WAN routing, multi-user concurrency under remote network latency, a real provider-generated agent turn, or browser engines older than those listed in the prerequisites.
 
 ## Removal
 

@@ -47,6 +47,7 @@ test("UI store: sessions, views, status/widget clears and layout revisions are i
   const before = store.snapshot().sessions.a.layouts;
   assert.equal(store.publish("a", "ui.layout.changed", { pluginId: "fixture", contributionId: "card", placement: { kind: "anchor", anchor: "auth" } }), false);
   assert.deepEqual(store.snapshot().sessions.a.layouts, before, "invalid runtime layout preserves last valid placement");
+  assert.match(store.snapshot().diagnostics.at(-1)!.message, /ui.layout.changed placement: unknown anchor/);
 });
 test("UI store: stale/repeated events rejected; replay gaps and server restarts recover full snapshots", () => {
   const store = new WebUiStore({ maxEvents: 2 });
