@@ -1,4 +1,5 @@
 import { WEB_PLUGIN_VIEW_EVENT, validateView } from "./view.ts";
+import { WEB_UI_EVENT, validateWebUiEvent, type WebUiType, type WebUiPayloads } from "./ui-events.ts";
 
 export interface PublishWebViewTarget {
   events?: {
@@ -10,6 +11,16 @@ export interface PublishWebViewResult {
   ok: boolean;
   warnings?: string[];
   error?: string;
+}
+
+/** Publish declarative UI data. The owning host assigns session, sequence and source. */
+export function publishWebUi<K extends WebUiType>(pi: PublishWebViewTarget, sourceKey: string, type: K, payload: WebUiPayloads[K]): PublishWebViewResult {
+  const result = validateWebUiEvent({ version: 1, eventId: "producer", sessionId: "producer", source: "extension", sourceKey, type, payload, timestamp: Date.now(), sequence: 1 });
+  if (!result.ok) return { ok: false, error: result.error };
+  try {
+    pi.events?.emit(WEB_UI_EVENT, { sourceKey, type, payload: result.event.payload });
+    return { ok: true };
+  } catch { return { ok: false, error: "UI event delivery failed" }; }
 }
 
 export function publishWebView(

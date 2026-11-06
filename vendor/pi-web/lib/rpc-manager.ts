@@ -22,7 +22,7 @@ import { computeLiveSessionTotalActiveMs } from "./session-timing";
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
 import { notifySessionComplete } from "./web-push";
 import { hasActiveSessionLivenessProvider } from "./session-liveness";
-import { attachSessionPlugins } from "./web-plugins-host";
+import { attachSessionPlugins, recordExtensionUi, recordWorkingUi } from "./web-plugins-host";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "./pi-types";
 import type {
@@ -963,6 +963,7 @@ export class AgentSessionWrapper {
   }
 
   private emit(event: AgentEvent): void {
+    recordExtensionUi(this.sessionId, event as unknown as Record<string, unknown>, this.cwd);
     for (const listener of this.listeners) {
       try {
         listener(event);
@@ -2304,9 +2305,11 @@ export class AgentSessionWrapper {
           statusText: text,
         } as ExtensionUiRequest as AgentEvent);
       },
-      setWorkingMessage: () => {},
-      setWorkingVisible: () => {},
-      setWorkingIndicator: () => {},
+      setWorkingMessage: (message) => { recordWorkingUi(this.sessionId, { message: message ?? null }); },
+      setWorkingVisible: (visible) => { recordWorkingUi(this.sessionId, { visible }); },
+      setWorkingIndicator: (options) => {
+        recordWorkingUi(this.sessionId, { frames: options?.frames ?? null, intervalMs: options?.intervalMs ?? 80 });
+      },
       setHiddenThinkingLabel: () => {},
       setWidget: (key, content, options) => {
         if (!this._alive || this.extensionWidgetsResetting) return;

@@ -22,6 +22,7 @@ import {
   checkAndSeedFixtures,
   getRegisteredPlugins,
   webPluginsStore,
+  webUiStore,
 } from "@/lib/web-plugins-host";
 import type {
   PluginDiagnostic,
@@ -421,7 +422,9 @@ export async function GET(req: Request) {
       id: plugin.id,
       title: plugin.title,
       ...(plugin.description ? { description: plugin.description } : {}),
+      extension: plugin.extension,
       surfaces: plugin.surfaces,
+      ...(plugin.ui ? { ui: plugin.ui } : {}),
       ...(plugin.actions ? { actions: plugin.actions } : {}),
     }));
     const views = webPluginsStore.getAllViews();
@@ -429,7 +432,8 @@ export async function GET(req: Request) {
     const awaitingInputIds = new Set(getAwaitingInputRpcSessionIds());
     const sessions: Record<string, { running: boolean; awaitingInput?: boolean }> = {};
 
-    for (const sessionId of Object.keys(views)) {
+    const ui = webUiStore.snapshot();
+    for (const sessionId of new Set([...Object.keys(views), ...Object.keys(ui.sessions)])) {
       const isTestSession = process.env.PI_WEB_TEST_PLUGIN_VIEWS === "1" && sessionId === "__test_session__";
       const isRunning = isTestSession || runningIds.has(sessionId);
       const isAwaiting = awaitingInputIds.has(sessionId);
@@ -440,7 +444,7 @@ export async function GET(req: Request) {
     }
 
     return NextResponse.json(
-      { plugins, views, sessions },
+      { plugins, views, sessions, ui }, 
       { headers: { "Cache-Control": "no-store" } },
     );
   }

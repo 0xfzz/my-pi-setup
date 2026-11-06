@@ -2,6 +2,7 @@ import {
   checkAndSeedFixtures,
   getPluginsRevision,
   subscribePluginChanges,
+  webUiStore,
 } from "@/lib/web-plugins-host";
 
 export const dynamic = "force-dynamic";
@@ -48,7 +49,8 @@ export async function GET(req: Request) {
       function send(payload: { type: string; revision: number }) {
         if (closed) return;
         try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+          const epoch = webUiStore.snapshot().epoch;
+          controller.enqueue(encoder.encode(`id: ${epoch}:${payload.revision}\ndata: ${JSON.stringify({ ...payload, epoch })}\n\n`));
         } catch {
           cleanup();
         }

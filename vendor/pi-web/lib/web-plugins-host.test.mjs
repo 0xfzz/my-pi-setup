@@ -245,7 +245,8 @@ test("audit log records entries and clears with store", () => {
   assert.equal(getActionAuditLog().length, 0);
 });
 
-test("webPluginsStore tracks monotonic revision and notifies subscribers on recordView", () => {
+test("webPluginsStore tracks monotonic revision and asynchronously notifies subscribers on recordView", async () => {
+  await Promise.resolve();
   webPluginsStore.clear();
 
   const initialRev = getPluginsRevision();
@@ -265,6 +266,8 @@ test("webPluginsStore tracks monotonic revision and notifies subscribers on reco
 
   const newRev = getPluginsRevision();
   assert.ok(newRev > initialRev);
+  assert.equal(seenRevisions.length, 0, "producer does not synchronously deliver");
+  await Promise.resolve();
   assert.equal(seenRevisions.length, 1);
   assert.equal(seenRevisions[0], newRev);
 

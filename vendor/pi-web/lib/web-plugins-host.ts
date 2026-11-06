@@ -11,6 +11,28 @@ import type {
   ValidateViewResult,
 } from "../../../lib/web-plugins/view.ts";
 
+import { WebUiStore } from "../../../lib/web-plugins/ui-store.ts";
+import { WEB_UI_EVENT, extensionUiUpdate, type WebUiType } from "../../../lib/web-plugins/ui-events.ts";
+import { normalizeContributions } from "../../../lib/web-plugins/ui-contract.ts";
+
+const uiGlobal = globalThis as Record<PropertyKey, unknown>;
+const uiStoreKey = Symbol.for("pi-web:unified-ui:v1");
+export const webUiStore = (uiGlobal[uiStoreKey] ??= new WebUiStore()) as WebUiStore;
+
+/** Called before legacy delivery; UI projection never consumes dialog responses. */
+export function recordExtensionUi(sessionId: string, event: Record<string, unknown>, project?: string): void {
+  if (event.type === "extension_ui_request") {
+    const update = extensionUiUpdate(event);
+    if (update) webUiStore.publish(sessionId, update.type, update.payload, update.sourceKey);
+  } else if (event.type === "extension_ui_closed") {
+    webUiStore.publish(sessionId, "ui.custom.changed", { id: event.id, method: "closed", lines: null }, String(event.id));
+  } else if (["agent_start", "agent_settled", "session_shutdown"].includes(String(event.type))) {
+    webUiStore.publish(sessionId, "ui.session.lifecycle", { running: event.type === "agent_start", closed: event.type === "session_shutdown", ...(project ? { project } : {}) }, "lifecycle", "host");
+  }
+}
+export function recordWorkingUi(sessionId: string, payload: unknown): boolean {
+  return webUiStore.publish(sessionId, "ui.working.changed", payload, "ctx.ui.working");
+}
 const jiti = createJiti(process.cwd());
 
 function resolveRepoPath(relPath: string): string {
@@ -109,27 +131,21 @@ function createStore(): WebPluginsState {
         return false;
       }
 
+      if (!webUiStore.publish(sessionId, "ui.view.changed", { pluginId, view: validation.view }, pluginId)) return false;
+      const safeView = webUiStore.snapshot().sessions[sessionId].views[pluginId];
       let sessionMap = this.views.get(sessionId);
       if (!sessionMap) {
         sessionMap = new Map();
         this.views.set(sessionId, sessionMap);
       }
-      sessionMap.set(pluginId, validation.view);
+      sessionMap.set(pluginId, safeView);
       this.latestByPlugin.set(pluginId, {
         sessionId,
-        view: validation.view,
+        view: safeView,
         timestamp: Date.now(),
       });
 
-      this.revision += 1;
-      const currentRev = this.revision;
-      for (const listener of this.changeListeners) {
-        try {
-          listener(currentRev);
-        } catch {
-          // Best effort
-        }
-      }
+      this.revision = webUiStore.snapshot().revision;
       return true;
     },
 
@@ -155,17 +171,15 @@ function createStore(): WebPluginsState {
     },
 
     getRevision(): number {
-      return this.revision;
+      return webUiStore.snapshot().revision;
     },
 
     subscribeChanges(cb: (revision: number) => void): () => void {
-      this.changeListeners.add(cb);
-      return () => {
-        this.changeListeners.delete(cb);
-      };
+      return webUiStore.subscribe(cb);
     },
 
     clear(): void {
+      webUiStore.clear();
       this.views.clear();
       this.latestByPlugin.clear();
       this.sessionBuses.clear();
@@ -205,7 +219,7 @@ function getStore(): WebPluginsState {
     if (!(existing.changeListeners instanceof Set)) existing.changeListeners = new Set();
     const fresh = createStore();
     existing.recordView = fresh.recordView.bind(existing);
-    existing.getRevision = () => existing.revision;
+    existing.getRevision = () => webUiStore.snapshot().revision;
     existing.subscribeChanges = fresh.subscribeChanges.bind(existing);
     existing.clear = fresh.clear.bind(existing);
     return existing;
@@ -353,6 +367,21 @@ export function attachSessionPlugins(wrapper: unknown): () => void {
   attachedWrappers.add(wrapper);
   webPluginsStore.sessionBuses.set(sessionId, eventBus);
 
+  const unsubUi = eventBus.on(WEB_UI_EVENT, (raw: unknown) => {
+    if (!raw || typeof raw !== "object") return;
+    const event = raw as { type?: WebUiType; payload?: unknown; sourceKey?: string; source?: string; sessionId?: string };
+    const sourceKey = typeof event.sourceKey === "string" ? event.sourceKey : "extension";
+    // Session identity/source/ordering are assigned by the owning host, not the bus payload.
+    if (event.sessionId !== undefined && event.sessionId !== sessionId) { webUiStore.reject(sessionId, sourceKey, "cross-session event rejected"); return; }
+    if (event.source === "browser" || event.type === "ui.plugin.action-requested" || event.type === "ui.session.lifecycle") { webUiStore.reject(sessionId, sourceKey, "reserved host event"); return; }
+    if (event.type === "ui.layout.changed") {
+      const p = event.payload as { pluginId?: string; contributionId?: string } | undefined;
+      const plugin = getPluginDescriptor(p?.pluginId ?? "");
+      if (!plugin || !normalizeContributions(plugin).some(c => c.id === p?.contributionId)) { webUiStore.reject(sessionId, sourceKey, "unknown plugin/contribution layout target"); return; }
+    }
+    if (event.type) webUiStore.publish(sessionId, event.type, event.payload, sourceKey);
+  });
+
   const unsubEventBus = eventBus.on(WEB_PLUGIN_VIEW_EVENT, (payload: unknown) => {
     if (payload && typeof payload === "object" && "pluginId" in payload && "view" in payload) {
       const { pluginId, view } = payload as { pluginId: string; view: unknown };
@@ -371,6 +400,7 @@ export function attachSessionPlugins(wrapper: unknown): () => void {
     }
     try {
       unsubEventBus();
+      unsubUi();
     } catch {
       // Ignore
     }
@@ -421,6 +451,7 @@ export function relayActionRequest(
   }
   try {
     const rid = requestId || crypto.randomUUID();
+    webUiStore.publish(sessionId, "ui.plugin.action-requested", { pluginId, actionId, requestId: rid }, pluginId, "host");
     bus.emit(WEB_PLUGIN_ACTION_REQUEST_EVENT, {
       requestId: rid,
       sessionId,
