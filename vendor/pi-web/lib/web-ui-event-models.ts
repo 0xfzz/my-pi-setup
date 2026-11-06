@@ -1,5 +1,5 @@
-import { validatePlacement, type WebPluginPlacement } from "./ui-contract.ts";
-import { validateView, type WebView } from "./view.ts";
+import { validatePlacement, type WebPluginPlacement } from "./web-ui-contracts.ts";
+import { validateView, type WebView } from "./web-ui-views.ts";
 
 export const WEB_UI_EVENT = "web-ui:event";
 export interface WorkingModel { message: string | null; visible: boolean; frames: string[] | null; intervalMs: number }

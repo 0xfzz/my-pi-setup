@@ -1,5 +1,5 @@
 import React from "react";
-import type { WebView } from "../../../../lib/web-plugins/view.ts";
+import type { WebView } from "@/lib/web-ui-views";
 export { useWebUiState as usePluginData } from "@/hooks/useWebUiState";
 export type { PluginSessionState, PluginDataState } from "@/hooks/useWebUiState";
 

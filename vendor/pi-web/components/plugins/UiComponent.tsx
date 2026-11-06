@@ -1,9 +1,9 @@
 "use client";
 
 import React, { Component, useEffect, useState, type ReactNode } from "react";
-import { normalizeContributions, resolveOverrides, type WebUiComponent, type OwnedContribution } from "../../../../lib/web-plugins/ui-contract.ts";
-import { validateWebUiEvent, type WorkingModel } from "../../../../lib/web-plugins/ui-events.ts";
-import { validateView, type WebView } from "../../../../lib/web-plugins/view.ts";
+import { normalizeContributions, resolveOverrides, type WebUiComponent, type OwnedContribution } from "@/lib/web-ui-contracts";
+import { validateWebUiEvent, type WorkingModel } from "@/lib/web-ui-event-models";
+import { validateView, type WebView } from "@/lib/web-ui-views";
 import { reportUiFailure, useWebUiState } from "@/hooks/useWebUiState";
 import { PluginViewRenderer } from "./PluginViewRenderer";
 

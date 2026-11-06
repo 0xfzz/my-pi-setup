@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { validatePlugin, type WebPluginDescriptor } from "../../../lib/web-plugins/descriptor.ts";
-import { validateWebUiEvent } from "../../../lib/web-plugins/ui-events.ts";
-import { validateView, type WebView } from "../../../lib/web-plugins/view.ts";
-import type { WebUiSessionState, WebUiSnapshot } from "../../../lib/web-plugins/ui-store.ts";
+import { validatePlugin, type WebPluginDescriptor } from "@/lib/web-ui-descriptor";
+import { validateWebUiEvent } from "@/lib/web-ui-event-models";
+import { validateView, type WebView } from "@/lib/web-ui-views";
+import type { WebUiSessionState, WebUiSnapshot } from "@/lib/web-ui-state-store";
 
 export interface PluginSessionState { running: boolean; awaitingInput?: boolean }
 export interface PluginDataState {

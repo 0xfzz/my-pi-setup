@@ -1,6 +1,6 @@
-import { validateWebUiEvent, type WebUiEvent, type WebUiType, type WorkingModel } from "./ui-events.ts";
-import type { WebPluginPlacement } from "./ui-contract.ts";
-import type { WebView } from "./view.ts";
+import { validateWebUiEvent, type WebUiEvent, type WebUiType, type WorkingModel } from "./web-ui-event-models.ts";
+import type { WebPluginPlacement } from "./web-ui-contracts.ts";
+import type { WebView } from "./web-ui-views.ts";
 
 export interface WebUiSessionState {
   revision: number; project?: string; running: boolean; closed: boolean;

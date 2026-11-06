@@ -1,5 +1,5 @@
 import { validateActions, type ActionDescriptor } from "./actions.ts";
-import { validateContributions, type WebPluginUiContribution } from "./ui-contract.ts";
+import { validateContributions, type WebPluginUiContribution } from "./ui-contracts.ts";
 
 export type { ActionDescriptor } from "./actions.ts";
 

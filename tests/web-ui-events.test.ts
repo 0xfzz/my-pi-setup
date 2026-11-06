@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { WebUiStore } from "../lib/web-plugins/ui-store.ts";
+import { WebUiStore } from "../lib/web-plugins/ui-state-store.ts";
 import { publishWebUi } from "../lib/web-plugins/publisher.ts";
-import { WEB_UI_EVENT, extensionUiUpdate, validateWebUiEvent, webUiText } from "../lib/web-plugins/ui-events.ts";
+import { WEB_UI_EVENT, extensionUiUpdate, validateWebUiEvent, webUiText } from "../lib/web-plugins/ui-event-models.ts";
 const event = (sequence: number, payload: unknown, type = "ui.working.changed") => ({ version: 1, eventId: `event-${sequence}`, sessionId: "session-a", source: "extension", sourceKey: "fixture", type, timestamp: Date.now(), sequence, payload });
 
 test("publisher validates declarative data and leaves session/source sequencing to host", () => {

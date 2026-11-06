@@ -1,19 +1,19 @@
 import { createJiti } from "jiti";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import type { ActionDescriptor } from "../../../lib/web-plugins/actions.ts";
-import type { WebPluginDescriptor } from "../../../lib/web-plugins/descriptor.ts";
+import type { ActionDescriptor } from "./web-ui-actions";
+import type { WebPluginDescriptor } from "./web-ui-descriptor";
 import type {
   WebView,
   KvWebView,
   ListWebView,
   StatusWebView,
   ValidateViewResult,
-} from "../../../lib/web-plugins/view.ts";
+} from "./web-ui-views";
 
-import { WebUiStore } from "../../../lib/web-plugins/ui-store.ts";
-import { WEB_UI_EVENT, extensionUiUpdate, type WebUiType } from "../../../lib/web-plugins/ui-events.ts";
-import { normalizeContributions } from "../../../lib/web-plugins/ui-contract.ts";
+import { WebUiStore } from "./web-ui-state-store";
+import { WEB_UI_EVENT, extensionUiUpdate, type WebUiType } from "./web-ui-event-models";
+import { normalizeContributions } from "./web-ui-contracts";
 
 const uiGlobal = globalThis as Record<PropertyKey, unknown>;
 const uiStoreKey = Symbol.for("pi-web:unified-ui:v1");
@@ -34,6 +34,8 @@ export function recordWorkingUi(sessionId: string, payload: unknown): boolean {
   return webUiStore.publish(sessionId, "ui.working.changed", payload, "ctx.ui.working");
 }
 const jiti = createJiti(process.cwd());
+
+const seededWorkingSessions = new Set<string>();
 
 function resolveRepoPath(relPath: string): string {
   const twoUp = resolve(process.cwd(), "../../", relPath);
@@ -180,6 +182,7 @@ function createStore(): WebPluginsState {
 
     clear(): void {
       webUiStore.clear();
+      seededWorkingSessions.clear();
       this.views.clear();
       this.latestByPlugin.clear();
       this.sessionBuses.clear();
@@ -306,8 +309,9 @@ export function checkAndSeedFixtures(store = webPluginsStore): void {
     }
     // Reference working UI state (PRD phase 6): Bubbly's standard ctx.ui
     // working message flows through the unified stream, not a special view.
-    if (webUiStore.snapshot().sessions[testSessionId]?.working.message === undefined) {
+    if (!seededWorkingSessions.has(testSessionId)) {
       recordWorkingUi(testSessionId, { message: "Ratiocinating..." });
+      seededWorkingSessions.add(testSessionId);
     }
   }
 }

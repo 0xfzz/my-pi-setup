@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { validateContributions, validatePlacement, normalizeContributions, resolveOverrides, type WebPluginUiContribution } from "../lib/web-plugins/ui-contract.ts";
+import { validateContributions, validatePlacement, normalizeContributions, resolveOverrides, type WebPluginUiContribution } from "../lib/web-plugins/ui-contracts.ts";
 import { validatePlugin } from "../lib/web-plugins/descriptor.ts";
 import { validateRegistry } from "../lib/web-plugins/registry.ts";
 

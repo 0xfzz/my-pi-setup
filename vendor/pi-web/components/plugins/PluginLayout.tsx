@@ -1,10 +1,10 @@
 "use client";
 
 import React, { useState, type CSSProperties, type ReactNode } from "react";
-import { normalizeContributions, type WebUiAnchor, type WebUiRegion, type WebPluginUiContribution, type WebPluginPlacement } from "../../../../lib/web-plugins/ui-contract.ts";
-import type { WebPluginDescriptor } from "../../../../lib/web-plugins/descriptor.ts";
-import type { WebUiSessionState } from "../../../../lib/web-plugins/ui-store.ts";
-import type { WebView } from "../../../../lib/web-plugins/view.ts";
+import { normalizeContributions, type WebUiAnchor, type WebUiRegion, type WebPluginUiContribution, type WebPluginPlacement } from "@/lib/web-ui-contracts";
+import type { WebPluginDescriptor } from "@/lib/web-ui-descriptor";
+import type { WebUiSessionState } from "@/lib/web-ui-state-store";
+import type { WebView } from "@/lib/web-ui-views";
 import { useWebUiState } from "@/hooks/useWebUiState";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { SessionStatusDot } from "./PluginViewRenderer";

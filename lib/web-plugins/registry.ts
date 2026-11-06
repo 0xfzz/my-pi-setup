@@ -1,7 +1,7 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { validatePlugin, type WebPluginDescriptor } from "./descriptor.ts";
-import { normalizeContributions } from "./ui-contract.ts";
+import { normalizeContributions } from "./ui-contracts.ts";
 
 export { WEB_PLUGIN_VIEW_EVENT } from "./view.ts";
 export {

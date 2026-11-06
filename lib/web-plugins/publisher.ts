@@ -1,5 +1,5 @@
 import { WEB_PLUGIN_VIEW_EVENT, validateView } from "./view.ts";
-import { WEB_UI_EVENT, validateWebUiEvent, type WebUiType, type WebUiPayloads } from "./ui-events.ts";
+import { WEB_UI_EVENT, validateWebUiEvent, type WebUiType, type WebUiPayloads } from "./ui-event-models.ts";
 
 export interface PublishWebViewTarget {
   events?: {

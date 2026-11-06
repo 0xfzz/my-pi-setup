@@ -18,7 +18,7 @@ The tree above is upstream verbatim. The fork diff (plugin host, sidebar section
 stay limited to what the PRD's R9 allows. Keep every fork file listed here:
 
 - `VENDORED.md` — provenance and resync documentation
-- `lib/web-plugins-host.ts` — plugin view store on globalThis, monotonic revision counter, change notification subscriptions, session event subscription, action relaying, in-flight tracking, and test fixture seeding
+- `lib/web-plugins-host.ts` — plugin view store on globalThis, unified ui store wiring, extension-UI projection (working message/visibility/indicator, display requests, lifecycle), monotonic revision counter, change notification subscriptions, session event subscription, action relaying, in-flight tracking, and test fixture seeding
 - `lib/web-plugins-host.test.mjs` — unit tests for the plugin view store, revision tracking, change subscriptions, session subscription, action relay, and in-flight tracking
 - `app/api/plugins/route.ts` — modified GET to return workflow plugins (including declared actions), views, and per-session running status derived from rpc-manager when called without `?cwd`, preserving package manager behavior
 - `app/api/plugins/events/route.ts` — GET SSE endpoint streaming change notifications `{type:"changed",revision}` with 15s heartbeats on view recording
@@ -40,6 +40,8 @@ stay limited to what the PRD's R9 allows. Keep every fork file listed here:
 - `e2e/web-plugins.mjs` — Playwright e2e test verifying kv rendering, XSS non-execution, empty state, dashboard action flow, slot regions, session status markers, unified ui snapshot working state, sidebar running marker, and realtime view push without page reload
 - `e2e/run.mjs` — calls checkWebPlugins during e2e suite run
 - `lib/rpc-manager.ts` — hook in registerRpcWrapper to attach web plugin listener on session creation; extension UI context projects `setWorkingMessage`/`setWorkingVisible`/`setWorkingIndicator` and all display requests into the unified session UI store instead of no-ops
+- `lib/web-ui-views.ts`, `lib/web-ui-actions.ts`, `lib/web-ui-contracts.ts`, `lib/web-ui-event-models.ts`, `lib/web-ui-state-store.ts`, `lib/web-ui-descriptor.ts` — vendored runtime copies of the outer workflow contracts: Turbopack resolves only inside the vendored tree, so browser/server code value-imports these copies while extensions keep the outer canonical modules; `lib/web-ui-parity.test.mjs` pins each copy byte-identical to its outer source (modulo the documented import rewrites) and fails the suite on drift
+- `lib/web-ui-parity.test.mjs` — the parity pins described above
 - `lib/web-ui-bridge.test.mjs` — bridge test proving the RPC working methods emit validated working state with reset defaults (PRD AC1)
 - `hooks/useWebUiState.ts` — shared reactive UI snapshot hook: validated snapshot adoption, single EventSource on `/api/plugins/events` with epoch/revision recovery, online refetch, named local diagnostics; the only transport owner
 - `components/plugins/UiComponent.tsx` — registry-driven renderer: deterministic replace/wrap/hide resolution over validated immutable models, error boundaries disabling failed contributions back to the builtin renderer, host-owned strategies (default/compact/card), chat working indicator consuming `ui.working.changed`
