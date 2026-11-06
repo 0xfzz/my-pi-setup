@@ -1,6 +1,7 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { validatePlugin, type WebPluginDescriptor } from "./descriptor.ts";
+import { normalizeContributions } from "./ui-contract.ts";
 
 export { WEB_PLUGIN_VIEW_EVENT } from "./view.ts";
 export {
@@ -40,11 +41,23 @@ export function validateRegistry(
 
   const seenIds = new Set<string>();
   const seenPaths = new Set<string>();
+  const replacements = new Map<string, string>();
 
   for (const plugin of plugins) {
     const pluginResult = validatePlugin(plugin, known);
     if (!pluginResult.ok) {
       errors.push(pluginResult.error);
+    }
+
+    if (pluginResult.ok) {
+      for (const c of normalizeContributions(pluginResult.plugin)) {
+        if (c.override && c.override.mode !== "wrap") {
+          const key = `${c.override.target}/${c.priority ?? 0}`;
+          const owner = `${plugin.id}/${c.id}`;
+          if (replacements.has(key)) errors.push(`Plugin "${plugin.id}" contribution "${c.id}": conflicting exclusive replacement with ${replacements.get(key)}`);
+          else replacements.set(key, owner);
+        }
+      }
     }
 
     if (plugin && typeof plugin.id === "string") {

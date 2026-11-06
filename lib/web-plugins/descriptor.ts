@@ -1,4 +1,5 @@
 import { validateActions, type ActionDescriptor } from "./actions.ts";
+import { validateContributions, type WebPluginUiContribution } from "./ui-contract.ts";
 
 export type { ActionDescriptor } from "./actions.ts";
 
@@ -21,6 +22,7 @@ export interface WebPluginDescriptor {
   extension: string;
   title: string;
   surfaces: WebPluginSurface[];
+  ui?: WebPluginUiContribution[];
   description?: string;
   actions?: ActionDescriptor[];
 }
@@ -80,7 +82,7 @@ export function validatePlugin(
       };
     }
 
-    if (!Array.isArray(raw.surfaces) || raw.surfaces.length === 0) {
+    if (!Array.isArray(raw.surfaces) || (raw.surfaces.length === 0 && (!Array.isArray(raw.ui) || raw.ui.length === 0))) {
       return {
         ok: false,
         error: `Plugin "${pluginName}": must have at least one surface`,
@@ -150,11 +152,15 @@ export function validatePlugin(
       cleanActions = actionsResult.actions;
     }
 
+    const ui = raw.ui === undefined ? undefined : validateContributions(raw.ui, pluginName);
+    if (ui && !ui.ok) return { ok: false, error: ui.error };
+
     const plugin: WebPluginDescriptor = {
       id: raw.id,
       extension: raw.extension,
       title: raw.title,
       surfaces: cleanSurfaces,
+      ...(ui?.ok ? { ui: ui.value } : {}),
       ...(typeof raw.description === "string" ? { description: raw.description } : {}),
       ...(cleanActions !== undefined ? { actions: cleanActions } : {}),
     };
