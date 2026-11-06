@@ -24,18 +24,18 @@ export async function checkPluggableUi(page, base) {
   secondUi.setWorkingMessage("Second session working");
   secondUi.setWorkingIndicator({ frames: ["◇", "◆"], intervalMs: 160 });
   for (const [id, label] of [[first, "First"], [second, "Second"]]) {
-    assert.ok(store.publish(id, "ui.session.lifecycle", { running: true, project: "/fixture" }, "fixture", "host"));
+    assert.ok(store.publish(id, "ui.session.lifecycle", { running: id === first, project: "/fixture" }, "fixture", "host"));
     assert.ok(store.publish(id, "ui.view.changed", { pluginId: "ui-fixture", view: { type: "status", text: `${label} session view`, tone: "neutral" } }, "ui-fixture"));
   }
   const contribution = (id, component, placement, extra = {}) => ({ id, component, scope: "session", placement, ...extra });
   const workingPlacement = { kind: "anchor", anchor: "chat.working" };
   const declarations = [
     contribution("composer", "ui.plugin-view.v1", { kind: "anchor", anchor: "chat.composer", maxWidth: 320 }),
-    contribution("header", "ui.plugin-view.v1", { kind: "anchor", anchor: "session.header" }),
+    contribution("header", "ui.plugin-view.v1", { kind: "anchor", anchor: "session.header" }, { strategy: "card" }),
     contribution("overlay", "ui.plugin-view.v1", { kind: "overlay", maxWidth: 320, maxHeight: 180, inset: { right: 8, bottom: 8 }, mobileFallback: "chat.after" }),
     contribution("working", "ui.working-indicator.v1", workingPlacement),
-    contribution("replacement", "ui.working-indicator.v1", workingPlacement, { priority: 20, strategy: "compact", override: { target: "ui.working-indicator.v1", mode: "replace", fallback: "builtin" } }),
-    contribution("wrapper", "ui.working-indicator.v1", workingPlacement, { priority: 30, strategy: "card", override: { target: "ui.working-indicator.v1", mode: "wrap", fallback: "builtin" } }),
+    contribution("replacement", "ui.working-indicator.v1", workingPlacement, { priority: 20, strategy: "compact", visibleWhen: "running", override: { target: "ui.working-indicator.v1", mode: "replace", fallback: "builtin" } }),
+    contribution("wrapper", "ui.working-indicator.v1", workingPlacement, { priority: 30, strategy: "card", visibleWhen: "running", override: { target: "ui.working-indicator.v1", mode: "wrap", fallback: "builtin" } }),
   ];
   let enabled = declarations;
   let forcedSnapshot;
@@ -83,6 +83,7 @@ export async function checkPluggableUi(page, base) {
   try {
     await page.goto(`${base}/?session=${first}`, { waitUntil: "load" });
     await expectText(inAnchor("session.header", "header"), "First session view");
+    await node("header").locator(".web-ui-card").waitFor({ state: "visible" });
     await expectText(inAnchor("chat.composer", "composer"), "First session view");
     await expectText(inAnchor("viewport.overlay", "overlay"), "First session view");
     await expectText(working, "First session working");
@@ -117,6 +118,8 @@ export async function checkPluggableUi(page, base) {
     await page.goto(`${base}/?session=${second}`, { waitUntil: "load" });
     await expectText(working, "Second session working");
     assert.equal(await working.getAttribute("data-frames"), "◇\u0000◆");
+    assert.equal(await node("working").locator('[data-ui-component]').getAttribute("data-ui-replacement"), "builtin");
+    assert.equal(await node("working").locator('[data-ui-wrapper]').count(), 0, "running-only overrides cannot leak into an idle session");
     await expectText(inAnchor("chat.composer", "composer"), "Second session view");
     assert.doesNotMatch(await node("header").textContent(), /First session/);
     assert.doesNotMatch(await node("overlay").textContent(), /First session/);

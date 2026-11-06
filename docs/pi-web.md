@@ -132,7 +132,7 @@ All cell contents and labels render as plain text nodes. HTML tags (such as `<sc
 
 Plugin data updates are push-based using Server-Sent Events (SSE). The server exposes `GET /api/plugins/events` streaming `{type:"changed",revision}` notifications whenever any plugin view is recorded or updated. The host store maintains a monotonically increasing revision counter and immediately pushes events to connected browser clients, including 15-second `: ping` heartbeats to maintain connectivity through proxies.
 
-Clients consume a single shared `usePluginData` reactive hook that subscribes to `/api/plugins/events` via browser-native `EventSource`. When a `"changed"` event is received, the client deduplicates in-flight fetches and re-queries `/api/plugins`. If the EventSource encounters repeated connection failures, it automatically falls back to slow 30-second polling until connectivity is restored.
+Clients, including plugin navigation, consume the shared `useWebUiState` reactive hook (`usePluginData` remains its compatibility alias). It owns one browser-native `EventSource` on `/api/plugins/events`, deduplicates in-flight snapshot fetches, and re-queries `/api/plugins` on revision changes. EventSource reconnect and browser `online` events trigger full snapshot recovery; individual components do not poll or create separate transports.
 
 #### Session status markers
 

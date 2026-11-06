@@ -61,6 +61,12 @@ test("UI registry: conflicting exclusive replacements name both owners", () => {
   const plugins = ["first", "second"].map(id => ({ id, title: id, extension: "fixture", surfaces: [], ui: [contribution] }));
   assert.match(validateRegistry(plugins, ["fixture"]).join("\n"), /second.*working.*first\/working/);
 });
+test("plugin navigation uses the shared UI subscription instead of a separate fetch", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile("vendor/pi-web/components/plugins/PluginNav.tsx", "utf8");
+  assert.match(source, /useWebUiState\(\)/);
+  assert.doesNotMatch(source, /\bfetch\s*\(|\bEventSource\s*\(/);
+});
 test("PRD AC3: no pi-web UI source contains a plugin-ID-specific renderer branch", async () => {
   const { readdir, readFile } = await import("node:fs/promises");
   const { join } = await import("node:path");

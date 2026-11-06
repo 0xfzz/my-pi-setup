@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React from "react";
+import { useWebUiState } from "@/hooks/useWebUiState";
 
 export interface WebPluginSurface {
   kind: "sidebar" | "page" | "slot";
@@ -23,26 +24,8 @@ interface PluginNavProps {
 }
 
 export function PluginNav({ plugins: initialPlugins, currentPluginId, variant = "toolbar" }: PluginNavProps) {
-  const [plugins, setPlugins] = useState<readonly WebPluginDescriptor[]>(initialPlugins ?? []);
-
-  useEffect(() => {
-    if (initialPlugins !== undefined) {
-      setPlugins(initialPlugins);
-      return;
-    }
-    let mounted = true;
-    void fetch("/api/plugins")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { plugins?: WebPluginDescriptor[] } | null) => {
-        if (mounted && data?.plugins) {
-          setPlugins(data.plugins);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      mounted = false;
-    };
-  }, [initialPlugins]);
+  const data = useWebUiState();
+  const plugins = initialPlugins ?? data.plugins;
 
   const pagePlugins = plugins.filter((p) =>
     p.surfaces.some((s) => s.kind === "page"),

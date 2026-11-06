@@ -51,7 +51,7 @@ function Contribution({ plugin, contribution: c, state, sessionId, view, place, 
   }
   const compact = (region === "top" || region === "bottom") && model.kind === "view";
   const page = plugin.surfaces.find(s => s.kind === "page");
-  const content = <UiComponent component={c.component} sessionId={sessionId} model={model} fallback={compact && model.kind === "view" ? <span className="plugin-slot-content">{model.value.type === "status" ? model.value.text : model.value.type === "kv" ? model.value.rows[0] ? `${model.value.rows[0].label}: ${model.value.rows[0].value}` : "" : `${model.value.items.length} items (${model.value.items[0] ?? ""})`}</span> : undefined} />;
+  const content = <UiComponent component={c.component} sessionId={sessionId} model={model} renderStrategy={c.strategy} fallback={compact && !c.strategy && model.kind === "view" ? <span className="plugin-slot-content">{model.value.type === "status" ? model.value.text : model.value.type === "kv" ? model.value.rows[0] ? `${model.value.rows[0].label}: ${model.value.rows[0].value}` : "" : `${model.value.items.length} items (${model.value.items[0] ?? ""})`}</span> : undefined} />;
   const title = <><SessionStatusDot sessionId={sessionId} running={running} /><span className={region === "center" ? "plugin-slot-center-title" : "plugin-slot-title"}>{plugin.title}</span></>;
   return <section tabIndex={overlay ? 0 : undefined} data-plugin-id={plugin.id} data-contribution-id={c.id} data-ui-owner={owner} data-scope={c.scope} data-collision={place.collision ?? "stack"}
     className={`web-ui-contribution ${overlay ? "web-ui-overlay" : ""} ${region === "center" ? "plugin-slot-center-panel" : region === "floating" ? "plugin-slot-floating-widget" : "plugin-slot-row"}`}

@@ -78,10 +78,18 @@ function OverrideTree({ component, model, entries, fallback, userChoice, session
   for (const wrap of [...resolution.wrappers].reverse()) rendered = <div data-ui-wrapper={`${wrap.pluginId}/${wrap.contribution.id}`}>{strategy(immutable, wrap.contribution.strategy ?? "card", rendered)}</div>;
   return <span data-ui-component={component} data-ui-replacement={resolution.replacement ? `${resolution.replacement.pluginId}/${resolution.replacement.contribution.id}` : "builtin"}>{rendered}</span>;
 }
-export function UiComponent({ component, model, sessionId, fallback, userChoice }: { component: WebUiComponent; model: UiModel; sessionId: string; fallback?: ReactNode; userChoice?: string }) {
+export function UiComponent({ component, model, sessionId, fallback, userChoice, renderStrategy = "default" }: { component: WebUiComponent; model: UiModel; sessionId: string; fallback?: ReactNode; userChoice?: string; renderStrategy?: "default" | "compact" | "card" }) {
   const data = useWebUiState();
-  const entries = data.plugins.flatMap(plugin => normalizeContributions(plugin).map(contribution => ({ pluginId: plugin.id, contribution })));
-  const builtin = fallback ?? strategy(model, "default");
+  const state = data.ui?.sessions[sessionId];
+  const running = data.sessions[sessionId]?.running ?? state?.running ?? false;
+  const entries = data.plugins.flatMap(plugin => normalizeContributions(plugin).filter(contribution => {
+    if (!state || state.closed) return false;
+    if (contribution.visibleWhen === "running" && !running) return false;
+    if (contribution.visibleWhen === "idle" && running) return false;
+    if (contribution.visibleWhen === "has-view" && !data.views[sessionId]?.[contribution.view ?? plugin.id]) return false;
+    return true;
+  }).map(contribution => ({ pluginId: plugin.id, contribution })));
+  const builtin = fallback ?? strategy(model, renderStrategy);
   const active = resolveOverrides(component, entries, disabledFor(sessionId), userChoice);
   const owner = active.replacement ? `${active.replacement.pluginId}/${active.replacement.contribution.id}` : active.wrappers[0] ? `${active.wrappers[0].pluginId}/${active.wrappers[0].contribution.id}` : "builtin";
   return <RendererBoundary key={`${sessionId}/${component}/${owner}`} owner={owner} sessionId={sessionId} fallback={builtin}>
