@@ -1607,6 +1607,7 @@ export function AppShell() {
       <SessionSidebar
         selectedSessionId={selectedSession?.id ?? null}
         onSelectSession={handleSelectSession}
+        onOpenSubagentSession={handleOpenSubagentTab}
         onNewSession={handleNewSession}
         controlRef={sidebarControlRef}
         onNewSessionContextChange={handleSidebarNewSessionContext}

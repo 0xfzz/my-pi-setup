@@ -104,6 +104,7 @@ function describeRows(rows) {
   return rows.map((row) => {
     switch (row.kind) {
       case "session": return `${row.context}:${row.family.root.id}`;
+      case "session-child": return `child:${row.family.root.id}:${row.session.id}`;
       case "group": return `group:${row.project.name}${row.expanded ? "" : " (collapsed)"}`;
       case "group-more": return `more:${row.hidden}${row.canShowLess ? " less" : ""}`;
       case "pinned-more": return `pinned-more:${row.hidden}${row.canShowLess ? " less" : ""}`;
@@ -167,8 +168,14 @@ test("forks stay separate rows while subagents fold into their root", () => {
     subagent("child", "parent", { modified: BASE + 1 }),
   ];
   const model = buildSessionTree(input({ sessions, currentProject: { key: "/work/alpha", root: "/work/alpha" } }));
-  assert.deepEqual(describeRows(model.rows), ["-", "group:alpha", "group:fork", "group:parent", "-", "footer-open"]);
+  assert.deepEqual(describeRows(model.rows), ["-", "group:alpha", "group:fork", "group:parent", "child:parent:child", "-", "footer-open"]);
   assert.deepEqual(model.rows[3].family.subagents.map((item) => item.id), ["child"]);
+  // The child row carries its own flags: selected and running by its id.
+  const viewing = buildSessionTree(input({ sessions, currentProject: { key: "/work/alpha", root: "/work/alpha" }, runningIds: new Set(["child"]), selectedSessionId: "child" }));
+  const childRow = viewing.rows.find((row) => row.kind === "session-child");
+  assert.deepEqual(childRow.status, { running: true, awaiting: false, unread: false, selected: true });
+  const parentRow = viewing.rows.find((row) => row.kind === "session" && row.family.root.id === "parent");
+  assert.deepEqual(parentRow.status, { running: true, awaiting: false, unread: false, selected: true, transient: false }, "the family keeps its folded flags");
 });
 
 test("a family is archived until its root session gets a newer message", () => {
@@ -328,7 +335,7 @@ test("expanded groups show six families plus running, unread and selected ones",
   assert.equal(GROUP_VISIBLE_LIMIT, 6);
   assert.deepEqual(describeRows(model.rows), [
     "-", "group:alpha", "group:s0", "group:s1", "group:s2", "group:s3", "group:s4", "group:s5",
-    "group:s7", "group:s8", "group:s9", "more:1", "-", "footer-open",
+    "group:s7", "group:s8", "child:s8:s8-child", "group:s9", "more:1", "-", "footer-open",
   ]);
   const group = model.rows[1];
   assert.equal(group.running, 1);

@@ -15,6 +15,7 @@ import {
   type RefObject,
 } from "react";
 import type { SessionFamily } from "@/lib/session-family";
+import { SIDE_SESSION_NAME } from "@/lib/session-family";
 import { splitForkSuffix } from "@/lib/session-fork-name";
 import { MAX_PROJECT_NAME_LENGTH, type ProjectMovePosition } from "@/lib/session-ui-state-shared";
 import {
@@ -106,6 +107,8 @@ export interface SessionTreeProps {
   /** Row whose menu is open: kept mounted, its ⋯ shown pressed. A group row's key works too. */
   activeMenuRowKey: string | null;
   onSelectFamily(family: SessionFamily): void;
+  /** A child row (a subagent run or side chat) opens in its side panel tab. */
+  onOpenSubagentSession(sessionId: string, label: string, side?: boolean): void;
   /** `all` (Alt+click): every group follows this one. */
   onToggleGroup(projectKey: string, all: boolean): void;
   /** Reveal SHOW_MORE_STEP more families; key is a projectKey or PINNED_MORE_KEY. */
@@ -445,6 +448,9 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
                   />
                 );
               }
+              if (row.kind === "session-child") {
+                return <ChildRowView key={row.key} row={row} top={top} height={height} now={now} handlers={handlersRef} />;
+              }
               if (row.kind === "archive-group") {
                 return <ArchiveGroupRowView key={row.key} row={row} top={top} height={height} menuOpen={menuOpen} handlers={handlersRef} />;
               }
@@ -720,6 +726,74 @@ const SessionRowView = memo(function SessionRowView({
           </button>
         </span>
       )}
+    </div>
+  );
+});
+
+/**
+ * A family child (a subagent run or a side chat): indented under its
+ * parent's row, opening in its side panel tab like the chat's own
+ * subagent views. It carries only its own flags; the parent row keeps
+ * the folded family's actions and menu.
+ */
+const ChildRowView = memo(function ChildRowView({
+  row,
+  top,
+  height,
+  now,
+  handlers,
+}: {
+  row: Extract<SidebarRow, { kind: "session-child" }>;
+  top: number;
+  height: number;
+  now: number;
+  handlers: Handlers;
+}) {
+  const { locale, t } = useI18n();
+  const { session, status } = row;
+  const relation = session.relation;
+  const side = relation?.kind === "side";
+  const label = side
+    ? (session.name && session.name !== SIDE_SESSION_NAME ? session.name : t("agentSwitcher.sideChat"))
+    : relation?.kind === "subagent"
+      ? (relation.description || relation.profile || t("agentSwitcher.subagent"))
+      : sessionRowTitle(session);
+  const className = [
+    "session-tree-row session-tree-child",
+    status.selected ? "is-selected" : "",
+    status.running ? "is-running" : "",
+  ].filter(Boolean).join(" ");
+  let meta: ReactNode = formatShortRelativeTime(session.modified, locale, new Date(now));
+  let metaState = "";
+  let metaTitle: string | undefined;
+  if (status.awaiting) {
+    meta = <span className="session-tree-awaiting" role="img" aria-label={t("sidebar.agentAwaitingInput")} />;
+    metaState = " is-awaiting";
+    metaTitle = t("sidebar.agentAwaitingInput");
+  } else if (status.running) {
+    meta = <SpinnerIcon size={12} label={t("sidebar.agentRunning")} />;
+    metaState = " is-running";
+    metaTitle = t("sidebar.agentRunning");
+  } else if (status.unread) {
+    meta = <span className="session-tree-unread" role="img" aria-label={t("sidebar.newSessionActivity")} />;
+    metaState = " is-unread";
+    metaTitle = t("sidebar.newActivity");
+  }
+  return (
+    <div className={className} style={rowStyle(top, height)} data-row-key={row.key}>
+      <button
+        type="button"
+        className="session-tree-main"
+        aria-current={status.selected ? "true" : undefined}
+        title={label}
+        onClick={(event) => {
+          event.stopPropagation();
+          handlers.current.onOpenSubagentSession(session.id, label, side);
+        }}
+      >
+        <span className="session-tree-title">{label}</span>
+        <span className={`session-tree-meta${metaState}`} title={metaTitle}>{meta}</span>
+      </button>
     </div>
   );
 });

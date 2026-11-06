@@ -208,6 +208,8 @@ interface Props {
   onNewSession?: (sessionId: string, cwd: string, projectKey?: string | null, options?: NewSessionOptions) => void;
   /** What the bar above a fresh composer moves through (`SessionSidebarControl`). */
   controlRef?: Ref<SessionSidebarControl>;
+  /** A child row (a subagent run or side chat) opens in its side panel tab. */
+  onOpenSubagentSession?: (sessionId: string, label: string, side?: boolean) => void;
   /** The sidebar's cwd as the bar above a fresh composer shows it; reported when that changes. */
   onNewSessionContextChange?: (context: NewSessionContext | null) => void;
   initialSessionId?: string | null;
@@ -510,7 +512,7 @@ function buttonAnchor(element: HTMLElement, align: "start" | "end"): SidebarMenu
   return { kind: "rect", rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }, align };
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, controlRef, onNewSessionContextChange, initialSessionId, initialSessionLinked, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, hiddenFinishedSessionIds, onRunningSessionIdsChange, onSessionsChange }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, onOpenSubagentSession, onNewSession, controlRef, onNewSessionContextChange, initialSessionId, initialSessionLinked, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, hiddenFinishedSessionIds, onRunningSessionIdsChange, onSessionsChange }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
@@ -2671,6 +2673,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     confirmDeleteRootId,
     activeMenuRowKey,
     onSelectFamily: handleSelectFamily,
+    onOpenSubagentSession: onOpenSubagentSession ?? (() => {}),
     onToggleGroup: handleToggleGroup,
     onShowMore: handleShowMore,
     onShowLess: handleShowLess,

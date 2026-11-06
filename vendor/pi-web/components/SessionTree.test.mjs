@@ -41,6 +41,7 @@ const defaults = {
   confirmDeleteRootId: null,
   activeMenuRowKey: null,
   onSelectFamily: noop,
+  onOpenSubagentSession: noop,
   onToggleGroup: noop,
   onShowMore: noop,
   onShowLess: noop,
@@ -103,6 +104,18 @@ function sessionRow(root, { context = "group", status = {}, rowProject = project
     status: { running: false, awaiting: false, unread: false, selected: false, transient: false, ...status },
   };
 }
+
+function childRow(id, rootId = "parent", { status = {}, sessionExtra = {} } = {}) {
+  return {
+    kind: "session-child",
+    key: `child:${rootId}:${id}`,
+    family: { root: session(rootId), subagents: [], latestModified: session(id).modified },
+    session: session(id, sessionExtra),
+    status: { running: false, awaiting: false, unread: false, selected: false, ...status },
+  };
+}
+
+const subagentRelation = { kind: "subagent", parentSessionId: "parent", profile: "explore", description: "Explore", status: "completed" };
 
 function groupRow(extra = {}, projectExtra = {}) {
   const groupProject = { ...project, ...projectExtra };
@@ -240,6 +253,31 @@ test("a running row shows the labelled spinner and cannot be archived from the r
 test("an unread row shows the labelled unread dot", () => {
   const html = rowMarkup(render({ rows: [sessionRow(session("new"), { status: { unread: true } })] }), "session:group:new");
   assert.match(html, /<span class="session-tree-meta is-unread" title="New activity"><span class="session-tree-unread" role="img" aria-label="New session activity"><\/span><\/span>/);
+});
+
+test("a child row indents under its parent, names its subagent and offers no family actions", () => {
+  const html = rowMarkup(render({ rows: [childRow("child", "parent", { sessionExtra: { relation: subagentRelation } })] }), "child:parent:child");
+  assert.match(html, /^<div class="session-tree-row session-tree-child" style="top:0;height:28px" data-row-key="child:parent:child">/);
+  // The description names the row; its control opens the side panel tab, so
+  // the family's actions (archive, ⋯) and a deep link stay off it.
+  assert.match(html, /<span class="session-tree-title">Explore<\/span>/);
+  assert.match(html, /<button type="button" class="session-tree-main" title="Explore">/);
+  assert.doesNotMatch(html, /session-tree-action|href=/);
+  assert.match(cssRule(".session-tree-child"), /padding: 0 4px 0 36px;/, "one indent past the parent's text column");
+  assert.match(css, /\.session-tree-child\.is-selected::before/, "the selected child gets the accent bar with the session rows");
+});
+
+test("a child row shows its states and an unnamed side chat's label", () => {
+  const running = rowMarkup(render({ rows: [childRow("c1", "parent", { status: { running: true } })] }), "child:parent:c1");
+  assert.match(running, /class="session-tree-row session-tree-child is-running"/);
+  assert.match(running, /<span class="session-tree-meta is-running" title="Agent running…"><svg[^>]*class="sidebar-spin" role="img" aria-label="Agent running…"/);
+  const unread = rowMarkup(render({ rows: [childRow("c2", "parent", { status: { unread: true } })] }), "child:parent:c2");
+  assert.match(unread, /<span class="session-tree-meta is-unread" title="New activity"><span class="session-tree-unread" role="img" aria-label="New session activity"><\/span><\/span>/);
+  const side = rowMarkup(render({ rows: [childRow("c3", "parent", { sessionExtra: { relation: { kind: "side", parentSessionId: "parent" }, name: "Side chat" } })] }), "child:parent:c3");
+  assert.match(side, /<span class="session-tree-title">Side chat<\/span>/);
+  const selected = rowMarkup(render({ rows: [childRow("c4", "parent", { status: { selected: true } })] }), "child:parent:c4");
+  assert.match(selected, /class="session-tree-row session-tree-child is-selected"/);
+  assert.match(selected, /aria-current="true"/);
 });
 
 test("an awaiting row shows the amber dot in the spinner's slot", () => {
@@ -500,7 +538,7 @@ test("renders the model built from a catalog with unique row keys", () => {
   const html = render({ rows: model.rows });
   const keys = renderedKeys(html);
   assert.equal(new Set(keys).size, keys.length);
-  assert.deepEqual(keys, ["pinned-header", "session:pinned:b", "group:/work/app", "session:group:a", "footer-open"]);
+  assert.deepEqual(keys, ["pinned-header", "session:pinned:b", "group:/work/app", "session:group:a", "child:a:sub", "footer-open"]);
   const familyRow = rowMarkup(html, "session:group:a");
   assert.match(familyRow, /is-selected/);
   assert.match(familyRow, /aria-label="Agent running…"/);
@@ -584,9 +622,9 @@ test("headers lead with their chevron, and every row's text starts in one column
   // One rhythm: session rows, every header (a project's, the pinned
   // section's, the archive's projects), the empty note and the footer are
   // one height, 28px (44px on a phone); only "show more" is shorter.
-  assert.deepEqual(SIDEBAR_ROW_HEIGHTS.desktop, { "pinned-header": 28, session: 28, "pinned-more": 26, group: 28, "group-more": 26, "group-empty": 28, spacer: 8, "footer-open": 28, "footer-archived": 28, "archive-group": 28 });
+  assert.deepEqual(SIDEBAR_ROW_HEIGHTS.desktop, { "pinned-header": 28, session: 28, "session-child": 28, "pinned-more": 26, group: 28, "group-more": 26, "group-empty": 28, spacer: 8, "footer-open": 28, "footer-archived": 28, "archive-group": 28 });
   for (const [layout, height] of [["desktop", 28], ["mobile", 44]]) {
-    for (const kind of ["session", "group", "pinned-header", "group-empty", "footer-open", "footer-archived", "archive-group"]) {
+    for (const kind of ["session", "session-child", "group", "pinned-header", "group-empty", "footer-open", "footer-archived", "archive-group"]) {
       assert.equal(SIDEBAR_ROW_HEIGHTS[layout][kind], height, `${layout} ${kind}`);
     }
   }
