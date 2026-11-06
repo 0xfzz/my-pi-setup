@@ -172,7 +172,7 @@ test("descriptor validation: enforces id regex, title, extension check, surfaces
   );
 
   const zeroSurfacesResult = validatePlugin(
-    { ...cacheStatsPlugin, surfaces: [] },
+    { ...cacheStatsPlugin, surfaces: [], ui: undefined },
     known,
   );
   assert.equal(zeroSurfacesResult.ok, false);

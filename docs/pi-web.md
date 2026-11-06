@@ -152,7 +152,53 @@ The browser consumes one snapshot plus one SSE stream through `hooks/useWebUiSta
 
 Plugins declare UI through the optional `ui` field on their descriptor (`WebPluginUiContribution` in `lib/web-plugins/ui-contracts.ts`): a stable component key (e.g. `ui.working-indicator.v1`), an optional view key, a validated placement, an explicit scope, and — only for allowlisted components — an override with `replace`/`wrap`/`hide` mode and a `builtin` fallback. Resolution is deterministic (enabled user choice, then highest-priority replacement, then wrapper chain, then the built-in renderer); a renderer that throws or exceeds its render budget is disabled for that session and the built-in renderer returns. Legacy `slot` surfaces remain supported and are normalized into equivalent region contributions. Host code never branches on a plugin id (enforced by test).
 
-Bubbly Spinner is the reference implementation: it calls only the standard `ctx.ui.setWorkingIndicator`/`setWorkingMessage`, which reach the web working indicator through the event stream; its descriptor wraps `ui.working-indicator.v1` with a compact strategy instead of publishing a duplicate status view.
+Bubbly Spinner is the reference implementation: it calls only the standard `ctx.ui.setWorkingIndicator`/`setWorkingMessage`, which reach the web working indicator through the event stream; its descriptor wraps `ui.working-indicator.v1` with a compact strategy instead of publishing a duplicate status view. Todo, cache, artifacts, and checkpoints now declare explicit session-scoped region contributions at their existing positions; dashboard declares a compact `session.sidebar` contribution alongside its page. Legacy surfaces remain for navigation and compatibility, but an explicit `ui` array replaces slot normalization rather than adding duplicate mounts.
+
+##### Author example
+
+Register a descriptor in `web-plugins/index.ts` (the referenced extension must exist). Keep page/sidebar surfaces for navigation, and choose placements in `ui`. For example, a Todo card beside the composer can replace its current `tasks` contribution with:
+
+```ts
+ui: [{
+  id: "tasks",
+  component: "ui.plugin-view.v1",
+  view: "todo",
+  scope: "session",
+  visibleWhen: "has-view",
+  placement: { kind: "anchor", anchor: "chat.composer", maxWidth: 400, collision: "shrink" },
+}],
+```
+
+The extension continues to use `publishWebView(pi, "todo", view)`. To move the declared contribution at runtime, use the typed publisher; the host assigns session identity, source, sequence, and revision:
+
+```ts
+import { publishWebUi } from "../lib/web-plugins/publisher.ts";
+
+const result = publishWebUi(pi, "todo", "ui.layout.changed", {
+  pluginId: "todo",
+  contributionId: "tasks",
+  placement: {
+    kind: "overlay", maxWidth: 320, maxHeight: 240,
+    inset: { right: 12, bottom: 12 }, mobileFallback: "chat.after",
+  },
+});
+// result.ok === false names an invalid payload; the last valid placement survives.
+```
+
+Observe producer events, if needed, with `pi.events.on(WEB_UI_EVENT, handler)` using `WEB_UI_EVENT` from `lib/web-plugins/ui-event-models.ts`; these are producer notifications, not browser commands or replay snapshots. Browser components consume only `useWebUiState()`. Never emit a browser-owned session/lifecycle event or infer another session's identity.
+
+For Bubbly-style working UI, no view publisher is needed:
+
+```ts
+ctx.ui.setWorkingIndicator({ frames: ["·", "●"], intervalMs: 120 });
+ctx.ui.setWorkingMessage("Ratiocinating...");
+ctx.ui.setWorkingVisible(true);
+// Reset when finished; undefined restores the built-in defaults.
+ctx.ui.setWorkingMessage();
+ctx.ui.setWorkingIndicator();
+```
+
+Its descriptor declares `component: "ui.working-indicator.v1"`, `scope: "session"`, `strategy: "compact"`, `placement: { kind: "anchor", anchor: "chat.working" }`, and `override: { target: "ui.working-indicator.v1", mode: "wrap", fallback: "builtin" }`. Use `replace` for a host-owned alternate strategy or `hide` for suppression; no React bundle, HTML, CSS, or arbitrary callback may be supplied. Component keys are experimental v1 schemas; changing a key's major version requires host support, otherwise validation rejects it.
 
 #### Plugin actions
 

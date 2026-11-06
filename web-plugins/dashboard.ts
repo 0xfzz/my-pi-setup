@@ -9,6 +9,15 @@ export const dashboardPlugin: WebPluginDescriptor = {
     { kind: "sidebar" },
     { kind: "page", path: "/plugins/dashboard" },
   ],
+  ui: [{
+    id: "summary",
+    component: "ui.session-sidebar-row.v1",
+    view: "dashboard",
+    strategy: "compact",
+    scope: "session",
+    visibleWhen: "has-view",
+    placement: { kind: "anchor", anchor: "session.sidebar", collision: "shrink" },
+  }],
   actions: [
     {
       id: "request-sync",

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { validateContributions, validatePlacement, normalizeContributions, resolveOverrides, type WebPluginUiContribution } from "../lib/web-plugins/ui-contracts.ts";
 import { validatePlugin } from "../lib/web-plugins/descriptor.ts";
 import { validateRegistry } from "../lib/web-plugins/registry.ts";
+import { WEB_PLUGINS } from "../web-plugins/index.ts";
 
 const contribution: WebPluginUiContribution = { id: "working", component: "ui.working-indicator.v1", scope: "session", placement: { kind: "anchor", anchor: "chat.working" }, override: { target: "ui.working-indicator.v1", mode: "replace", fallback: "builtin" } };
 test("UI contract: anchor catalog, bounded overlay, responsive constraints and legacy normalization", () => {
@@ -40,6 +41,21 @@ test("UI contract: deterministic override priority/user preference, wrap/hide an
   assert.equal(resolveOverrides(contribution.component, entries).wrappers[0]?.pluginId, "wrap");
   assert.equal(resolveOverrides(contribution.component, entries, new Set(["high/working", "low/working"])).replacement, undefined);
   assert.equal(resolveOverrides(contribution.component, [{ pluginId: "hide", contribution: { ...contribution, override: { target: contribution.component, mode: "hide", fallback: "builtin" } } }]).hidden, true);
+});
+test("adopted plugins declare session-scoped UI without duplicating legacy slots", () => {
+  for (const plugin of WEB_PLUGINS) {
+    assert.ok(plugin.ui?.length, `${plugin.id} must explicitly declare its UI`);
+    assert.equal(validateContributions(plugin.ui, plugin.id).ok, true);
+    assert.equal(normalizeContributions(plugin), plugin.ui);
+    assert.ok(plugin.ui.every(c => c.scope === "session"), plugin.id);
+    for (const surface of plugin.surfaces) {
+      if (surface.kind !== "slot") continue;
+      assert.equal(plugin.ui.filter(c => c.placement.kind === "region" && c.placement.region === surface.slot).length, 1,
+        `${plugin.id} preserves exactly one contribution in ${surface.slot}`);
+    }
+  }
+  const dashboard = WEB_PLUGINS.find(plugin => plugin.id === "dashboard");
+  assert.deepEqual(dashboard?.ui?.[0]?.placement, { kind: "anchor", anchor: "session.sidebar", collision: "shrink" });
 });
 test("UI registry: conflicting exclusive replacements name both owners", () => {
   const plugins = ["first", "second"].map(id => ({ id, title: id, extension: "fixture", surfaces: [], ui: [contribution] }));

@@ -5,6 +5,14 @@ export const artifactsPlugin: WebPluginDescriptor = {
   extension: "artifacts",
   title: "Artifacts",
   description: "Persisted workspace artifacts catalog and editor.",
+  ui: [{
+    id: "catalog",
+    component: "ui.plugin-view.v1",
+    view: "artifacts",
+    scope: "session",
+    visibleWhen: "has-view",
+    placement: { kind: "region", region: "floating", maxWidth: 400, maxHeight: 360 },
+  }],
   surfaces: [
     { kind: "sidebar" },
     { kind: "slot", slot: "floating" },
