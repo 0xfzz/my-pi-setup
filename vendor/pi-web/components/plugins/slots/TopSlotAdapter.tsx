@@ -47,8 +47,7 @@ export function TopSlotAdapter({ pluginsWithViews }: TopSlotAdapterProps) {
               <span className="plugin-slot-title">{plugin.title}</span>
               <span className="plugin-slot-sep">: </span>
               <span
-                className={`plugin-slot-chip plugin-status-chip ${plugin.id === "bubbly-spinner" ? "plugin-bubbly-chip" : ""} tone-${view.tone}`}
-                data-testid={plugin.id === "bubbly-spinner" ? "bubbly-chip" : undefined}
+                className={`plugin-slot-chip plugin-status-chip tone-${view.tone}`}
               >
                 {view.text}
               </span>

@@ -20,6 +20,9 @@ import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
+import { PluginAnchor } from "./plugins/PluginLayout";
+import { UiComponent, WorkingIndicator } from "./plugins/UiComponent";
+import { useWebUiState } from "@/hooks/useWebUiState";
 import { AnsiText } from "./AnsiText";
 import { useI18n } from "@/hooks/useI18n";
 import { phaseLabel } from "@/lib/chat-phase-label";
@@ -256,6 +259,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, durationMs, cacheMis
 
 export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, newSessionContextBar, initialNewSessionChoices, onNewSessionChoicesChange, onAgentEnd, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, panel = false, onSideSession, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onDebugSnapshotReaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onOpenSettings, onContextUsageChange, onOpenFile, onFilesUploaded, onOpenSubagent, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio, holdAudio }: Props) {
   const { t } = useI18n();
+  const webUi = useWebUiState();
   const isMobile = useIsMobile();
   const completionNotificationsEnabled = !isHiddenRelation(session?.relation);
 
@@ -1076,6 +1080,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         <NoticeShelf notices={notices} floating onPauseChange={setNoticePaused} />
       </div>
 
+      <PluginAnchor anchor="chat.before" sessionId={session?.id ?? sessionIdRef.current} project={messageCwd} />
       <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
         {extensionDialog && (
           <ExtensionDialog key={extensionDialog.id} request={extensionDialog} waitingCount={waitingExtensionDialogCount} onRespond={respondToExtensionUi} />
@@ -1336,11 +1341,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
               <StreamingReply store={streamingStore} onCommit={updatePromptAnchor} toolResults={toolResultsMap} modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} />
             )}
 
-            {(agentRunning || isCompacting) && !hasStreamingContent && (agentPhase || isCompacting) && (
-              <div className="break-words py-2 text-[13px] text-text-muted">
-                <span className="animate-[pulse_1.5s_infinite]">{phaseLabel(agentPhase, t, isCompacting, (queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0))}</span>
-              </div>
-            )}
+            <WorkingIndicator sessionId={session?.id ?? sessionIdRef.current}
+              active={(agentRunning || isCompacting) && !hasStreamingContent && Boolean(agentPhase || isCompacting)}
+              fallbackText={phaseLabel(agentPhase, t, isCompacting, (queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0)) ?? "Working…"} />
+            <PluginAnchor anchor="chat.working" sessionId={session?.id ?? sessionIdRef.current} project={messageCwd} />
 
             {bashRunning && !pendingBash && (
               <div className="py-2 text-[13px] text-text-muted">
@@ -1512,13 +1516,17 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             </div>
           </div>
         )}
+        <PluginAnchor anchor="chat.after" sessionId={session?.id ?? sessionIdRef.current} project={messageCwd} />
+        <PluginAnchor anchor="chat.composer" sessionId={session?.id ?? sessionIdRef.current} project={messageCwd} />
         {chatInputElement}
-        <ExtensionStatusBar
-          statuses={extensionStatuses}
-          widgets={extensionWidgets}
-          onCommand={handleSend}
-          commandsDisabled={sessionBusy}
-        />
+        <UiComponent component="ui.extension-status.v1" sessionId={session?.id ?? sessionIdRef.current ?? "new"}
+          model={{ kind: "status", value: webUi.ui?.sessions[session?.id ?? sessionIdRef.current ?? ""]?.statuses ?? Object.fromEntries(extensionStatuses.map(s => [s.key, s.text])) }}
+          fallback={<ExtensionStatusBar
+            statuses={webUi.ui?.sessions[session?.id ?? sessionIdRef.current ?? ""] ? Object.entries(webUi.ui.sessions[session?.id ?? sessionIdRef.current ?? ""].statuses).map(([key, text]) => ({ key, text })) : extensionStatuses}
+            widgets={extensionWidgets}
+            onCommand={handleSend}
+            commandsDisabled={sessionBusy}
+          />} />
       </div>
       {isEmptyNew && <div className="min-h-0 flex-1" />}
     </div>

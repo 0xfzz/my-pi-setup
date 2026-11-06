@@ -628,19 +628,31 @@
   border: 1px solid var(--border);
 }
 
-.plugin-bubbly-chip.tone-accent {
-  animation: bubbly-pulse 2s ease-in-out infinite;
+.web-ui-anchor { position: relative; flex-shrink: 0; min-width: 0; max-width: 100%; }
+.web-ui-contribution { min-width: 0; overflow: auto; overflow-wrap: anywhere; pointer-events: auto; }
+.web-ui-contribution-header { display: inline-flex; align-items: center; gap: 5px; }
+.web-ui-contribution-header button { margin-left: auto; min-width: 32px; min-height: 32px; }
+.web-ui-card, .web-ui-strategy-card { border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+.web-ui-status { display: flex; gap: 10px; }
+.web-ui-working-host { padding: 8px 0; color: var(--text-muted); font-size: 13px; }
+.web-ui-working { display: inline-flex; align-items: center; gap: 8px; white-space: pre-wrap; }
+.web-ui-working-frame { width: 1.5em; text-align: center; flex-shrink: 0; }
+.web-ui-working.is-compact { gap: 4px; font-size: 12px; }
+.web-ui-overlay-safe {
+  /* Bounded to the chat pane, excluding header, navigation and composer controls. */
+  position: absolute; inset: 12px 12px 140px 12px; z-index: 20;
+  pointer-events: none; overflow: hidden; display: flex; flex-direction: column;
+  align-items: flex-end; justify-content: flex-end; gap: 8px;
 }
-
-@keyframes bubbly-pulse {
-  0%, 100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.85;
-    transform: scale(1.02);
-  }
+.web-ui-overlay { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px; flex-shrink: 1; }
+.web-ui-overlay-safe:focus { outline: none; }
+.web-ui-anchor.plugin-slot-floating { position: absolute; bottom: 80px; right: 12px; z-index: 15; max-height: calc(100% - 120px); overflow: auto; }
+.web-ui-contribution[data-collision="hide"] { flex-shrink: 0; }
+@media (max-width: 767px) {
+  .web-ui-contribution[data-collision="hide"] { display: none; }
+  .web-ui-overlay-safe { inset: 8px 8px 160px 8px; }
+  .web-ui-contribution { max-width: 100%; }
 }
+@media (prefers-reduced-motion: reduce) { .web-ui-working-frame { animation: none; } }
 
 

@@ -83,6 +83,7 @@ import { getLastSettingsSection, settingsSectionRequiresProject, type SettingsSe
 import { focusIfLost } from "@/lib/stacked-dialog";
 import { PluginNav } from "@/components/plugins/PluginNav";
 import { SlotHost } from "@/components/plugins/slots/SlotHost";
+import { PluginAnchor } from "@/components/plugins/PluginLayout";
 import { usePluginData } from "@/components/plugins/PluginViewRenderer";
 import type { WebPluginDescriptor, WebView } from "@/lib/web-plugins-host";
 
@@ -1628,6 +1629,8 @@ export function AppShell() {
         onRunningSessionIdsChange={handleRunningSessionIdsChange}
         onSessionsChange={handleSessionsChange}
       />
+      <PluginAnchor anchor="session.sidebar" sessionId={selectedSession?.id} project={activeCwd} />
+      <PluginAnchor region="sidebar" sessionId={selectedSession?.id} project={activeCwd} />
       <PluginNav variant="toolbar" plugins={pluginsData.plugins} />
       <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
         {([
@@ -2816,6 +2819,8 @@ export function AppShell() {
         {isMobile && renderProjectTrustWarning(true)}
         </div>
 
+        <PluginAnchor anchor="app.header" sessionId={selectedSession?.id} project={activeCwd} />
+        <PluginAnchor anchor="session.header" sessionId={selectedSession?.id} project={activeCwd} />
         {/* Top slot strip: directly below the header */}
         <SlotHost
           slot="top"
@@ -2836,6 +2841,7 @@ export function AppShell() {
 
         {/* Chat content */}
         <div style={{ flex: 1, overflow: "hidden", position: "relative", display: "flex", flexDirection: "column" }}>
+          <PluginAnchor anchor="viewport.overlay" sessionId={selectedSession?.id} project={activeCwd} />
           <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
           {showChat ? (
             <ChatWindow
@@ -2981,6 +2987,7 @@ export function AppShell() {
           borderBottom: "1px solid var(--border)",
         }}>
           <div style={{ flex: 1, overflow: "hidden" }}>
+            <PluginAnchor anchor="file-panel.header" sessionId={selectedSession?.id} project={activeCwd} />
             <TabBar
               tabs={panelTabs}
               activeTabId={activeFileTabId ?? ""}
