@@ -40,7 +40,7 @@ test("validateConfig falls back per field instead of rejecting wholesale", () =>
   // A bad field must not discard the good ones.
   assert.deepEqual(
     validateConfig({ mode: "off", maxSnippetChars: "wide", includeToolGuidelines: false }),
-    { mode: "off", maxSnippetChars: DEFAULT_DYNAMIC_PROMPT_CONFIG.maxSnippetChars, includeToolGuidelines: false },
+    { mode: "off", maxSnippetChars: DEFAULT_DYNAMIC_PROMPT_CONFIG.maxSnippetChars, includeToolGuidelines: false, preserveDocs: true },
   );
   // Out-of-range widths clamp rather than throw.
   assert.equal(validateConfig({ maxSnippetChars: 5 }).maxSnippetChars, 40);
@@ -352,4 +352,31 @@ test("small windows default to the compact prompt and profiles override by speci
 test("profiles are validated field by field", () => {
   const parsed = validateConfig({ profiles: { "a/b": { maxSnippetChars: 9999, bogus: 1 }, junk: 5 } });
   assert.deepEqual(parsed.profiles, { "a/b": { maxSnippetChars: 400 } });
+});
+
+test("preserveDocs: false drops pi's docs section but keeps the other replace-mode sections", () => {
+  const tools = [tool("read", { promptSnippet: "Read a file." })];
+  const rendered = "<docs>\n- custom providers (docs/custom-provider.md), packages (docs/packages.md)\n</docs>";
+
+  const kept: any = {};
+  applyDynamicPrompt(kept, tools, { ...CONFIG, mode: "replace" }, rendered);
+  assert.match(kept.sections.docs, /docs\/custom-provider\.md/);
+
+  const dropped: any = {};
+  applyDynamicPrompt(dropped, tools, { ...CONFIG, mode: "replace", preserveDocs: false }, rendered);
+  assert.equal("docs" in dropped.sections, false, "a provider that refuses this line must not receive it");
+  // Only the docs pointer is gone; the prompt still describes this session.
+  assert.match(dropped.customPrompt, /Do not assume every request is about code/i);
+  assert.match(dropped.sections.tools, /read/);
+  assert.match(dropped.sections.rules, /Read a file before changing it/);
+  assert.match(dropped.sections.capabilities, /filesystem is readable/i);
+});
+
+test("preserveDocs is a config field, defaulted and settable per profile", () => {
+  assert.equal(DEFAULT_DYNAMIC_PROMPT_CONFIG.preserveDocs, true, "pi's docs pointer stays by default");
+  assert.equal(validateConfig({ preserveDocs: "no" }).preserveDocs, true);
+  assert.equal(validateConfig({ preserveDocs: false }).preserveDocs, false);
+  const parsed = validateConfig({ profiles: { "claude-bridge/*": { preserveDocs: false } } });
+  assert.equal(configForModel(parsed, { provider: "claude-bridge", id: "claude-opus-5-5" }).preserveDocs, false);
+  assert.equal(configForModel(parsed, { provider: "anthropic", id: "claude-sonnet-5-5" }).preserveDocs, true);
 });

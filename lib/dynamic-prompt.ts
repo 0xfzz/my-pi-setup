@@ -36,8 +36,16 @@ export interface DynamicPromptConfig {
   /** Include each tool's own promptGuidelines bullets. */
   includeToolGuidelines: boolean;
   /**
+   * Re-supply Pi's `<docs>` section in `replace` mode. Turn it off for a provider
+   * whose own prompt gate rejects pi's documentation-routing line — the
+   * `claude-bridge` Anthropic path reads the pair of doc paths in it as a
+   * third-party app and refuses the turn.
+   */
+  preserveDocs: boolean;
+  /**
    * Per-model overrides keyed by `provider/model`, a bare model id, or a `*`
-   * glob. Each value may set `mode`, `maxSnippetChars` and `includeToolGuidelines`.
+   * glob. Each value may set `mode`, `maxSnippetChars`, `includeToolGuidelines`
+   * and `preserveDocs`.
    */
   profiles?: Record<string, Partial<Omit<DynamicPromptConfig, "profiles">>>;
 }
@@ -81,6 +89,7 @@ export const DEFAULT_DYNAMIC_PROMPT_CONFIG: DynamicPromptConfig = {
   mode: "replace",
   maxSnippetChars: 110,
   includeToolGuidelines: true,
+  preserveDocs: true,
 };
 
 /** Validate untrusted config, falling back per-field rather than rejecting wholesale. */
@@ -95,8 +104,11 @@ export function validateConfig(value: unknown): DynamicPromptConfig {
   const includeToolGuidelines = typeof raw.includeToolGuidelines === "boolean"
     ? raw.includeToolGuidelines
     : DEFAULT_DYNAMIC_PROMPT_CONFIG.includeToolGuidelines;
+  const preserveDocs = typeof raw.preserveDocs === "boolean"
+    ? raw.preserveDocs
+    : DEFAULT_DYNAMIC_PROMPT_CONFIG.preserveDocs;
   const profiles = parseProfiles(raw.profiles);
-  return { mode, maxSnippetChars, includeToolGuidelines, ...(profiles ? { profiles } : {}) };
+  return { mode, maxSnippetChars, includeToolGuidelines, preserveDocs, ...(profiles ? { profiles } : {}) };
 }
 
 function parseProfiles(value: unknown): DynamicPromptConfig["profiles"] {
@@ -111,6 +123,7 @@ function parseProfiles(value: unknown): DynamicPromptConfig["profiles"] {
     if ("mode" in raw) profile.mode = checked.mode;
     if ("maxSnippetChars" in raw) profile.maxSnippetChars = checked.maxSnippetChars;
     if ("includeToolGuidelines" in raw) profile.includeToolGuidelines = checked.includeToolGuidelines;
+    if ("preserveDocs" in raw) profile.preserveDocs = checked.preserveDocs;
     out[key] = profile;
   }
   return Object.keys(out).length ? out : undefined;
@@ -365,6 +378,9 @@ export function buildDynamicSections(
  * the docs section is a static pointer to pi's own documentation — regenerating
  * it here would duplicate that. Extracting the rendered value keeps it in step
  * with whatever pi version is installed.
+ *
+ * `config.preserveDocs: false` skips the re-supply entirely: some providers read
+ * Pi's documentation-routing line as a third-party app and refuse the turn.
  */
 export function preserveDefaultSections(renderedPrompt: string): { docs?: string } {
   const match = renderedPrompt.match(/<docs>\n([\s\S]*?)\n<\/docs>/);

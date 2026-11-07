@@ -104,8 +104,9 @@ export function applyDynamicPrompt(
   if (config.mode === "replace") {
     options.customPrompt = sections.preamble;
     // `customPrompt` suppresses Pi's tools/rules/docs, so re-supply all three.
-    // `docs` is Pi's own static pointer: extract rather than duplicate it.
-    const preserved = preserveDefaultSections(renderedPrompt);
+    // `docs` is Pi's own static pointer: extract rather than duplicate it, and
+    // leave it out where the provider refuses a prompt carrying it.
+    const preserved = config.preserveDocs ? preserveDefaultSections(renderedPrompt) : {};
     options.sections = {
       ...options.sections,
       tools: sections.tools,
@@ -173,8 +174,14 @@ export default function dynamicPromptExtension(pi: ExtensionAPI) {
     // Report both, because the prompt describes only the active ones.
     const activeNames = new Set(pi.getActiveTools());
     const callableCount = visible.filter((entry) => activeNames.has(entry.name)).length;
+    const effective = { ...configForModel(active, ctx.model), ...(sessionMode ? { mode: sessionMode } : {}) };
     const text = [
-      `Mode: ${active.mode} (config: ${path})`,
+      `Mode: ${effective.mode} (config: ${path})`,
+      `Pi's docs section: ${effective.mode !== "replace"
+        ? "Pi's own, untouched"
+        : effective.preserveDocs
+          ? "re-supplied by replace"
+          : "dropped (preserveDocs: false)"}`,
       `Tools: ${callableCount} active of ${visible.length} registered` +
         (tools.length !== visible.length ? ` (${tools.length - visible.length} hidden)` : ""),
       missing.length

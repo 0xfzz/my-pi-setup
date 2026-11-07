@@ -87,6 +87,23 @@ small-window default. `/dynamic-prompt <mode>` beats a profile for the session.
 }
 ```
 
+`preserveDocs` (default `true`) controls whether `replace` mode re-supplies Pi's
+`<docs>` section, which `customPrompt` would otherwise suppress. Set it to `false`
+for a provider that refuses a prompt carrying Pi's documentation-routing line:
+`claude-bridge` (Claude Code via the Agent SDK) reads the doc-path pair in that line
+as a third-party app and stops the turn with `prompt-capture: refusing to send this
+prompt`. The rest of the replaced prompt — preamble, tools, rules, capabilities — is
+unaffected; only the pointer to Pi's own docs is dropped, and only for the models the
+profile matches.
+
+```json
+{
+  "profiles": {
+    "claude-bridge/*": { "preserveDocs": false }
+  }
+}
+```
+
 ## Not done
 
 Moving rarely used tools to Pi's `deferred` exposure would shrink the tool block
