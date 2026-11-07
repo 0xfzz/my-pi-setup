@@ -180,6 +180,8 @@ export function catalogMarkdown(points: readonly ExtensionPoint[] = EXTENSION_PO
   return [
     "# Web plugin extension-point catalog",
     "",
+    "> Part of [pi-workflow-extensions](../README.md). Every extension point a web plugin can use, with its stability, version and whether it is protected.",
+    "",
     "Generated from `lib/web-plugins/kernel/catalog.ts` by `scripts/gen-web-plugin-catalog.mjs`. Do not edit by hand.",
     "",
     "| Id | Kind | Stability | Description |",
