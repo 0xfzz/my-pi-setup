@@ -59,14 +59,15 @@ export const TRANSITIONS: Table = {
   rejected: {},
   ignored: {},
   unresolved: { "resolve-ok": "resolved" },
-  resolved: { enable: "enabled", disable: "disabled" },
+  // `quarantine` from resolved restores a quarantine persisted by an earlier process.
+  resolved: { enable: "enabled", disable: "disabled", quarantine: "quarantined" },
   disabled: { enable: "enabled" },
   enabled: { load: "loaded", "load-fail": "failed", disable: "disabled" },
   loaded: { activate: "activating", disable: "disabled", "load-fail": "failed" },
   activating: { activated: "active", "activate-fail": "failed" },
   active: { deactivate: "deactivating" },
   deactivating: { disposed: "disposed" },
-  disposed: { enable: "enabled", quarantine: "quarantined" },
+  disposed: { enable: "enabled", quarantine: "quarantined", disable: "disabled" },
   failed: { retry: "enabled", quarantine: "quarantined", disable: "disabled" },
   quarantined: { "clear-quarantine": "enabled", disable: "disabled" },
 };

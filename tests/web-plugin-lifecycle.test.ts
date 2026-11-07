@@ -68,9 +68,9 @@ test("a rejected dispatch throws and leaves the state unchanged", () => {
   assert.equal(life.history.length, 0);
 });
 
-test("quarantine is reachable only from failed or disposed, and clearing returns to enabled", () => {
+test("quarantine is reachable only from failed, disposed, or resolved (persisted quarantine), and clearing returns to enabled", () => {
   const sources = legalTransitions().filter((t) => t.event === "quarantine").map((t) => t.from).sort();
-  assert.deepEqual(sources, ["disposed", "failed"]);
+  assert.deepEqual(sources, ["disposed", "failed", "resolved"]);
   const life = new PluginLifecycle("acme.zen", { initial: "failed" });
   life.dispatch("quarantine");
   assert.equal(life.state, "quarantined");

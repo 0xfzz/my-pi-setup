@@ -21,6 +21,8 @@ export interface PluginOperatorState {
   grants: string[];
   /** Set when the operator clears a quarantine; the breaker starts fresh from here. */
   quarantineClearedAt?: number;
+  /** Persisted quarantine: survives restarts until cleared or the plugin version changes. */
+  quarantine?: { version: string; reason: string; at: number };
 }
 
 export interface WebPluginsState {
@@ -52,10 +54,15 @@ export function parseState(input: unknown): { ok: true; state: WebPluginsState }
     if (!isRecord(entry) || typeof entry.enabled !== "boolean" || !Array.isArray(entry.grants) || !entry.grants.every((g) => typeof g === "string")) {
       return { ok: false, error: `plugins["${id}"] is malformed` };
     }
+    const q = entry.quarantine;
+    const quarantine = isRecord(q) && typeof q.version === "string" && typeof q.reason === "string" && typeof q.at === "number"
+      ? { version: q.version, reason: q.reason, at: q.at }
+      : undefined;
     plugins[id] = {
       enabled: entry.enabled,
       grants: [...entry.grants],
       ...(typeof entry.quarantineClearedAt === "number" ? { quarantineClearedAt: entry.quarantineClearedAt } : {}),
+      ...(quarantine ? { quarantine } : {}),
     };
   }
   const boots = Array.isArray(input.boots) ? input.boots.filter((n): n is number => typeof n === "number" && Number.isFinite(n)) : [];
