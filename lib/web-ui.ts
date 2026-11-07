@@ -10,8 +10,10 @@
  *    and a fresh server takes over.
  * 4. Detached lifecycle: servers spawn detached so they survive the parent Pi session.
  * 5. Production serving: `/web start` serves the production build (`next start`), running
- *    the fork's build first only when no build output exists or a rebuild is asked for.
- *    Dev mode is never used by the command.
+ *    the fork's build first when no build output exists, when a rebuild is asked for, or
+ *    when the fork's sources changed since the last build. Dev mode is never used.
+ * 5a. Reload: `/web reload` stops a managed server, waits for it to go down, and starts it
+ *    again (rebuilding when needed). A running session reloads on its own when our sources change.
  * 6. Complete testability: IO (health check, state persistence, process spawning,
  *    clocks, pid probing) is injectable; tests never bind real ports or modify production files.
  */
@@ -21,6 +23,19 @@ import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  acquireReloadLock,
+  buildRecordPath,
+  evaluateChange,
+  readBuildRecord,
+  reloadLockPath,
+  repoRootFromVendor,
+  sourceFingerprints,
+  writeBuildRecord,
+  type BuildRecord,
+  type SourceChange,
+  type SourceFingerprints,
+} from "./web-ui-reload.ts";
 
 export const DEFAULT_WEB_UI_PORT = 30141;
 export const DEFAULT_WEB_UI_HOST = "127.0.0.1";
@@ -83,6 +98,14 @@ export interface WebUiDeps {
   hasBuild: (cwd: string) => boolean;
   buildServer: (cwd: string) => Promise<{ ok: boolean; error?: string }>;
   rebuild: boolean;
+  /** Fingerprints of the fork's build inputs and our runtime inputs right now. */
+  fingerprints: () => Promise<SourceFingerprints>;
+  /** The record of the last successful build and start, or null when there is none. */
+  readRecord: () => Promise<BuildRecord | null>;
+  /** Persist the fingerprints captured before a build or start. */
+  writeRecord: (fingerprints: SourceFingerprints) => Promise<void>;
+  /** Take the cross-session reload lock; null when another reload holds it. */
+  acquireReloadLock: () => (() => void) | null;
   killProcess: (pid: number) => void;
   removeState: (path: string) => Promise<void>;
   readState: (path: string) => Promise<WebUiStateStatus>;
@@ -346,9 +369,11 @@ export async function defaultRemoveState(statePath: string): Promise<void> {
 }
 
 function resolveDeps(overrides: Partial<WebUiDeps> = {}): WebUiDeps {
+  const statePath = overrides.statePath ?? defaultWebUiStatePath();
+  const vendorDir = overrides.vendorDir ?? defaultVendorDir();
   return {
-    statePath: overrides.statePath ?? defaultWebUiStatePath(),
-    vendorDir: overrides.vendorDir ?? defaultVendorDir(),
+    statePath,
+    vendorDir,
     healthUrl: overrides.healthUrl ?? DEFAULT_HEALTH_ENDPOINT,
     pkillCommand: overrides.pkillCommand ?? DEFAULT_PKILL_COMMAND,
     isPidAlive: overrides.isPidAlive ?? defaultIsPidAlive,
@@ -358,6 +383,11 @@ function resolveDeps(overrides: Partial<WebUiDeps> = {}): WebUiDeps {
     hasBuild: overrides.hasBuild ?? defaultHasBuild,
     buildServer: overrides.buildServer ?? defaultBuildServer,
     rebuild: overrides.rebuild ?? false,
+    fingerprints: overrides.fingerprints ?? (async () => sourceFingerprints(vendorDir, repoRootFromVendor(vendorDir))),
+    readRecord: overrides.readRecord ?? (() => readBuildRecord(buildRecordPath(statePath))),
+    writeRecord: overrides.writeRecord ?? ((fingerprints) =>
+      writeBuildRecord(buildRecordPath(statePath), { ...fingerprints, builtAt: new Date().toISOString() })),
+    acquireReloadLock: overrides.acquireReloadLock ?? (() => acquireReloadLock(reloadLockPath(statePath), defaultIsPidAlive)),
     killProcess: overrides.killProcess ?? defaultKillProcess,
     removeState: overrides.removeState ?? defaultRemoveState,
     readState: overrides.readState ?? defaultReadState,
@@ -411,10 +441,22 @@ export async function startWebUi(options: Partial<WebUiDeps> = {}): Promise<WebU
     };
   }
 
-  // Serve the production build. Build only when there is no output to serve, or
-  // when the caller explicitly asks for a rebuild: `next start` cannot serve a
-  // missing or stale build, and dev mode is not what this command runs.
-  if (deps.rebuild || !deps.hasBuild(deps.vendorDir)) {
+  // Fingerprint before building or starting: a source edit made during the build
+  // must count as a change next time, not as already built.
+  const before = await deps.fingerprints();
+  const change: SourceChange = evaluateChange(before, await deps.readRecord());
+
+  // Serve the production build. Build when there is no output, when a rebuild is asked
+  // for, or when the fork's sources changed since the last build. `next start` cannot
+  // serve a missing or stale build, and dev mode is not what this command runs.
+  const rebuildReason = deps.rebuild
+    ? "rebuild requested"
+    : !deps.hasBuild(deps.vendorDir)
+      ? "no build output"
+      : change.build
+        ? "sources changed since the last build"
+        : undefined;
+  if (rebuildReason) {
     const built = await deps.buildServer(deps.vendorDir);
     if (!built.ok) {
       return {
@@ -479,10 +521,13 @@ export async function startWebUi(options: Partial<WebUiDeps> = {}): Promise<WebU
     };
   }
 
+  // A failed record only costs a rebuild on the next start, so it does not fail the start.
+  await deps.writeRecord(before).catch(() => undefined);
+
   return {
     status: "started",
-    message: `pi-web started and serving at ${rootUrl}`,
-    details: { ...newState },
+    message: `pi-web started and serving at ${rootUrl}${rebuildReason ? ` (built: ${rebuildReason})` : ""}`,
+    details: { ...newState, ...(rebuildReason ? { rebuilt: rebuildReason } : {}) },
   };
 }
 
@@ -546,4 +591,75 @@ export async function statusWebUi(options: Partial<WebUiDeps> = {}): Promise<Web
     message: report.message,
     details: { ...report },
   };
+}
+
+/** Poll until the old server stops answering, so a new one never races it for the port. */
+async function waitUntilDown(deps: WebUiDeps): Promise<boolean> {
+  const deadline = deps.now() + deps.startupTimeoutMs;
+  while (deps.now() < deadline) {
+    if (!(await deps.fetchHealth(deps.healthUrl))) return true;
+    await deps.sleep(deps.pollIntervalMs);
+  }
+  return false;
+}
+
+/**
+ * Execute `/web reload`: stop the managed server, wait until it is down, then start it
+ * again, rebuilding when the sources changed. An unmanaged server is not ours to restart.
+ */
+export async function reloadWebUi(options: Partial<WebUiDeps> = {}): Promise<WebUiCommandResult> {
+  const deps = resolveDeps(options);
+  const state = await deps.readState(deps.statePath);
+  const healthy = await deps.fetchHealth(deps.healthUrl);
+  const decision = decideStop(state, healthy, deps.isPidAlive);
+
+  if (decision.action === "unmanaged_running") {
+    return {
+      status: "info",
+      message: `pi-web is serving as an unmanaged instance, so /web reload cannot restart it. Kill it with:\n  ${deps.pkillCommand}\nthen run /web start.`,
+      details: { unmanaged: true, pkillCommand: deps.pkillCommand },
+    };
+  }
+  if (decision.action === "kill") {
+    deps.killProcess(decision.pid);
+    await deps.removeState(deps.statePath);
+    if (!(await waitUntilDown(deps))) {
+      return {
+        status: "error",
+        message: `pi-web (PID ${decision.pid}) did not stop within ${Math.round(deps.startupTimeoutMs / 1000)}s. No second instance was started on the same port.`,
+      };
+    }
+  } else if (decision.cleanStaleState) {
+    await deps.removeState(deps.statePath);
+  }
+
+  const started = await startWebUi(deps);
+  return { ...started, message: `pi-web reloaded. ${started.message}` };
+}
+
+export type AutoReloadResult =
+  | { status: "idle" | "unchanged" | "busy" }
+  | WebUiCommandResult;
+
+/**
+ * The automatic reload a running session triggers when our sources change. It acts only
+ * on a managed server that is up, and only when the sources differ from what it runs.
+ * The reload lock is shared, so two sessions watching the same tree reload once.
+ */
+export async function reloadWebUiIfChanged(options: Partial<WebUiDeps> = {}): Promise<AutoReloadResult> {
+  const deps = resolveDeps(options);
+  const state = await deps.readState(deps.statePath);
+  const healthy = await deps.fetchHealth(deps.healthUrl);
+  if (!healthy || !state || state === "corrupt") return { status: "idle" };
+
+  const change = evaluateChange(await deps.fingerprints(), await deps.readRecord());
+  if (!change.build && !change.runtime) return { status: "unchanged" };
+
+  const release = deps.acquireReloadLock();
+  if (!release) return { status: "busy" };
+  try {
+    return await reloadWebUi(deps);
+  } finally {
+    release();
+  }
 }

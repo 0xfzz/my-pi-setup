@@ -312,6 +312,9 @@ test("/web start: takes over stale state when health check fails and spawns fres
       sessionId: "new-session",
       checkVendorDir: () => true,
       hasBuild: () => true,
+      // The build is current: its record matches the sources, so the start must not rebuild.
+      fingerprints: async () => ({ build: "b", runtime: "r" }),
+      readRecord: async () => ({ build: "b", runtime: "r", builtAt: "t" }),
       fetchHealth: async () => {
         healthCallCount++;
         // 1st call before spawn: unhealthy
@@ -351,6 +354,9 @@ test("/web start: successful start writes state file and reports URL", async () 
       sessionId: "my-session-id",
       checkVendorDir: () => true,
       hasBuild: () => true,
+      // The build is current: its record matches the sources, so the start must not rebuild.
+      fingerprints: async () => ({ build: "b", runtime: "r" }),
+      readRecord: async () => ({ build: "b", runtime: "r", builtAt: "t" }),
       fetchHealth: async () => {
         healthCallCount++;
         return healthCallCount > 1;
@@ -386,6 +392,9 @@ test("/web start: timeout kills spawned process and cleans up state", async () =
       statePath,
       checkVendorDir: () => true,
       hasBuild: () => true,
+      // The build is current: its record matches the sources, so the start must not rebuild.
+      fingerprints: async () => ({ build: "b", runtime: "r" }),
+      readRecord: async () => ({ build: "b", runtime: "r", builtAt: "t" }),
       fetchHealth: async () => false, // never becomes healthy
       spawnServer: () => ({ pid: 8888, unref: () => {} }),
       killProcess: (pid) => {
@@ -591,6 +600,8 @@ test("webExtension: command registration, subcommands, and notifications", async
       registeredCommandName = name;
       commandDescriptor = desc;
     },
+    // The extension subscribes to session events for the source watcher.
+    on: () => undefined,
   };
 
   const notifications: Array<{ message: string; level: string }> = [];
@@ -714,6 +725,9 @@ test("/web start: an existing build is served without rebuilding", async () => {
       statePath,
       checkVendorDir: () => true,
       hasBuild: () => true,
+      // The build is current: its record matches the sources, so the start must not rebuild.
+      fingerprints: async () => ({ build: "b", runtime: "r" }),
+      readRecord: async () => ({ build: "b", runtime: "r", builtAt: "t" }),
       buildServer: async () => {
         builds++;
         return { ok: true };
@@ -775,6 +789,9 @@ test("/web start: rebuild forces a build even when output exists", async () => {
       statePath,
       checkVendorDir: () => true,
       hasBuild: () => true,
+      // The build is current: its record matches the sources, so the start must not rebuild.
+      fingerprints: async () => ({ build: "b", runtime: "r" }),
+      readRecord: async () => ({ build: "b", runtime: "r", builtAt: "t" }),
       rebuild: true,
       buildServer: async () => {
         builds++;

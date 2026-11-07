@@ -84,6 +84,7 @@ The `/web` command manages the detached `pi-web` server lifecycle directly from 
 ```text
 /web start   - Build if needed, then serve the production build; denies if an instance is already healthy
 /web start --rebuild - Force a fresh production build before serving
+/web reload  - Stop the managed instance, wait for it to go down, then start it again (rebuilds if the sources changed)
 /web stop    - Stop the managed instance, or provide manual pkill instructions if unmanaged
 /web status  - Report health, URL, owner session, start timestamp, and state file agreement
 ```
@@ -93,6 +94,13 @@ The `/web` command manages the detached `pi-web` server lifecycle directly from 
 - **Single-instance denial (unmanaged)**: If the health check passes but the state file is missing or corrupt, startup is denied as an unmanaged instance (still serving, but owner cannot be attributed).
 - **Stale takeover**: If a state file exists but the health check fails, the stale state file is removed and a fresh instance takes over.
 - **Production serve**: When starting, `pi-web` first checks for build output (`vendor/pi-web/.next/BUILD_ID`). If it is missing — or `--rebuild` was passed — it runs the fork's production build and, if that build fails, reports the build error and starts nothing. It then spawns detached from `vendor/pi-web` (`node_modules/next/dist/bin/next start -H 127.0.0.1 -p 30141`) so the server survives the Pi process. It polls health for up to 30 seconds; upon readiness, it writes the state file (`{pid, port, url, startedBy, startedAt}`) and reports the URL. On timeout, the spawned PID is killed and cleaned up. If `vendor/pi-web` is missing, it refuses with `"fork not vendored"`.
+
+#### Reloading after source changes
+- **Build inputs** (`vendor/pi-web`: `app`, `components`, `lib`, `hooks`, `public`, and the config files) need a rebuild and a restart. `/web start` and `/web reload` rebuild when these changed since the last build. The fingerprint is size and mtime per file, and it is recorded in `<agent dir>/web-ui-build.json` next to the state file.
+- **Runtime inputs** (`lib/web-plugins/` and `web-plugins/`) are loaded at runtime, so a change needs only a restart, not a build.
+- **Automatic reload**: while a Pi session runs, edits to those inputs reload a managed server that is up, after a 2-second quiet period. Two sessions watching the same tree reload once (a shared lock in `<agent dir>/web-ui-reload.lock`). An unmanaged server is never restarted. Set `PI_WEB_AUTO_RELOAD=0` to turn this off.
+- Top-level config files (`next.config.ts`, `package.json`) are not watched while a session runs. They are still checked by `/web start` and `/web reload`.
+- Automatic reloads run only while a Pi session with this extension is open. If no session is open, run `/web reload` when you next want the change.
 
 #### `/web stop` rules
 - **Managed shutdown**: If the state file has a live PID, it sends `SIGTERM` (`process.kill(pid)`), deletes the state file, and confirms stoppage.
