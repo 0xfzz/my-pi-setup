@@ -62,11 +62,18 @@ const loadedActions = jiti(webPluginsActions) as {
 export const WEB_PLUGINS: readonly WebPluginDescriptor[] = loadedIndex.WEB_PLUGINS;
 
 /** The plugin kernel's host facade (lib/web-plugins/kernel/host.ts), loaded from the outer repo. */
+/** Verdict of the session.before-delete veto chain. */
+export type PluginBailVerdict = { denied: false } | { denied: true; reason: string; pluginId: string };
+
 interface KernelHost {
   ready: Promise<unknown>;
   warnings: readonly string[];
   visible(): WebPluginDescriptor[];
   descriptor(id: string): WebPluginDescriptor | undefined;
+  hooks: {
+    waterfall<T>(point: string, value: T, info: unknown): Promise<T>;
+    bail(point: string, payload: unknown): Promise<PluginBailVerdict>;
+  };
 }
 const loadedKernel = jiti(resolveRepoPath("lib/web-plugins/kernel/host.ts")) as {
   createPluginHost: (options: Record<string, unknown>) => KernelHost;
@@ -93,6 +100,8 @@ export const pluginHost: KernelHost = (uiGlobal[pluginHostKey] ??= loadedKernel.
     return mod.default ?? mod;
   },
 })) as KernelHost;
+/** Logic hooks for the server call sites (prompt.before-send, session.before-delete). */
+export const pluginHooks = pluginHost.hooks;
 pluginHost.ready.catch((error: unknown) => {
   console.error("web plugin host failed to boot:", error);
 });

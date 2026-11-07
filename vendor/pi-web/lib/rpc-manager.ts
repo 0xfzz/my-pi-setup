@@ -22,7 +22,7 @@ import { computeLiveSessionTotalActiveMs } from "./session-timing";
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
 import { notifySessionComplete } from "./web-push";
 import { hasActiveSessionLivenessProvider } from "./session-liveness";
-import { attachSessionPlugins, recordExtensionUi, recordWorkingUi } from "./web-plugins-host";
+import { attachSessionPlugins, pluginHooks, recordExtensionUi, recordWorkingUi } from "./web-plugins-host";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "./pi-types";
 import type {
@@ -1154,6 +1154,11 @@ export class AgentSessionWrapper {
         try {
           if (this.inner.isBashRunning) {
             throw new Error("Cannot send a prompt while a shell command is running");
+          }
+          // Plugins may rewrite the prompt. A failing transform is skipped by the hook bus,
+          // so a plugin can change the text but cannot block the send.
+          if (typeof command.message === "string") {
+            command.message = await pluginHooks.waterfall("prompt.before-send", command.message, { sessionId: this.sessionId });
           }
           if (this.sideChat) this.nameSideChat(command.message);
           const model = this.inner.model;

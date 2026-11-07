@@ -16,6 +16,7 @@
 import { readdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { abortSubagent, getRpcSession, getRpcSessionInfos, getRunningRpcSessionIds } from "./rpc-manager";
+import { pluginHooks } from "./web-plugins-host";
 import {
   invalidateSessionListCache,
   invalidateSessionManagerCache,
@@ -41,6 +42,8 @@ export interface SessionDeleteResult {
   missing: string[];
   /** Named ids kept because a session of theirs runs (`keepRunning` only). */
   running: string[];
+  /** Named ids a plugin vetoed (session.before-delete), with its reason. Present only when there are some. */
+  vetoed?: Array<{ id: string; reason: string }>;
 }
 
 function addChild(childrenByParent: Map<string, string[]>, parentId: string, childId: string): void {
@@ -60,12 +63,20 @@ export async function deleteSessions(
 ): Promise<SessionDeleteResult> {
   const targets = new Map<string, string>();
   const missing: string[] = [];
+  // A plugin may veto a named session before anything is deleted; its subagents go with it.
+  const vetoed: Array<{ id: string; reason: string }> = [];
+  const vetoedResult = () => (vetoed.length ? { vetoed } : {});
   for (const id of new Set(ids)) {
+    const verdict = await pluginHooks.bail("session.before-delete", { sessionId: id });
+    if (verdict.denied) {
+      vetoed.push({ id, reason: verdict.reason });
+      continue;
+    }
     const filePath = await resolveSessionPath(id);
     if (filePath) targets.set(id, filePath);
     else missing.push(id);
   }
-  if (targets.size === 0) return { deleted: [], missing, running: [] };
+  if (targets.size === 0) return { deleted: [], missing, running: [], ...vetoedResult() };
 
   // Read only the bounded headers before deleting.
   const parentPathByKey = new Map<string, string | undefined>();
@@ -255,5 +266,5 @@ export async function deleteSessions(
     console.warn(`[pi-web] could not clear the sidebar state of deleted sessions: ${error instanceof Error ? error.message : String(error)}`);
   }
   invalidateSessionListCache();
-  return { deleted: [...deletedSessionIds], missing, running };
+  return { deleted: [...deletedSessionIds], missing, running, ...vetoedResult() };
 }
