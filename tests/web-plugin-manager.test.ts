@@ -18,11 +18,14 @@ interface Harness {
 }
 
 function candidate(id: string, opts: { version?: string; dependsOn?: Record<string, string>; capabilities?: string[]; source?: DiscoveredPlugin["source"] } = {}): DiscoveredPlugin {
+  // Every fixture has a server entry, so the manager calls the injected loader for it.
   const result = validateManifest({
     id,
     name: id,
     version: opts.version ?? "1.0.0",
     engines: { piWeb: "^1.0.0", sdk: "^1.0.0" },
+    trust: "trusted",
+    main: { server: "./server.ts" },
     dependsOn: opts.dependsOn ?? {},
     capabilities: opts.capabilities ?? [],
   });
@@ -198,10 +201,10 @@ test("the crash-loop trigger boots in safe mode after two starts within a minute
   const h = harness();
   let now = 1_000_000;
   const plugins = [candidate("core.chat"), candidate("acme.extra")];
-  const first = new PluginManager({ plugins, state: enabledState("core.chat", "acme.extra"), loader: h.loader, now: () => now });
+  const first = new PluginManager({ plugins, state: enabledState("core.chat", "acme.extra"), loader: h.loader, now: () => now, pid: 101 });
   await first.start();
   now += 5_000;
-  const second = new PluginManager({ plugins, state: first.operatorState, loader: h.loader, now: () => now });
+  const second = new PluginManager({ plugins, state: first.operatorState, loader: h.loader, now: () => now, pid: 102 });
   const boot = await second.start();
   assert.equal(boot.safeMode, true);
   assert.deepEqual(boot.active, ["core.chat"]);
@@ -334,7 +337,7 @@ test("every change to operator state is persisted, and disable turns the plugin 
   const restart = manager(harness(), [candidate("acme.zen")], { state: stored });
   const boot = await restart.mgr.start();
   assert.deepEqual(boot.active, []);
-  assert.equal(restart.mgr.snapshot()[0].state, "resolved");
+  assert.equal(restart.mgr.snapshot()[0].state, "disabled", "an operator disable is restored, not forgotten");
 });
 
 test("unknown plugin ids are refused, not created", async () => {

@@ -43,6 +43,8 @@ export interface DiscoveryRoots {
   project?: string;
   /** Pi package directories whose package.json lists `pi.webPlugins`. */
   packages?: readonly string[];
+  /** Candidates built in code (for example the `core.compat` descriptor adapter). Already validated. */
+  inline?: readonly DiscoveredPlugin[];
 }
 
 /** Read one manifest from a directory. Never executes anything. */
@@ -120,6 +122,7 @@ export function discoverPlugins(roots: DiscoveryRoots): DiscoveryResult {
     diagnostics.push(...scan.diagnostics);
   };
   if (roots.repo) add(scanRoot(roots.repo, "repo"));
+  found.push(...(roots.inline ?? []));
   if (roots.user) add(scanRoot(roots.user, "user"));
   if (roots.project) add(scanRoot(roots.project, "project"));
   for (const packageDir of roots.packages ?? []) {

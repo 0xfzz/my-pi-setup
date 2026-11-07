@@ -11,7 +11,7 @@ import { assertGranted, autoGrant, formatCapability, parseCapability, type Capab
 import type { DiscoveredPlugin } from "./discovery.ts";
 import { PluginLifecycle, isLive, type PluginEvent, type PluginState } from "./lifecycle.ts";
 import { deactivationOrder, requiredDependents, resolvePlugins, type ResolverInput } from "./resolver.ts";
-import { markActivating, recordBoot, recoverInterruptedActivation, setPluginState, type WebPluginsState } from "./state.ts";
+import { markActivating, markCleanShutdown, recordBoot, recoverInterruptedActivation, setPluginState, type WebPluginsState } from "./state.ts";
 
 export interface PluginContext {
   readonly id: string;
@@ -43,6 +43,8 @@ export interface ManagerOptions {
   loader: PluginLoader;
   env?: Record<string, string | undefined>;
   now?: () => number;
+  /** Process id recorded for the crash-loop window; defaults to this process. */
+  pid?: number;
   budgets?: { activateMs?: number; deactivateMs?: number };
   breaker?: { threshold?: number; windowMs?: number };
   /** Called after every operator-state change; the host writes web-plugins.json here. */
@@ -92,6 +94,7 @@ export class PluginManager {
   private readonly loader: PluginLoader;
   private readonly now: () => number;
   private readonly env: Record<string, string | undefined>;
+  private readonly pid: number;
   private readonly activateMs: number;
   private readonly deactivateMs: number;
   private readonly breakerOptions: { threshold: number; windowMs: number };
@@ -104,6 +107,7 @@ export class PluginManager {
     this.loader = options.loader;
     this.now = options.now ?? Date.now;
     this.env = options.env ?? {};
+    this.pid = options.pid ?? process.pid;
     this.activateMs = options.budgets?.activateMs ?? DEFAULT_ACTIVATE_MS;
     this.deactivateMs = options.budgets?.deactivateMs ?? DEFAULT_DEACTIVATE_MS;
     this.breakerOptions = { threshold: options.breaker?.threshold ?? DEFAULT_BREAKER.threshold, windowMs: options.breaker?.windowMs ?? DEFAULT_BREAKER.windowMs };
@@ -133,7 +137,7 @@ export class PluginManager {
 
   /** Boot: safe-mode decision, crash recovery, resolution, then activation in dependency order. */
   async start(): Promise<BootReport> {
-    const boot = recordBoot(this.state, this.now(), this.env);
+    const boot = recordBoot(this.state, this.now(), this.env, this.pid);
     this.safeMode = boot.safeMode;
     this.state = boot.state;
     if (boot.safeMode) this.audit.append("safe-mode", "kernel", boot.reason ?? "safe mode");
@@ -159,6 +163,14 @@ export class PluginManager {
     }
 
     const report: BootReport = { safeMode: boot.safeMode, ...(boot.reason ? { safeModeReason: boot.reason } : {}), active: [], failed: {}, crashed: recovered.crashed };
+    // Repo-source plugins (first-party descriptors) default to on so existing behaviour is kept;
+    // user, project and package plugins are off until the operator enables them.
+    for (const id of this.order) {
+      const slot = this.slots.get(id)!;
+      if (!this.state.plugins[id] && slot.plugin.source === "repo") {
+        this.state = setPluginState(this.state, id, { enabled: true });
+      }
+    }
     for (const id of resolution.ordered) {
       const slot = this.slots.get(id)!;
       const persisted = this.state.plugins[id];
@@ -170,7 +182,11 @@ export class PluginManager {
         }
         this.clearPersistedQuarantine(id, "plugin version changed");
       }
-      if (!persisted?.enabled) continue;
+      if (!persisted?.enabled) {
+        // Switched off by the operator: record it, so it stays hidden across restarts.
+        if (persisted && slot.life.can("disable")) slot.life.dispatch("disable");
+        continue;
+      }
       if (recovered.crashed.includes(id)) {
         slot.life.dispatch("enable");
         slot.waiting = "crashed while activating on the previous start; enable it to retry";
@@ -303,6 +319,7 @@ export class PluginManager {
     for (const id of reverse) {
       if (live.includes(id)) await this.deactivateSlot(this.slots.get(id)!, "shutdown");
     }
+    this.state = markCleanShutdown(this.state);
     this.save();
   }
 
@@ -412,7 +429,8 @@ export class PluginManager {
 
     if (given === undefined) {
       try {
-        slot.runtime = await this.loader(slot.plugin);
+        // A plugin without a server entry is declarative: there is no code to load.
+        slot.runtime = slot.plugin.manifest.main.server ? await this.loader(slot.plugin) : {};
       } catch (error) {
         return this.fail(slot, `load failed: ${errorText(error)}`, options.countFailure ?? true, "load-fail");
       }

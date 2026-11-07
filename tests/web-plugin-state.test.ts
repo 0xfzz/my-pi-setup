@@ -64,24 +64,31 @@ test("a corrupt or invalid file loads as defaults and says why", () => {
 
 test("parseState rejects unknown versions and keeps only well-typed fields", () => {
   assert.equal(parseState({ version: 2, plugins: {} }).ok, false);
-  const ok = parseState({ version: 1, plugins: {}, boots: [1, "x", 3], activating: ["a", 7] });
+  const ok = parseState({ version: 1, plugins: {}, boots: [{ at: 1, pid: 9 }, "x", 3, { at: 3, pid: 9 }], activating: ["a", 7] });
   assert.ok(ok.ok);
-  assert.deepEqual(ok.ok && ok.state.boots, [1, 3]);
+  assert.deepEqual(ok.ok && ok.state.boots, [{ at: 1, pid: 9 }, { at: 3, pid: 9 }]);
   assert.deepEqual(ok.ok && ok.state.activating, ["a"]);
 });
 
 test("two starts inside the window enter safe mode; one start does not", () => {
-  const first = recordBoot(defaultState(), 1_000_000);
+  const first = recordBoot(defaultState(), 1_000_000, {}, 101);
   assert.equal(first.safeMode, false);
-  const second = recordBoot(first.state, 1_000_000 + 10_000);
+  const second = recordBoot(first.state, 1_000_000 + 10_000, {}, 102);
   assert.equal(second.safeMode, true);
   assert.match(second.reason ?? "", /2 starts within 60s/);
 });
 
 test("starts spread beyond the window do not trip safe mode", () => {
-  const first = recordBoot(defaultState(), 0);
-  const later = recordBoot(first.state, SAFE_MODE_WINDOW_MS + 1);
+  const first = recordBoot(defaultState(), 0, {}, 101);
+  const later = recordBoot(first.state, SAFE_MODE_WINDOW_MS + 1, {}, 102);
   assert.equal(later.safeMode, false);
+});
+
+test("re-recording the same process does not count as a second start", () => {
+  const first = recordBoot(defaultState(), 1_000, {}, 77);
+  const again = recordBoot(first.state, 2_000, {}, 77);
+  assert.equal(again.safeMode, false);
+  assert.equal(again.state.boots.length, 1);
 });
 
 test("PI_WEB_SAFE_MODE=1 forces safe mode on the first start", () => {

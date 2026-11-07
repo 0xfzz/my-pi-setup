@@ -25,11 +25,16 @@ export interface PluginOperatorState {
   quarantine?: { version: string; reason: string; at: number };
 }
 
+export interface BootEntry {
+  at: number;
+  pid: number;
+}
+
 export interface WebPluginsState {
   version: typeof STATE_VERSION;
   plugins: Record<string, PluginOperatorState>;
-  /** Epoch ms of recent process starts, oldest first. */
-  boots: number[];
+  /** Recent process starts, oldest first. One entry per process, so re-evaluating the host in the same process is not a second start. */
+  boots: BootEntry[];
   /** Plugin ids that were `activating` when the last process stopped. */
   activating: string[];
 }
@@ -65,7 +70,9 @@ export function parseState(input: unknown): { ok: true; state: WebPluginsState }
       ...(quarantine ? { quarantine } : {}),
     };
   }
-  const boots = Array.isArray(input.boots) ? input.boots.filter((n): n is number => typeof n === "number" && Number.isFinite(n)) : [];
+  const boots = Array.isArray(input.boots)
+    ? input.boots.filter((b): b is BootEntry => isRecord(b) && typeof b.at === "number" && Number.isFinite(b.at) && typeof b.pid === "number")
+    : [];
   const activating = Array.isArray(input.activating) ? input.activating.filter((id): id is string => typeof id === "string") : [];
   return { ok: true, state: { version: STATE_VERSION, plugins, boots: boots.slice(-BOOT_HISTORY_LIMIT), activating } };
 }
@@ -106,11 +113,14 @@ export function recordBoot(
   state: WebPluginsState,
   now: number,
   env: Record<string, string | undefined> = {},
+  pid: number = process.pid,
 ): { state: WebPluginsState; safeMode: boolean; reason?: string } {
-  const boots = [...state.boots, now].slice(-BOOT_HISTORY_LIMIT);
+  // A process that is already recorded (the host re-evaluated in the same process) adds nothing.
+  const last = state.boots.at(-1);
+  const boots = last?.pid === pid ? state.boots : [...state.boots, { at: now, pid }].slice(-BOOT_HISTORY_LIMIT);
   const next: WebPluginsState = { ...state, boots };
   if (env.PI_WEB_SAFE_MODE === "1") return { state: next, safeMode: true, reason: "PI_WEB_SAFE_MODE=1" };
-  const recent = boots.filter((at) => at > now - SAFE_MODE_WINDOW_MS);
+  const recent = boots.filter((b) => b.at > now - SAFE_MODE_WINDOW_MS);
   if (recent.length >= SAFE_MODE_CRASH_LIMIT) {
     return {
       state: next,
@@ -119,6 +129,14 @@ export function recordBoot(
     };
   }
   return { state: next, safeMode: false };
+}
+
+/**
+ * Record an orderly shutdown: the start that just ended does not count toward the
+ * crash-loop window, so a normal restart never looks like a crash.
+ */
+export function markCleanShutdown(state: WebPluginsState): WebPluginsState {
+  return { ...state, boots: state.boots.slice(0, -1) };
 }
 
 /**
