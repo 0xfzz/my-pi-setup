@@ -24,6 +24,8 @@ export interface PluginHostOptions<D extends DescriptorLike> {
   roots?: Pick<DiscoveryRoots, "user" | "project" | "packages">;
   statePath: string;
   env?: Record<string, string | undefined>;
+  /** False when this evaluation is not a server start (see ManagerOptions.countStarts). */
+  countStarts?: boolean;
   loader?: PluginLoader;
   now?: () => number;
 }
@@ -72,6 +74,7 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     state: loaded.state,
     loader: options.loader ?? defaultLoader,
     env: options.env ?? {},
+    countStarts: options.countStarts,
     now: options.now,
     audit,
     hooks,

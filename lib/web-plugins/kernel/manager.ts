@@ -64,6 +64,11 @@ export interface ManagerOptions {
   loader: PluginLoader;
   env?: Record<string, string | undefined>;
   now?: () => number;
+  /**
+   * Whether this process's start counts toward the crash-loop window. A host that is only
+   * evaluated to build (or to prerender) is not a server start, so it passes false. Defaults to true.
+   */
+  countStarts?: boolean;
   /** Process id recorded for the crash-loop window; defaults to this process. */
   pid?: number;
   budgets?: { activateMs?: number; deactivateMs?: number };
@@ -118,6 +123,7 @@ export class PluginManager {
   private readonly loader: PluginLoader;
   private readonly now: () => number;
   private readonly env: Record<string, string | undefined>;
+  private readonly countStarts: boolean;
   private readonly pid: number;
   private readonly activateMs: number;
   private readonly deactivateMs: number;
@@ -134,6 +140,7 @@ export class PluginManager {
     this.loader = options.loader;
     this.now = options.now ?? Date.now;
     this.env = options.env ?? {};
+    this.countStarts = options.countStarts ?? true;
     this.pid = options.pid ?? process.pid;
     this.activateMs = options.budgets?.activateMs ?? DEFAULT_ACTIVATE_MS;
     this.deactivateMs = options.budgets?.deactivateMs ?? DEFAULT_DEACTIVATE_MS;
@@ -170,7 +177,8 @@ export class PluginManager {
 
   /** Boot: safe-mode decision, crash recovery, resolution, then activation in dependency order. */
   async start(): Promise<BootReport> {
-    const boot = recordBoot(this.state, this.now(), this.env, this.pid);
+    // Only a real start is recorded; a build worker that evaluates the host must not look like a crash loop.
+    const boot = this.countStarts ? recordBoot(this.state, this.now(), this.env, this.pid) : { state: this.state, safeMode: false, reason: undefined };
     this.safeMode = boot.safeMode;
     this.state = boot.state;
     if (boot.safeMode) this.audit.append("safe-mode", "kernel", boot.reason ?? "safe mode");

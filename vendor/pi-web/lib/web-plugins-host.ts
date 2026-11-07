@@ -68,6 +68,7 @@ export type PluginBailVerdict = { denied: false } | { denied: true; reason: stri
 interface KernelHost {
   ready: Promise<unknown>;
   warnings: readonly string[];
+  shutdown(): Promise<void>;
   visible(): WebPluginDescriptor[];
   descriptor(id: string): WebPluginDescriptor | undefined;
   hooks: {
@@ -94,6 +95,8 @@ export const pluginHost: KernelHost = (uiGlobal[pluginHostKey] ??= loadedKernel.
   statePath: process.env.PI_WEB_PLUGIN_STATE ?? defaultPluginStatePath(),
   roots: { user: userPluginRoot, project: join(process.cwd(), ".pi", "web-plugins") },
   env: process.env,
+  // `next build` evaluates this module in its workers; that is not a server start (see the crash-loop guard).
+  countStarts: process.env.NEXT_PHASE !== "phase-production-build",
   // Only plugins with a server entry reach the loader; descriptors are declarative.
   loader: (plugin: { dir: string; manifest: { main: { server?: string } } }) => {
     const mod = jiti(join(plugin.dir, plugin.manifest.main.server ?? "")) as { default?: object };

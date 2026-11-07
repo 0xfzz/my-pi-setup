@@ -210,6 +210,35 @@ test("the crash-loop trigger boots in safe mode after two starts within a minute
   assert.deepEqual(boot.active, ["core.chat"]);
 });
 
+test("an evaluation that is not a server start (a build worker) never counts toward the crash loop", async () => {
+  const h = harness();
+  let now = 1_000_000;
+  const plugins = [candidate("core.chat"), candidate("acme.extra")];
+  let state = enabledState("core.chat", "acme.extra");
+  for (const pid of [201, 202, 203]) {
+    const build = new PluginManager({ plugins, state, loader: h.loader, now: () => now, pid, countStarts: false });
+    const boot = await build.start();
+    assert.equal(boot.safeMode, false, `build worker ${pid} must not trip safe mode`);
+    state = build.operatorState;
+    now += 1_000;
+  }
+  assert.equal(state.boots.length, 0);
+});
+
+test("a clean shutdown does not count toward the crash loop, so a quick restart stays out of safe mode", async () => {
+  const h = harness();
+  let now = 1_000_000;
+  const plugins = [candidate("core.chat"), candidate("acme.extra")];
+  const first = new PluginManager({ plugins, state: enabledState("core.chat", "acme.extra"), loader: h.loader, now: () => now, pid: 301 });
+  await first.start();
+  await first.shutdown();
+  now += 5_000;
+  const second = new PluginManager({ plugins, state: first.operatorState, loader: h.loader, now: () => now, pid: 302 });
+  const boot = await second.start();
+  assert.equal(boot.safeMode, false);
+  assert.deepEqual(boot.active.sort(), ["acme.extra", "core.chat"]);
+});
+
 test("a plugin left mid-activation by a crash is reported and not auto-started", async () => {
   const h = harness();
   const state: WebPluginsState = { ...enabledState("acme.crashy"), activating: ["acme.crashy"] };
