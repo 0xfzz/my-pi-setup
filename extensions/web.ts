@@ -23,6 +23,8 @@ export interface WebExtensionOptions {
 }
 
 export const AUTO_RELOAD_DEBOUNCE_MS = 2_000;
+/** One status line, updated in place while a start, reload or automatic reload runs. */
+export const WEB_PROGRESS_STATUS_KEY = "web-reload";
 
 export default function webExtension(pi: ExtensionAPI, options: WebExtensionOptions = {}) {
   const sessionIdOf = (ctx: ExtensionContext): string =>
@@ -32,8 +34,20 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
 
   const depsFor = (ctx: ExtensionContext): Partial<WebUiDeps> => ({
     sessionId: sessionIdOf(ctx),
+    onProgress: (message: string) => {
+      if (ctx.hasUI) ctx.ui.setStatus(WEB_PROGRESS_STATUS_KEY, message);
+    },
     ...options.deps,
   });
+
+  /** Runs a long pi-web operation with its progress shown in the status line, cleared when it ends. */
+  const withProgress = async <T,>(ctx: ExtensionContext, work: () => Promise<T>): Promise<T> => {
+    try {
+      return await work();
+    } finally {
+      if (ctx.hasUI) ctx.ui.setStatus(WEB_PROGRESS_STATUS_KEY, undefined);
+    }
+  };
 
   let watcher: SourceWatcher | undefined;
   const autoReloadEnabled = options.autoReload !== false && process.env.PI_WEB_AUTO_RELOAD !== "0";
@@ -52,14 +66,14 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       const deps = depsFor(ctx);
 
       if (sub === "start") {
-        const result = await startWebUi({ ...deps, rebuild });
+        const result = await withProgress(ctx, () => startWebUi({ ...deps, rebuild }));
         const level = result.status === "denied" ? "warning" : result.status === "error" ? "error" : "info";
         ctx.ui?.notify(result.message, level);
         return;
       }
 
       if (sub === "reload") {
-        const result = await reloadWebUi({ ...deps, rebuild });
+        const result = await withProgress(ctx, () => reloadWebUi({ ...deps, rebuild }));
         const level = result.status === "error" ? "error" : result.status === "denied" ? "warning" : "info";
         ctx.ui?.notify(result.message, level);
         return;
@@ -103,7 +117,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   });
 
   async function autoReload(ctx: ExtensionContext): Promise<void> {
-    const result = await reloadWebUiIfChanged(depsFor(ctx));
+    const result = await withProgress(ctx, () => reloadWebUiIfChanged(depsFor(ctx)));
     // Only a reload that actually ran has a message; idle, unchanged and busy stay quiet.
     if (!("message" in result)) return;
     const level = result.status === "error" ? "error" : "info";

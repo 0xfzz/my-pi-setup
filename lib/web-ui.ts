@@ -116,6 +116,8 @@ export interface WebUiDeps {
   pollIntervalMs: number;
   startupTimeoutMs: number;
   sleep: (ms: number) => Promise<void>;
+  /** Receives each phase and periodic progress line (`Building… 2m 05s`). Defaults to silence. */
+  onProgress: (message: string) => void;
 }
 
 /** Pure decision for start requests based on current health and persisted state. */
@@ -368,6 +370,24 @@ export async function defaultRemoveState(statePath: string): Promise<void> {
   }
 }
 
+/** Human elapsed time for progress lines: `42s`, then `2m 05s`. */
+export function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  if (total < 60) return `${total}s`;
+  return `${Math.floor(total / 60)}m ${String(total % 60).padStart(2, "0")}s`;
+}
+
+/** Emits a progress line only when the displayed second changes, so a fast poll does not flood the UI. */
+function throttledProgress(deps: WebUiDeps, label: (elapsed: string) => string): (elapsedMs: number) => void {
+  let last = -1;
+  return (elapsedMs) => {
+    const second = Math.floor(elapsedMs / 1000);
+    if (second === last) return;
+    last = second;
+    deps.onProgress(label(formatElapsed(elapsedMs)));
+  };
+}
+
 function resolveDeps(overrides: Partial<WebUiDeps> = {}): WebUiDeps {
   const statePath = overrides.statePath ?? defaultWebUiStatePath();
   const vendorDir = overrides.vendorDir ?? defaultVendorDir();
@@ -398,6 +418,7 @@ function resolveDeps(overrides: Partial<WebUiDeps> = {}): WebUiDeps {
     pollIntervalMs: overrides.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
     startupTimeoutMs: overrides.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS,
     sleep: overrides.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms))),
+    onProgress: overrides.onProgress ?? (() => undefined),
   };
 }
 
@@ -457,7 +478,14 @@ export async function startWebUi(options: Partial<WebUiDeps> = {}): Promise<WebU
         ? "sources changed since the last build"
         : undefined;
   if (rebuildReason) {
-    const built = await deps.buildServer(deps.vendorDir);
+    deps.onProgress(`Building pi-web production build (${rebuildReason})…`);
+    const buildStarted = deps.now();
+    // A build can run for minutes, so report its elapsed time every ten seconds.
+    const heartbeat = setInterval(() => {
+      deps.onProgress(`Building pi-web… ${formatElapsed(deps.now() - buildStarted)} elapsed`);
+    }, 10_000);
+    const built = await deps.buildServer(deps.vendorDir).finally(() => clearInterval(heartbeat));
+    if (built.ok) deps.onProgress(`Build finished in ${formatElapsed(deps.now() - buildStarted)}.`);
     if (!built.ok) {
       return {
         status: "error",
@@ -467,6 +495,7 @@ export async function startWebUi(options: Partial<WebUiDeps> = {}): Promise<WebU
   }
 
   let spawned: { pid?: number; unref?: () => void };
+  deps.onProgress("Starting pi-web server…");
   try {
     spawned = deps.spawnServer(deps.vendorDir);
   } catch (error: any) {
@@ -485,12 +514,15 @@ export async function startWebUi(options: Partial<WebUiDeps> = {}): Promise<WebU
   }
 
   const deadline = deps.now() + deps.startupTimeoutMs;
+  const waitStarted = deps.now();
+  const reportWait = throttledProgress(deps, (elapsed) => `Waiting for pi-web to answer… ${elapsed}`);
   let ready = false;
 
   while (deps.now() < deadline) {
     await deps.sleep(deps.pollIntervalMs);
     ready = await deps.fetchHealth(deps.healthUrl);
     if (ready) break;
+    reportWait(deps.now() - waitStarted);
   }
 
   if (!ready) {
@@ -595,9 +627,12 @@ export async function statusWebUi(options: Partial<WebUiDeps> = {}): Promise<Web
 
 /** Poll until the old server stops answering, so a new one never races it for the port. */
 async function waitUntilDown(deps: WebUiDeps): Promise<boolean> {
-  const deadline = deps.now() + deps.startupTimeoutMs;
+  const started = deps.now();
+  const deadline = started + deps.startupTimeoutMs;
+  const reportWait = throttledProgress(deps, (elapsed) => `Waiting for the old pi-web to stop… ${elapsed}`);
   while (deps.now() < deadline) {
     if (!(await deps.fetchHealth(deps.healthUrl))) return true;
+    reportWait(deps.now() - started);
     await deps.sleep(deps.pollIntervalMs);
   }
   return false;
@@ -621,6 +656,7 @@ export async function reloadWebUi(options: Partial<WebUiDeps> = {}): Promise<Web
     };
   }
   if (decision.action === "kill") {
+    deps.onProgress(`Stopping pi-web (PID ${decision.pid})…`);
     deps.killProcess(decision.pid);
     await deps.removeState(deps.statePath);
     if (!(await waitUntilDown(deps))) {
@@ -633,6 +669,7 @@ export async function reloadWebUi(options: Partial<WebUiDeps> = {}): Promise<Web
     await deps.removeState(deps.statePath);
   }
 
+  deps.onProgress("pi-web is stopped; starting it again…");
   const started = await startWebUi(deps);
   return { ...started, message: `pi-web reloaded. ${started.message}` };
 }
@@ -657,6 +694,7 @@ export async function reloadWebUiIfChanged(options: Partial<WebUiDeps> = {}): Pr
 
   const release = deps.acquireReloadLock();
   if (!release) return { status: "busy" };
+  deps.onProgress(change.build ? "pi-web sources changed: rebuilding and reloading…" : "pi-web plugin code changed: reloading…");
   try {
     return await reloadWebUi(deps);
   } finally {

@@ -15,7 +15,7 @@ import {
   watchSources,
   writeBuildRecord,
 } from "../lib/web-ui-reload.ts";
-import { reloadWebUi, reloadWebUiIfChanged, type WebUiDeps, type WebUiState } from "../lib/web-ui.ts";
+import { formatElapsed, reloadWebUi, reloadWebUiIfChanged, startWebUi, type WebUiDeps, type WebUiState } from "../lib/web-ui.ts";
 
 async function tree(): Promise<string> {
   return mkdtemp(join(tmpdir(), "web-ui-reload-"));
@@ -274,4 +274,61 @@ test("/web reload refuses to start a second instance when the old one never stop
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("/web reload reports each phase in order, so a long reload is never silent", async () => {
+  const dir = await tree();
+  try {
+    const fake = fakeServer({ build: "stale", statePath: join(dir, "state.json") });
+    const messages: string[] = [];
+    fake.deps.onProgress = (message) => messages.push(message);
+    await reloadWebUi(fake.deps);
+    assert.deepEqual(messages, [
+      "Stopping pi-web (PID 1111)…",
+      "pi-web is stopped; starting it again…",
+      "Building pi-web production build (sources changed since the last build)…",
+      "Build finished in 0s.",
+      "Starting pi-web server…",
+    ]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a slow start reports the health wait while it lasts", async () => {
+  const dir = await tree();
+  try {
+    let starting = false;
+    let polls = 0;
+    const messages: string[] = [];
+    const result = await startWebUi({
+      statePath: join(dir, "state.json"),
+      checkVendorDir: () => true,
+      hasBuild: () => true,
+      fingerprints: async () => ({ build: "b", runtime: "r" }),
+      readRecord: async () => ({ build: "b", runtime: "r", builtAt: "t" }),
+      readState: async () => null,
+      fetchHealth: async () => starting && ++polls > 2,
+      spawnServer: () => {
+        starting = true;
+        return { pid: 3333, unref: () => {} };
+      },
+      pollIntervalMs: 1,
+      startupTimeoutMs: 1000,
+      sleep: async () => {},
+      onProgress: (message) => messages.push(message),
+    });
+    assert.equal(result.status, "started");
+    assert.ok(messages.includes("Starting pi-web server…"));
+    assert.ok(messages.includes("Waiting for pi-web to answer… 0s"), messages.join(" | "));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("elapsed time reads as seconds, then minutes and seconds", () => {
+  assert.equal(formatElapsed(0), "0s");
+  assert.equal(formatElapsed(42_900), "42s");
+  assert.equal(formatElapsed(125_000), "2m 05s");
+  assert.equal(formatElapsed(-5), "0s");
 });
