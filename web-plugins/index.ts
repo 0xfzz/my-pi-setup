@@ -2,6 +2,7 @@ import { artifactsPlugin } from "./artifacts.ts";
 import { bubblySpinnerPlugin } from "./bubbly-spinner.ts";
 import { cacheStatsPlugin } from "./cache-stats.ts";
 import { dashboardPlugin } from "./dashboard.ts";
+import { modesPlugin } from "./modes.ts";
 import { subagentCheckpointsPlugin } from "./subagent-checkpoints.ts";
 import { todoPlugin } from "./todo.ts";
 import type { WebPluginDescriptor } from "../lib/web-plugins/descriptor.ts";
@@ -13,6 +14,7 @@ export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [
   subagentCheckpointsPlugin,
   dashboardPlugin,
   bubblySpinnerPlugin,
+  modesPlugin,
 ];
 
 export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {
@@ -34,8 +36,6 @@ export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {
     "Registry-driven system prompt builder; background prompt middleware",
   "image-thumbnails":
     "Downscaled image previews for terminal rendering; TUI-only media optimization",
-  modes:
-    "Input mode registry, prompt guidance, and tool permissions; ported in Phase 3",
   "prompt-ui":
     "Interactive popup prompt selector and editor; TUI-only dialog",
   providers:

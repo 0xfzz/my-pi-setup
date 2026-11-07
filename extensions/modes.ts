@@ -12,6 +12,9 @@ import { isRetiredDelegationTool, stripRetiredTools } from "../lib/delegation-to
 import { waitCommandProblem } from "../lib/delegation/wait-guard.ts";
 import { hasLiveDelegation } from "../lib/delegation/live.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardMode } from "../lib/dashboard/integration.ts";
+import { MODES_LEAVE_PLAN_ACTION, MODES_PLUGIN_ID, modeWebView } from "../lib/modes-web-view.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../lib/web-plugins/actions.ts";
+import { publishWebView } from "../lib/web-plugins/publisher.ts";
 
 /** Derive from the UI contract so this does not depend on a re-exported alias. */
 type EditorFactory = NonNullable<ReturnType<ExtensionContext["ui"]["getEditorComponent"]>>;
@@ -24,6 +27,8 @@ export default function modesExtension(pi: ExtensionAPI) {
   let nativeShellSubmissions = 0;
   let refresh: (() => void) | undefined;
   let draw: (() => void) | undefined;
+  // The most recent context from session start/tree, for web actions that arrive outside a handler.
+  let activeCtx: ExtensionContext | undefined;
   let installedEditor: EditorFactory | undefined;
   let baseEditor: EditorFactory | undefined;
   const isPlan = (ctx: ExtensionContext) => planModeFromBranch(policyEntries(ctx))?.enabled === true;
@@ -215,6 +220,7 @@ export default function modesExtension(pi: ExtensionAPI) {
     // Notification only, after the transition actually applied. A refused switch
     // returned above and therefore publishes nothing.
     publishDashboardMode(pi, id);
+    publishWebView(pi, MODES_PLUGIN_ID, modeWebView(registry.current));
     return true;
   }
 
@@ -229,6 +235,7 @@ export default function modesExtension(pi: ExtensionAPI) {
   }
 
   function restore(ctx: ExtensionContext) {
+    activeCtx = ctx;
     const branch = policyEntries(ctx);
     const planState = planModeFromBranch(branch);
     pendingTools.clear();
@@ -253,6 +260,7 @@ export default function modesExtension(pi: ExtensionAPI) {
     // Restore is also the resume/reload path: publish the mode the transcript
     // actually resolved to, so a resumed session reconnects.
     publishDashboardMode(pi, registry.current.id);
+    publishWebView(pi, MODES_PLUGIN_ID, modeWebView(registry.current));
   }
 
   pi.on("session_start", (_event, ctx) => {
@@ -504,5 +512,12 @@ export default function modesExtension(pi: ExtensionAPI) {
     },
   });
 
-  pi.on("session_shutdown", () => { refresh = undefined; draw = undefined; });
+  // Web action: leave Plan mode from the web. Same transition as `/plan off`, refused the same way.
+  pi.events?.on(WEB_PLUGIN_ACTION_REQUEST_EVENT, (data: unknown) => {
+    const request = data as Partial<ActionRequestPayload> | undefined;
+    if (request?.pluginId !== MODES_PLUGIN_ID || request.actionId !== MODES_LEAVE_PLAN_ACTION || !activeCtx) return;
+    select("normal", activeCtx);
+  });
+
+  pi.on("session_shutdown", () => { refresh = undefined; draw = undefined; activeCtx = undefined; });
 }
