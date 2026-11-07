@@ -11,6 +11,8 @@ import { SessionStatusDot } from "./PluginViewRenderer";
 import { UiComponent } from "./UiComponent";
 import "./plugins.css";
 
+/** Anchors inside the chat column. They take the composer's width and side padding so they line up with it. */
+const CHAT_COLUMN_ANCHORS: readonly WebUiAnchor[] = ["chat.before", "chat.after", "chat.composer"];
 function location(p: WebPluginPlacement, mobile: boolean): string {
   if (mobile && p.mobileFallback) return p.mobileFallback;
   return p.kind === "region" ? p.region : p.kind === "anchor" ? p.anchor : p.anchor ?? "viewport.overlay";
@@ -52,12 +54,15 @@ function Contribution({ plugin, contribution: c, state, sessionId, view, place, 
   const compact = (region === "top" || region === "bottom") && model.kind === "view";
   const page = plugin.surfaces.find(s => s.kind === "page");
   const content = <UiComponent component={c.component} sessionId={sessionId} model={model} renderStrategy={c.strategy} fallback={compact && !c.strategy && model.kind === "view" ? <span className="plugin-slot-content">{model.value.type === "status" ? model.value.text : model.value.type === "kv" ? model.value.rows[0] ? `${model.value.rows[0].label}: ${model.value.rows[0].value}` : "" : `${model.value.items.length} items (${model.value.items[0] ?? ""})`}</span> : undefined} />;
-  const title = <><SessionStatusDot sessionId={sessionId} running={running} /><span className={region === "center" ? "plugin-slot-center-title" : "plugin-slot-title"}>{plugin.title}</span></>;
+  const title = <span className="plugin-slot-title-row"><SessionStatusDot sessionId={sessionId} running={running} /><span className={region === "center" ? "plugin-slot-center-title" : "plugin-slot-title"}>{plugin.title}</span></span>;
   return <section tabIndex={overlay ? 0 : undefined} data-plugin-id={plugin.id} data-contribution-id={c.id} data-ui-owner={owner} data-scope={c.scope} data-collision={place.collision ?? "stack"}
     className={`web-ui-contribution ${overlay ? "web-ui-overlay" : ""} ${region === "center" ? "plugin-slot-center-panel" : region === "floating" ? "plugin-slot-floating-widget" : "plugin-slot-row"}`}
     style={contributionStyle(place)}>
     {collapsible ? <>
-      <button type="button" className={region === "center" ? "plugin-slot-center-header" : "plugin-slot-floating-chip"} onClick={() => setExpanded(v => !v)} aria-expanded={expanded}>{title}</button>
+      <button type="button" className={region === "center" ? "plugin-slot-center-header" : "plugin-slot-floating-chip"} onClick={() => setExpanded(v => !v)} aria-expanded={expanded}>
+        {title}
+        {region === "center" && <span className="plugin-slot-collapse-indicator" aria-hidden="true">{expanded ? "▼" : "▶"}</span>}
+      </button>
       {expanded && <div className={region === "center" ? "plugin-slot-center-body" : "plugin-slot-floating-card"}>
         {region === "floating" && <button type="button" className="plugin-slot-floating-close" aria-label={`Collapse ${plugin.title}`} onClick={() => setExpanded(false)}>✕</button>}
         <div className={region === "floating" ? "plugin-slot-floating-body" : undefined}>{content}</div>
@@ -91,7 +96,8 @@ export function PluginAnchor({ anchor, region, sessionId, project, children }: {
   }
   nodes.sort((a, b) => a.order - b.order || a.key.localeCompare(b.key));
   if (!nodes.length && !children) return null;
-  return <div tabIndex={-1} data-web-ui-anchor={target} className={`web-ui-anchor${region ? ` plugin-slot-region plugin-slot-${region}` : ""}${anchor === "viewport.overlay" ? " web-ui-overlay-safe" : ""}`}>
+  const chatColumn = anchor !== undefined && CHAT_COLUMN_ANCHORS.includes(anchor) ? " web-ui-chat-column" : "";
+  return <div tabIndex={-1} data-web-ui-anchor={target} className={`web-ui-anchor${region ? ` plugin-slot-region plugin-slot-${region}` : ""}${anchor === "viewport.overlay" ? " web-ui-overlay-safe" : ""}${chatColumn}`}>
     {children}{nodes.map(n => n.node)}
   </div>;
 }

@@ -629,6 +629,15 @@
 }
 
 .web-ui-anchor { position: relative; flex-shrink: 0; min-width: 0; max-width: 100%; }
+/* Chat-column anchors use the composer's column. ChatInput centres an 820px column inside 16px sides (52px on desktop, for the minimap), so the cap includes the padding. */
+.web-ui-chat-column { box-sizing: border-box; width: 100%; margin: 0 auto; padding: 0 16px; max-width: calc(var(--chat-content-max-width, 820px) + 32px); }
+/* A contribution in the chat column wraps its text instead of running past the column on a phone. */
+.web-ui-chat-column > .web-ui-contribution { flex-wrap: wrap; white-space: normal; min-width: 0; max-width: 100%; }
+@media (min-width: 641px) { .web-ui-chat-column { padding-right: 52px; max-width: calc(var(--chat-content-max-width, 820px) + 68px); } }
+/* Sidebar rows keep the session list's inset and wrap, so a link at the end of a row is not clipped. */
+.web-ui-anchor[data-web-ui-anchor="session.sidebar"] { padding: 6px 10px; border-top: 1px solid var(--border); }
+.web-ui-anchor[data-web-ui-anchor="session.sidebar"] > .web-ui-contribution { flex-wrap: wrap; white-space: normal; overflow: visible; }
+.plugin-slot-title-row { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .web-ui-contribution { min-width: 0; overflow: auto; overflow-wrap: anywhere; pointer-events: auto; }
 .web-ui-contribution-header { display: inline-flex; align-items: center; gap: 5px; }
 .web-ui-contribution-header button { margin-left: auto; min-width: 32px; min-height: 32px; }
