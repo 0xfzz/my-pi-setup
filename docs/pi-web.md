@@ -125,7 +125,7 @@ Opening `http://127.0.0.1:30141` displays the main application shell with toolba
 | Chat working indicator | Any extension (e.g. Bubbly spinner) | `ctx.ui.setWorkingMessage` / `setWorkingIndicator` state rendered through the unified UI event stream |
 | Center panel | Subagent checkpoints | Delegated worker milestones and checkpoint history (collapsible) |
 | Floating widget | Artifact catalog | Plans, specifications, and scratchpads (collapsible corner card) |
-| Bottom strip | Cache health | Compact summary row above the chat input |
+| Bottom strip | Cache health | Compact summary row below the chat input |
 | Page `/plugins/dashboard` | Delegation dashboard | Parent/child agents, handoffs, reviews, escalations — the settings/whole-pi surface (data parity with standalone dashboard) |
 
 #### Read-only data presentation
