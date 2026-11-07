@@ -8,6 +8,7 @@
 | **Owner** | Faiz |
 | **Scope** | `lib/web-plugins/`, `web-plugins/`, `extensions/`, `vendor/pi-web/` |
 | **Related** | [fork-pi-web-integration](./fork-pi-web-integration.md), [plugin-actions](./plugin-actions.md) |
+| **Follow-up** | [pi-web-plugin-platform](./pi-web-plugin-platform.md) — audits this PRD's limits and extends it to a full plugin platform |
 
 ## 1. Problem
 
