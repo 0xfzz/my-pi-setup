@@ -63,6 +63,11 @@ test("trust tiers, engines and version are validated", () => {
   expectError({ ...base(), engines: { piWeb: "^1.0.0", sdk: "!!" } }, /engines.sdk/);
 });
 
+test("ui.css is only accepted from a trusted plugin", () => {
+  expectError({ ...base(), trust: "sandboxed", capabilities: ["ui.css"] }, /capability "ui.css" requires trust "trusted"/);
+  assert.ok(validateManifest({ ...base(), trust: "trusted", capabilities: ["ui.css"] }).ok);
+});
+
 test("capabilities go through the grammar", () => {
   expectError({ ...base(), capabilities: ["ui.replace"] }, /requires an argument/);
   expectError({ ...base(), capabilities: ["teleport"] }, /unknown capability/);

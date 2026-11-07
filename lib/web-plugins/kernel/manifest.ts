@@ -3,7 +3,7 @@
  * any plugin code. Validation is total: every field is either accepted in its
  * declared shape or the whole manifest is rejected with a named error.
  */
-import { validateCapabilities, type Capability } from "./capabilities.ts";
+import { TRUSTED_ONLY, validateCapabilities, type Capability } from "./capabilities.ts";
 import { isValidRange } from "./semver.ts";
 
 export const PLUGIN_ID_PATTERN = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)*$/;
@@ -116,6 +116,10 @@ export function validateManifest(input: unknown): ManifestResult {
 
   const caps = validateCapabilities(input.capabilities ?? []);
   if (!caps.ok) return fail(caps.error);
+  const trustedOnly = caps.value.find((cap) => TRUSTED_ONLY.has(cap.kind));
+  if (trustedOnly && trust !== "trusted") {
+    return fail(`capability "${trustedOnly.kind}" requires trust "trusted"`);
+  }
 
   const deps = rangeMap(input.dependsOn, "dependsOn");
   if (!deps.ok) return fail(deps.error);
