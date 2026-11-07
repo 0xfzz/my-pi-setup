@@ -195,6 +195,11 @@ function fakeServer(options: { build?: "current" | "stale"; runtime?: "current" 
       calls.push(`kill ${pid}`);
       up = false;
     },
+    forceKillProcess: (pid) => {
+      calls.push(`force kill ${pid}`);
+      up = false;
+    },
+    stopGraceMs: 1000,
     spawnServer: () => {
       calls.push("spawn");
       up = true;
@@ -260,13 +265,31 @@ test("the automatic reload does nothing when nothing changed, nothing is running
   }
 });
 
-test("/web reload refuses to start a second instance when the old one never stops", async () => {
+test("/web reload force-kills an old server that ignores SIGTERM, then starts the new one", async () => {
   const dir = await tree();
   try {
     const fake = fakeServer({ statePath: join(dir, "state.json") });
-    fake.deps.killProcess = (pid) => {
-      fake.calls.push(`kill ${pid}`);
-    };
+    // SIGTERM is accepted but the server keeps running (open connections hold it, as Next does).
+    fake.deps.killProcess = (pid) => fake.calls.push(`kill ${pid}`);
+    fake.deps.stopGraceMs = 0;
+    const messages: string[] = [];
+    fake.deps.onProgress = (message) => messages.push(message);
+    const result = await reloadWebUi(fake.deps);
+    assert.equal(result.status, "started");
+    assert.deepEqual(fake.calls, ["kill 1111", "removeState", "force kill 1111", "spawn", "record"]);
+    assert.ok(messages.some((m) => m.includes("force-killing it")));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("/web reload refuses to start a second instance when the old one survives even SIGKILL", async () => {
+  const dir = await tree();
+  try {
+    const fake = fakeServer({ statePath: join(dir, "state.json") });
+    fake.deps.killProcess = (pid) => fake.calls.push(`kill ${pid}`);
+    fake.deps.forceKillProcess = (pid) => fake.calls.push(`force kill ${pid}`);
+    fake.deps.stopGraceMs = 0;
     const result = await reloadWebUi(fake.deps);
     assert.equal(result.status, "error");
     assert.match(result.message, /did not stop within 1s/);

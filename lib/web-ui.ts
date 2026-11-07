@@ -107,6 +107,10 @@ export interface WebUiDeps {
   /** Take the cross-session reload lock; null when another reload holds it. */
   acquireReloadLock: () => (() => void) | null;
   killProcess: (pid: number) => void;
+  /** Force-stop a server that ignored SIGTERM (Next waits for open connections before it exits). */
+  forceKillProcess: (pid: number) => void;
+  /** How long a stopping server may take after SIGTERM before it is force-killed. */
+  stopGraceMs: number;
   removeState: (path: string) => Promise<void>;
   readState: (path: string) => Promise<WebUiStateStatus>;
   writeState: (path: string, state: WebUiState) => Promise<void>;
@@ -262,6 +266,17 @@ export async function defaultFetchHealth(url = DEFAULT_HEALTH_ENDPOINT): Promise
 }
 
 /** Kill process gracefully with SIGTERM. */
+/** Grace period for a SIGTERM'd server before /web reload force-kills it. */
+const DEFAULT_STOP_GRACE_MS = 10_000;
+
+function defaultForceKillProcess(pid: number): void {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // Already exited, or permission denied.
+  }
+}
+
 export function defaultKillProcess(pid: number): void {
   try {
     process.kill(pid, "SIGTERM");
@@ -409,6 +424,8 @@ function resolveDeps(overrides: Partial<WebUiDeps> = {}): WebUiDeps {
       writeBuildRecord(buildRecordPath(statePath), { ...fingerprints, builtAt: new Date().toISOString() })),
     acquireReloadLock: overrides.acquireReloadLock ?? (() => acquireReloadLock(reloadLockPath(statePath), defaultIsPidAlive)),
     killProcess: overrides.killProcess ?? defaultKillProcess,
+    forceKillProcess: overrides.forceKillProcess ?? defaultForceKillProcess,
+    stopGraceMs: overrides.stopGraceMs ?? DEFAULT_STOP_GRACE_MS,
     removeState: overrides.removeState ?? defaultRemoveState,
     readState: overrides.readState ?? defaultReadState,
     writeState: overrides.writeState ?? defaultWriteState,
@@ -625,13 +642,24 @@ export async function statusWebUi(options: Partial<WebUiDeps> = {}): Promise<Web
   };
 }
 
-/** Poll until the old server stops answering, so a new one never races it for the port. */
-async function waitUntilDown(deps: WebUiDeps): Promise<boolean> {
+/**
+ * Wait until the old server is gone: no longer answering and its process has exited, so a
+ * new server never races it for the port. A server with open connections can outlive
+ * SIGTERM (Next waits for every connection), so after the grace period it is force-killed.
+ */
+async function waitUntilDown(deps: WebUiDeps, pid: number): Promise<boolean> {
   const started = deps.now();
   const deadline = started + deps.startupTimeoutMs;
+  let forced = false;
   const reportWait = throttledProgress(deps, (elapsed) => `Waiting for the old pi-web to stop… ${elapsed}`);
   while (deps.now() < deadline) {
-    if (!(await deps.fetchHealth(deps.healthUrl))) return true;
+    const answering = await deps.fetchHealth(deps.healthUrl);
+    if (!answering && !deps.isPidAlive(pid)) return true;
+    if (!forced && deps.now() - started >= deps.stopGraceMs) {
+      deps.onProgress(`pi-web (PID ${pid}) did not stop after SIGTERM; force-killing it.`);
+      deps.forceKillProcess(pid);
+      forced = true;
+    }
     reportWait(deps.now() - started);
     await deps.sleep(deps.pollIntervalMs);
   }
@@ -659,7 +687,7 @@ export async function reloadWebUi(options: Partial<WebUiDeps> = {}): Promise<Web
     deps.onProgress(`Stopping pi-web (PID ${decision.pid})…`);
     deps.killProcess(decision.pid);
     await deps.removeState(deps.statePath);
-    if (!(await waitUntilDown(deps))) {
+    if (!(await waitUntilDown(deps, decision.pid))) {
       return {
         status: "error",
         message: `pi-web (PID ${decision.pid}) did not stop within ${Math.round(deps.startupTimeoutMs / 1000)}s. No second instance was started on the same port.`,
