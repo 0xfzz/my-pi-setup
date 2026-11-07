@@ -242,6 +242,15 @@ npm run tidy
 3. **No mutation endpoints**: There are no HTTP endpoints that accept write payloads to modify agent execution, file systems, or workflow state. Views are unidirectional projections pushed over `pi.events` from extension code running in the Pi process.
 4. **Content escaping**: Plugin view renderers enforce strict string coercion and text node rendering, preventing XSS injection even if an untrusted agent session emits markup payloads.
 
+### Plugin lifecycle and safe mode
+
+Workflow web plugins run through a small kernel (`lib/web-plugins/kernel/`). It discovers manifests, resolves dependencies, and drives each plugin through its lifecycle. Operator choices are saved in `~/.pi/agent/web-plugins.json` (override with `PI_WEB_PLUGIN_STATE`).
+
+- The repo's descriptors (`web-plugins/`) start enabled. Plugins from `~/.pi/agent/web-plugins/`, `<project>/.pi/web-plugins/`, and pi packages start disabled until enabled.
+- A plugin that fails three times in ten minutes is quarantined. It stays off across restarts until it is cleared, or until its version changes.
+- **Safe mode** starts only `core.*` plugins, and hides the other descriptors. Turn it on with `PI_WEB_SAFE_MODE=1`, or it turns on by itself when the server starts twice within a minute without a clean shutdown.
+- The kernel's audit log records lifecycle moves, capability denials, quarantines, and vetoes.
+
 ### Troubleshooting
 
 - **Separate build and dev artifacts**: `/web start` serves a production build and writes it to `vendor/pi-web/.next/`; the dev server writes its own cache under `.next/dev/`. Do not run a build while a dev server is serving — stop the dev server first, or use `/web start` (which refuses when an instance is already healthy) so the two modes never overlap. If a build fails, `/web start` reports the compiler output tail and starts no server.

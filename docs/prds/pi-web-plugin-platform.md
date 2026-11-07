@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | proposed |
+| **Status** | in progress: Phases 0–2 (server) and the modes re-port landed; Phases 3–7 not started. See [§16](#16-implementation-status). |
 | **Owner** | Faiz |
 | **Scope** | `lib/web-plugins/` (contracts + SDK), `web-plugins/` (first-party plugins), `vendor/pi-web/` (kernel only), `docs/` |
 | **Related** | [pi-web-pluggable-ui](./pi-web-pluggable-ui.md), [plugin-actions](./plugin-actions.md), [fork-pi-web-integration](./fork-pi-web-integration.md) |
@@ -458,3 +458,54 @@ Each is verifiable by a test or a scripted e2e; none relies on reading code.
 ## 15. Definition of done
 
 The PRD is implemented when AC1-AC20 pass, the six existing plugins run on the SDK, the first-party UI is registered through the public API with the fork diff within its budget, lifecycle, capability and safe-mode behavior are covered by tests, the inspector and plugin manager ship, docs are committed, the working tree is clean, and the root verification gate passes.
+
+## 16. Implementation status
+
+What is done, what is not, and what was verified. "Done" means the kernel code and its tests exist and pass; browser behaviour is only claimed where a test exercised it.
+
+| Phase | Status | What landed (commit subjects) |
+| --- | --- | --- |
+| 0. Contracts | **Done (server)** | Manifest validation, extension-point catalog with stability and protected flags, capability grammar and grants, lifecycle state machine. Generated catalog doc `docs/web-plugin-catalog.md` with `--check`. Not done: browser-side contracts are still the vendored `web-ui-*.ts` copies (F9). |
+| 1. Lifecycle manager | **Done (server)** | Semver ranges, dependency resolver with named cycles, breaker and budgets, bounded audit log, `web-plugins.json` with atomic writes, crash-loop and safe mode, discovery over repo/user/project/package roots, manager (enable, disable, reload with rollback, quarantine, clear), `core.compat` adapter for `WEB_PLUGINS`, host facade wired into the vendored host. Not done: the Plugin manager UI, the `pi-web plugin` CLI, a loader for `main.browser`. |
+| 2. Logic extension points | **Partly done** | Hook bus (event, waterfall, bail) with budgets and isolation, failure counted toward the breaker; service registry (provide, replace, decorate) with conflict detection; scoped quota-limited storage. Call sites wired: `prompt.before-send` (waterfall) and `session.before-delete` (bail). Not done: `session.list.sort`, `session.title.generate`, the `/api/p/<id>/…` routes, the bridge, jobs, and the pi-event tap. |
+| 3. Browser runtime | Not started | The existing `UiComponent`/`PluginLayout` replace/wrap/hide path is unchanged. No slot/component registry, `PluginRoot`, loader, or theme engine. |
+| 4. Dogfood the core | Not started | Upstream components are not wrapped. |
+| 5. Sandboxed tier | Not started | |
+| 6. DX | Not started | No SDK package, scaffold, inspector overlay, or test harness. |
+| 7. Migrate and retire | Not started | The six descriptors still use the declarative path (through `core.compat`). |
+| Re-port | **Done** | `modes` is a web plugin: a status view (warning in Plan, neutral in Normal) above the composer and a confirmed `leave-plan` action that uses the `/plan off` transition. |
+
+### Acceptance criteria
+
+| AC | State | Evidence or gap |
+| --- | --- | --- |
+| AC1 lifecycle order | Met (kernel) | `tests/web-plugin-manager.test.ts` dependency-first activation, reverse deactivation, LIFO dispose; cycle named in `tests/web-plugin-resolver.test.ts`. |
+| AC2 replace with no fork edit | Not met | Needs the browser runtime (Phase 3). |
+| AC3 fallback | Not met | Browser runtime. |
+| AC4 quarantine | Met (kernel) | Three activate failures quarantine; others stay up; clear re-enables. |
+| AC5 logic hooks | Partly | Prompt transform and session veto work through the real delete route (`vendor/pi-web/app/api/sessions/delete-route.test.mjs`, untracked, see below). The sort decorator is kernel-level only. |
+| AC6 routes, storage, bridge | Partly | Storage works. Routes and bridge are not built. |
+| AC7 live reload | Not met | `plugin dev` not built. |
+| AC8 insert-between and conflict | Partly | Exclusive-replacement conflict is rejected at registration; slot `before`/`after` ordering is not built. |
+| AC9 capabilities | Met (kernel) | `CapabilityError` names plugin and capability; denials are audited. The confirmation UI is not built. |
+| AC10 protected core | Met (kernel) | Hooks and services refuse protected points. |
+| AC11 no leaks across 50 cycles | Not met | No leak-check test yet. |
+| AC12 safe mode | Met (kernel) | `PI_WEB_SAFE_MODE=1` and the crash-loop trigger start only `core.*`; the manager re-enables one plugin. The host hides non-core descriptors in safe mode. |
+| AC13 dogfooding | Not met | No first-party plugin is wrapped yet. |
+| AC14–AC17 sandbox, DX, inspector, migration | Not met | |
+| AC18 compat | Not met | CLI `ctx.ui.setHeader` and similar are still no-ops. |
+| AC19 skew | Not met | |
+| AC20 docs | Partly | This section, the catalog doc, and `VENDORED.md`. `docs/pi-web.md` describes the kernel state file and safe mode. |
+
+### Decisions taken while implementing
+
+- Repo-source descriptors default to **enabled**; user, project, and package plugins default to **disabled** until the operator enables them. This keeps the six existing plugins visible.
+- Safe mode follows §6.5 literally: only `core.*` starts, which also hides the six descriptor plugins while it is on. This is visible behaviour; say if you want first-party descriptors kept in safe mode.
+- A crash is counted once per process (pid recorded), and a clean shutdown removes its own start, so a normal restart never trips safe mode.
+- A descriptor-only plugin has no code, so the loader is never called for it.
+
+### Known gaps in this session's verification
+
+- The browser has not been exercised. The modes chip placement at `chat.composer` relies on the existing layout coordinator and was not checked in a live page.
+- `vendor/pi-web/app/api/sessions/` is gitignored (`sessions/` in `.gitignore`) and none of its files are tracked. The veto route test lives there, so it is on disk but not in git. This predates this work.
+
