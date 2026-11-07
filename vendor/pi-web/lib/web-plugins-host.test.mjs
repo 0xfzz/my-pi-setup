@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
+
+// Operator state (web-plugins.json) must not be written into a real home directory by the suite.
+process.env.PI_WEB_PLUGIN_STATE ??= join(mkdtempSync(join(tmpdir(), "pi-web-plugin-state-")), "web-plugins.json");
 
 const jiti = createJiti(import.meta.url, { alias: { "@": process.cwd() } });
 const {

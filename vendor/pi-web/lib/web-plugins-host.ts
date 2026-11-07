@@ -1,6 +1,7 @@
 import { createJiti } from "jiti";
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import type { ActionDescriptor } from "./web-ui-actions";
 import type { WebPluginDescriptor } from "./web-ui-descriptor";
 import type {
@@ -59,6 +60,42 @@ const loadedActions = jiti(webPluginsActions) as {
 };
 
 export const WEB_PLUGINS: readonly WebPluginDescriptor[] = loadedIndex.WEB_PLUGINS;
+
+/** The plugin kernel's host facade (lib/web-plugins/kernel/host.ts), loaded from the outer repo. */
+interface KernelHost {
+  ready: Promise<unknown>;
+  warnings: readonly string[];
+  visible(): WebPluginDescriptor[];
+  descriptor(id: string): WebPluginDescriptor | undefined;
+}
+const loadedKernel = jiti(resolveRepoPath("lib/web-plugins/kernel/host.ts")) as {
+  createPluginHost: (options: Record<string, unknown>) => KernelHost;
+};
+const userPluginRoot = join(homedir(), ".pi", "agent", "web-plugins");
+// Test processes get their own state file so a suite never writes into a real home directory.
+function defaultPluginStatePath(): string {
+  return process.env.NODE_TEST_CONTEXT
+    ? join(tmpdir(), "pi-web-plugin-state", `${process.pid}.json`)
+    : join(homedir(), ".pi", "agent", "web-plugins.json");
+}
+// One host per process: Next.js can evaluate this module more than once, and each evaluation
+// must not start the manager again (that would count as a second start for the crash-loop guard).
+const pluginHostKey = Symbol.for("pi-web:plugin-host:v1");
+export const pluginHost: KernelHost = (uiGlobal[pluginHostKey] ??= loadedKernel.createPluginHost({
+  descriptors: WEB_PLUGINS,
+  descriptorDir: resolveRepoPath("web-plugins"),
+  statePath: process.env.PI_WEB_PLUGIN_STATE ?? defaultPluginStatePath(),
+  roots: { user: userPluginRoot, project: join(process.cwd(), ".pi", "web-plugins") },
+  env: process.env,
+  // Only plugins with a server entry reach the loader; descriptors are declarative.
+  loader: (plugin: { dir: string; manifest: { main: { server?: string } } }) => {
+    const mod = jiti(join(plugin.dir, plugin.manifest.main.server ?? "")) as { default?: object };
+    return mod.default ?? mod;
+  },
+})) as KernelHost;
+pluginHost.ready.catch((error: unknown) => {
+  console.error("web plugin host failed to boot:", error);
+});
 export const WEB_PLUGIN_VIEW_EVENT: string = loadedView.WEB_PLUGIN_VIEW_EVENT;
 export const WEB_PLUGIN_ACTION_REQUEST_EVENT: string = loadedActions.WEB_PLUGIN_ACTION_REQUEST_EVENT;
 export const validateView = loadedView.validateView;
@@ -323,11 +360,12 @@ checkAndSeedFixtures();
  * Read registered descriptors from the workflow extension index.
  */
 export function getRegisteredPlugins(): readonly WebPluginDescriptor[] {
-  return WEB_PLUGINS;
+  return pluginHost.visible();
 }
 
+/** Undefined while the plugin is switched off, quarantined, or hidden in safe mode. */
 export function getPluginDescriptor(id: string): WebPluginDescriptor | undefined {
-  return WEB_PLUGINS.find((plugin) => plugin.id === id);
+  return pluginHost.descriptor(id);
 }
 
 const attachedWrappers = new WeakSet<object>();
