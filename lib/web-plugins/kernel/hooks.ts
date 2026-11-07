@@ -61,7 +61,7 @@ export class HookBus {
   private readonly regs: Registration[] = [];
   private nextId = 1;
   private readonly budgetMs: number;
-  private readonly onFailure: (failure: HookFailure) => void;
+  private onFailure: (failure: HookFailure) => void;
   private readonly clock: () => number;
 
   constructor(options: HookBusOptions = {}) {
@@ -132,6 +132,11 @@ export class HookBus {
       }
     }
     return { denied: false };
+  }
+
+  /** Set after construction: the manager needs the bus first, and the bus reports to the manager. */
+  setFailureHandler(handler: (failure: HookFailure) => void): void {
+    this.onFailure = handler;
   }
 
   /** Remove every registration a plugin made (on deactivate, rollback, or quarantine). */

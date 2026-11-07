@@ -10,14 +10,35 @@ import { runWithBudget } from "./budget.ts";
 import { assertGranted, autoGrant, formatCapability, parseCapability, type Capability } from "./capabilities.ts";
 import type { DiscoveredPlugin } from "./discovery.ts";
 import { PluginLifecycle, isLive, type PluginEvent, type PluginState } from "./lifecycle.ts";
+import { HookBus } from "./hooks.ts";
 import { deactivationOrder, requiredDependents, resolvePlugins, type ResolverInput } from "./resolver.ts";
+import { ServiceRegistry } from "./services.ts";
+import { PluginStorage, type ScopedStorage } from "./storage.ts";
 import { markActivating, markCleanShutdown, recordBoot, recoverInterruptedActivation, setPluginState, type WebPluginsState } from "./state.ts";
+
+/** Hook registration for this plugin. Each call returns an unregister function. */
+export interface PluginHooks {
+  event(point: string, handler: (payload: unknown) => unknown, priority?: number): () => void;
+  waterfall(point: string, handler: (value: unknown, info: unknown) => unknown, priority?: number): () => void;
+  bail(point: string, handler: (payload: unknown) => unknown, priority?: number): () => void;
+}
+
+/** Service registration for this plugin. Replacements and decorators need their grants. */
+export interface PluginServices {
+  provide(name: string, impl: (...args: never[]) => unknown): () => void;
+  replace(name: string, impl: (...args: never[]) => unknown, priority?: number): () => void;
+  decorate(name: string, wrap: (next: (...args: never[]) => unknown) => (...args: never[]) => unknown, priority?: number): () => void;
+}
 
 export interface PluginContext {
   readonly id: string;
   readonly signal: AbortSignal;
   /** Register cleanup. Everything registered is disposed LIFO on deactivate or rollback. */
   register(dispose: () => void): void;
+  readonly hooks: PluginHooks;
+  readonly services: PluginServices;
+  /** Scoped storage; each scope needs its `storage:<scope>` grant. Survives deactivation. */
+  readonly storage: ScopedStorage;
   /** Throws CapabilityError (and audits the denial) unless the capability is granted. */
   assert(capability: string): void;
   log(message: string): void;
@@ -50,6 +71,9 @@ export interface ManagerOptions {
   /** Called after every operator-state change; the host writes web-plugins.json here. */
   persist?: (state: WebPluginsState) => void;
   audit?: AuditLog;
+  hooks?: HookBus;
+  services?: ServiceRegistry;
+  storage?: PluginStorage;
 }
 
 export interface BootReport {
@@ -100,6 +124,9 @@ export class PluginManager {
   private readonly breakerOptions: { threshold: number; windowMs: number };
   private readonly persistFn: (state: WebPluginsState) => void;
   private readonly audit: AuditLog;
+  private readonly hooks: HookBus;
+  private readonly services: ServiceRegistry;
+  private readonly storage: PluginStorage;
   private state: WebPluginsState;
   private safeMode = false;
 
@@ -113,6 +140,12 @@ export class PluginManager {
     this.breakerOptions = { threshold: options.breaker?.threshold ?? DEFAULT_BREAKER.threshold, windowMs: options.breaker?.windowMs ?? DEFAULT_BREAKER.windowMs };
     this.persistFn = options.persist ?? (() => undefined);
     this.audit = options.audit ?? new AuditLog({ clock: this.now });
+    this.hooks = options.hooks ?? new HookBus();
+    this.services = options.services ?? new ServiceRegistry();
+    this.storage = options.storage ?? new PluginStorage();
+    this.hooks.setFailureHandler((failure) => {
+      void this.reportFailure(failure.pluginId, `${failure.point} ${failure.reason}: ${failure.message}`);
+    });
     this.state = options.state;
     for (const plugin of options.plugins) {
       if (this.slots.has(plugin.id)) continue;
@@ -374,12 +407,25 @@ export class PluginManager {
 
   private makeContext(slot: Slot, signal: AbortSignal): PluginContext {
     const id = slot.plugin.id;
+    const owner = { pluginId: id, grants: slot.grants };
+    const scoped = this.storage.forPlugin(owner);
     return {
       id,
       signal,
       register: (dispose) => {
         slot.disposers.push(dispose);
       },
+      hooks: {
+        event: (point, handler, priority) => this.hooks.register(owner, "event", point, handler, priority),
+        waterfall: (point, handler, priority) => this.hooks.register(owner, "waterfall", point, handler, priority),
+        bail: (point, handler, priority) => this.hooks.register(owner, "bail", point, handler, priority),
+      },
+      services: {
+        provide: (name, impl) => this.services.register(owner, name, "provide", impl),
+        replace: (name, impl, priority) => this.services.register(owner, name, "replace", impl, priority),
+        decorate: (name, wrap, priority) => this.services.register(owner, name, "decorate", wrap, priority),
+      },
+      storage: scoped,
       assert: (capability) => {
         const parsed = parseCapability(capability);
         if (!parsed.ok) throw new Error(`Plugin "${id}": ${parsed.error}`);
@@ -396,8 +442,25 @@ export class PluginManager {
     };
   }
 
+  /**
+   * Hook failures count toward the breaker. A trip deactivates a running plugin and
+   * quarantines it, so a plugin that keeps breaking a hook stops being called.
+   */
+  async reportFailure(pluginId: string, reason: string): Promise<void> {
+    const slot = this.slots.get(pluginId);
+    if (!slot) return;
+    this.audit.append("failure", pluginId, reason);
+    if (!slot.breaker.recordFailure()) return;
+    if (isLive(slot.life.state)) await this.deactivateSlot(slot, "circuit breaker tripped");
+    if (slot.life.can("quarantine")) {
+      this.quarantine(slot, `hook failures tripped the breaker; last: ${reason}`);
+    }
+  }
+
   /** Dispose registrations LIFO. A throwing disposer is audited and does not stop the rest. */
   private disposeAll(slot: Slot): void {
+    this.hooks.removeOwner(slot.plugin.id);
+    this.services.removeOwner(slot.plugin.id);
     while (slot.disposers.length) {
       const dispose = slot.disposers.pop()!;
       try {

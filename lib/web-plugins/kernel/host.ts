@@ -9,6 +9,9 @@ import { compatCandidates, type DescriptorLike } from "./compat.ts";
 import { discoverPlugins, type DiscoveryRoots } from "./discovery.ts";
 import { isCorePlugin, PluginManager, type BootReport, type PluginLoader, type PluginRuntime } from "./manager.ts";
 import type { PluginState } from "./lifecycle.ts";
+import { HookBus } from "./hooks.ts";
+import { ServiceRegistry } from "./services.ts";
+import { PluginStorage } from "./storage.ts";
 import { loadState, saveState, type WebPluginsState } from "./state.ts";
 
 /** States whose descriptor must not be shown or acted on. */
@@ -27,6 +30,10 @@ export interface PluginHostOptions<D extends DescriptorLike> {
 
 export interface PluginHost<D extends DescriptorLike> {
   readonly manager: PluginManager;
+  /** Logic hooks shared by every plugin; the host calls `waterfall`/`bail` at its call sites. */
+  readonly hooks: HookBus;
+  readonly services: ServiceRegistry;
+  readonly storage: PluginStorage;
   /** Resolves once the manager has booted (activation done or failed for each plugin). */
   readonly ready: Promise<BootReport>;
   /** Non-fatal problems found while loading state or discovering plugins. */
@@ -57,6 +64,9 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
   warnings.push(...discovered.diagnostics);
 
   const audit = new AuditLog({ clock: options.now });
+  const hooks = new HookBus();
+  const services = new ServiceRegistry();
+  const storage = new PluginStorage();
   const manager = new PluginManager({
     plugins: discovered.selected,
     state: loaded.state,
@@ -64,6 +74,9 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     env: options.env ?? {},
     now: options.now,
     audit,
+    hooks,
+    services,
+    storage,
     persist: (state: WebPluginsState) => {
       try {
         saveState(options.statePath, state);
@@ -83,6 +96,9 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
 
   return {
     manager,
+    hooks,
+    services,
+    storage,
     ready: manager.start(),
     warnings,
     visible: () => options.descriptors.filter((d) => !hidden(d.id)),
