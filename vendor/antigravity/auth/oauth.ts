@@ -104,6 +104,11 @@ function startCallbackServer(expectedState: string): Promise<CallbackServer> {
       resolveCode = res;
       rejectCode = rej;
     });
+    // cleanup() rejects this promise even when no caller ever awaits it (the login
+    // failed before reaching acquireAuthCode). Mark it handled so that cancellation
+    // cannot surface as an unhandled rejection that crashes the host. Callers that
+    // await waitForCode() still receive the rejection.
+    codePromise.catch(() => {});
 
     const finish = (fn: () => void) => {
       if (settled) return;

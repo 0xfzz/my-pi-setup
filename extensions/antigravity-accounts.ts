@@ -161,6 +161,35 @@ export function slotIsFresh(
     typeof account.expires === "number" && account.expires > now + skewMs;
 }
 
+/**
+ * Adapt Pi's extension UI to the OAuth callbacks loginAntigravity() drives. Pi's
+ * `ctx.ui` has no onAuth/onPrompt, so handing it over unchanged made the login
+ * throw before the browser was ever opened.
+ */
+export function loginCallbacks(
+  ui: ExtensionContext["ui"], signal: AbortSignal,
+): Parameters<typeof loginAntigravity>[0] {
+  return {
+    signal,
+    onAuth: ({ url, instructions }) => {
+      ui.notify(`Open this URL to sign in to Google:\n${url}${instructions ? `\n\n${instructions}` : ""}`, "info");
+    },
+    onDeviceCode: ({ verificationUri, userCode }) => {
+      ui.notify(`Enter code ${userCode} at ${verificationUri}`, "info");
+    },
+    onPrompt: async ({ message, placeholder }) => {
+      const text = await ui.input(message, placeholder, { signal });
+      if (text === undefined) throw new Error("Login cancelled");
+      return text;
+    },
+    onSelect: async ({ message, options }) => {
+      const label = await ui.select(message, options.map((option) => option.label), { signal });
+      return options.find((option) => option.label === label)?.id;
+    },
+    onProgress: (message) => ui.notify(message, "info"),
+  };
+}
+
 export default function antigravityAccountsExtension(pi: ExtensionAPI): void {
   const agentDir = (() => {
     try { return getAgentDir(); } catch { return join(process.env.HOME ?? "", ".pi", "agent"); }
@@ -399,9 +428,10 @@ export default function antigravityAccountsExtension(pi: ExtensionAPI): void {
           emit(ctx, formatSlots());
           return;
         case "login": {
+          // Dismisses the paste prompt once the browser callback wins the race.
+          const dialogs = new AbortController();
           try {
-            const callbacks = ctx.ui as unknown as Parameters<typeof loginAntigravity>[0];
-            const credentials = await loginAntigravity(callbacks);
+            const credentials = await loginAntigravity(loginCallbacks(ctx.ui, dialogs.signal));
             const stored = rememberAccount(credentials);
             refreshed.clear();
             register(ctx);
@@ -411,6 +441,8 @@ export default function antigravityAccountsExtension(pi: ExtensionAPI): void {
               : `Linked ${slotLabel(stored)}.`);
           } catch (error) {
             emit(ctx, `Antigravity login failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+          } finally {
+            dialogs.abort();
           }
           return;
         }
