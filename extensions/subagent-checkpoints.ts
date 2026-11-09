@@ -142,11 +142,9 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
     const rows = ordered(records);
     if (!rows.length) {
       try {
-        publishWebView(pi, "subagent-checkpoints", {
-          type: "list",
-          title: "Delegated work",
-          items: [],
-        });
+        // A list with no items renders as an empty box under the centre panel's
+        // own "Delegated work" heading. A neutral status is the empty state.
+        publishWebView(pi, "subagent-checkpoints", { type: "status", tone: "neutral", text: "No child agents" });
       } catch {
         // Never throw into extension flow
       }

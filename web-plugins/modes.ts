@@ -10,6 +10,7 @@ export const modesPlugin: WebPluginDescriptor = {
     id: "mode",
     component: "ui.plugin-view.v1",
     view: MODES_PLUGIN_ID,
+    strategy: "compact",
     scope: "session",
     visibleWhen: "has-view",
     placement: { kind: "anchor", anchor: "chat.composer", order: -1 },

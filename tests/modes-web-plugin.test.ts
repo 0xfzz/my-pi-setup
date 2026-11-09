@@ -18,7 +18,7 @@ test("the plan view is a warning status and the normal view is neutral", () => {
   assert.deepEqual(planView, {
     type: "status",
     tone: "warning",
-    text: "Plan mode: read-only exploration; writes only to artifacts. Use Leave plan mode to resume normal work.",
+    text: "Plan mode: read-only; writes only to artifacts",
   });
   assert.deepEqual(normalView, { type: "status", tone: "neutral", text: "Normal mode: AI chat & tools" });
   assert.equal(validateView(planView).ok, true);

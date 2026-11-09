@@ -693,10 +693,12 @@ test("phase 3 views: representative view fixtures for todo, artifacts, and subag
   }
 
   // subagent-checkpoints: empty state
+  // The extension publishes a neutral status line, not an empty list: an empty
+  // list under the panel's own "Delegated work" heading renders as a blank box.
   const subagentsEmptyView = {
-    type: "list" as const,
-    title: "Delegated work",
-    items: [],
+    type: "status" as const,
+    tone: "neutral" as const,
+    text: "No child agents",
   };
   const emptyResult = validateView(subagentsEmptyView);
   assert.equal(emptyResult.ok, true);

@@ -13,7 +13,7 @@ export function modeWebView(mode: { id: string; label: string; summary?: string 
     return {
       type: "status",
       tone: "warning",
-      text: "Plan mode: read-only exploration; writes only to artifacts. Use Leave plan mode to resume normal work.",
+      text: "Plan mode: read-only; writes only to artifacts",
     };
   }
   return { type: "status", tone: "neutral", text: mode.summary ? `${mode.label} mode: ${mode.summary}` : `${mode.label} mode` };
