@@ -1,8 +1,10 @@
 import type { WebView } from "./web-plugins/view.ts";
 
-/** Web plugin id and the action that leaves Plan mode. Shared by the extension and its descriptor. */
+/** Web plugin id and the actions it declares. Shared by the extension and its descriptor. */
 export const MODES_PLUGIN_ID = "modes";
 export const MODES_LEAVE_PLAN_ACTION = "leave-plan";
+/** Instant (no-confirm) action: cycles Normal ↔ Plan, bound to Alt+M in the web UI. */
+export const MODES_TOGGLE_MODE_ACTION = "toggle-mode";
 
 /**
  * The status the web shows for an input mode. Normal is informational; Plan is a

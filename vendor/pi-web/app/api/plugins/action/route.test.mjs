@@ -213,3 +213,53 @@ test("POST returns 400 on malformed JSON body", async () => {
   const res = await POST(createPostRequest("not-valid-json"));
   assert.equal(res.status, 400);
 });
+
+test("instant action: an action without a declared confirm submits without a typed string", async () => {
+  webPluginsStore.clear();
+
+  let busCalls = 0;
+  const mockEventBus = {
+    on() {
+      return () => {};
+    },
+    emit() {
+      busCalls++;
+    },
+  };
+
+  attachSessionPlugins({
+    sessionId: "sess-instant",
+    inner: {
+      resourceLoader: {
+        eventBus: mockEventBus,
+      },
+    },
+  });
+
+  // The modes descriptor declares toggle-mode with no confirm and Alt+M: the
+  // POST carries no confirm field and is accepted and relayed exactly once.
+  const instantRes = await POST(
+    createPostRequest({
+      sessionId: "sess-instant",
+      pluginId: "modes",
+      actionId: "toggle-mode",
+    }),
+  );
+  assert.equal(instantRes.status, 200);
+  const instantBody = await instantRes.json();
+  assert.equal(instantBody.ok, true);
+  assert.ok(instantBody.requestId, "a single-use requestId is issued");
+  assert.equal(busCalls, 1, "the instant action is relayed on the session bus");
+
+  // A confirmed action on the same plugin still demands its exact string,
+  // even after an instant action from the same descriptor was accepted.
+  const refusedRes = await POST(
+    createPostRequest({
+      sessionId: "sess-instant",
+      pluginId: "modes",
+      actionId: "leave-plan",
+    }),
+  );
+  assert.equal(refusedRes.status, 403);
+  assert.equal(busCalls, 1, "nothing further is relayed on a refused confirm");
+});

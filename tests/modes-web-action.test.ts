@@ -93,6 +93,34 @@ test("the leave-plan web action returns the session to normal mode, and only for
   assert.equal((views[0].data as { view: { tone: string } }).view.tone, "neutral");
 });
 
+test("the Alt+M toggle-mode action enters Plan mode and only for this plugin's declared action", async () => {
+  const run = fakePi();
+  modes(run.pi as never);
+  const { ctx } = fakeContext([]);
+  for (const handler of run.handlers.get("session_start") ?? []) await handler({ reason: "startup" }, ctx);
+  const [onAction] = run.eventHandlers.get(WEB_PLUGIN_ACTION_REQUEST_EVENT) ?? [];
+  assert.ok(onAction);
+
+  // An action id this plugin does not declare is ignored.
+  run.emitted.length = 0;
+  onAction({ requestId: "t0", pluginId: "modes", actionId: "unknown-action", sessionId: "session-1" });
+  assert.equal(viewsFor(run.emitted).length, 0);
+
+  // The instant toggle from Normal publishes the Plan (warning) view.
+  onAction({ requestId: "t1", pluginId: "modes", actionId: "toggle-mode", sessionId: "session-1" });
+  const views = viewsFor(run.emitted);
+  assert.equal(views.length, 1);
+  assert.equal((views[0].data as { view: { tone: string } }).view.tone, "warning");
+});
+
+test("the toggle-mode action before any session has started is a no-op, not an error", () => {
+  const run = fakePi();
+  modes(run.pi as never);
+  const [onAction] = run.eventHandlers.get(WEB_PLUGIN_ACTION_REQUEST_EVENT) ?? [];
+  assert.doesNotThrow(() => onAction({ requestId: "t4", pluginId: "modes", actionId: "toggle-mode", sessionId: "s" }));
+  assert.equal(viewsFor(run.emitted).length, 0);
+});
+
 test("the leave-plan action before any session has started is a no-op, not an error", () => {
   const run = fakePi();
   modes(run.pi as never);

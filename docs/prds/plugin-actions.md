@@ -56,3 +56,28 @@ This deliberately matches the repo's trust stance: the browser stays a viewer th
 ## 6. Out of scope
 
 Mutation actions of any kind (spawn/steer/stop agents, edit todos/artifacts, run commands) — Phase 5 ships the transport, confirmation and audit skeleton with one refresh-type reference action; each real mutation action needs a named entry in a follow-up PRD with blast radius.
+
+## 7. Addendum: instant actions and keybindings (approved with this round)
+
+Phase 5 shipped confirmed actions only. This round adds the first instant
+action, under rules that keep the threat model above intact:
+
+- **A8 (instant form).** An action may omit `confirm` only when this PRD names
+  it. Registry validation (A1) accepts the omission; the API route still 403s
+  any mismatched confirm a declared action requires. Instant actions are
+  reversible-only: they may toggle state the TUI toggles back through the same
+  guards, never write data, spawn agents, or run commands.
+- **A9 (keybindings).** A descriptor may declare one keybinding per action,
+  strictly validated (one to three modifiers — Alt/Ctrl/Meta/Shift — then one
+  letter or digit). The host dispatches it at window level, never while a field
+  has focus, with a transient result toast. Keybindings stay host-owned: a
+  plugin cannot bind a bare key, ship a handler, or fire while the user types.
+- **Named instant action: `modes/toggle-mode` (Alt+M).** Cycles Normal ↔ Plan —
+  the same transition as the TUI switch key and `/mode`, refused identically
+  when the turn is busy or children are running. Blast radius: one reversible
+  mode transition in the owning session. Bound to Alt+M; `modes/leave-plan`
+  stays a confirmed action with its typed string.
+
+Residual risk is unchanged: an attacker who can trigger this action can already
+read the descriptor and the session; a reversible mode toggle is strictly
+narrower than what that session can already do.

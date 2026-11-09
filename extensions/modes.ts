@@ -12,7 +12,7 @@ import { isRetiredDelegationTool, stripRetiredTools } from "../lib/delegation-to
 import { waitCommandProblem } from "../lib/delegation/wait-guard.ts";
 import { hasLiveDelegation } from "../lib/delegation/live.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardMode } from "../lib/dashboard/integration.ts";
-import { MODES_LEAVE_PLAN_ACTION, MODES_PLUGIN_ID, modeWebView } from "../lib/modes-web-view.ts";
+import { MODES_LEAVE_PLAN_ACTION, MODES_PLUGIN_ID, MODES_TOGGLE_MODE_ACTION, modeWebView } from "../lib/modes-web-view.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../lib/web-plugins/actions.ts";
 import { publishWebView } from "../lib/web-plugins/publisher.ts";
 
@@ -512,11 +512,14 @@ export default function modesExtension(pi: ExtensionAPI) {
     },
   });
 
-  // Web action: leave Plan mode from the web. Same transition as `/plan off`, refused the same way.
+  // Web actions: leave Plan mode and the Alt+M mode toggle. Same transitions
+  // as `/plan off` and the TUI switch key, refused the same way — a busy turn
+  // or running children never switch from the web either.
   pi.events?.on(WEB_PLUGIN_ACTION_REQUEST_EVENT, (data: unknown) => {
     const request = data as Partial<ActionRequestPayload> | undefined;
-    if (request?.pluginId !== MODES_PLUGIN_ID || request.actionId !== MODES_LEAVE_PLAN_ACTION || !activeCtx) return;
-    select("normal", activeCtx);
+    if (request?.pluginId !== MODES_PLUGIN_ID || !activeCtx) return;
+    if (request.actionId === MODES_LEAVE_PLAN_ACTION) select("normal", activeCtx);
+    else if (request.actionId === MODES_TOGGLE_MODE_ACTION) switchToNext(activeCtx);
   });
 
   pi.on("session_shutdown", () => { refresh = undefined; draw = undefined; activeCtx = undefined; });

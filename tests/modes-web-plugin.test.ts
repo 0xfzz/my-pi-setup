@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { MODES_LEAVE_PLAN_ACTION, MODES_PLUGIN_ID, modeWebView } from "../lib/modes-web-view.ts";
+import { MODES_LEAVE_PLAN_ACTION, MODES_PLUGIN_ID, MODES_TOGGLE_MODE_ACTION, modeWebView } from "../lib/modes-web-view.ts";
 import { WEB_PLUGIN_VIEW_EVENT, validateView } from "../lib/web-plugins/view.ts";
 import { publishWebView } from "../lib/web-plugins/publisher.ts";
 import { validatePlugin, type WebPluginDescriptor } from "../lib/web-plugins/descriptor.ts";
@@ -38,7 +38,12 @@ test("the modes descriptor is valid, declares the leave-plan action, and is regi
   const known = ["modes.ts", "todo.ts"];
   const result = validatePlugin(modesPlugin, known);
   assert.equal(result.ok, true, result.ok ? "" : result.error);
-  assert.deepEqual(modesPlugin.actions?.map((a) => a.id), [MODES_LEAVE_PLAN_ACTION]);
+  assert.deepEqual(modesPlugin.actions?.map((a) => a.id), [MODES_TOGGLE_MODE_ACTION, MODES_LEAVE_PLAN_ACTION]);
+  const toggle = modesPlugin.actions?.find((a) => a.id === MODES_TOGGLE_MODE_ACTION);
+  assert.equal(toggle?.confirm, undefined, "switch mode is the instant form: no typed confirmation");
+  assert.equal(toggle?.keybinding, "Alt+M");
+  const leave = modesPlugin.actions?.find((a) => a.id === MODES_LEAVE_PLAN_ACTION);
+  assert.equal(leave?.confirm, "leave plan mode", "leaving Plan mode keeps its typed confirmation");
   assert.deepEqual(modesPlugin.ui?.map((c) => [c.component, c.view, c.placement]), [
     ["ui.plugin-view.v1", "modes", { kind: "anchor", anchor: "chat.composer", order: -1 }],
   ]);

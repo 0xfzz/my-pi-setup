@@ -1,11 +1,11 @@
 import type { WebPluginDescriptor } from "../lib/web-plugins/descriptor.ts";
-import { MODES_LEAVE_PLAN_ACTION, MODES_PLUGIN_ID } from "../lib/modes-web-view.ts";
+import { MODES_LEAVE_PLAN_ACTION, MODES_PLUGIN_ID, MODES_TOGGLE_MODE_ACTION } from "../lib/modes-web-view.ts";
 
 export const modesPlugin: WebPluginDescriptor = {
   id: MODES_PLUGIN_ID,
   extension: "modes",
   title: "Input mode",
-  description: "Current input mode (Normal or Plan) shown above the composer, with an action to leave Plan mode.",
+  description: "Current input mode (Normal or Plan) shown above the composer. Alt+M switches mode instantly; leaving Plan mode stays a confirmed action.",
   ui: [{
     id: "mode",
     component: "ui.plugin-view.v1",
@@ -19,6 +19,11 @@ export const modesPlugin: WebPluginDescriptor = {
     { kind: "sidebar" },
   ],
   actions: [
+    {
+      id: MODES_TOGGLE_MODE_ACTION,
+      title: "Switch mode",
+      keybinding: "Alt+M",
+    },
     {
       id: MODES_LEAVE_PLAN_ACTION,
       title: "Leave plan mode",
