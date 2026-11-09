@@ -1,0 +1,163 @@
+// SSE transport for agent events over a raw Node response — the trimmed
+// port of the vendored agent-event-stream.ts. One stream per client page:
+// it opens immediately, publishes a `connected` event once the session is
+// ready, coalesces tool progress, heartbeats every 30 s, and guards against
+// a client that stops reading (drop rebuildable deltas above 512 KB, end the
+// response above 16 MB so the client reconnects and re-snapshots).
+
+import type { IncomingMessage, ServerResponse } from "node:http";
+import {
+  AGENT_EVENT_HEARTBEAT_MS,
+  isDroppableEvent,
+  toClientAgentEvent,
+  type AgentEventLike,
+} from "./wire.ts";
+import type { SessionCore } from "./sessions.ts";
+
+const TOOL_UPDATE_COALESCE_MS = 150;
+const STREAM_HIGH_WATER_MARK_BYTES = 512 * 1024;
+const STREAM_BACKLOG_LIMIT_BYTES = 16 * 1024 * 1024;
+
+export interface EventStreamSession extends Pick<SessionCore, "subscribe" | "isStreaming"> {}
+
+/**
+ * Attach an SSE stream to `res` for `sessionId`. `sessionPromise` resolves
+ * with the session core, or null when the session cannot be found or started.
+ */
+export function attachAgentEventStream(
+  req: IncomingMessage,
+  res: ServerResponse,
+  sessionId: string,
+  sessionPromise: Promise<EventStreamSession | null>,
+): void {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  // Flush the headers before the agent is ready; the client waits for the
+  // later `connected` data event.
+  res.write(":\n\n");
+
+  let closed = false;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let unsubscribe: (() => void) | null = null;
+  let toolUpdateTimer: ReturnType<typeof setTimeout> | null = null;
+  const pendingToolUpdates = new Map<unknown, AgentEventLike>();
+
+  const cleanup = (finish: boolean): void => {
+    if (closed) return;
+    closed = true;
+    if (heartbeat !== null) clearInterval(heartbeat);
+    if (toolUpdateTimer !== null) clearTimeout(toolUpdateTimer);
+    pendingToolUpdates.clear();
+    unsubscribe?.();
+    unsubscribe = null;
+    if (finish) res.end();
+  };
+
+  const send = (data: unknown, options?: { droppable?: boolean }): void => {
+    if (closed) return;
+    const queuedBytes = res.writableLength;
+    if (options?.droppable && queuedBytes > STREAM_HIGH_WATER_MARK_BYTES) {
+      return;
+    }
+    if (queuedBytes > STREAM_BACKLOG_LIMIT_BYTES) {
+      cleanup(true);
+      return;
+    }
+    try {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    } catch {
+      cleanup(false);
+    }
+  };
+
+  const flushToolUpdates = (): void => {
+    toolUpdateTimer = null;
+    const updates = [...pendingToolUpdates.values()];
+    pendingToolUpdates.clear();
+    for (const update of updates) send(update, { droppable: true });
+  };
+
+  const sendClientEvent = (clientEvent: AgentEventLike): void => {
+    if (clientEvent.type === "tool_execution_update") {
+      pendingToolUpdates.set(clientEvent.toolCallId, clientEvent);
+      if (toolUpdateTimer === null) {
+        toolUpdateTimer = setTimeout(flushToolUpdates, TOOL_UPDATE_COALESCE_MS);
+      }
+      return;
+    }
+    // The end supersedes a partial result still waiting here; agent_end does
+    // the same for any tool call whose end never came.
+    if (clientEvent.type === "tool_execution_end") {
+      pendingToolUpdates.delete(clientEvent.toolCallId);
+    } else if (clientEvent.type === "agent_end") {
+      pendingToolUpdates.clear();
+    }
+    send(clientEvent, { droppable: isDroppableEvent(clientEvent) });
+  };
+
+  const forwardEvent = (event: AgentEventLike): void => {
+    const clientEvent = toClientAgentEvent(event);
+    if (clientEvent !== null) sendClientEvent(clientEvent);
+  };
+
+  const publishSession = async (): Promise<void> => {
+    try {
+      const session = await sessionPromise;
+      if (closed) return;
+      if (session === null) {
+        send({ type: "startup_error", errorMessage: "Session not found" });
+        cleanup(true);
+        return;
+      }
+
+      // Buffer events that arrive before the connection announcement, so a
+      // reconnecting client never sees live events precede the state they
+      // extend. (The vendored app also replayed the streaming snapshot here;
+      // minimal v1 relies on the history endpoint for full state.)
+      const buffered: AgentEventLike[] = [];
+      let announced = false;
+      const handleEvent = (event: unknown): void => {
+        const typed = event as AgentEventLike;
+        if (typed.type === "session_shutdown") {
+          cleanup(true);
+          return;
+        }
+        if (!announced) {
+          buffered.push(typed);
+          return;
+        }
+        forwardEvent(typed);
+      };
+
+      unsubscribe = session.subscribe(handleEvent);
+      if (closed) {
+        unsubscribe();
+        return;
+      }
+
+      send({ type: "connected", sessionId, isStreaming: session.isStreaming() });
+      announced = true;
+      for (const event of buffered) forwardEvent(event);
+    } catch (error) {
+      if (closed) return;
+      send({
+        type: "startup_error",
+        errorMessage: `Failed to start agent: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      cleanup(true);
+    }
+  };
+
+  void publishSession();
+
+  req.on("close", () => cleanup(false));
+  res.on("close", () => cleanup(false));
+
+  heartbeat = setInterval(() => {
+    send({ type: "heartbeat" }, { droppable: true });
+  }, AGENT_EVENT_HEARTBEAT_MS);
+}
