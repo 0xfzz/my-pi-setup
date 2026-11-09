@@ -1,9 +1,9 @@
 import { artifactsPlugin } from "./artifacts.ts";
 import { bubblySpinnerPlugin } from "./bubbly-spinner.ts";
 import { cacheStatsPlugin } from "./cache-stats.ts";
-import { dashboardPlugin } from "./dashboard.ts";
 import { modesPlugin } from "./modes.ts";
 import { subagentCheckpointsPlugin } from "./subagent-checkpoints.ts";
+import { subagentMonitorPlugin } from "./subagent-monitor.ts";
 import { todoPlugin } from "./todo.ts";
 import type { WebPluginDescriptor } from "../lib/web-plugins/descriptor.ts";
 
@@ -12,7 +12,7 @@ export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [
   todoPlugin,
   artifactsPlugin,
   subagentCheckpointsPlugin,
-  dashboardPlugin,
+  subagentMonitorPlugin,
   bubblySpinnerPlugin,
   modesPlugin,
 ];

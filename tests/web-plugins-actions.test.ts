@@ -22,7 +22,7 @@ import {
   type ActionRequestPayload as RegistryActionPayload,
 } from "../lib/web-plugins/registry.ts";
 import { WEB_PLUGINS } from "../web-plugins/index.ts";
-import { dashboardPlugin } from "../web-plugins/dashboard.ts";
+import { subagentMonitorPlugin } from "../web-plugins/subagent-monitor.ts";
 import dashboardExtension from "../extensions/dashboard.ts";
 
 test("registry re-exports action constants and types", () => {
@@ -37,7 +37,7 @@ test("registry re-exports action constants and types", () => {
   const samplePayload: RegistryActionPayload = {
     requestId: "req-1",
     sessionId: "sess-1",
-    pluginId: "dashboard",
+    pluginId: "subagent-monitor",
     actionId: "request-sync",
   };
   assert.equal(samplePayload.requestId, "req-1");
@@ -198,19 +198,19 @@ test("validateRegistry: rejects duplicate action ids within a plugin", () => {
   );
 });
 
-test("WEB_PLUGINS contains the dashboard plugin with exactly the declared reference action", () => {
-  assert.equal(dashboardPlugin.id, "dashboard");
-  assert.ok(dashboardPlugin.actions, "dashboardPlugin must declare actions");
-  assert.equal(dashboardPlugin.actions.length, 1);
-  assert.deepEqual(dashboardPlugin.actions[0], {
+test("WEB_PLUGINS contains the subagent monitor plugin with exactly the declared reference action", () => {
+  assert.equal(subagentMonitorPlugin.id, "subagent-monitor");
+  assert.ok(subagentMonitorPlugin.actions, "the monitor plugin must declare actions");
+  assert.equal(subagentMonitorPlugin.actions.length, 1);
+  assert.deepEqual(subagentMonitorPlugin.actions[0], {
     id: "request-sync",
     title: "Request fresh snapshot",
     confirm: "request sync",
   });
 
-  const registeredDashboard = WEB_PLUGINS.find((p) => p.id === "dashboard");
-  assert.ok(registeredDashboard, "dashboard plugin must be present in WEB_PLUGINS");
-  assert.deepEqual(registeredDashboard.actions, [
+  const registeredMonitor = WEB_PLUGINS.find((p) => p.id === "subagent-monitor");
+  assert.ok(registeredMonitor, "the subagent monitor plugin must be present in WEB_PLUGINS");
+  assert.deepEqual(registeredMonitor.actions, [
     {
       id: "request-sync",
       title: "Request fresh snapshot",
@@ -271,12 +271,12 @@ test("AC4: dashboard extension ignores unrecognised action requests and guards p
 
   // 1. Unknown pluginId -> ignored
   syncEmitted = false;
-  actionHandler({ pluginId: "not-dashboard", actionId: "request-sync" });
+  actionHandler({ pluginId: "not-subagent-monitor", actionId: "request-sync" });
   assert.equal(syncEmitted, false, "Must ignore unknown pluginId");
 
   // 2. Unknown actionId -> ignored
   syncEmitted = false;
-  actionHandler({ pluginId: "dashboard", actionId: "unknown-action" });
+  actionHandler({ pluginId: "subagent-monitor", actionId: "unknown-action" });
   assert.equal(syncEmitted, false, "Must ignore unknown actionId");
 
   // 3. Garbage / null payload -> ignored
@@ -291,7 +291,7 @@ test("AC4: dashboard extension ignores unrecognised action requests and guards p
   const validPayload: ActionRequestPayload = {
     requestId: "uuid-123",
     sessionId: "sess-1",
-    pluginId: "dashboard",
+    pluginId: "subagent-monitor",
     actionId: "request-sync",
   };
   actionHandler({
@@ -347,10 +347,10 @@ test("phase 6 slot surfaces: validation and placement mapping", () => {
     assert.equal(slotSurface.slot, expectedSlot, `${id} must be in slot ${expectedSlot}`);
   }
 
-  // Dashboard keeps its page surface
-  const dashboard = WEB_PLUGINS.find((p) => p.id === "dashboard");
-  assert.ok(dashboard, "dashboard must exist in WEB_PLUGINS");
-  const pageSurface = dashboard.surfaces.find((s) => s.kind === "page");
-  assert.ok(pageSurface && pageSurface.kind === "page", "dashboard must keep its page surface");
-  assert.equal(pageSurface.path, "/plugins/dashboard");
+  // The subagent monitor keeps its page surface
+  const monitor = WEB_PLUGINS.find((p) => p.id === "subagent-monitor");
+  assert.ok(monitor, "the subagent monitor must exist in WEB_PLUGINS");
+  const pageSurface = monitor.surfaces.find((s) => s.kind === "page");
+  assert.ok(pageSurface && pageSurface.kind === "page", "the monitor must keep its page surface");
+  assert.equal(pageSurface.path, "/plugins/subagent-monitor");
 });

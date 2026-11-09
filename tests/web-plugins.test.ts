@@ -30,7 +30,7 @@ import { todoPlugin } from "../web-plugins/todo.ts";
 import { artifactsPlugin } from "../web-plugins/artifacts.ts";
 import { bubblySpinnerPlugin } from "../web-plugins/bubbly-spinner.ts";
 import { subagentCheckpointsPlugin } from "../web-plugins/subagent-checkpoints.ts";
-import { dashboardPlugin } from "../web-plugins/dashboard.ts";
+import { subagentMonitorPlugin } from "../web-plugins/subagent-monitor.ts";
 import { WEB_PLUGINS, WEB_PLUGIN_OPT_OUT } from "../web-plugins/index.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -712,7 +712,7 @@ test("phase 6 placements: WEB_PLUGINS declared with exact slot and page placemen
   // plugin, which is the exact flow this system exists to make cheap. Coverage
   // is pinned by the sum (every extension in exactly one list) plus membership.
   assert.equal(WEB_PLUGINS.length + Object.keys(WEB_PLUGIN_OPT_OUT).length, diskFiles.length);
-  for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "dashboard", "bubbly-spinner"]) {
+  for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "subagent-monitor", "bubbly-spinner"]) {
     assert.ok(WEB_PLUGINS.some((plugin) => plugin.id === id), `${id} must be a registered plugin`);
     assert.equal(id in WEB_PLUGIN_OPT_OUT, false, `${id} must not also be opted out`);
   }
@@ -741,11 +741,11 @@ test("phase 6 placements: WEB_PLUGINS declared with exact slot and page placemen
     { kind: "sidebar" },
     { kind: "slot", slot: "center" },
   ]);
-  assert.deepEqual(dashboardPlugin.surfaces, [
+  assert.deepEqual(subagentMonitorPlugin.surfaces, [
     { kind: "sidebar" },
-    { kind: "page", path: "/plugins/dashboard" },
+    { kind: "page", path: "/plugins/subagent-monitor" },
   ]);
-  assert.ok(dashboardPlugin.actions && dashboardPlugin.actions.length > 0, "dashboard keeps actions");
+  assert.ok(subagentMonitorPlugin.actions && subagentMonitorPlugin.actions.length > 0, "the subagent monitor keeps its sync action");
 
   for (const descriptor of WEB_PLUGINS) {
     const result = validatePlugin(descriptor, diskFiles);

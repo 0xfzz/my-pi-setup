@@ -291,6 +291,25 @@ export function subscribePluginChanges(cb: (revision: number) => void): () => vo
   return webPluginsStore.subscribeChanges(cb);
 }
 
+/** Seeded delegated-work graph for the subagent monitor (test fixtures only). */
+function monitorFixtureGraph(lastRequest: string) {
+  return {
+    type: "graph" as const,
+    title: "Delegated work graph",
+    nodes: [
+      { id: "parent", label: "Fixture parent", kind: "parent" as const, status: "active" as const },
+      {
+        id: "child:worker-slots",
+        label: `worker-slots · ${lastRequest}`,
+        kind: "child" as const,
+        status: "active" as const,
+        detail: `**Task:** Port slot adapters\n**Last request:** ${lastRequest}`,
+      },
+    ],
+    edges: [{ from: "parent", to: "child:worker-slots", label: "handoff" }],
+  };
+}
+
 /**
  * Seed fixture views for tests when PI_WEB_TEST_PLUGIN_VIEWS is enabled.
  */
@@ -304,14 +323,7 @@ export function checkAndSeedFixtures(store = webPluginsStore): void {
         emit: (ch: string, data: unknown) => {
           if (ch === WEB_PLUGIN_ACTION_REQUEST_EVENT) {
             const d = data as { requestId?: string };
-            store.recordView(testSessionId, "dashboard", {
-              type: "kv",
-              title: "Delegated work snapshot",
-              rows: [
-                { label: "Status", value: "Synchronized" },
-                { label: "Last Request", value: d?.requestId || "synced" },
-              ],
-            });
+            store.recordView(testSessionId, "subagent-monitor", monitorFixtureGraph(d?.requestId || "synced"));
           }
         },
       });
@@ -355,6 +367,9 @@ export function checkAndSeedFixtures(store = webPluginsStore): void {
           { label: "Status", value: "In progress" },
         ],
       });
+    }
+    if (!store.getView(testSessionId, "subagent-monitor")) {
+      store.recordView(testSessionId, "subagent-monitor", monitorFixtureGraph("seeded"));
     }
     // Reference working UI state (PRD phase 6): Bubbly's standard ctx.ui
     // working message flows through the unified stream, not a special view.

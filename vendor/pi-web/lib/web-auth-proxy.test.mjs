@@ -35,7 +35,7 @@ test("redirects page navigation to the login page and preserves its query", () =
 
 test("plugin diagnostics use the same signed-session boundary as plugin pages", () => {
   assert.equal(proxy(request("/plugins")).status, 307);
-  assert.equal(proxy(request("/plugins/dashboard")).status, 307);
+  assert.equal(proxy(request("/plugins/subagent-monitor")).status, 307);
   const token = createWebSessionToken("secret");
   assert.equal(proxy(request("/plugins", { Cookie: `pi_web_session=${token}` })).status, 200);
 });

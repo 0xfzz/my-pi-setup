@@ -190,13 +190,13 @@ test("relayActionRequest emits on session bus and returns relayed: true", () => 
   attachSessionPlugins(mockWrapper);
   assert.equal(isKnownSession("sess-action-test"), true);
 
-  const result = relayActionRequest("sess-action-test", "dashboard", "request-sync", "custom-req-id");
+  const result = relayActionRequest("sess-action-test", "subagent-monitor", "request-sync", "custom-req-id");
   assert.equal(result.relayed, true);
   assert.equal(emittedChannel, WEB_PLUGIN_ACTION_REQUEST_EVENT);
   assert.deepEqual(emittedData, {
     requestId: "custom-req-id",
     sessionId: "sess-action-test",
-    pluginId: "dashboard",
+    pluginId: "subagent-monitor",
     actionId: "request-sync",
   });
 });
@@ -205,7 +205,7 @@ test("relayActionRequest reports relayed: false when no bus is attached (A5)", (
   webPluginsStore.clear();
   assert.equal(isKnownSession("sess-no-bus"), false);
 
-  const result = relayActionRequest("sess-no-bus", "dashboard", "request-sync");
+  const result = relayActionRequest("sess-no-bus", "subagent-monitor", "request-sync");
   assert.equal(result.relayed, false);
 });
 
@@ -237,7 +237,7 @@ test("audit log records entries and clears with store", () => {
   recordActionAudit({
     requestId: "req-1",
     sessionId: "sess-1",
-    pluginId: "dashboard",
+    pluginId: "subagent-monitor",
     actionId: "request-sync",
     timestamp: Date.now(),
   });
@@ -245,7 +245,7 @@ test("audit log records entries and clears with store", () => {
   const log = getActionAuditLog();
   assert.equal(log.length, 1);
   assert.equal(log[0].requestId, "req-1");
-  assert.equal(log[0].pluginId, "dashboard");
+  assert.equal(log[0].pluginId, "subagent-monitor");
 
   webPluginsStore.clear();
   assert.equal(getActionAuditLog().length, 0);

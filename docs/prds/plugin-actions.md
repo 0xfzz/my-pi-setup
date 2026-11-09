@@ -7,7 +7,7 @@
 | **Status** | approved for implementation (threat review below is part of this approval) |
 | **Owner** | Faiz |
 | **Parent PRD** | [fork-pi-web-integration](fork-pi-web-integration.md) §8 Phase 5 |
-| **Scope** | `lib/web-plugins/` (contract), `web-plugins/dashboard.ts`, `extensions/dashboard.ts`, the fork host/API/UI (`vendor/pi-web/`), one reference action |
+| **Scope** | `lib/web-plugins/` (contract), `web-plugins/subagent-monitor.ts` (previously `web-plugins/dashboard.ts`, replaced by the monitor), `extensions/dashboard.ts`, the fork host/API/UI (`vendor/pi-web/`), one reference action |
 
 ## 1. What an action is
 
@@ -42,7 +42,7 @@ This deliberately matches the repo's trust stance: the browser stays a viewer th
 
 ## 4. Reference action
 
-`dashboard` plugin gets `request-sync`: id `request-sync`, title `Request fresh snapshot`, confirm string `request sync`. Extension handler: on `web-plugin:action-request` where `pluginId === "dashboard"` and `actionId === "request-sync"`, call the existing `requestDashboardSync` path (already in `lib/dashboard/integration.ts`) so publishers re-emit current state, then the normal view publish follows. This action is read-only, idempotent, and exercises every contract piece (registry, confirm, relay, extension guard, republish) without introducing a mutation.
+The reference action ships on the `subagent-monitor` plugin (it was declared on the `dashboard` plugin before that descriptor was replaced by the monitor; the owning extension and handler are unchanged): id `request-sync`, title `Request fresh snapshot`, confirm string `request sync`. Extension handler: on `web-plugin:action-request` where `pluginId === "subagent-monitor"` and `actionId === "request-sync"`, call the existing `requestDashboardSync` path (already in `lib/dashboard/integration.ts`) so publishers re-emit current state, then the normal view publish follows. This action is read-only, idempotent, and exercises every contract piece (registry, confirm, relay, extension guard, republish) without introducing a mutation.
 
 ## 5. Acceptance criteria
 

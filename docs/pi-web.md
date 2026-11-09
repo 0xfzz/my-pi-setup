@@ -126,7 +126,7 @@ Opening `http://127.0.0.1:30141` displays the main application shell with toolba
 | Center panel | Subagent checkpoints | Delegated worker milestones and checkpoint history (collapsible) |
 | Above the composer | Artifact catalog | Collapsible chip docked in the chat column above the composer; the card expands upward into the conversation, never over the input |
 | Bottom strip | Cache health | Compact summary row below the chat input (last request hit rate; the page shows the session trend) |
-| Page `/plugins/dashboard` | Delegation dashboard | Parent/child agents, handoffs, reviews, escalations — the settings/whole-pi surface (data parity with standalone dashboard) |
+| Page `/plugins/subagent-monitor` | Subagent monitor | Parent/child agents, handoffs, reviews, escalations as a session-scoped graph with per-node markdown detail (data parity with the standalone dashboard) |
 
 #### Read-only data presentation
 
@@ -217,7 +217,7 @@ The route is available in development. In production it returns 404 unless the o
 
 #### Plugin actions
 
-The dashboard plugin ships one trusted, read-only action — **Request fresh snapshot** — rendered on `/plugins/dashboard`. Submitting it requires typing the exact confirmation string (`request sync`); the fork validates it server-side (403 otherwise), enforces one in-flight action per session, and relays a single-use, audited request to the owning extension over the session event bus. The web server never executes anything itself: the extension re-checks the request and republishes its view through the normal channel. The modes plugin ships the one instant action the plugin-actions PRD names — **Switch mode**, bound to **Alt+M**, no typed confirmation — which cycles Normal ↔ Plan through the same refusal guards as the TUI switch key; it renders as a one-click button on `/plugins/modes`, in the ⋯ action menu on the mode row above the composer, and fires from the keyboard. Mutation actions remain out of scope pending a follow-up PRD. The contract and threat review live in [`docs/prds/plugin-actions.md`](prds/plugin-actions.md).
+The subagent monitor ships one trusted, read-only action — **Request fresh snapshot** — rendered on `/plugins/subagent-monitor`. Submitting it requires typing the exact confirmation string (`request sync`); the fork validates it server-side (403 otherwise), enforces one in-flight action per session, and relays a single-use, audited request to the owning extension over the session event bus. The web server never executes anything itself: the extension re-checks the request and republishes its view through the normal channel. The modes plugin ships the one instant action the plugin-actions PRD names — **Switch mode**, bound to **Alt+M**, no typed confirmation — which cycles Normal ↔ Plan through the same refusal guards as the TUI switch key; it renders as a one-click button on `/plugins/modes`, in the ⋯ action menu on the mode row above the composer, and fires from the keyboard. Mutation actions remain out of scope pending a follow-up PRD. The contract and threat review live in [`docs/prds/plugin-actions.md`](prds/plugin-actions.md).
 
 ### Updating and resyncing
 
@@ -285,7 +285,7 @@ Documentation consistency and plugin host behavior are covered by the following 
   - Slot placement rendering for all five registered plugins (top/center/floating/bottom on the home view; dashboard on its page).
   - Home toolbar navigation.
   - The standalone runner additionally calls `e2e/pluggable-ui.mjs`: actual `AgentSessionWrapper.createExtensionUiContext()` working calls feed an isolated host store and real SSE connection into the app's shared hook. It asserts live message/frames/visibility without reload, two-session isolation, composer/header/overlay placements, responsive mobile fallback and keyboard close focus, runtime moves/rejection, reconnect recovery, stale snapshot rejection, deterministic replacement/wrapping, disablement, and injected renderer-failure fallback. The fixture uses local session files and stub SDK internals; it does not contact a model provider or install a production test endpoint.
-- Dev server smoke test: HTTP `GET http://127.0.0.1:30141/api/plugins` and `GET http://127.0.0.1:30141/plugins/dashboard` returning HTTP 200.
+- Dev server smoke test: HTTP `GET http://127.0.0.1:30141/api/plugins` and `GET http://127.0.0.1:30141/plugins/subagent-monitor` returning HTTP 200.
 
 For a resource-bounded run of the complete vendored upstream suite (same test globs as `npm test`):
 

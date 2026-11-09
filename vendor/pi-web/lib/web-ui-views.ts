@@ -401,6 +401,16 @@ export function validateView(input: unknown): ValidateViewResult {
         nodes = nodes.slice(0, GRAPH_MAX_NODES);
         warnings.push(`Nodes capped at ${GRAPH_MAX_NODES} (${excess} omitted)`);
       }
+      // A capped node leaves dangling edges: drop them too, and count them,
+      // so every edge in the published view references a declared node.
+      {
+        const keptIds = new Set(nodes.map(node => node.id));
+        const connected = edges.filter(edge => keptIds.has(edge.from) && keptIds.has(edge.to));
+        if (connected.length !== edges.length) {
+          omitted += edges.length - connected.length;
+          edges = connected;
+        }
+      }
       if (edges.length > GRAPH_MAX_EDGES) {
         const excess = edges.length - GRAPH_MAX_EDGES;
         omitted += excess;

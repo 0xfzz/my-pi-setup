@@ -54,8 +54,8 @@ test("adopted plugins declare session-scoped UI without duplicating legacy slots
         `${plugin.id} preserves exactly one contribution in ${surface.slot}`);
     }
   }
-  const dashboard = WEB_PLUGINS.find(plugin => plugin.id === "dashboard");
-  assert.deepEqual(dashboard?.ui?.[0]?.placement, { kind: "anchor", anchor: "session.sidebar", collision: "shrink" });
+  const monitor = WEB_PLUGINS.find(plugin => plugin.id === "subagent-monitor");
+  assert.deepEqual(monitor?.ui?.[0]?.placement, { kind: "anchor", anchor: "session.sidebar", collision: "shrink" });
 });
 test("UI registry: conflicting exclusive replacements name both owners", () => {
   const plugins = ["first", "second"].map(id => ({ id, title: id, extension: "fixture", surfaces: [], ui: [contribution] }));

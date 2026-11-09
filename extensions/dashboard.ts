@@ -40,7 +40,7 @@ import { projectSession } from "../lib/dashboard/projection.ts";
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";
 import { publishWebView } from "../lib/web-plugins/publisher.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../lib/web-plugins/actions.ts";
-import { snapshotToWebView } from "../lib/dashboard/web-view.ts";
+import { delegationToGraphView, SUBAGENT_MONITOR_PLUGIN_ID, SUBAGENT_MONITOR_SYNC_ACTION } from "../lib/dashboard/graph-view.ts";
 import type { DashboardSnapshot } from "../lib/dashboard/protocol.ts";
 
 export interface DashboardExtensionOptions {
@@ -102,7 +102,7 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
     return {
       publish(snapshot: DashboardSnapshot) {
         try {
-          publishWebView(pi, "dashboard", snapshotToWebView(snapshot));
+          publishWebView(pi, SUBAGENT_MONITOR_PLUGIN_ID, delegationToGraphView(snapshot));
         } catch {
           // guarded by try/catch so nothing thrown can reach the dashboard flow
         }
@@ -262,8 +262,8 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
     if (
       !data ||
       typeof data !== "object" ||
-      (data as Record<string, unknown>).pluginId !== "dashboard" ||
-      (data as Record<string, unknown>).actionId !== "request-sync"
+      (data as Record<string, unknown>).pluginId !== SUBAGENT_MONITOR_PLUGIN_ID ||
+      (data as Record<string, unknown>).actionId !== SUBAGENT_MONITOR_SYNC_ACTION
     ) {
       return;
     }

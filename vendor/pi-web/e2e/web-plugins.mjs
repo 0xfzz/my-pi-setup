@@ -25,13 +25,13 @@ export async function checkWebPlugins(page, base) {
   page.on("dialog", onDialog);
 
   try {
-    // 1. Visit published plugin page: /plugins/dashboard is the only declared page surface
-    await page.goto(`${base}/plugins/dashboard`, { waitUntil: "load" });
+    // 1. Visit published plugin page: /plugins/subagent-monitor is the only declared page surface
+    await page.goto(`${base}/plugins/subagent-monitor`, { waitUntil: "load" });
 
     // (a) Verify page heading and descriptor title
     const heading = page.locator(".plugin-page-title");
     await heading.waitFor({ state: "visible", timeout: 60_000 });
-    assert.equal(await heading.textContent(), "Delegated work graph");
+    assert.equal(await heading.textContent(), "Subagent monitor");
 
     // (b) Verify status marker: seeded session (__test_session__) reports running (Phase 7)
     const dashboardStatusDot = page.locator(".plugin-status-dot.plugin-status-running");
@@ -39,7 +39,7 @@ export async function checkWebPlugins(page, base) {
     assert.ok(await dashboardStatusDot.first().isVisible(), "Status dot renders for running seeded session");
 
     // (c) Verify unpublished view shows empty state
-    await page.goto(`${base}/plugins/dashboard?session=empty_session_id`, {
+    await page.goto(`${base}/plugins/subagent-monitor?session=empty_session_id`, {
       waitUntil: "load",
     });
 
@@ -51,14 +51,19 @@ export async function checkWebPlugins(page, base) {
       "Unpublished session view must show the empty state",
     );
 
-    // Return to /plugins/dashboard for action execution and navigation verification
-    await page.goto(`${base}/plugins/dashboard`, { waitUntil: "load" });
+    // Return to /plugins/subagent-monitor for action execution and navigation verification
+    await page.goto(`${base}/plugins/subagent-monitor`, { waitUntil: "load" });
     await heading.waitFor({ state: "visible", timeout: 60_000 });
 
     // (d) Navigation links: verify Home link points to /
     const homeLink = page.locator(".plugin-nav-home-link");
     await homeLink.waitFor({ state: "visible", timeout: 10_000 });
     assert.equal(await homeLink.getAttribute("href"), "/", "Home link points to /");
+
+    // The seeded delegated-work graph renders on the page before any action
+    const seededNode = page.locator(".plugin-graph-node-label").filter({ hasText: "worker-slots" });
+    await seededNode.waitFor({ state: "visible", timeout: 30_000 });
+    assert.ok(await seededNode.isVisible(), "Seeded delegated-work graph renders on the page");
 
     // (e) Action confirmation, execution flow (AC5), and Realtime SSE push update without reload (Phase 7)
     // Setup client-side EventSource listener and document navigation counter in page context
@@ -112,15 +117,11 @@ export async function checkWebPlugins(page, base) {
       { timeout: 15_000 },
     );
 
-    // Verify that the view updated to "Synchronized" via realtime SSE push without a manual reload
-    const syncRow = page.locator(".plugin-kv-value").filter({ hasText: "Synchronized" });
-    await syncRow.waitFor({ state: "visible", timeout: 30_000 });
-    assert.ok(await syncRow.isVisible(), "View content updated to Synchronized via realtime SSE");
-
-    // Verify the view contains the exact accepted requestId published by the server
-    const reqRow = page.locator(".plugin-kv-value").filter({ hasText: acceptedRequestId });
-    await reqRow.waitFor({ state: "visible", timeout: 30_000 });
-    assert.ok(await reqRow.isVisible(), "View contains exact accepted requestId pushed over SSE");
+    // Verify that the graph view updated with the accepted requestId via realtime
+    // SSE push, without a manual reload
+    const reqNode = page.locator(".plugin-graph-node-label").filter({ hasText: acceptedRequestId });
+    await reqNode.waitFor({ state: "visible", timeout: 30_000 });
+    assert.ok(await reqNode.isVisible(), "Graph node label carries the accepted requestId pushed over SSE");
 
     const realtimeProof = await page.evaluate(() => {
       window.__testEs?.close();
@@ -149,7 +150,7 @@ export async function checkWebPlugins(page, base) {
         .map((surface) => ({ plugin, path: surface.path })),
     );
     const registeredIds = registry.plugins.map((plugin) => plugin.id);
-    for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "dashboard", "bubbly-spinner"]) {
+    for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "subagent-monitor", "bubbly-spinner"]) {
       assert.ok(registeredIds.includes(id), `Plugin "${id}" must be registered, got: ${registeredIds.join(", ")}`);
     }
     assert.ok(pageSurfaces.length >= 1, `At least one plugin must expose a page surface, got ${pageSurfaces.length}`);
@@ -158,7 +159,7 @@ export async function checkWebPlugins(page, base) {
       const title = page.locator(".plugin-page-title");
       await title.waitFor({ state: "visible", timeout: 60_000 });
       assert.equal((await title.textContent())?.trim(), plugin.title, `${path} must show its descriptor title`);
-      const body = page.locator(".plugin-empty-state, .plugin-kv-table, .plugin-list, .plugin-status-badge");
+      const body = page.locator(".plugin-empty-state, .plugin-kv-table, .plugin-list, .plugin-status-badge, .plugin-view-graph");
       await body.first().waitFor({ state: "visible", timeout: 30_000 });
     }
     assert.equal(dialogFired, false, "No plugin page may open a dialog");

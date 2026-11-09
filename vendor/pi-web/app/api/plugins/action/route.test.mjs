@@ -45,7 +45,7 @@ test("AC1: POST with wrong or missing confirm returns 403 and leaves event bus u
   const wrongConfirmRes = await POST(
     createPostRequest({
       sessionId: "sess-ac1",
-      pluginId: "dashboard",
+      pluginId: "subagent-monitor",
       actionId: "request-sync",
       confirm: "wrong string",
     }),
@@ -57,7 +57,7 @@ test("AC1: POST with wrong or missing confirm returns 403 and leaves event bus u
   const missingConfirmRes = await POST(
     createPostRequest({
       sessionId: "sess-ac1",
-      pluginId: "dashboard",
+      pluginId: "subagent-monitor",
       actionId: "request-sync",
     }),
   );
@@ -68,7 +68,7 @@ test("AC1: POST with wrong or missing confirm returns 403 and leaves event bus u
   const paddedConfirmRes = await POST(
     createPostRequest({
       sessionId: "sess-ac1",
-      pluginId: "dashboard",
+      pluginId: "subagent-monitor",
       actionId: "request-sync",
       confirm: "request sync ",
     }),
@@ -105,7 +105,7 @@ test("AC2: unknown sessionId, pluginId, or actionId returns 404 before any relay
   const badSessionRes = await POST(
     createPostRequest({
       sessionId: "sess-unknown",
-      pluginId: "dashboard",
+      pluginId: "subagent-monitor",
       actionId: "request-sync",
       confirm: "request sync",
     }),
@@ -129,7 +129,7 @@ test("AC2: unknown sessionId, pluginId, or actionId returns 404 before any relay
   const badActionRes = await POST(
     createPostRequest({
       sessionId: "sess-known",
-      pluginId: "dashboard",
+      pluginId: "subagent-monitor",
       actionId: "nonexistent-action",
       confirm: "request sync",
     }),
@@ -166,7 +166,7 @@ test("AC3: valid request emits exactly one event with fresh single-use requestId
   const res1 = await POST(
     createPostRequest({
       sessionId: "sess-valid",
-      pluginId: "dashboard",
+      pluginId: "subagent-monitor",
       actionId: "request-sync",
       confirm: "request sync",
     }),
@@ -183,7 +183,7 @@ test("AC3: valid request emits exactly one event with fresh single-use requestId
   assert.deepEqual(emitted[0].data, {
     requestId: body1.requestId,
     sessionId: "sess-valid",
-    pluginId: "dashboard",
+    pluginId: "subagent-monitor",
     actionId: "request-sync",
   });
 
@@ -192,14 +192,14 @@ test("AC3: valid request emits exactly one event with fresh single-use requestId
   assert.equal(audit.length, 1);
   assert.equal(audit[0].requestId, body1.requestId);
   assert.equal(audit[0].sessionId, "sess-valid");
-  assert.equal(audit[0].pluginId, "dashboard");
+  assert.equal(audit[0].pluginId, "subagent-monitor");
   assert.equal(audit[0].actionId, "request-sync");
 
   // 2. Second concurrent request on same session -> 409
   const res2 = await POST(
     createPostRequest({
       sessionId: "sess-valid",
-      pluginId: "dashboard",
+      pluginId: "subagent-monitor",
       actionId: "request-sync",
       confirm: "request sync",
     }),
