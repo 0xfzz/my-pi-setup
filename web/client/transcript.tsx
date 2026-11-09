@@ -15,6 +15,9 @@ const BASH_OUTPUT_PREVIEW_LIMIT = 8_000;
 const DEFAULT_WORKING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 /** Below this distance from the bottom the user counts as "at the bottom". */
 const PIN_DISTANCE_PX = 48;
+/** Smart follow: after this much scroll idleness a running session pulls the
+ * view back to the newest content (the jump button stays for the in-between). */
+const IDLE_FOLLOW_MS = 8_000;
 
 /** The transcript's working line: animated frames plus the streamed message. */
 export function WorkingIndicator({
@@ -360,7 +363,11 @@ export function Transcript({
 }: TranscriptProps) {
   const scrollRef = useRef<HTMLElement | null>(null);
   const pinnedRef = useRef(true);
+  // The last USER scroll: programmatic follows do not reset the idle clock.
+  const lastUserScrollRef = useRef(Date.now());
+  const programmaticScrollRef = useRef(false);
   const [showJump, setShowJump] = useState(false);
+  const [hasUnread, setHasUnread] = useState(false);
 
   const entries: TranscriptEntry[] = [
     ...history.map((entry, index) => ({
@@ -376,10 +383,13 @@ export function Transcript({
     })),
   ];
 
-  // Auto-scroll: while the user is at the bottom, every content change
-  // (history load, streamed delta, thinking, working line) keeps the newest
-  // content in view — that visible motion is what makes the stream feel
-  // realtime.
+  // Auto-scroll (the "smart follow"): while the user is at the bottom every
+  // content change keeps the newest content in view — that visible motion is
+  // what makes the stream feel realtime. When they scroll up to read, the
+  // view stays put (the jump button shows, marked unread); once they have
+  // been idle past IDLE_FOLLOW_MS, the next content change — a running turn,
+  // a turn that landed while they read, the working line appearing — pulls
+  // the view back to the end on its own.
   const streamedLength =
     streaming.streamingMessage?.content.reduce(
       (total, block) => total + (block.kind === "text" ? block.text.length : block.kind === "thinking" ? block.thinking.length : 0),
@@ -389,10 +399,16 @@ export function Transcript({
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el !== null && pinnedRef.current) {
+    if (el === null) return;
+    const idleMs = Date.now() - lastUserScrollRef.current;
+    if (pinnedRef.current || idleMs >= IDLE_FOLLOW_MS) {
+      programmaticScrollRef.current = true;
       el.scrollTop = el.scrollHeight;
+      setHasUnread(false);
+    } else {
+      setHasUnread(true);
     }
-  }, [contentSignature]);
+  }, [contentSignature, showWorking]);
 
   const handleScroll = (): void => {
     const el = scrollRef.current;
@@ -401,14 +417,22 @@ export function Transcript({
     const pinned = distance < PIN_DISTANCE_PX;
     pinnedRef.current = pinned;
     setShowJump(!pinned);
+    if (!programmaticScrollRef.current) {
+      lastUserScrollRef.current = Date.now();
+      if (pinned) setHasUnread(false);
+    }
+    programmaticScrollRef.current = false;
   };
 
   const jumpToLatest = (): void => {
     const el = scrollRef.current;
     if (el === null) return;
+    programmaticScrollRef.current = true;
     el.scrollTop = el.scrollHeight;
     pinnedRef.current = true;
+    lastUserScrollRef.current = Date.now();
     setShowJump(false);
+    setHasUnread(false);
   };
 
   return (
@@ -452,12 +476,12 @@ export function Transcript({
       {showJump ? (
         <button
           type="button"
-          className="app-jump-latest"
+          className={`app-jump-latest${hasUnread ? " has-unread" : ""}`}
           onClick={jumpToLatest}
           aria-label="Jump to latest messages"
           title="Jump to latest"
         >
-          <span aria-hidden="true">↓</span> latest
+          <span aria-hidden="true">↓</span> {hasUnread ? "new messages" : "latest"}
         </button>
       ) : null}
     </main>

@@ -614,6 +614,23 @@ body {
   border-color: var(--accent);
 }
 
+/* Unread: new content arrived while the view stayed put. */
+.app-jump-latest.has-unread {
+  border-color: var(--accent);
+  color: var(--accent);
+  animation: jump-unread-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes jump-unread-pulse {
+  0%,
+  100% {
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+  }
+  50% {
+    box-shadow: 0 6px 18px rgba(79, 156, 249, 0.35);
+  }
+}
+
 /* Markdown bodies: assistant replies and plugin detail. */
 .markdown-body > :first-child {
   margin-top: 0;
