@@ -33,6 +33,7 @@ import {
 } from "../lib/popup/frame.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
 import { publishWebView } from "../lib/web-plugins/publisher.ts";
+import type { ListItem } from "../lib/web-plugins/view.ts";
 import { markVolatileTail } from "../lib/cache-anchor.ts";
 import { TODO_DETAILS_HINT } from "../lib/workflow-actions.ts";
 import { planModeFromBranch } from "../lib/plan/plan-mode.ts";
@@ -280,6 +281,62 @@ export default function todoExtension(pi: ExtensionAPI) {
     return plan.tasks.map(task => `${todoIcon(task.status)} ${task.title}`);
   };
 
+  /**
+   * Web rows carry a status and a markdown detail instead of a glyph: the host
+   * draws its own icon (the nerd-font codepoints the TUI uses render as tofu in
+   * a browser), and opening a row shows the task's context rendered as markdown.
+   */
+  const webStatus = (status: G.TaskStatus): NonNullable<ListItem["status"]> =>
+    status === "done" ? "done"
+    : status === "claimed" ? "active"
+    : status === "failed" || status === "dropped" ? "failed"
+    : "pending";
+
+  const evidenceLine = (evidence: G.Evidence): string => {
+    const check = evidence.check ? ` · ${evidence.check}` : "";
+    switch (evidence.kind) {
+      case "file": return `file \`${evidence.path ?? "?"}\`${evidence.line ? `:${evidence.line}` : ""}${check}`;
+      case "cmd": return `cmd \`${evidence.cmd ?? "?"}\` (exit ${evidence.exit ?? "?"})${check}`;
+      case "test": return `test \`${evidence.name ?? "?"}\` ${evidence.pass ? "pass" : "FAIL"}${check}`;
+      case "artifact": return `artifact \`${evidence.id ?? "?"}\` v${evidence.version ?? "?"}${check}`;
+      case "commit": return `commit \`${evidence.sha ?? "?"}\`${check}`;
+      case "url": return `[${evidence.url ?? "?"}](${evidence.url ?? ""})${check}`;
+    }
+  };
+
+  const taskDetail = (task: G.Task, now: number): string => {
+    const lines = [`**Status:** ${G.taskLabel(task)}`];
+    if (task.resource) lines.push(`**Resource:** \`${task.resource}\``);
+    if (task.claim) {
+      const live = G.isLiveClaim(task, now);
+      const minutes = Math.max(0, Math.round((task.claim.expiresAt - now) / 60_000));
+      lines.push(`**Claim:** ${task.claim.owner}${live ? ` · ${minutes} min left` : " · expired"}`);
+    }
+    if (task.deps.length) {
+      const state = task.deps.map(dep => {
+        const target = plan?.tasks.find(candidate => candidate.id === dep);
+        return `\`${dep}\` ${target ? G.taskLabel(target) : "missing"}`;
+      });
+      lines.push(`**Deps:** ${state.join(" · ")}`);
+    }
+    if (task.reason) lines.push(`**Reason:** ${task.reason}`);
+    if (task.note) lines.push(`**Note:** ${task.note}`);
+    if (task.evidence?.length) {
+      lines.push("**Evidence:**", ...task.evidence.map(item => `- ${evidenceLine(item)}`));
+    }
+    return lines.join("\n");
+  };
+
+  const webItems = (now: number): ListItem[] => {
+    if (!plan) return [{ text: "No active plan" }];
+    if (plan.supersededAt) return [{ text: `${plan.id} superseded` }];
+    return plan.tasks.map(task => ({
+      text: task.title,
+      status: webStatus(task.status),
+      detail: taskDetail(task, now),
+    }));
+  };
+
   const draw = (ctx: ExtensionContext) => {
     uiContext = ctx;
     if (!ctx.hasUI) return;
@@ -295,7 +352,7 @@ export default function todoExtension(pi: ExtensionAPI) {
       publishWebView(pi, "todo", {
         type: "list",
         title,
-        items: rowList,
+        items: webItems(now),
       });
     } catch {
       // Never throw into extension flow

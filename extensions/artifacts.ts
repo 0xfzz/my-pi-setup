@@ -11,6 +11,7 @@ import {
 import { PopupList } from "../lib/ui/shell.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
 import { publishWebView } from "../lib/web-plugins/publisher.ts";
+import type { ListItem } from "../lib/web-plugins/view.ts";
 import { markVolatileTail } from "../lib/cache-anchor.ts";
 import { createArtifactAutocompleteProvider, expandArtifactMentions } from "../lib/artifact-mentions.ts";
 import {
@@ -465,6 +466,23 @@ export default function artifactsExtension(pi: ExtensionAPI) {
    */
   let dashboardSignature = "";
 
+  /**
+   * The web row's opened body: a metadata line, then the artifact's content as
+   * markdown — the host renders it through its own sanitising renderer, so the
+   * catalog is readable in the browser, not just listed.
+   */
+  function artifactDetail(art: Artifact): string {
+    const size = formatBytes(Buffer.byteLength(art.content, "utf8"));
+    const meta = [
+      `\`${art.type}\` v${art.version}`,
+      size,
+      `by ${art.createdBy}`,
+      art.updatedAt,
+      ...art.tags.map(tag => `\`${tag}\``),
+    ].filter(Boolean).join(" · ");
+    return `${meta}\n\n${art.content}`;
+  }
+
   function widget() {
     if (!ctx?.hasUI || isChild) return;
     const items = ordered(artifacts);
@@ -475,7 +493,9 @@ export default function artifactsExtension(pi: ExtensionAPI) {
       publishWebView(pi, "artifacts", {
         type: "list",
         title,
-        items: artRows,
+        items: items.length
+          ? items.map(art => ({ text: art.title, detail: artifactDetail(art) }) satisfies ListItem)
+          : [{ text: "None yet" }],
       });
     } catch {
       // Never throw into extension flow
