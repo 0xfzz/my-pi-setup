@@ -47,9 +47,29 @@ interface OptimisticUserMessage {
   text: string;
 }
 
+/** localStorage key for the selected session: reloads and plugin-page navigation keep the session context. */
+const SELECTED_SESSION_KEY = "pi-web-minimal:selected-session";
+
 export function usePiSession() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedIdState] = useState<string | null>(() => {
+    try {
+      return window.localStorage.getItem(SELECTED_SESSION_KEY);
+    } catch {
+      return null;
+    }
+  });
+  // Persist the selection so a reload (or a /plugins/:id navigation, which
+  // is a fresh page load in the SPA-fallback setup) reconnects the stream.
+  const setSelectedId = useCallback((id: string | null) => {
+    setSelectedIdState(id);
+    try {
+      if (id === null) window.localStorage.removeItem(SELECTED_SESSION_KEY);
+      else window.localStorage.setItem(SELECTED_SESSION_KEY, id);
+    } catch {
+      // Storage is best-effort; the selection still works for this page load.
+    }
+  }, []);
   const [history, setHistory] = useState<HistoryEntryLike[]>([]);
   const [userMessages, setUserMessages] = useState<OptimisticUserMessage[]>([]);
   const [streaming, setStreaming] = useState<StreamingState>(INITIAL_STREAMING_STATE);

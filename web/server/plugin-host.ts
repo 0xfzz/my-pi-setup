@@ -445,6 +445,10 @@ export function checkAndSeedFixtures(store = webPluginsStore): void {
           if (ch === WEB_PLUGIN_ACTION_REQUEST_EVENT) {
             const d = data as { requestId?: string };
             store.recordView(testSessionId, "subagent-monitor", monitorFixtureGraph(d?.requestId || "synced"));
+            // A handled action completes: release the in-flight lock so a
+            // follow-up action (the e2e's shortcut) is not refused with 409
+            // for the full 60-second TTL.
+            store.inFlightActions.delete(testSessionId);
           }
         },
       });

@@ -16,23 +16,18 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wat
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
-/** Vendored fork directories and files the production build reads. */
-export const BUILD_INPUT_DIRS = ["app", "components", "lib", "hooks", "public"] as const;
+/** Minimal server directories and files the build reads. */
+export const BUILD_INPUT_DIRS = ["client", "server", "shared"] as const;
 export const BUILD_INPUT_FILES = [
   "package.json",
   "package-lock.json",
-  "next.config.ts",
   "tsconfig.json",
-  "proxy.ts",
-  "instrumentation.ts",
-  "instrumentation-node.ts",
-  "tailwind.config.ts",
-  "postcss.config.mjs",
+  "build.mjs",
 ] as const;
 /** Our directories the running server loads at runtime (relative to the repo root). */
 export const RUNTIME_INPUT_DIRS = ["lib/web-plugins", "web-plugins"] as const;
 
-const SKIPPED_DIRS = new Set(["node_modules", ".next", "test-results", "e2e"]);
+const SKIPPED_DIRS = new Set(["node_modules", "dist", "test-results", "e2e"]);
 const TEST_FILE = /\.test\.(ts|tsx|mjs|js)$/;
 
 export interface SourceFingerprints {
@@ -89,10 +84,10 @@ export function fingerprintInputs(root: string, dirs: readonly string[], files: 
   return hash.digest("hex");
 }
 
-/** Fingerprints for the vendored fork (`vendorDir`) and our runtime files (under `repoRoot`). */
-export function sourceFingerprints(vendorDir: string, repoRoot: string): SourceFingerprints {
+/** Fingerprints for the vendored fork (`serverDir`) and our runtime files (under `repoRoot`). */
+export function sourceFingerprints(serverDir: string, repoRoot: string): SourceFingerprints {
   return {
-    build: fingerprintInputs(vendorDir, BUILD_INPUT_DIRS, BUILD_INPUT_FILES),
+    build: fingerprintInputs(serverDir, BUILD_INPUT_DIRS, BUILD_INPUT_FILES),
     runtime: fingerprintInputs(repoRoot, RUNTIME_INPUT_DIRS, []),
   };
 }
@@ -170,9 +165,9 @@ export function acquireReloadLock(path: string, isPidAlive: (pid: number) => boo
   return tryCreate();
 }
 
-/** Repo root for the default fingerprint paths: `vendor/pi-web` sits two levels below it. */
-export function repoRootFromVendor(vendorDir: string): string {
-  return resolve(vendorDir, "..", "..");
+/** Repo root for the default fingerprint paths: `web` sits one level below it. */
+export function repoRootFromServerDir(serverDir: string): string {
+  return resolve(serverDir, "..");
 }
 
 export interface SourceWatcher {
@@ -210,9 +205,9 @@ export function watchSources(options: { roots: readonly string[]; debounceMs: nu
  * Top-level config files are not watched; they are still in the fingerprint, so the next
  * `/web start` or `/web reload` picks them up.
  */
-export function sourceWatchRoots(vendorDir: string, repoRoot: string): string[] {
+export function sourceWatchRoots(serverDir: string, repoRoot: string): string[] {
   return [
-    ...BUILD_INPUT_DIRS.map((dir) => join(vendorDir, dir)),
+    ...BUILD_INPUT_DIRS.map((dir) => join(serverDir, dir)),
     ...RUNTIME_INPUT_DIRS.map((dir) => join(repoRoot, dir)),
   ];
 }

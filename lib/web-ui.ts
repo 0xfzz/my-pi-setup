@@ -1,6 +1,6 @@
 /**
  * web-ui — runtime management and single-instance decision logic for the
- * vendored pi-web fork (vendor/pi-web).
+ * minimal pi-web server (web/).
  *
  * Rules enforced here:
  * 1. Single UI: pi-web is THE web interface. Only one instance may serve.
@@ -9,9 +9,9 @@
  * 3. Takeover: if state exists but the server is not healthy, state is removed
  *    and a fresh server takes over.
  * 4. Detached lifecycle: servers spawn detached so they survive the parent Pi session.
- * 5. Production serving: `/web start` serves the production build (`next start`), running
- *    the fork's build first when no build output exists, when a rebuild is asked for, or
- *    when the fork's sources changed since the last build. Dev mode is never used.
+ * 5. Production serving: `/web start` serves the built client, running the
+ *    esbuild bundle first when no build output exists, when a rebuild is asked for,
+ *    or when the sources changed since the last build. Dev mode is never used.
  * 5a. Reload: `/web reload` stops a managed server, waits for it to go down, and starts it
  *    again (rebuilding when needed). A running session reloads on its own when our sources change.
  * 6. Complete testability: IO (health check, state persistence, process spawning,
@@ -29,7 +29,7 @@ import {
   evaluateChange,
   readBuildRecord,
   reloadLockPath,
-  repoRootFromVendor,
+  repoRootFromServerDir,
   sourceFingerprints,
   writeBuildRecord,
   type BuildRecord,
@@ -37,14 +37,14 @@ import {
   type SourceFingerprints,
 } from "./web-ui-reload.ts";
 
-export const DEFAULT_WEB_UI_PORT = 30141;
+export const DEFAULT_WEB_UI_PORT = 30142;
 export const DEFAULT_WEB_UI_HOST = "127.0.0.1";
 export const DEFAULT_WEB_UI_URL = `http://${DEFAULT_WEB_UI_HOST}:${DEFAULT_WEB_UI_PORT}`;
-export const DEFAULT_HEALTH_ENDPOINT = `${DEFAULT_WEB_UI_URL}/api/plugins`;
-export const DEFAULT_PKILL_COMMAND = `pkill -f "next.*${DEFAULT_WEB_UI_PORT}"`;
+export const DEFAULT_HEALTH_ENDPOINT = `${DEFAULT_WEB_UI_URL}/api/health`;
+export const DEFAULT_PKILL_COMMAND = `pkill -f "pi-web-minimal"`;
 export const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 export const DEFAULT_BUILD_TIMEOUT_MS = 600_000;
-export const DEFAULT_BUILD_MARKER = ".next/BUILD_ID";
+export const DEFAULT_BUILD_MARKER = "client/dist/app.js";
 export const DEFAULT_POLL_INTERVAL_MS = 250;
 
 export interface WebUiState {
@@ -88,17 +88,17 @@ export interface WebUiCommandResult {
 
 export interface WebUiDeps {
   statePath: string;
-  vendorDir: string;
+  serverDir: string;
   healthUrl: string;
   pkillCommand: string;
   isPidAlive: (pid: number) => boolean;
   fetchHealth: (url: string) => Promise<boolean>;
-  checkVendorDir: (dir: string) => boolean;
+  checkServerDir: (dir: string) => boolean;
   spawnServer: (cwd: string) => { pid?: number; unref?: () => void };
   hasBuild: (cwd: string) => boolean;
   buildServer: (cwd: string) => Promise<{ ok: boolean; error?: string }>;
   rebuild: boolean;
-  /** Fingerprints of the fork's build inputs and our runtime inputs right now. */
+  /** Fingerprints of the build inputs and our runtime inputs right now. */
   fingerprints: () => Promise<SourceFingerprints>;
   /** The record of the last successful build and start, or null when there is none. */
   readRecord: () => Promise<BuildRecord | null>;
@@ -236,9 +236,9 @@ export function defaultWebUiStatePath(): string {
   return join(agentDir, "web-ui-state.json");
 }
 
-/** Default vendor directory holding the vendored pi-web fork. */
-export function defaultVendorDir(): string {
-  return join(fileURLToPath(new URL("..", import.meta.url)), "vendor", "pi-web");
+/** Default directory holding the minimal pi-web server package. */
+export function defaultServerDir(): string {
+  return join(fileURLToPath(new URL("..", import.meta.url)), "web");
 }
 
 /** Check if process is alive without signaling side effects. */
@@ -285,24 +285,23 @@ export function defaultKillProcess(pid: number): void {
   }
 }
 
-/** Arguments for serving the production build: never `dev`. */
-export function nextServeArgs(): string[] {
-  return ["start", "-H", DEFAULT_WEB_UI_HOST, "-p", String(DEFAULT_WEB_UI_PORT)];
+/** Arguments for serving the built client: the minimal server, run directly. */
+export function serverSpawnArgs(): string[] {
+  return ["--experimental-strip-types", "server/main.ts"];
 }
 
-/** True when the fork has production build output to serve. */
+/** True when the built client output exists to serve. */
 export function defaultHasBuild(cwd: string): boolean {
   return existsSync(join(cwd, DEFAULT_BUILD_MARKER));
 }
 
-/** Run the fork's production build; resolve with the failure tail on error. */
+/** Run the esbuild bundle; resolve with the failure tail on error. */
 export function defaultBuildServer(
   cwd: string,
   timeoutMs = DEFAULT_BUILD_TIMEOUT_MS,
 ): Promise<{ ok: boolean; error?: string }> {
   return new Promise((resolve) => {
-    const nextBin = "node_modules/next/dist/bin/next";
-    const child = spawn(process.execPath, [nextBin, "build", "--webpack"], {
+    const child = spawn(process.execPath, ["build.mjs"], {
       cwd,
       stdio: ["ignore", "ignore", "pipe"],
     });
@@ -335,13 +334,14 @@ export function defaultBuildServer(
   });
 }
 
-/** Spawn the detached production server from the vendor directory. */
+/** Spawn the detached minimal server: one direct node process, so SIGTERM
+ * reaches the server itself (no npm/tsx wrapper holding its stdio open). */
 export function defaultSpawnServer(cwd: string): { pid?: number; unref?: () => void } {
-  const nextBin = "node_modules/next/dist/bin/next";
-  const child = spawn(process.execPath, [nextBin, ...nextServeArgs()], {
+  const child = spawn(process.execPath, serverSpawnArgs(), {
     cwd,
     detached: true,
     stdio: "ignore",
+    env: { ...process.env, PI_WEB_PORT: String(DEFAULT_WEB_UI_PORT) },
   });
   child.unref();
   return { pid: child.pid, unref: () => child.unref() };
@@ -405,20 +405,20 @@ function throttledProgress(deps: WebUiDeps, label: (elapsed: string) => string):
 
 function resolveDeps(overrides: Partial<WebUiDeps> = {}): WebUiDeps {
   const statePath = overrides.statePath ?? defaultWebUiStatePath();
-  const vendorDir = overrides.vendorDir ?? defaultVendorDir();
+  const serverDir = overrides.serverDir ?? defaultServerDir();
   return {
     statePath,
-    vendorDir,
+    serverDir,
     healthUrl: overrides.healthUrl ?? DEFAULT_HEALTH_ENDPOINT,
     pkillCommand: overrides.pkillCommand ?? DEFAULT_PKILL_COMMAND,
     isPidAlive: overrides.isPidAlive ?? defaultIsPidAlive,
     fetchHealth: overrides.fetchHealth ?? defaultFetchHealth,
-    checkVendorDir: overrides.checkVendorDir ?? existsSync,
+    checkServerDir: overrides.checkServerDir ?? existsSync,
     spawnServer: overrides.spawnServer ?? defaultSpawnServer,
     hasBuild: overrides.hasBuild ?? defaultHasBuild,
     buildServer: overrides.buildServer ?? defaultBuildServer,
     rebuild: overrides.rebuild ?? false,
-    fingerprints: overrides.fingerprints ?? (async () => sourceFingerprints(vendorDir, repoRootFromVendor(vendorDir))),
+    fingerprints: overrides.fingerprints ?? (async () => sourceFingerprints(serverDir, repoRootFromServerDir(serverDir))),
     readRecord: overrides.readRecord ?? (() => readBuildRecord(buildRecordPath(statePath))),
     writeRecord: overrides.writeRecord ?? ((fingerprints) =>
       writeBuildRecord(buildRecordPath(statePath), { ...fingerprints, builtAt: new Date().toISOString() })),
@@ -443,7 +443,7 @@ function resolveDeps(overrides: Partial<WebUiDeps> = {}): WebUiDeps {
  * Execute `/web start`:
  * - Refuses if already serving (with owner or unmanaged notice).
  * - Takes over if stale state exists and health check fails.
- * - Spawns detached server from vendor directory and polls health until ready.
+ * - Spawns detached server from the web package directory and polls health until ready.
  */
 export async function startWebUi(options: Partial<WebUiDeps> = {}): Promise<WebUiCommandResult> {
   const deps = resolveDeps(options);
@@ -472,10 +472,10 @@ export async function startWebUi(options: Partial<WebUiDeps> = {}): Promise<WebU
     await deps.removeState(deps.statePath);
   }
 
-  if (!deps.checkVendorDir(deps.vendorDir)) {
+  if (!deps.checkServerDir(deps.serverDir)) {
     return {
       status: "error",
-      message: `pi-web fork not vendored: directory not found at ${deps.vendorDir}.`,
+      message: `minimal pi-web server package not found: directory missing at ${deps.serverDir}.`,
     };
   }
 
@@ -484,12 +484,12 @@ export async function startWebUi(options: Partial<WebUiDeps> = {}): Promise<WebU
   const before = await deps.fingerprints();
   const change: SourceChange = evaluateChange(before, await deps.readRecord());
 
-  // Serve the production build. Build when there is no output, when a rebuild is asked
-  // for, or when the fork's sources changed since the last build. `next start` cannot
-  // serve a missing or stale build, and dev mode is not what this command runs.
+  // Serve the built client. Build when there is no output, when a rebuild is asked
+  // for, or when the sources changed since the last build. The minimal server
+  // serves static files from the bundle, and dev mode is not what this command runs.
   const rebuildReason = deps.rebuild
     ? "rebuild requested"
-    : !deps.hasBuild(deps.vendorDir)
+    : !deps.hasBuild(deps.serverDir)
       ? "no build output"
       : change.build
         ? "sources changed since the last build"
@@ -501,7 +501,7 @@ export async function startWebUi(options: Partial<WebUiDeps> = {}): Promise<WebU
     const heartbeat = setInterval(() => {
       deps.onProgress(`Building pi-web… ${formatElapsed(deps.now() - buildStarted)} elapsed`);
     }, 10_000);
-    const built = await deps.buildServer(deps.vendorDir).finally(() => clearInterval(heartbeat));
+    const built = await deps.buildServer(deps.serverDir).finally(() => clearInterval(heartbeat));
     if (built.ok) deps.onProgress(`Build finished in ${formatElapsed(deps.now() - buildStarted)}.`);
     if (!built.ok) {
       return {
@@ -514,7 +514,7 @@ export async function startWebUi(options: Partial<WebUiDeps> = {}): Promise<WebU
   let spawned: { pid?: number; unref?: () => void };
   deps.onProgress("Starting pi-web server…");
   try {
-    spawned = deps.spawnServer(deps.vendorDir);
+    spawned = deps.spawnServer(deps.serverDir);
   } catch (error: any) {
     return {
       status: "error",

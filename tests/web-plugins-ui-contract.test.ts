@@ -61,16 +61,18 @@ test("UI registry: conflicting exclusive replacements name both owners", () => {
   const plugins = ["first", "second"].map(id => ({ id, title: id, extension: "fixture", surfaces: [], ui: [contribution] }));
   assert.match(validateRegistry(plugins, ["fixture"]).join("\n"), /second.*working.*first\/working/);
 });
-test("plugin navigation uses the shared UI subscription instead of a separate fetch", async () => {
+test("plugin navigation rides the shared session state instead of a separate fetch", async () => {
   const { readFile } = await import("node:fs/promises");
-  const source = await readFile("vendor/pi-web/components/plugins/PluginNav.tsx", "utf8");
-  assert.match(source, /useWebUiState\(\)/);
+  const source = await readFile("web/client/plugins/PluginLayout.tsx", "utf8");
+  // The minimal client's nav is prop-driven: one session hook owns the single
+  // EventSource, so navigation surfaces never open their own connections.
+  assert.match(source, /plugins\s*:\s*readonly WebPluginDescriptor\[\]/);
   assert.doesNotMatch(source, /\bfetch\s*\(|\bEventSource\s*\(/);
 });
 test("PRD AC3: no pi-web UI source contains a plugin-ID-specific renderer branch", async () => {
   const { readdir, readFile } = await import("node:fs/promises");
   const { join } = await import("node:path");
-  const roots = ["vendor/pi-web/components", "vendor/pi-web/hooks"];
+  const roots = ["web/client", "web/shared"];
   for (const root of roots) {
     for (const entry of await readdir(root, { recursive: true })) {
       if (!entry.endsWith(".tsx") && !entry.endsWith(".ts")) continue;

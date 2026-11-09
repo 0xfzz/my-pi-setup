@@ -17,7 +17,7 @@ import {
   DEFAULT_WEB_UI_PORT,
   DEFAULT_WEB_UI_URL,
   DEFAULT_PKILL_COMMAND,
-  nextServeArgs,
+  serverSpawnArgs,
   type WebUiState,
   type WebUiDeps,
 } from "../lib/web-ui.ts";
@@ -30,8 +30,8 @@ async function createTempDir(prefix = "pi-web-ui-test-"): Promise<string> {
 test("decideStart: pure decision matrix", () => {
   const validState: WebUiState = {
     pid: 12345,
-    port: 30141,
-    url: "http://127.0.0.1:30141",
+    port: 30142,
+    url: "http://127.0.0.1:30142",
     startedBy: "sess-1",
     startedAt: "2026-11-05T00:00:00.000Z",
   };
@@ -73,8 +73,8 @@ test("decideStart: pure decision matrix", () => {
 test("decideStop: pure decision matrix", () => {
   const validState: WebUiState = {
     pid: 12345,
-    port: 30141,
-    url: "http://127.0.0.1:30141",
+    port: 30142,
+    url: "http://127.0.0.1:30142",
     startedBy: "sess-1",
     startedAt: "2026-11-05T00:00:00.000Z",
   };
@@ -126,8 +126,8 @@ test("decideStop: pure decision matrix", () => {
 test("decideStatus: pure report generation", () => {
   const validState: WebUiState = {
     pid: 12345,
-    port: 30141,
-    url: "http://127.0.0.1:30141",
+    port: 30142,
+    url: "http://127.0.0.1:30142",
     startedBy: "sess-1",
     startedAt: "2026-11-05T00:00:00.000Z",
   };
@@ -193,7 +193,7 @@ test("default disk IO: readState, writeState, removeState roundtrip in temporary
     assert.equal(await defaultReadState(statePath), "corrupt");
 
     // Partial JSON missing pid
-    await writeFile(statePath, JSON.stringify({ port: 30141, url: "http://..." }), "utf8");
+    await writeFile(statePath, JSON.stringify({ port: 30142, url: "http://..." }), "utf8");
     assert.equal(await defaultReadState(statePath), "corrupt");
 
     // Remove state
@@ -215,8 +215,8 @@ test("/web start: denies with owner info when already serving and state file is 
 
     const existingState: WebUiState = {
       pid: 9876,
-      port: 30141,
-      url: "http://127.0.0.1:30141",
+      port: 30142,
+      url: "http://127.0.0.1:30142",
       startedBy: "owner-session-42",
       startedAt: "2026-11-05T00:00:00.000Z",
     };
@@ -232,7 +232,7 @@ test("/web start: denies with owner info when already serving and state file is 
     });
 
     assert.equal(result.status, "denied");
-    assert.match(result.message, /already serving at http:\/\/127\.0\.0\.1:30141/);
+    assert.match(result.message, /already serving at http:\/\/127\.0\.0\.1:30142/);
     assert.match(result.message, /owner-session-42/);
     assert.match(result.message, /2026-11-05T00:00:00\.000Z/);
     assert.match(result.message, /No new instance was started/);
@@ -297,8 +297,8 @@ test("/web start: takes over stale state when health check fails and spawns fres
     const statePath = join(tmp, "state.json");
     const staleState: WebUiState = {
       pid: 1111,
-      port: 30141,
-      url: "http://127.0.0.1:30141",
+      port: 30142,
+      url: "http://127.0.0.1:30142",
       startedBy: "dead-session",
       startedAt: "2026-11-04T00:00:00.000Z",
     };
@@ -310,7 +310,7 @@ test("/web start: takes over stale state when health check fails and spawns fres
     const result = await startWebUi({
       statePath,
       sessionId: "new-session",
-      checkVendorDir: () => true,
+      checkServerDir: () => true,
       hasBuild: () => true,
       // The build is current: its record matches the sources, so the start must not rebuild.
       fingerprints: async () => ({ build: "b", runtime: "r" }),
@@ -352,7 +352,7 @@ test("/web start: successful start writes state file and reports URL", async () 
     const result = await startWebUi({
       statePath,
       sessionId: "my-session-id",
-      checkVendorDir: () => true,
+      checkServerDir: () => true,
       hasBuild: () => true,
       // The build is current: its record matches the sources, so the start must not rebuild.
       fingerprints: async () => ({ build: "b", runtime: "r" }),
@@ -368,7 +368,7 @@ test("/web start: successful start writes state file and reports URL", async () 
     });
 
     assert.equal(result.status, "started");
-    assert.match(result.message, /pi-web started and serving at http:\/\/127\.0\.0\.1:30141/);
+    assert.match(result.message, /pi-web started and serving at http:\/\/127\.0\.0\.1:30142/);
 
     const saved = await defaultReadState(statePath);
     assert.ok(saved && typeof saved === "object");
@@ -390,7 +390,7 @@ test("/web start: timeout kills spawned process and cleans up state", async () =
     let currentTime = 1000;
     const result = await startWebUi({
       statePath,
-      checkVendorDir: () => true,
+      checkServerDir: () => true,
       hasBuild: () => true,
       // The build is current: its record matches the sources, so the start must not rebuild.
       fingerprints: async () => ({ build: "b", runtime: "r" }),
@@ -417,7 +417,7 @@ test("/web start: timeout kills spawned process and cleans up state", async () =
   }
 });
 
-test("/web start: fails early with 'fork not vendored' if vendor dir is missing", async () => {
+test("/web start: fails early when the web package directory is missing", async () => {
   const tmp = await createTempDir();
   try {
     const statePath = join(tmp, "state.json");
@@ -425,7 +425,7 @@ test("/web start: fails early with 'fork not vendored' if vendor dir is missing"
 
     const result = await startWebUi({
       statePath,
-      checkVendorDir: () => false,
+      checkServerDir: () => false,
       fetchHealth: async () => false,
       spawnServer: () => {
         spawned = true;
@@ -434,8 +434,8 @@ test("/web start: fails early with 'fork not vendored' if vendor dir is missing"
     });
 
     assert.equal(result.status, "error");
-    assert.match(result.message, /fork not vendored/);
-    assert.equal(spawned, false, "Must not attempt spawn when fork is not vendored");
+    assert.match(result.message, /server package not found/);
+    assert.equal(spawned, false, "Must not attempt spawn when the server directory is missing");
   } finally {
     await rm(tmp, { recursive: true, force: true }).catch(() => {});
   }
@@ -449,8 +449,8 @@ test("/web stop: stops managed instance with live PID and removes state file", a
 
     await defaultWriteState(statePath, {
       pid: 4321,
-      port: 30141,
-      url: "http://127.0.0.1:30141",
+      port: 30142,
+      url: "http://127.0.0.1:30142",
       startedBy: "session-x",
       startedAt: "2026-11-05T00:00:00.000Z",
     });
@@ -490,8 +490,8 @@ test("/web stop: unmanaged instance returns instructions with pkill command", as
     // Case 2: state file has dead PID, but server is still healthy
     await defaultWriteState(statePath, {
       pid: 9999,
-      port: 30141,
-      url: "http://127.0.0.1:30141",
+      port: 30142,
+      url: "http://127.0.0.1:30142",
       startedBy: "dead",
       startedAt: "2026-11-05T00:00:00.000Z",
     });
@@ -525,8 +525,8 @@ test("/web stop: reports not running when not serving", async () => {
     // Case 2: stale state file, not healthy -> cleans up stale state and reports not running
     await defaultWriteState(statePath, {
       pid: 9999,
-      port: 30141,
-      url: "http://127.0.0.1:30141",
+      port: 30142,
+      url: "http://127.0.0.1:30142",
       startedBy: "stale",
       startedAt: "2026-11-05T00:00:00.000Z",
     });
@@ -552,8 +552,8 @@ test("/web status: reports state accuracy and ownership", async () => {
     // 1. Serving and managed
     await defaultWriteState(statePath, {
       pid: 3333,
-      port: 30141,
-      url: "http://127.0.0.1:30141",
+      port: 30142,
+      url: "http://127.0.0.1:30142",
       startedBy: "status-sess",
       startedAt: "2026-11-05T00:00:00.000Z",
     });
@@ -563,7 +563,7 @@ test("/web status: reports state accuracy and ownership", async () => {
       isPidAlive: (pid) => pid === 3333,
       fetchHealth: async () => true,
     });
-    assert.match(s1.message, /pi-web is serving at http:\/\/127\.0\.0\.1:30141/);
+    assert.match(s1.message, /pi-web is serving at http:\/\/127\.0\.0\.1:30142/);
     assert.match(s1.message, /PID: 3333/);
     assert.match(s1.message, /Started by: status-sess/);
     assert.match(s1.message, /State matches reality: yes/);
@@ -620,8 +620,8 @@ test("webExtension: command registration, subcommands, and notifications", async
     fetchHealth: async () => true,
     readState: async () => ({
       pid: 1111,
-      port: 30141,
-      url: "http://127.0.0.1:30141",
+      port: 30142,
+      url: "http://127.0.0.1:30142",
       startedBy: "mock-sess-id",
       startedAt: "2026-11-05T00:00:00.000Z",
     }),
@@ -671,11 +671,10 @@ test("webExtension: command registration, subcommands, and notifications", async
   assert.match(notifications[0]?.message ?? "", /Unknown subcommand/);
 });
 
-test("nextServeArgs: serves the production build, never dev mode", () => {
-  const args = nextServeArgs();
-  assert.equal(args[0], "start", "must run next start, not next dev");
+test("serverSpawnArgs: runs the minimal server directly, never a dev watcher", () => {
+  const args = serverSpawnArgs();
+  assert.deepEqual(args, ["--experimental-strip-types", "server/main.ts"]);
   assert.ok(!args.includes("dev"), "dev mode must never be used by /web start");
-  assert.deepEqual(args, ["start", "-H", "127.0.0.1", "-p", "30141"]);
   assert.ok(!args.includes("build"), "build is a separate step, not a server flag");
 });
 
@@ -688,7 +687,7 @@ test("/web start: builds when no production build exists, then serves it", async
 
     const result = await startWebUi({
       statePath,
-      checkVendorDir: () => true,
+      checkServerDir: () => true,
       hasBuild: () => false,
       buildServer: async () => {
         calls.push("build");
@@ -723,7 +722,7 @@ test("/web start: an existing build is served without rebuilding", async () => {
 
     const result = await startWebUi({
       statePath,
-      checkVendorDir: () => true,
+      checkServerDir: () => true,
       hasBuild: () => true,
       // The build is current: its record matches the sources, so the start must not rebuild.
       fingerprints: async () => ({ build: "b", runtime: "r" }),
@@ -757,7 +756,7 @@ test("/web start: a failed build reports the error and starts nothing", async ()
 
     const result = await startWebUi({
       statePath,
-      checkVendorDir: () => true,
+      checkServerDir: () => true,
       hasBuild: () => false,
       buildServer: async () => ({ ok: false, error: "exit 1: Type error in components/plugins/SlotHost.tsx" }),
       fetchHealth: async () => false,
@@ -787,7 +786,7 @@ test("/web start: rebuild forces a build even when output exists", async () => {
 
     const result = await startWebUi({
       statePath,
-      checkVendorDir: () => true,
+      checkServerDir: () => true,
       hasBuild: () => true,
       // The build is current: its record matches the sources, so the start must not rebuild.
       fingerprints: async () => ({ build: "b", runtime: "r" }),

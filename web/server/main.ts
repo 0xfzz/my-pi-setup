@@ -23,6 +23,7 @@ import {
   listLiveSessions,
   parseSessionCommand,
   readHistory,
+  registerSession,
   resolveSessionFile,
   sendCommand,
   startSession,
@@ -384,8 +385,52 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
 }
 
 async function main(): Promise<void> {
+  // A stable process title: the /web command's unmanaged-instance cleanup
+  // matches it with pkill -f "pi-web-minimal" and nothing else. main() only
+  // runs when the server is started directly, so test processes keep theirs.
+  process.title = "pi-web-minimal";
   const handle = await startWebServer();
   console.log(`[pi-web-minimal] listening on http://${handle.host}:${handle.port}`);
+  if (process.env.PI_WEB_TEST_PLUGIN_VIEWS === "1") {
+    registerFixtureSession();
+    console.log("[pi-web-minimal] fixture session registered (PI_WEB_TEST_PLUGIN_VIEWS=1)");
+  }
+}
+
+/**
+ * The fixture session for e2e runs (PI_WEB_TEST_PLUGIN_VIEWS=1): a live
+ * session core with no real agent behind it. Its plugin views come from the
+ * seeded store, its action requests flow through the seeded fixture bus, and
+ * it reports itself running on connect so the working indicator renders.
+ */
+function registerFixtureSession(): void {
+  const sessionId = "__test_session__";
+  registerSession(
+    {
+      sessionId,
+      subscribe: (listener: (event: unknown) => void) => {
+        listener({ type: "agent_start" });
+        return () => {};
+      },
+      prompt: async () => {
+        throw new Error("the fixture session accepts no prompts");
+      },
+      abort: async () => {},
+      isStreaming: () => false,
+      getState: () => ({
+        sessionId,
+        sessionFile: "",
+        isStreaming: false,
+        isBashRunning: false,
+        isCompacting: false,
+        model: undefined,
+        contextUsage: null,
+        thinkingLevel: "off",
+      }),
+    },
+    process.cwd(),
+    "",
+  );
 }
 
 const invokedDirectly =

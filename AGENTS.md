@@ -12,8 +12,9 @@ covered by that safety net.
   move on to something else.
 - **Keep the tree clean at the end of a task.** Run `git status` and commit or
   explicitly discard every change. A dirty tree at hand-off is unfinished work.
-- **Verify before committing.** `npm test` and `npm run typecheck` must pass (the
-  two documented TUI clipping failures are the only accepted baseline failures).
+- **Verify before committing.** `npm test`, `npm run typecheck` and the web
+  gate (`npm run test:web`) must pass (the two documented TUI clipping
+  failures are the only accepted baseline failures).
   The pre-commit hook also runs `oxlint` on the staged TypeScript files — see
   [Smell gate](#smell-gate).
 - **Use a scoped conventional message** so history stays greppable:
@@ -30,18 +31,19 @@ covered by that safety net.
 ## Verification gate
 
 ```sh
-npm run tidy      # typecheck + lint + tests, the whole gate in one command
+npm run tidy      # typecheck + lint + tests (root and web), the whole gate in one command
 ```
 
-The gate is the three checks that must all pass:
+The gate is the four checks that must all pass:
 
 ```sh
 npm run typecheck
 npm run lint:smell
 npm test
+npm run test:web
 ```
 
-`npm run tidy` runs exactly those three in that order. Use it before a commit
+`npm run tidy` runs exactly those four in that order. Use it before a commit
 rather than remembering the list.
 
 The only accepted baseline failures are the two `native regular/fullscreen inline

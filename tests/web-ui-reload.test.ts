@@ -21,25 +21,25 @@ async function tree(): Promise<string> {
   return mkdtemp(join(tmpdir(), "web-ui-reload-"));
 }
 
-test("fingerprints change when a build input changes, and ignore node_modules, .next and tests", async () => {
+test("fingerprints change when a build input changes, and ignore node_modules, dist and tests", async () => {
   const root = await tree();
   try {
-    await mkdir(join(root, "app"), { recursive: true });
+    await mkdir(join(root, "client"), { recursive: true });
     await mkdir(join(root, "node_modules", "x"), { recursive: true });
-    await mkdir(join(root, ".next"), { recursive: true });
-    await writeFile(join(root, "app", "page.tsx"), "a");
-    await writeFile(join(root, "app", "page.test.mjs"), "t");
+    await mkdir(join(root, "dist"), { recursive: true });
+    await writeFile(join(root, "client", "shell.tsx"), "a");
+    await writeFile(join(root, "client", "shell.test.mjs"), "t");
     await writeFile(join(root, "node_modules", "x", "i.js"), "n");
-    await writeFile(join(root, ".next", "BUILD_ID"), "1");
-    const before = fingerprintInputs(root, ["app"], []);
+    await writeFile(join(root, "dist", "app.js"), "1");
+    const before = fingerprintInputs(root, ["client"], []);
 
     await writeFile(join(root, "node_modules", "x", "i.js"), "changed dependency");
-    await writeFile(join(root, ".next", "BUILD_ID"), "2");
-    await writeFile(join(root, "app", "page.test.mjs"), "changed test");
-    assert.equal(fingerprintInputs(root, ["app"], []), before, "ignored paths do not move the fingerprint");
+    await writeFile(join(root, "dist", "app.js"), "2");
+    await writeFile(join(root, "client", "shell.test.mjs"), "changed test");
+    assert.equal(fingerprintInputs(root, ["client"], []), before, "ignored paths do not move the fingerprint");
 
-    await writeFile(join(root, "app", "page.tsx"), "ab");
-    assert.notEqual(fingerprintInputs(root, ["app"], []), before, "a source edit does");
+    await writeFile(join(root, "client", "shell.tsx"), "ab");
+    assert.notEqual(fingerprintInputs(root, ["client"], []), before, "a source edit does");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -62,9 +62,9 @@ test("a file touched with the same size still moves the fingerprint (mtime)", as
 test("a missing config file is part of the fingerprint as absence, not an error", async () => {
   const root = await tree();
   try {
-    const absent = fingerprintInputs(root, [], ["next.config.ts"]);
-    await writeFile(join(root, "next.config.ts"), "export default {};");
-    assert.notEqual(fingerprintInputs(root, [], ["next.config.ts"]), absent);
+    const absent = fingerprintInputs(root, [], ["build.mjs"]);
+    await writeFile(join(root, "build.mjs"), "console.log(1);");
+    assert.notEqual(fingerprintInputs(root, [], ["build.mjs"]), absent);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -73,20 +73,20 @@ test("a missing config file is part of the fingerprint as absence, not an error"
 test("build and runtime inputs are fingerprinted separately, so a plugin edit does not rebuild", async () => {
   const repo = await tree();
   try {
-    const vendor = join(repo, "vendor", "pi-web");
-    await mkdir(join(vendor, "app"), { recursive: true });
+    const serverDir = join(repo, "web");
+    await mkdir(join(serverDir, "client"), { recursive: true });
     await mkdir(join(repo, "lib", "web-plugins"), { recursive: true });
-    await writeFile(join(vendor, "app", "page.tsx"), "ui");
+    await writeFile(join(serverDir, "client", "shell.tsx"), "ui");
     await writeFile(join(repo, "lib", "web-plugins", "host.ts"), "logic");
-    const first = sourceFingerprints(vendor, repo);
+    const first = sourceFingerprints(serverDir, repo);
 
     await writeFile(join(repo, "lib", "web-plugins", "host.ts"), "logic v2");
-    const second = sourceFingerprints(vendor, repo);
+    const second = sourceFingerprints(serverDir, repo);
     assert.equal(second.build, first.build, "runtime edit leaves the build fingerprint alone");
     assert.notEqual(second.runtime, first.runtime);
 
-    await writeFile(join(vendor, "app", "page.tsx"), "ui v2");
-    assert.notEqual(sourceFingerprints(vendor, repo).build, second.build, "a UI edit changes the build fingerprint");
+    await writeFile(join(serverDir, "client", "shell.tsx"), "ui v2");
+    assert.notEqual(sourceFingerprints(serverDir, repo).build, second.build, "a UI edit changes the build fingerprint");
   } finally {
     await rm(repo, { recursive: true, force: true });
   }
@@ -136,11 +136,11 @@ test("the reload lock is exclusive, and a lock whose owner died is taken over", 
 });
 
 test("source roots name only the build inputs and our runtime directories", () => {
-  const roots = sourceWatchRoots("/repo/vendor/pi-web", "/repo");
-  assert.ok(roots.includes("/repo/vendor/pi-web/app"));
+  const roots = sourceWatchRoots("/repo/web", "/repo");
+  assert.ok(roots.includes("/repo/web/client"));
   assert.ok(roots.includes("/repo/lib/web-plugins"));
   assert.ok(roots.includes("/repo/web-plugins"));
-  assert.equal(roots.some((r) => r.includes("node_modules") || r.endsWith("/vendor/pi-web")), false);
+  assert.equal(roots.some((r) => r.includes("node_modules") || r.endsWith("/web")), false);
 });
 
 test("the watcher fires once after a quiet period, and ignores node_modules churn", async () => {
@@ -172,12 +172,12 @@ test("the watcher fires once after a quiet period, and ignores node_modules chur
 function fakeServer(options: { build?: "current" | "stale"; runtime?: "current" | "stale"; statePath: string; lock?: boolean }) {
   const calls: string[] = [];
   let up = true;
-  let state: WebUiState | null = { pid: 1111, port: 30141, url: "http://127.0.0.1:30141", startedBy: "s", startedAt: "t" };
+  let state: WebUiState | null = { pid: 1111, port: 30142, url: "http://127.0.0.1:30142", startedBy: "s", startedAt: "t" };
   const record = { build: "b", runtime: "r", builtAt: "t" };
   const current = { build: options.build === "stale" ? "b2" : "b", runtime: options.runtime === "stale" ? "r2" : "r" };
   const deps: Partial<WebUiDeps> = {
     statePath: options.statePath,
-    checkVendorDir: () => true,
+    checkServerDir: () => true,
     hasBuild: () => true,
     sessionId: "s2",
     pollIntervalMs: 1,
@@ -326,7 +326,7 @@ test("a slow start reports the health wait while it lasts", async () => {
     const messages: string[] = [];
     const result = await startWebUi({
       statePath: join(dir, "state.json"),
-      checkVendorDir: () => true,
+      checkServerDir: () => true,
       hasBuild: () => true,
       fingerprints: async () => ({ build: "b", runtime: "r" }),
       readRecord: async () => ({ build: "b", runtime: "r", builtAt: "t" }),

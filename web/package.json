@@ -13,7 +13,8 @@
     "start": "tsx server/main.ts",
     "dev": "npm run build && npm run start",
     "check": "tsc --noEmit",
-    "test": "npm run build && node --experimental-strip-types --test server/*.test.ts client/*.test.ts shared/*.test.ts"
+    "test": "npm run build && node --experimental-strip-types --test server/*.test.ts client/*.test.ts shared/*.test.ts",
+    "test:e2e": "node e2e/e2e.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.5.0",
@@ -27,6 +28,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "esbuild": "^0.28.2",
+    "playwright": "1.63.0",
     "tsx": "^4",
     "typescript": "^5.9"
   }

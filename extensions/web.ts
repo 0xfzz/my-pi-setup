@@ -11,8 +11,8 @@
  * server that is up. Set PI_WEB_AUTO_RELOAD=0 to turn that off.
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { defaultVendorDir, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiDeps } from "../lib/web-ui.ts";
-import { repoRootFromVendor, sourceWatchRoots, watchSources, type SourceWatcher } from "../lib/web-ui-reload.ts";
+import { defaultServerDir, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiDeps } from "../lib/web-ui.ts";
+import { repoRootFromServerDir, sourceWatchRoots, watchSources, type SourceWatcher } from "../lib/web-ui-reload.ts";
 
 export interface WebExtensionOptions {
   deps?: Partial<WebUiDeps>;
@@ -101,9 +101,9 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
 
   pi.on("session_start", (_event, ctx) => {
     if (!autoReloadEnabled || watcher) return;
-    const vendorDir = options.deps?.vendorDir ?? defaultVendorDir();
+    const serverDir = options.deps?.serverDir ?? defaultServerDir();
     watcher = watchSources({
-      roots: sourceWatchRoots(vendorDir, repoRootFromVendor(vendorDir)),
+      roots: sourceWatchRoots(serverDir, repoRootFromServerDir(serverDir)),
       debounceMs: options.autoReloadDebounceMs ?? AUTO_RELOAD_DEBOUNCE_MS,
       onChange: () => {
         void autoReload(ctx);
