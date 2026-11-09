@@ -48,15 +48,30 @@ body {
   height: 100%;
 }
 
-/* Base region: header */
-.app-header {
+/* The body row: session sidebar + the main column. */
+.app-body {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-raised);
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Base region: sidebar — the session list with live/running/stopped state. */
+.app-sidebar {
   flex: none;
+  width: 216px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg-raised);
+  min-height: 0;
+}
+
+.app-sidebar-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 12px 14px 6px;
 }
 
 .app-title {
@@ -69,6 +84,146 @@ body {
   font-size: 12px;
 }
 
+.app-sidebar-new {
+  margin: 4px 10px 10px;
+  padding: 6px 10px;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  flex: none;
+}
+
+.app-sidebar-new:hover {
+  border-color: var(--accent);
+}
+
+.app-sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.app-sidebar-empty {
+  color: var(--fg-faint);
+  font-size: 12px;
+  padding: 8px;
+}
+
+.app-session-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--fg-dim);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-session-item:hover {
+  background: var(--bg-input);
+}
+
+.app-session-item.is-selected {
+  background: var(--bg-input);
+  color: var(--fg);
+}
+
+.app-session-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.app-session-name {
+  color: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-session-meta {
+  color: var(--fg-faint);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Session state dots: running pulses (accent), live is attached (fg),
+   stopped is a disk session (faint). */
+.app-session-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+}
+
+.app-session-dot-live {
+  background: var(--ok);
+}
+
+.app-session-dot-running {
+  background: var(--accent);
+  animation: session-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes session-dot-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+.app-session-running {
+  flex: none;
+  color: var(--accent);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* The main column beside the sidebar. */
+.app-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+/* Base region: header */
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+  flex: none;
+}
+
 .app-header-status {
   margin-left: auto;
   color: var(--fg-faint);
@@ -77,32 +232,6 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 40%;
-}
-
-.app-session-select {
-  background: var(--bg-input);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 4px 8px;
-  font: inherit;
-  font-size: 12px;
-  max-width: 260px;
-}
-
-.app-new-session {
-  background: transparent;
-  color: var(--accent);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 4px 10px;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.app-new-session:hover {
-  border-color: var(--accent);
 }
 
 /* Base region: transcript */

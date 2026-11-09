@@ -8,16 +8,12 @@ import { useEffect, useState } from "react";
 import { usePiSession } from "./use-session.ts";
 import { Transcript } from "./transcript.tsx";
 import { Composer } from "./composer.tsx";
+import { SessionSidebar } from "./sidebar.tsx";
 import { SlotHost } from "./plugins/slots.tsx";
 import { PluginActionShortcuts } from "./plugins/PluginActionShortcuts.tsx";
 import { PluginPage, parsePluginRoute } from "./plugins/PluginLayout.tsx";
 import { PluginViewRenderer } from "./plugins/PluginViewRenderer.tsx";
 import { resolveRegionOverrides, type RegionOverride } from "../shared/regions.ts";
-
-function shortCwd(cwd: string): string {
-  const parts = cwd.split("/").filter((part) => part.length > 0);
-  return parts[parts.length - 1] ?? cwd;
-}
 
 function useRoute(): string {
   const [path, setPath] = useState(() => window.location.pathname);
@@ -70,6 +66,8 @@ export function AppShell() {
       ? `${session.sessionState.model.provider}/${session.sessionState.model.id}`
       : "connected")
     : session.connection;
+  const selected = session.sessions.find((summary) => summary.id === session.selectedId);
+  const headerCwd = selected ? selected.cwd : "";
 
   // The transcript's working line shows while a reply streams or the session
   // reports itself running (ui.session.lifecycle); a hidden working model
@@ -84,91 +82,79 @@ export function AppShell() {
 
   return (
     <div className="app-shell">
-      {regions.header !== undefined ? (
-        <header className="app-header">
-          <RegionOverrideView override={regions.header} region="header" />
-        </header>
-      ) : (
-        <header className="app-header">
-          <span className="app-title">pi</span>
-          <span className="app-subtitle">minimal web client</span>
-          <select
-            className="app-session-select"
-            value={session.selectedId ?? ""}
-            onChange={(event) =>
-              session.setSelectedId(event.target.value === "" ? null : event.target.value)}
-            aria-label="Session"
-          >
-            <option value="">sessions…</option>
-            {session.sessions.map((summary) => (
-              <option key={summary.id} value={summary.id}>
-                {shortCwd(summary.cwd)} · {summary.id.slice(0, 8)}
-                {summary.live ? " ●" : ""}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className="app-new-session"
-            onClick={() => {
-              void session.newSession();
-            }}
-          >
-            new
-          </button>
-          <span className="app-header-status">
-            {regions.status !== undefined ? (
-              <RegionOverrideView override={regions.status} region="status" />
-            ) : (
-              headerStatus
-            )}
-          </span>
-        </header>
-      )}
-      {conflicts.length > 0 ? (
-        <div className="app-region-conflicts" role="status">
-          {conflicts.map((conflict) => (
-            <span key={conflict.region} className="app-region-conflict">
-              {conflict.region} override: {conflict.pluginIds.join(", ")} — last registered wins
-            </span>
-          ))}
-        </div>
-      ) : null}
-      <SlotHost slot="top" plugins={session.plugins} views={session.pluginViews} />
-      {regions.transcript !== undefined ? (
-        <main className="app-transcript" aria-live="polite">
-          <RegionOverrideView override={regions.transcript} region="transcript" />
-        </main>
-      ) : (
-        <Transcript
-          history={session.history}
-          userMessages={session.userMessages}
-          streaming={session.streaming}
-          toolStatus={session.toolStatus}
-          toolResults={session.toolResults}
-          working={session.working}
-          showWorking={showWorking}
-        />
-      )}
-      <SlotHost slot="center" plugins={session.plugins} views={session.pluginViews} />
-      {regions.composer !== undefined ? (
-        <div className="app-composer app-composer-override">
-          <RegionOverrideView override={regions.composer} region="composer" />
-        </div>
-      ) : (
-        <Composer
-          disabled={session.selectedId === null || session.connection !== "connected"}
-          busy={session.streaming.isStreaming || session.uiRunning}
-          error={session.sendError}
-          onSend={(text) => {
-            void session.sendPrompt(text);
-          }}
-          onAbort={() => {
-            void session.abort();
+      <div className="app-body">
+        <SessionSidebar
+          sessions={session.sessions}
+          selectedId={session.selectedId}
+          onSelect={session.setSelectedId}
+          selectedRunning={session.streaming.isStreaming || session.uiRunning}
+          onNewSession={() => {
+            void session.newSession();
           }}
         />
-      )}
-      <SlotHost slot="bottom" plugins={session.plugins} views={session.pluginViews} />
+        <div className="app-main">
+          {regions.header !== undefined ? (
+            <header className="app-header">
+              <RegionOverrideView override={regions.header} region="header" />
+            </header>
+          ) : (
+            <header className="app-header">
+              {headerCwd !== "" ? <span className="app-subtitle">{headerCwd}</span> : null}
+              <span className="app-header-status">
+                {regions.status !== undefined ? (
+                  <RegionOverrideView override={regions.status} region="status" />
+                ) : (
+                  headerStatus
+                )}
+              </span>
+            </header>
+          )}
+          {conflicts.length > 0 ? (
+            <div className="app-region-conflicts" role="status">
+              {conflicts.map((conflict) => (
+                <span key={conflict.region} className="app-region-conflict">
+                  {conflict.region} override: {conflict.pluginIds.join(", ")} — last registered wins
+                </span>
+              ))}
+            </div>
+          ) : null}
+          <SlotHost slot="top" plugins={session.plugins} views={session.pluginViews} />
+          {regions.transcript !== undefined ? (
+            <main className="app-transcript" aria-live="polite">
+              <RegionOverrideView override={regions.transcript} region="transcript" />
+            </main>
+          ) : (
+            <Transcript
+              history={session.history}
+              userMessages={session.userMessages}
+              streaming={session.streaming}
+              toolStatus={session.toolStatus}
+              toolResults={session.toolResults}
+              working={session.working}
+              showWorking={showWorking}
+            />
+          )}
+          <SlotHost slot="center" plugins={session.plugins} views={session.pluginViews} />
+          {regions.composer !== undefined ? (
+            <div className="app-composer app-composer-override">
+              <RegionOverrideView override={regions.composer} region="composer" />
+            </div>
+          ) : (
+            <Composer
+              disabled={session.selectedId === null || session.connection !== "connected"}
+              busy={session.streaming.isStreaming || session.uiRunning}
+              error={session.sendError}
+              onSend={(text) => {
+                void session.sendPrompt(text);
+              }}
+              onAbort={() => {
+                void session.abort();
+              }}
+            />
+          )}
+          <SlotHost slot="bottom" plugins={session.plugins} views={session.pluginViews} />
+        </div>
+      </div>
       <SlotHost slot="floating" plugins={session.plugins} views={session.pluginViews} />
       <PluginActionShortcuts plugins={session.plugins} sessionId={session.selectedId} />
     </div>

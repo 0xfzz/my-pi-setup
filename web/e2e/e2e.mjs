@@ -58,7 +58,7 @@ async function waitForHealth(baseUrl, timeoutMs = 30_000, serverExitCode = () =>
 }
 
 async function selectFixtureSession(page) {
-  await page.selectOption(".app-session-select", "__test_session__");
+  await page.click('.app-session-item[data-id="__test_session__"]');
   // The composer override only renders once the session's plugin views land.
   await page.waitForSelector('[data-region-override="composer"]', { timeout: 15_000 });
 }
@@ -106,14 +106,9 @@ async function run() {
     assert.ok(await composer.isDisabled(), "composer is disabled without a session");
 
     // The fixture session is listed as live.
-    await page.waitForFunction(
-      () => {
-        const select = document.querySelector(".app-session-select");
-        return select !== null && [...select.options].some((option) => option.value === "__test_session__");
-      },
-      undefined,
-      { timeout: 15_000 },
-    );
+    await page.waitForSelector('.app-session-item[data-id="__test_session__"]', {
+      timeout: 15_000,
+    });
 
     step("2: fixture session + slots");
     // 2. Select the fixture session: slots render from the seeded views.
@@ -326,17 +321,10 @@ async function run() {
       }
     })();
 
-    step("8: waiting for bridge option");
-    // The bridged session appears in the picker as live — select it.
-    await page.waitForFunction(
-      (id) => {
-        const select = document.querySelector(".app-session-select");
-        return select !== null && [...select.options].some((option) => option.value === id);
-      },
-      bridgeId,
-      { timeout: 15_000 },
-    );
-    await page.selectOption(".app-session-select", bridgeId);
+    step("8: waiting for bridge session");
+    // The bridged session appears in the sidebar as live — select it.
+    await page.waitForSelector(`.app-session-item[data-id="${bridgeId}"]`, { timeout: 15_000 });
+    await page.click(`.app-session-item[data-id="${bridgeId}"]`);
     step("8: selected, composer");
     // No override on this session: the real composer renders and enables.
     const composerInput = page.locator(".app-composer-input");

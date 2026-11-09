@@ -181,6 +181,7 @@ export function listLiveSessions(): SessionInfo[] {
     cwd: handle.cwd,
     sessionFile: handle.sessionFile,
     live: true,
+    running: handle.core.getState().isStreaming,
     modifiedAt: handle.lastActivityAt,
   }));
 }
@@ -191,6 +192,8 @@ export interface SessionInfo {
   sessionFile: string;
   live: boolean;
   modifiedAt: number;
+  /** The session is mid-turn right now (agent streaming), for live sessions. */
+  running?: boolean;
 }
 
 function sessionsRoot(agentDir?: string): string {

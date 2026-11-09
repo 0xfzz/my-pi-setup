@@ -20,6 +20,8 @@ export interface SessionSummary {
   cwd: string;
   live: boolean;
   modifiedAt: number;
+  /** The session is mid-turn right now (agent streaming), for live sessions. */
+  running?: boolean;
 }
 
 export interface HistoryEntryLike {

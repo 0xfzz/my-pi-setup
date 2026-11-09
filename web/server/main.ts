@@ -295,6 +295,7 @@ async function handleApi(
           cwd: session.cwd,
           sessionFile: session.file,
           live: false,
+          running: false,
           modifiedAt: session.modifiedAt,
         })),
     ];
