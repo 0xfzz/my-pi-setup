@@ -236,6 +236,10 @@ async function run() {
     await jumpButton.waitFor({ state: "hidden", timeout: 5_000 });
     await page.setViewportSize({ width: 1280, height: 720 });
 
+    step("4c: slash command palette");
+    // 4c. (moved to step 8 — the fixture session's composer region is
+    //     overridden, and the bridge session exercises the real one.)
+
     step("5: Alt+M shortcut");
     // 5. Instant-action shortcut (before the confirmed action, so the
     //    in-flight guard is not involved): Alt+M fires the modes action and
@@ -320,8 +324,9 @@ async function run() {
         }
       }
     })();
-
-    step("8: waiting for bridge session");
+    // A server teardown mid-run must not crash the runner with an unhandled
+    // rejection before the real assertion error can surface.
+    bridgeReadLoop.catch(() => undefined);
     // The bridged session appears in the sidebar as live — select it.
     await page.waitForSelector(`.app-session-item[data-id="${bridgeId}"]`, { timeout: 15_000 });
     await page.click(`.app-session-item[data-id="${bridgeId}"]`);
@@ -334,6 +339,31 @@ async function run() {
       undefined,
       { timeout: 15_000 },
     );
+
+    step("8b: slash command palette");
+    // 8b. The palette on the real composer: "/" lists pi's built-ins; a
+    //     TUI-only one is blocked with an honest notice instead of being
+    //     fed to the model as a prompt.
+    await composerInput.fill("/");
+    await page.waitForSelector(".app-command-palette", { timeout: 5_000 });
+    assert.ok(
+      (await page.locator(".app-command-name", { hasText: "/settings" }).count()) === 1,
+      "the palette lists pi's built-ins",
+    );
+    await composerInput.fill("/mod");
+    await page.locator(".app-command-item", { hasText: "/model" }).first().waitFor({
+      state: "visible",
+      timeout: 5_000,
+    });
+    await composerInput.fill("/model");
+    await composerInput.press("Enter");
+    const notice = page.locator(".app-composer-error");
+    await notice.waitFor({ state: "visible", timeout: 5_000 });
+    assert.ok(
+      (await notice.textContent())?.includes("TUI command"),
+      "the TUI-only command is blocked with a notice",
+    );
+    await composerInput.fill("");
 
     step("8: prompting from browser");
     // Prompt in the browser → the fake TUI receives it as a bridge command.

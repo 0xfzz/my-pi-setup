@@ -93,6 +93,8 @@ export function Composer({
   const [images, setImages] = useState<PendingImage[]>([]);
   const [paletteIndex, setPaletteIndex] = useState(0);
   const [paletteDismissed, setPaletteDismissed] = useState(false);
+  /** Local composer feedback (a blocked TUI-only command); cleared on typing. */
+  const [notice, setNotice] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -153,10 +155,30 @@ export function Composer({
 
   const send = (): void => {
     if (text.trim() === "" && images.length === 0) return;
+    // pi's interactive built-ins that open dialogs/selectors cannot run from
+    // here — the session only dispatches extension commands. Say so instead
+    // of silently feeding "/model" to the model. Commands the session lists
+    // (extension commands, including the web-bridge built-ins) dispatch fine.
+    const firstToken = text.startsWith("/") ? text.slice(1).split(" ")[0] : null;
+    if (firstToken !== null && firstToken !== "") {
+      const dispatchable = commands.some(
+        (command) => command.name === firstToken && command.tuiOnly !== true,
+      );
+      const tuiOnly = commands.find(
+        (command) => command.name === firstToken && command.tuiOnly === true,
+      );
+      if (tuiOnly !== undefined && !dispatchable) {
+        setNotice(
+          `/${firstToken} is a TUI command — it opens a dialog in the terminal. Run it there, or pick a command the session dispatches.`,
+        );
+        return;
+      }
+    }
     onSend(text, images);
     setText("");
     setImages([]);
     setPaletteDismissed(false);
+    setNotice(null);
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -248,6 +270,7 @@ export function Composer({
         onChange={(event) => {
           setText(event.target.value);
           setPaletteDismissed(false);
+          setNotice(null);
         }}
         onPaste={handlePaste}
         onKeyDown={handleKeyDown}
@@ -286,6 +309,7 @@ export function Composer({
         </button>
       ) : null}
       </div>
+      {notice ? <div className="app-composer-error" role="alert">{notice}</div> : null}
       {error ? <div className="app-composer-error" role="alert">{error}</div> : null}
     </div>
   );

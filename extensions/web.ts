@@ -462,6 +462,60 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     bridgePoster?.post({ type: "web_ui_event", payload });
   });
 
+  // pi's interactive built-ins, implemented for the web. The names collide
+  // with the TUI's own commands on purpose: the TUI skips them in its
+  // autocomplete (its versions keep working locally), while the session's
+  // dispatch — the path a browser prompt takes — reaches these handlers,
+  // so /compact, /name, /thinking and /new finally work from the web.
+  pi.registerCommand("compact", {
+    description: "Compact the session context (works from the web)",
+    handler: async (args, ctx) => {
+      const instructions = args.trim();
+      ctx.compact(instructions !== "" ? { customInstructions: instructions } : undefined);
+    },
+  });
+
+  pi.registerCommand("name", {
+    description: "Set the session display name (works from the web)",
+    handler: async (args) => {
+      const name = args.trim();
+      if (name === "") {
+        ctxNotify("usage: /name <new-name>");
+        return;
+      }
+      pi.setSessionName(name);
+      ctxNotify(`session name: ${name}`);
+    },
+  });
+
+  const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+  pi.registerCommand("thinking", {
+    description: "Set the thinking level (works from the web)",
+    getArgumentCompletions(prefix) {
+      return THINKING_LEVELS
+        .filter((level) => level.startsWith(prefix.trim().toLowerCase()))
+        .map((level) => ({ value: level, label: level }));
+    },
+    handler: async (args) => {
+      const level = args.trim().toLowerCase();
+      if (!THINKING_LEVELS.includes(level as (typeof THINKING_LEVELS)[number])) {
+        ctxNotify(`usage: /thinking <${THINKING_LEVELS.join("|")}>`);
+        return;
+      }
+      pi.setThinkingLevel(level as (typeof THINKING_LEVELS)[number]);
+      ctxNotify(`thinking level: ${level}`);
+    },
+  });
+
+  pi.registerCommand("new", {
+    description: "Start a new session (works from the web)",
+    handler: async (_args, ctx) => {
+      const result = await ctx.newSession();
+      if (result.cancelled) ctxNotify("new session cancelled");
+    },
+  });
+
   pi.registerCommand("web", {
     description: "Manage pi-web UI server (built client): /web start | reload [--rebuild] | stop | status",
     getArgumentCompletions(prefix) {
