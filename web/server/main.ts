@@ -3,11 +3,11 @@
 // per docs/prds/minimal-pi-web.md.
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { readFile, readdir } from "node:fs/promises";
+import { existsSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { extname, join, resolve, sep } from "node:path";
+import { dirname, extname, join, resolve, sep } from "node:path";
 import { attachBridge, getBridge, type BridgeState } from "./bridge.ts";
 import {
   checkAndSetInFlightAction,
@@ -279,6 +279,43 @@ async function handleApi(
     }
     bridge.close();
     sendJson(res, 200, { ok: true });
+    return true;
+  }
+  if (pathname === "/api/directories") {
+    if (req.method !== "GET") return methodNotAllowed();
+    // The new-session picker: subdirectories of a path (hidden dirs skipped,
+    // capped) plus the parent for navigation. A bad path is a 400, not an
+    // error — the picker shows it inline.
+    const requested = url.searchParams.get("path") ?? "";
+    let dir: string;
+    try {
+      dir = resolve(requested === "" ? process.cwd() : requested);
+    } catch {
+      sendJson(res, 400, { error: "invalid path" });
+      return true;
+    }
+    if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+      sendJson(res, 400, { error: `not a directory: ${dir}` });
+      return true;
+    }
+    let dirents: Array<{ isDirectory: () => boolean; name: string }>;
+    try {
+      dirents = await readdir(dir, { withFileTypes: true });
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+      return true;
+    }
+    const entries = dirents
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+      .map((entry) => ({ name: entry.name, path: join(dir, entry.name) }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 500);
+    const parent = dirname(dir);
+    sendJson(res, 200, {
+      path: dir,
+      parent: parent === dir ? null : parent,
+      entries,
+    });
     return true;
   }
   if (pathname === "/api/sessions") {

@@ -536,20 +536,22 @@ export function usePiSession() {
     };
   }, [selectedId, historyEpoch, applyStream, fetchState]);
 
-  const newSession = useCallback(async () => {
+  const newSession = useCallback(async (cwd?: string) => {
     try {
       const res = await fetch("/api/agent/new", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify(cwd !== undefined && cwd.trim() !== "" ? { cwd } : {}),
       });
-      const body = (await res.json()) as { sessionId?: string };
+      const body = (await res.json()) as { sessionId?: string; error?: string };
       if (body.sessionId !== undefined) {
         await refreshSessions();
         setSelectedId(body.sessionId);
+        return null;
       }
+      return body.error ?? `new session failed (HTTP ${res.status})`;
     } catch {
-      // The button press is user-visible; failures show up in the list poll.
+      return "could not reach the server";
     }
   }, [refreshSessions]);
 

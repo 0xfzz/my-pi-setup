@@ -35,6 +35,32 @@ test("health endpoint reports service identity", async () => {
   });
 });
 
+test("directories endpoint lists subdirectories for the picker", async () => {
+  await withServer(async (baseUrl) => {
+    const repo = resolve(import.meta.dirname, "../..");
+    const res = await fetch(`${baseUrl}/api/directories?path=${encodeURIComponent(repo)}`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      path?: string;
+      parent?: string | null;
+      entries?: Array<{ name: string; path: string }>;
+    };
+    assert.equal(body.path, repo);
+    assert.equal(typeof body.parent, "string");
+    const names = (body.entries ?? []).map((entry) => entry.name);
+    for (const expected of ["web", "web-plugins", "lib", "extensions"]) {
+      assert.ok(names.includes(expected), `${expected} must be listed`);
+    }
+    // Hidden directories are skipped.
+    assert.ok(!names.some((name) => name.startsWith(".")), "no hidden dirs");
+
+    const bad = await fetch(`${baseUrl}/api/directories?path=${encodeURIComponent("/no/such/dir")}`);
+    assert.equal(bad.status, 400);
+    const file = await fetch(`${baseUrl}/api/directories?path=${encodeURIComponent(`${repo}/package.json`)}`);
+    assert.equal(file.status, 400);
+  });
+});
+
 test("plugins registry endpoint serves the descriptor list", async () => {
   await withServer(async (baseUrl) => {
     const res = await fetch(`${baseUrl}/api/plugins`);

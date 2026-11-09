@@ -9,6 +9,7 @@ import { usePiSession } from "./use-session.ts";
 import { Transcript } from "./transcript.tsx";
 import { Composer } from "./composer.tsx";
 import { SessionSidebar } from "./sidebar.tsx";
+import { NewSessionDialog } from "./new-session-dialog.tsx";
 import { SlotHost } from "./plugins/slots.tsx";
 import { PluginActionShortcuts } from "./plugins/PluginActionShortcuts.tsx";
 import { PluginPage, parsePluginRoute } from "./plugins/PluginLayout.tsx";
@@ -43,6 +44,7 @@ function RegionOverrideView({
 export function AppShell() {
   const session = usePiSession();
   const route = useRoute();
+  const [newSessionOpen, setNewSessionOpen] = useState(false);
 
   // Plugin pages: /plugins/:id renders the descriptor's page surface with
   // its live view for the selected session and its actions.
@@ -88,9 +90,7 @@ export function AppShell() {
           selectedId={session.selectedId}
           onSelect={session.setSelectedId}
           selectedRunning={session.streaming.isStreaming || session.uiRunning}
-          onNewSession={() => {
-            void session.newSession();
-          }}
+          onNewSession={() => setNewSessionOpen(true)}
         />
         <div className="app-main">
           {regions.header !== undefined ? (
@@ -157,6 +157,12 @@ export function AppShell() {
       </div>
       <SlotHost slot="floating" plugins={session.plugins} views={session.pluginViews} />
       <PluginActionShortcuts plugins={session.plugins} sessionId={session.selectedId} />
+      <NewSessionDialog
+        open={newSessionOpen}
+        sessions={session.sessions}
+        onClose={() => setNewSessionOpen(false)}
+        onStart={(cwd) => session.newSession(cwd)}
+      />
     </div>
   );
 }
