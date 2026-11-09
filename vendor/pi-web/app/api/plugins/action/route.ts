@@ -48,8 +48,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Action not found" }, { status: 404 });
   }
 
-  // 2. Validate: confirm byte-identical to the descriptor's confirm (403, nothing emitted)
-  if (typeof confirm !== "string" || confirm !== action.confirm) {
+  // 2. Validate: a declared confirm must match byte-identically (403, nothing emitted).
+  //    An action without a declared confirm is the instant form the plugin-actions
+  //    PRD names per action; it submits without a typed string.
+  if (action.confirm !== undefined && (typeof confirm !== "string" || confirm !== action.confirm)) {
     return NextResponse.json({ error: "Invalid confirmation string" }, { status: 403 });
   }
 

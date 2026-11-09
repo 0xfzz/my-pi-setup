@@ -84,6 +84,7 @@ import { focusIfLost } from "@/lib/stacked-dialog";
 import { PluginNav } from "@/components/plugins/PluginNav";
 import { SlotHost } from "@/components/plugins/slots/SlotHost";
 import { PluginAnchor } from "@/components/plugins/PluginLayout";
+import { PluginActionShortcuts } from "@/components/plugins/PluginActionShortcuts";
 import { usePluginData } from "@/components/plugins/PluginViewRenderer";
 import type { WebPluginDescriptor, WebView } from "@/lib/web-plugins-host";
 
@@ -2822,6 +2823,7 @@ export function AppShell() {
 
         <PluginAnchor anchor="app.header" sessionId={selectedSession?.id} project={activeCwd} />
         <PluginAnchor anchor="session.header" sessionId={selectedSession?.id} project={activeCwd} />
+        <PluginActionShortcuts sessionId={selectedSession?.id} />
         {/* Top slot strip: directly below the header */}
         <SlotHost
           slot="top"

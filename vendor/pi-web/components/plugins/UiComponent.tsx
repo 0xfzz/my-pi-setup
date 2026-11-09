@@ -53,7 +53,13 @@ export function compactView(view: WebView): string {
     case "kv": return view.rows[0] ? `${view.rows[0].label}: ${view.rows[0].value}` : "";
     case "list": {
       const count = view.items.length;
-      return `${count} ${count === 1 ? "item" : "items"}${view.items[0] ? ` (${view.items[0]})` : ""}`;
+      const first = view.items[0];
+      const firstText = typeof first === "string" ? first : first?.text;
+      return `${count} ${count === 1 ? "item" : "items"}${firstText ? ` (${firstText})` : ""}`;
+    }
+    case "graph": {
+      const count = view.nodes.length;
+      return `${count} ${count === 1 ? "node" : "nodes"}${view.edges.length ? ` · ${view.edges.length} edges` : ""}`;
     }
   }
 }

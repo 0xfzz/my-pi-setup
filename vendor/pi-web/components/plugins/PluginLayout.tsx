@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, type CSSProperties, type ReactNode } from "react";
+import React, { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { normalizeContributions, type WebUiAnchor, type WebUiRegion, type WebPluginUiContribution, type WebPluginPlacement } from "@/lib/web-ui-contracts";
 import type { WebPluginDescriptor } from "@/lib/web-ui-descriptor";
 import type { WebUiSessionState } from "@/lib/web-ui-state-store";
@@ -9,6 +9,7 @@ import { useWebUiState } from "@/hooks/useWebUiState";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { SessionStatusDot } from "./PluginViewRenderer";
 import { UiComponent, compactView } from "./UiComponent";
+import { postPluginAction } from "./actionClient";
 import "./plugins.css";
 
 /** Anchors inside the chat column. They take the composer's width and side padding so they line up with it. */
@@ -74,8 +75,54 @@ function Contribution({ plugin, contribution: c, state, sessionId, view, place, 
         host?.focus(); setClosed(true);
       }}>✕</button>}</header>
       {content}{page?.kind === "page" && <a href={page.path} className="plugin-slot-page-link">Open</a>}
+      {!collapsible && <ContributionActions plugin={plugin} sessionId={sessionId} />}
     </>}
   </section>;
+}
+/**
+ * A descriptor-declared action menu on any non-collapsible contribution row.
+ * Instant actions fire directly; confirmed ones link to the plugin page. The
+ * list is fixed-positioned when open so the row's overflow clipping cannot
+ * hide it, and any click outside closes the menu.
+ */
+function ContributionActions({ plugin, sessionId }: { plugin: WebPluginDescriptor; sessionId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const actions = plugin.actions ?? [];
+  useEffect(() => {
+    if (pos === null) return;
+    const close = (event: MouseEvent) => {
+      if (detailsRef.current?.contains(event.target as Node)) return;
+      if (detailsRef.current) detailsRef.current.open = false;
+      setPos(null);
+    };
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [pos]);
+  if (!actions.length) return null;
+  const menuStyle: CSSProperties | undefined = pos ? { position: "fixed", top: pos.top, left: pos.left } : undefined;
+  return <details ref={detailsRef} className="plugin-actions-menu" onToggle={event => {
+    const details = event.currentTarget;
+    if (!details.open) { setPos(null); return; }
+    const rect = details.getBoundingClientRect();
+    setPos({
+      top: Math.min(rect.bottom + 4, window.innerHeight - 140),
+      left: Math.max(8, Math.min(rect.left, window.innerWidth - 210)),
+    });
+  }}>
+    <summary className="plugin-actions-menu-summary" aria-label={`${plugin.title} actions`} title={`${plugin.title} actions`}>⋯</summary>
+    <div className="plugin-actions-menu-list" role="menu" style={menuStyle}>
+      {actions.map(action => action.confirm === undefined
+        ? <button key={action.id} type="button" role="menuitem" className="plugin-actions-menu-item" disabled={busy} onClick={() => {
+          setBusy(true);
+          void postPluginAction(sessionId, plugin.id, action).finally(() => setBusy(false));
+        }}>
+          {action.title}{action.keybinding && <kbd className="plugin-action-keybinding">{action.keybinding}</kbd>}
+        </button>
+        : <a key={action.id} role="menuitem" className="plugin-actions-menu-item" href={`/plugins/${plugin.id}`} title={`Requires typing "${action.confirm}"`}>{action.title}…</a>)}
+    </div>
+  </details>;
 }
 export function PluginAnchor({ anchor, region, sessionId, project, children }: { anchor?: WebUiAnchor; region?: WebUiRegion; sessionId?: string | null; project?: string | null; children?: ReactNode }) {
   const data = useWebUiState();

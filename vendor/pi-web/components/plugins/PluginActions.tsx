@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import type { ActionDescriptor } from "@/lib/web-plugins-host";
+import { postPluginAction } from "./actionClient";
 
 interface PluginActionsProps {
   pluginId: string;
@@ -26,7 +27,8 @@ export function PluginActions({ pluginId, sessionId, actions }: PluginActionsPro
 
   const handleActionSubmit = async (action: ActionDescriptor) => {
     const confirmVal = confirmInputs[action.id] ?? "";
-    if (confirmVal !== action.confirm) {
+
+    if (action.confirm !== undefined && confirmVal !== action.confirm) {
       setStatusMap((prev) => ({
         ...prev,
         [action.id]: {
@@ -56,30 +58,14 @@ export function PluginActions({ pluginId, sessionId, actions }: PluginActionsPro
     });
 
     try {
-      const response = await fetch("/api/plugins/action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId,
-          pluginId,
-          actionId: action.id,
-          confirm: confirmVal,
-        }),
-      });
+      const { data } = await postPluginAction(sessionId, pluginId, action);
 
-      const data = (await response.json()) as {
-        ok?: boolean;
-        requestId?: string;
-        error?: string;
-        relayed?: boolean;
-      };
-
-      if (!response.ok || !data.ok) {
+      if (!data.ok) {
         setStatusMap((prev) => ({
           ...prev,
           [action.id]: {
             type: "error",
-            message: data.error || `Action failed with status ${response.status}`,
+            message: data.error || "Action failed",
           },
         }));
       } else {
@@ -113,32 +99,48 @@ export function PluginActions({ pluginId, sessionId, actions }: PluginActionsPro
       <div className="plugin-actions-grid">
         {actions.map((action) => {
           const typedConfirm = confirmInputs[action.id] ?? "";
-          const isConfirmed = typedConfirm === action.confirm;
+          const isConfirmed = action.confirm === undefined || typedConfirm === action.confirm;
           const isLoading = loadingAction === action.id;
           const status = statusMap[action.id];
 
           return (
             <div key={action.id} className="plugin-action-card" data-action-id={action.id}>
               <div className="plugin-action-row">
-                <input
-                  type="text"
-                  className="plugin-action-input"
-                  placeholder={`Type "${action.confirm}" to confirm`}
-                  value={typedConfirm}
-                  onChange={(e) => handleInputChange(action.id, e.target.value)}
-                  disabled={isLoading}
-                  data-testid={`action-input-${action.id}`}
-                  aria-label={`Confirm ${action.title}`}
-                />
-                <button
-                  type="button"
-                  className="plugin-action-button"
-                  onClick={() => handleActionSubmit(action)}
-                  disabled={!isConfirmed || isLoading}
-                  data-testid={`action-button-${action.id}`}
-                >
-                  {isLoading ? "Submitting..." : action.title}
-                </button>
+                {action.confirm === undefined ? (
+                  // An instant action (per the plugin-actions PRD): one click, no typed string.
+                  <button
+                    type="button"
+                    className="plugin-action-button plugin-action-instant"
+                    onClick={() => void handleActionSubmit(action)}
+                    disabled={isLoading}
+                    data-testid={`action-button-${action.id}`}
+                  >
+                    {isLoading ? "Submitting..." : action.title}
+                    {action.keybinding && <kbd className="plugin-action-keybinding">{action.keybinding}</kbd>}
+                  </button>
+                ) : (
+                  <>
+                    <input
+                      type="text"
+                      className="plugin-action-input"
+                      placeholder={`Type "${action.confirm}" to confirm`}
+                      value={typedConfirm}
+                      onChange={(e) => handleInputChange(action.id, e.target.value)}
+                      disabled={isLoading}
+                      data-testid={`action-input-${action.id}`}
+                      aria-label={`Confirm ${action.title}`}
+                    />
+                    <button
+                      type="button"
+                      className="plugin-action-button"
+                      onClick={() => void handleActionSubmit(action)}
+                      disabled={!isConfirmed || isLoading}
+                      data-testid={`action-button-${action.id}`}
+                    >
+                      {isLoading ? "Submitting..." : action.title}
+                    </button>
+                  </>
+                )}
               </div>
               {status && (
                 <div
