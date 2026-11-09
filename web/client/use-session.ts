@@ -103,6 +103,9 @@ export function usePiSession() {
   const [working, setWorking] = useState<WorkingModelLike | null>(null);
   const [uiRunning, setUiRunning] = useState(false);
   const [toolResults, setToolResults] = useState<Record<string, ToolResultLike>>({});
+  // Bumped when the TUI-side bridge reconnects after a gap: the effect
+  // re-runs, reloading history in case events were missed while it was away.
+  const [historyEpoch, setHistoryEpoch] = useState(0);
 
   const streamingRef = useRef<StreamingState>(INITIAL_STREAMING_STATE);
   const applyStream = useCallback((action: StreamAction) => {
@@ -291,6 +294,11 @@ export function usePiSession() {
         case "agent_end":
           applyStream({ type: "end" });
           break;
+        case "bridge_resync":
+          // The TUI-side bridge re-attached after a drop; reload the history
+          // in case events were missed while it was away.
+          setHistoryEpoch((epoch) => epoch + 1);
+          break;
         case "plugin_state": {
           // Plugin views, the working indicator model and the running flag,
           // all scoped to this stream's session.
@@ -314,7 +322,7 @@ export function usePiSession() {
       source.close();
       setConnection("idle");
     };
-  }, [selectedId, applyStream, fetchState]);
+  }, [selectedId, historyEpoch, applyStream, fetchState]);
 
   const newSession = useCallback(async () => {
     try {

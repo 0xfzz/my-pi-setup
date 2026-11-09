@@ -8,6 +8,7 @@ import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { extname, join, resolve, sep } from "node:path";
+import { attachBridge, getBridge, type BridgeState } from "./bridge.ts";
 import {
   checkAndSetInFlightAction,
   getPluginDescriptor,
@@ -214,6 +215,71 @@ async function handleApi(
   if (pathname === "/api/plugins/action") {
     if (req.method !== "POST") return methodNotAllowed();
     return handlePluginAction(req, res);
+  }
+
+  // The session bridge: a live TUI-owned session attaches here.
+  const bridgeAttachMatch = /^\/api\/bridge\/([^/]+)\/attach$/.exec(pathname);
+  if (bridgeAttachMatch !== null) {
+    if (req.method !== "GET") return methodNotAllowed();
+    const id = sessionIdFromPath(bridgeAttachMatch);
+    const modelParam = url.searchParams.get("model");
+    const modelSlash = modelParam !== null ? modelParam.indexOf("/") : -1;
+    attachBridge({
+      req,
+      res,
+      metadata: {
+        sessionId: id,
+        cwd: url.searchParams.get("cwd") ?? process.cwd(),
+        sessionFile: url.searchParams.get("sessionFile") ?? undefined,
+        model: modelSlash > 0 && modelParam !== null
+          ? { provider: modelParam.slice(0, modelSlash), id: modelParam.slice(modelSlash + 1) }
+          : undefined,
+        thinkingLevel: url.searchParams.get("thinkingLevel") ?? undefined,
+      },
+    });
+    return true;
+  }
+
+  const bridgeEventsMatch = /^\/api\/bridge\/([^/]+)\/events$/.exec(pathname);
+  if (bridgeEventsMatch !== null) {
+    if (req.method !== "POST") return methodNotAllowed();
+    const id = sessionIdFromPath(bridgeEventsMatch);
+    const bridge = getBridge(id);
+    if (bridge === undefined) {
+      sendJson(res, 404, { error: "Bridge not attached" });
+      return true;
+    }
+    try {
+      const body = (await readJsonBody(req)) as {
+        event?: unknown;
+        events?: unknown[];
+        state?: Partial<BridgeState>;
+      };
+      if (body.state !== undefined) bridge.postState(body.state);
+      const events = [
+        ...(Array.isArray(body.events) ? body.events : []),
+        ...(body.event !== undefined ? [body.event] : []),
+      ];
+      for (const event of events) bridge.postEvent(event);
+      sendJson(res, 200, { ok: true });
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
+
+  const bridgeDetachMatch = /^\/api\/bridge\/([^/]+)\/detach$/.exec(pathname);
+  if (bridgeDetachMatch !== null) {
+    if (req.method !== "POST") return methodNotAllowed();
+    const id = sessionIdFromPath(bridgeDetachMatch);
+    const bridge = getBridge(id);
+    if (bridge === undefined) {
+      sendJson(res, 404, { error: "Bridge not attached" });
+      return true;
+    }
+    bridge.close();
+    sendJson(res, 200, { ok: true });
+    return true;
   }
   if (pathname === "/api/sessions") {
     if (req.method !== "GET") return methodNotAllowed();

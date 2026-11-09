@@ -80,6 +80,33 @@ reconnect the stream. Backpressure: rebuildable deltas drop above 512 KB
 queued, the stream ends above 16 MB (the client reconnects and
 re-snapshots).
 
+## The session bridge (TUI ↔ web sync)
+
+The pi process that **owns** a live session — the TUI — attaches it to the
+web server, making that one AgentSession the single source of truth for
+both frontends. `extensions/web.ts` does the bridging:
+
+- It attaches whenever the server is reachable at session start, and right
+  after `/web start` brings the server up (`GET /api/bridge/:id/attach`).
+- The attach response is an SSE command stream: a prompt typed in a
+  browser arrives as `{type:"prompt"}` and runs against the **same session**
+  (`pi.sendUserMessage`), so the TUI sees the same turn it would see if the
+  user had typed it locally. Aborts call `ctx.abort()`. Plugin actions emit
+  on `pi.events`, so the TUI-side extensions handle them exactly like
+  in-process ones.
+- The extension posts the session's events back (batched at 25 ms —
+  message deltas included), plus the TUI-side plugin views and
+  working-indicator bus events, so the web renders the TUI's turns, plugin
+  surfaces and working line in realtime.
+
+While a bridge is attached, the web's `/api/agent/:id` routes proxy into it
+and the session is listed as live; when it detaches, the server falls back
+to resuming the session file and browser streams reconnect. A reconnect
+after a gap emits `bridge_resync`, which makes the client reload its
+history. Without a TUI attached, the web still spawns/resumes sessions
+in-process — but running both frontends on one session is exactly what the
+bridge is for.
+
 ## HTTP API
 
 | Route | Method | Purpose |

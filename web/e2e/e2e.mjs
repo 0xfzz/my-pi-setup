@@ -12,6 +12,23 @@ import assert from "node:assert/strict";
 const PORT = 30_000 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
 
+/** Step marker: an e2e log that pinpoints where a stall happens. */
+const step = (name) => console.log(`[e2e] ${name}`);
+
+/**
+ * Stall watchdog: if the run stops making progress while the event loop is
+ * still alive, dump the pending libuv handles so the stuck await is
+ * identifiable. (unref'd: it never keeps the process alive on its own.)
+ */
+const watchdog = setTimeout(() => {
+  console.error("[e2e] WATCHDOG: stalled — active handles:");
+  for (const handle of process._getActiveHandles?.() ?? []) {
+    console.error("  -", handle?.constructor?.name, handle?._idleTimeout ?? "");
+  }
+  process.exit(2);
+}, 150_000);
+watchdog.unref?.();
+
 async function waitForHealth(baseUrl, timeoutMs = 30_000, serverExitCode = () => null, logs = []) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -70,6 +87,7 @@ async function run() {
     const pageErrors = [];
     page.on("pageerror", (error) => pageErrors.push(String(error)));
 
+    step("1: base shell");
     // 1. Base shell: header, session picker, disabled composer.
     await page.goto(`${BASE}/`);
     await page.waitForSelector(".app-shell", { timeout: 20_000 });
@@ -88,6 +106,7 @@ async function run() {
       { timeout: 15_000 },
     );
 
+    step("2: fixture session + slots");
     // 2. Select the fixture session: slots render from the seeded views.
     await selectFixtureSession(page);
 
@@ -115,6 +134,7 @@ async function run() {
     const floatingChip = page.locator(".plugin-slot-floating-chip");
     await floatingChip.first().waitFor({ state: "visible", timeout: 15_000 });
 
+    step("3: composer override");
     // 3. Region override: the composer is replaced by the example plugin's
     //    declarative view, and the built-in input is gone.
     const override = page.locator('[data-region-override="composer"]');
@@ -129,12 +149,14 @@ async function run() {
       "the built-in composer is absent while overridden",
     );
 
+    step("4: working indicator");
     // 4. The working indicator: the fixture session reports running and the
     //    seeded working message renders.
     const working = page.locator(".msg-working");
     await working.waitFor({ state: "visible", timeout: 15_000 });
     assert.ok((await working.textContent())?.includes("Ratiocinating"));
 
+    step("4b: realtime streaming + markdown + tool calls");
     // 4b. Realtime streaming, markdown and collapsible tool calls: the
     //     fixture session simulates a full agent turn when prompted (its
     //     composer region is overridden, so the prompt goes through the API).
@@ -209,6 +231,7 @@ async function run() {
     await jumpButton.waitFor({ state: "hidden", timeout: 5_000 });
     await page.setViewportSize({ width: 1280, height: 720 });
 
+    step("5: Alt+M shortcut");
     // 5. Instant-action shortcut (before the confirmed action, so the
     //    in-flight guard is not involved): Alt+M fires the modes action and
     //    the toast confirms the relay.
@@ -221,6 +244,7 @@ async function run() {
       "the Alt+M shortcut relays the modes action",
     );
 
+    step("6: plugin page");
     // 6. Plugin page: the subagent monitor graph renders with expandable nodes.
     await page.goto(`${BASE}/plugins/subagent-monitor`);
     await page.waitForSelector(".plugin-view-graph", { timeout: 20_000 });
@@ -230,6 +254,7 @@ async function run() {
       "the graph shows the fixture parent node",
     );
 
+    step("7: confirmed action round trip");
     // 7. Confirmed action round trip: typing the exact confirm string relays
     //    the request; the fixture bus records it and the graph label updates
     //    with the requestId over SSE — no reload.
@@ -250,6 +275,113 @@ async function run() {
 
     assert.deepEqual(pageErrors, [], "the browser must stay error-free");
 
+    step("8: bridge sync");
+    // 8. Bridge sync: a fake TUI attaches its live session to the web; a
+    //    prompt typed in the browser reaches it as a command, and the events
+    //    it posts stream back to the browser — one session, two frontends.
+    await page.goto(`${BASE}/`);
+    await page.waitForSelector(".app-shell", { timeout: 20_000 });
+
+    const bridgeId = "bridge-e2e-session";
+    step("8: bridge attach fetched");
+    const bridgeCommands = [];
+    const bridgeController = new AbortController();
+    const bridgeAttach = await fetch(
+      `${BASE}/api/bridge/${bridgeId}/attach?cwd=${encodeURIComponent("/tmp/bridge-proj")}`,
+      { signal: bridgeController.signal, headers: { accept: "text/event-stream" } },
+    );
+    assert.equal(bridgeAttach.status, 200);
+    const bridgeReader = bridgeAttach.body.getReader();
+    const bridgeReadLoop = (async () => {
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await bridgeReader.read();
+        if (done) return;
+        buffer += decoder.decode(value, { stream: true });
+        let separator = buffer.indexOf("\n\n");
+        while (separator >= 0) {
+          const frame = buffer.slice(0, separator);
+          buffer = buffer.slice(separator + 2);
+          if (frame.startsWith("data:")) {
+            try {
+              const parsed = JSON.parse(frame.slice(5).trim());
+              if (parsed.type === "bridge_command") bridgeCommands.push(parsed.command);
+            } catch {
+              // Not a data frame we understand.
+            }
+          }
+          separator = buffer.indexOf("\n\n");
+        }
+      }
+    })();
+
+    step("8: waiting for bridge option");
+    // The bridged session appears in the picker as live — select it.
+    await page.waitForFunction(
+      (id) => {
+        const select = document.querySelector(".app-session-select");
+        return select !== null && [...select.options].some((option) => option.value === id);
+      },
+      bridgeId,
+      { timeout: 15_000 },
+    );
+    await page.selectOption(".app-session-select", bridgeId);
+    step("8: selected, composer");
+    // No override on this session: the real composer renders and enables.
+    const composerInput = page.locator(".app-composer-input");
+    await composerInput.waitFor({ state: "visible", timeout: 15_000 });
+    await page.waitForFunction(
+      () => document.querySelector(".app-composer-input")?.disabled === false,
+      undefined,
+      { timeout: 15_000 },
+    );
+
+    step("8: prompting from browser");
+    // Prompt in the browser → the fake TUI receives it as a bridge command.
+    await composerInput.fill("hello from the web");
+    await composerInput.press("Enter");
+    const promptEcho = page.locator(".msg-user", { hasText: "hello from the web" });
+    await promptEcho.first().waitFor({ state: "visible", timeout: 10_000 });
+    const commandDeadline = Date.now() + 10_000;
+    while (bridgeCommands.length === 0 && Date.now() < commandDeadline) {
+      await page.waitForTimeout(100);
+    }
+    assert.deepEqual(
+      bridgeCommands[0],
+      { type: "prompt", message: "hello from the web" },
+      "the browser prompt must reach the TUI as a bridge command",
+    );
+
+    step("8: command received, streaming reply");
+    // The TUI streams its reply; the browser renders it.
+    await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          { type: "agent_start" },
+          { type: "message_start", message: { role: "assistant", content: [] } },
+          { type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 0 } },
+          { type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Hello from " } },
+          { type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "the TUI!" } },
+          { type: "message_update", assistantMessageEvent: { type: "text_end", contentIndex: 0, content: "Hello from the TUI!" } },
+          { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Hello from the TUI!" }] } },
+          { type: "agent_settled" },
+        ],
+      }),
+    });
+    const tuiReply = page.locator(".msg-assistant", { hasText: "Hello from the TUI!" });
+    await tuiReply.first().waitFor({ state: "visible", timeout: 15_000 });
+
+    step("8: reply rendered, detaching");
+    // Detach: the browser stream ends and the session falls back to disk.
+    const detachRes = await fetch(`${BASE}/api/bridge/${bridgeId}/detach`, { method: "POST" });
+    assert.equal(detachRes.status, 200);
+    bridgeController.abort();
+    await bridgeReadLoop.catch(() => undefined);
+
+    step("closing browser");
     await browser.close();
     passed = true;
     console.log("[e2e] all checks passed");

@@ -6,7 +6,7 @@
 // model-selection, lease, trust, push and custom-UI chrome is out of scope.
 
 import { createAgentSession, getAgentDir, SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
-import { existsSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { attachSessionPlugins } from "./plugin-host.ts";
@@ -162,6 +162,11 @@ export function getSession(id: string): SessionHandle | undefined {
   return liveSessions.get(id);
 }
 
+/** Drop a live session registration (bridge detach or replacement). */
+export function unregisterSession(id: string): void {
+  liveSessions.delete(id);
+}
+
 export function listLiveSessions(): SessionInfo[] {
   return [...liveSessions.values()].map((handle) => ({
     id: handle.core.sessionId,
@@ -198,16 +203,47 @@ interface SessionHeaderLike {
   timestamp?: string;
 }
 
+/**
+ * Read only the first line of a session file, streaming: a directory scan
+ * must never load whole session files (they run to megabytes) just to read
+ * a header.
+ */
 async function readSessionHeader(file: string): Promise<SessionHeaderLike | null> {
-  try {
-    const text = await readFile(file, "utf-8");
-    const firstLine = text.split("\n", 1)[0];
-    if (!firstLine) return null;
-    const parsed = JSON.parse(firstLine) as SessionHeaderLike;
-    return parsed.type === "session" ? parsed : null;
-  } catch {
-    return null;
-  }
+  return new Promise((resolve) => {
+    const stream = createReadStream(file, { encoding: "utf-8" });
+    let settled = false;
+    let buffer = "";
+    const finish = (value: SessionHeaderLike | null): void => {
+      if (settled) return;
+      settled = true;
+      stream.destroy();
+      resolve(value);
+    };
+    stream.on("data", (chunk: string | Buffer) => {
+      buffer += typeof chunk === "string" ? chunk : chunk.toString("utf-8");
+      const newline = buffer.indexOf("\n");
+      if (newline >= 0) {
+        try {
+          const parsed = JSON.parse(buffer.slice(0, newline)) as SessionHeaderLike;
+          finish(parsed.type === "session" ? parsed : null);
+        } catch {
+          finish(null);
+        }
+        return;
+      }
+      // A header line never spans 64 KB; stop reading instead of buffering.
+      if (buffer.length > 65_536) finish(null);
+    });
+    stream.on("error", () => finish(null));
+    stream.on("end", () => {
+      try {
+        const parsed = JSON.parse(buffer) as SessionHeaderLike;
+        finish(parsed.type === "session" ? parsed : null);
+      } catch {
+        finish(null);
+      }
+    });
+  });
 }
 
 /** Sessions on disk under the agent dir, newest first, capped. */
