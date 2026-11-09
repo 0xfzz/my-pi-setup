@@ -191,6 +191,16 @@ from either host. The TUI's own `ctx.ui.notify`/`setStatus`/`setWidget`
 calls do not emit events, so bridging them means also calling `publishWebUi`
 from the extension — the contract lives in `lib/web-plugins/ui-contracts.ts`.
 
+## Themes
+
+Dark and light palettes are both defined in `web/client/base.css` as the
+same slot variables; `data-theme` on `<html>` selects one and is set before
+the first React render (no flash). The choice is `pi-web-theme` in
+localStorage; with no stored choice the web follows the OS and re-follows
+it live. The toggle is the ☾/☀ button in the sidebar head. Shadows and
+modal scrims are theme-aware (`--scrim`), so plugin views and popups read
+fine in both.
+
 ## Verification
 
 The root gate covers the whole repo:

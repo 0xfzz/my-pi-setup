@@ -256,6 +256,33 @@ async function run() {
     // 4c. (moved to step 8 — the fixture session's composer region is
     //     overridden, and the bridge session exercises the real one.)
 
+    step("4e: persistent dark/light theme");
+    // 4e. The sidebar toggle flips data-theme, the choice survives a reload,
+    //     and the palette actually applies. Headless defaults to light, so
+    // "before" can be either theme — assert per-theme expectations.
+    const themeBefore = await page.evaluate(() => document.documentElement.dataset.theme);
+    await page.locator(".app-theme-toggle").click();
+    const themeAfter = themeBefore === "light" ? "dark" : "light";
+    assert.equal(
+      await page.evaluate(() => document.documentElement.dataset.theme),
+      themeAfter,
+      "toggle flips the theme",
+    );
+    await page.reload();
+    await page.locator(".app-session-item").first().waitFor({ state: "visible", timeout: 15_000 });
+    assert.equal(
+      await page.evaluate(() => document.documentElement.dataset.theme),
+      themeAfter,
+      "theme persists across reload",
+    );
+    assert.equal(
+      await page.evaluate(() => getComputedStyle(document.body).backgroundColor),
+      themeAfter === "light" ? "rgb(247, 248, 250)" : "rgb(16, 18, 20)",
+      "the active theme's palette applies",
+    );
+    // Back to the starting theme for the rest of the run.
+    if (themeBefore !== themeAfter) await page.locator(".app-theme-toggle").click();
+
     step("5: Alt+M shortcut");
     // 5. Instant-action shortcut (before the confirmed action, so the
     //    in-flight guard is not involved): Alt+M fires the modes action and

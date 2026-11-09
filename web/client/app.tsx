@@ -1,6 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { AppShell } from "./shell.tsx";
+import { initTheme } from "./theme.ts";
+
+// Before the first paint: the theme is on <html> before React renders.
+initTheme();
 
 const rootElement = document.getElementById("root");
 if (rootElement === null) {

@@ -2,7 +2,9 @@
 // replacing the header dropdown. One row per session — the project name,
 // the state dot (pulsing while a turn runs), and how long ago it was active.
 
+import { useState } from "react";
 import type { SessionSummary } from "./use-session.ts";
+import { toggleTheme, type Theme } from "./theme.ts";
 
 function shortCwd(cwd: string): string {
   const parts = cwd.split("/").filter((part) => part.length > 0);
@@ -36,6 +38,10 @@ export function SessionSidebar({
   onNewSession,
   selectedRunning,
 }: SessionSidebarProps) {
+  // The theme is on <html> before first paint; the glyph only mirrors it.
+  const [theme, setTheme] = useState<Theme>(() =>
+    document.documentElement.dataset.theme === "light" ? "light" : "dark",
+  );
   const now = Date.now();
   const ordered = [...sessions].sort((a, b) => {
     // Live sessions first, then most recently active.
@@ -48,6 +54,17 @@ export function SessionSidebar({
       <div className="app-sidebar-head">
         <span className="app-title">pi</span>
         <span className="app-subtitle">web</span>
+        <button
+          type="button"
+          className="app-theme-toggle"
+          title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          aria-label="Toggle dark and light theme"
+          onClick={() => {
+            setTheme(toggleTheme());
+          }}
+        >
+          {theme === "dark" ? "☾" : "☀"}
+        </button>
       </div>
       <button
         type="button"
