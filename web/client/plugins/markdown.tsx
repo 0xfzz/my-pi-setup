@@ -6,6 +6,7 @@
 
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { memo } from "react";
 
 const components: Components = {
   a: ({ href, children }) => (
@@ -22,8 +23,11 @@ function safeUrlTransform(url: string): string {
   return "#";
 }
 
-/** Render a markdown string (GFM: tables, strikethrough, autolinks) safely. */
-export function MarkdownBody({ text }: { text: string }) {
+/** Render a markdown string (GFM: tables, strikethrough, autolinks) safely.
+ * Memoized by text: the transcript re-renders on every stream delta, plugin
+ * state frame and status change, and re-parsing every historical message
+ * each time is the flicker/jank users saw ("blipping"). */
+export const MarkdownBody = memo(function MarkdownBody({ text }: { text: string }) {
   return (
     <div className="markdown-body">
       <ReactMarkdown
@@ -35,4 +39,4 @@ export function MarkdownBody({ text }: { text: string }) {
       </ReactMarkdown>
     </div>
   );
-}
+});

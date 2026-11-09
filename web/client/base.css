@@ -78,6 +78,20 @@ body {
 }
 
 /* Base region: sidebar — the session list with live/running/stopped state. */
+/* Sidebar: static column on wide screens, overlay on narrow ones. */
+.app-sidebar-wrap {
+  flex: none;
+  display: contents;
+}
+
+.app-sidebar-scrim {
+  display: none;
+}
+
+.app-sidebar-toggle {
+  display: none;
+}
+
 .app-sidebar {
   flex: none;
   width: 216px;
@@ -252,6 +266,66 @@ body {
   min-width: 0;
   min-height: 0;
   height: 100%;
+}
+
+/* Narrow screens (phones): the sidebar becomes a left overlay with a scrim,
+ * the ☰ toggle appears, and the header drops its crumbs to fit. */
+@media (max-width: 720px) {
+  .app-sidebar-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    background: none;
+    color: var(--fg-dim);
+    border-radius: 6px;
+    width: 28px;
+    height: 24px;
+    padding: 0;
+    cursor: pointer;
+    flex: none;
+  }
+
+  .app-sidebar-toggle:hover {
+    color: var(--fg);
+  }
+
+  .app-sidebar-wrap {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 60;
+    transform: translateX(-100%);
+    transition: transform 160ms ease-out;
+    pointer-events: none;
+  }
+
+  .app-sidebar-wrap.is-open {
+    transform: none;
+    pointer-events: auto;
+  }
+
+  .app-sidebar-scrim {
+    position: fixed;
+    inset: 0;
+    background: var(--scrim);
+    z-index: 55;
+    display: block;
+  }
+
+  .app-sidebar {
+    height: 100%;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35);
+  }
+
+  .app-subtitle {
+    max-width: 30vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 /* Base region: header */

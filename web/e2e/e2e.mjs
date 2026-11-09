@@ -283,6 +283,47 @@ async function run() {
     // Back to the starting theme for the rest of the run.
     if (themeBefore !== themeAfter) await page.locator(".app-theme-toggle").click();
 
+    step("4f: narrow viewport — overlay sidebar, no horizontal overflow");
+    // 4f. The web-hostile layout fix: at phone width the sidebar collapses
+    //     off-canvas behind a ☰ toggle, and plugin views/regions fit without
+    //     a horizontal scrollbar.
+    await page.setViewportSize({ width: 420, height: 800 });
+    await page.locator(".app-sidebar-toggle").waitFor({ state: "visible", timeout: 10_000 });
+    assert.ok(
+      await page.evaluate(() => document.querySelector(".app-sidebar-wrap") !== null),
+      "the sidebar wrapper exists",
+    );
+    // Off-canvas, then the ☰ opens the overlay with a scrim.
+    await page.waitForFunction(
+      () => {
+        const el = document.querySelector(".app-sidebar-wrap");
+        return el !== null && getComputedStyle(el).transform.includes("-21");
+      },
+      undefined,
+      { timeout: 5_000 },
+    );
+    await page.locator(".app-sidebar-toggle").click();
+    await page.locator(".app-sidebar").waitFor({ state: "visible", timeout: 5_000 });
+    assert.ok(await page.locator(".app-sidebar-scrim").isVisible(), "scrim shows behind the overlay");
+    // Selecting a session closes the overlay again.
+    await page.locator(".app-session-item").first().click();
+    await page.waitForFunction(
+      () => {
+        const el = document.querySelector(".app-sidebar-wrap");
+        return el !== null && getComputedStyle(el).transform.includes("-21");
+      },
+      undefined,
+      { timeout: 5_000 },
+    );
+    // The composer override (a plugin view) still fits.
+    await page.locator('[data-region-override="composer"]').waitFor({ state: "visible", timeout: 10_000 });
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth),
+      false,
+      "no horizontal scrollbar at 420px",
+    );
+    await page.setViewportSize({ width: 1280, height: 800 });
+
     step("5: Alt+M shortcut");
     // 5. Instant-action shortcut (before the confirmed action, so the
     //    in-flight guard is not involved): Alt+M fires the modes action and

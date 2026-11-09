@@ -4,7 +4,7 @@
 // The transcript stays pinned to the bottom while the user is there, and a
 // jump-to-latest button appears whenever they scroll up.
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { AssistantBlock, BashBlock, ImageBlock, ToolCallBlock } from "./streaming.ts";
 import type { HistoryEntryLike, ToolCallStatus, ToolResultLike } from "./use-session.ts";
 import type { WorkingModelLike } from "./plugins/contract.ts";
@@ -265,7 +265,7 @@ function ToolCallRow({
   );
 }
 
-export function AssistantBlocks({
+export const AssistantBlocks = memo(function AssistantBlocks({
   blocks,
   toolStatus,
   toolResults,
@@ -309,7 +309,7 @@ export function AssistantBlocks({
       })}
     </>
   );
-}
+});
 
 export interface TranscriptEntry {
   key: string;
@@ -335,7 +335,7 @@ export interface TranscriptProps {
 }
 
 /** The user side: text paragraphs, attached images, `!` bash rows. */
-function UserBlocks({ blocks }: { blocks: AssistantBlock[] }) {
+const UserBlocks = memo(function UserBlocks({ blocks }: { blocks: AssistantBlock[] }) {
   return (
     <>
       {blocks.map((block, index) => {
@@ -356,7 +356,7 @@ function UserBlocks({ blocks }: { blocks: AssistantBlock[] }) {
       })}
     </>
   );
-}
+});
 
 export function Transcript({
   history,

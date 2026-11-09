@@ -201,6 +201,20 @@ it live. The toggle is the ☾/☀ button in the sidebar head. Shadows and
 modal scrims are theme-aware (`--scrim`), so plugin views and popups read
 fine in both.
 
+## Responsive layout and render performance
+
+Below 720px the session sidebar collapses off-canvas behind a ☰ toggle in
+the header and reopens as an overlay with a scrim; selecting a session
+closes it, and crossing from wide to narrow closes it automatically.
+Nothing renders wider than the viewport — the transcript, composer and
+plugin views wrap.
+
+On the performance side, message bodies and markdown are memoized: stream
+deltas, plugin_state frames and status changes re-render only the live
+message, not the transcript's history. Before that, every frame re-parsed
+every historical message's markdown and rebuilt its DOM — the visible
+flicker ("blipping") plugin UIs had during streaming.
+
 ## Verification
 
 The root gate covers the whole repo:

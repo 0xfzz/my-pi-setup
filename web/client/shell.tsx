@@ -46,6 +46,21 @@ export function AppShell() {
   const session = usePiSession();
   const route = useRoute();
   const [newSessionOpen, setNewSessionOpen] = useState(false);
+  // Narrow screens: the sidebar starts collapsed and opens as an overlay.
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 720);
+
+  // Crossing from wide to narrow closes the sidebar instead of leaving an
+  // overlay + scrim stranded over the shrunken layout.
+  useEffect(() => {
+    let wasWide = window.innerWidth > 720;
+    const onResize = (): void => {
+      const wide = window.innerWidth > 720;
+      if (wasWide && !wide) setSidebarOpen(false);
+      wasWide = wide;
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   // Plugin pages: /plugins/:id renders the descriptor's page surface with
   // its live view for the selected session and its actions.
@@ -86,13 +101,19 @@ export function AppShell() {
   return (
     <div className="app-shell">
       <div className="app-body">
-        <SessionSidebar
-          sessions={session.sessions}
-          selectedId={session.selectedId}
-          onSelect={session.setSelectedId}
-          selectedRunning={session.streaming.isStreaming || session.uiRunning}
-          onNewSession={() => setNewSessionOpen(true)}
-        />
+        {sidebarOpen ? <div className="app-sidebar-scrim" onClick={() => setSidebarOpen(false)} /> : null}
+        <div className={sidebarOpen ? "app-sidebar-wrap is-open" : "app-sidebar-wrap"}>
+          <SessionSidebar
+            sessions={session.sessions}
+            selectedId={session.selectedId}
+            onSelect={(id) => {
+              session.setSelectedId(id);
+              if (window.innerWidth <= 720) setSidebarOpen(false);
+            }}
+            selectedRunning={session.streaming.isStreaming || session.uiRunning}
+            onNewSession={() => setNewSessionOpen(true)}
+          />
+        </div>
         <div className="app-main">
           {regions.header !== undefined ? (
             <header className="app-header">
@@ -100,6 +121,15 @@ export function AppShell() {
             </header>
           ) : (
             <header className="app-header">
+              <button
+                type="button"
+                className="app-sidebar-toggle"
+                aria-label="Toggle session list"
+                title="Sessions"
+                onClick={() => setSidebarOpen((open) => !open)}
+              >
+                ☰
+              </button>
               {headerCwd !== "" ? <span className="app-subtitle">{headerCwd}</span> : null}
               <StatusChips statuses={session.statuses} />
               <span className="app-header-status">
