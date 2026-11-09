@@ -9,6 +9,7 @@ import {
   VIEW_MAX_ROWS,
   VIEW_MAX_CELL_CHARS,
   VIEW_MAX_BYTES,
+  VIEW_MAX_DETAIL_CHARS,
   STATUS_TONES,
   validateView,
 } from "../lib/web-plugins/view.ts";
@@ -289,8 +290,12 @@ test("view contract: cell clamping at 500 characters with ellipsis", () => {
   assert.equal(listResult.ok, true);
   if (listResult.ok) {
     assert.equal(listResult.view.type, "list");
-    assert.equal(listResult.view.items[0].length, 500);
-    assert.ok(listResult.view.items[0].endsWith("…"));
+    const first = listResult.view.items[0];
+    assert.equal(typeof first, "string", "a plain string row stays a string");
+    if (typeof first === "string") {
+      assert.equal(first.length, 500);
+      assert.ok(first.endsWith("…"));
+    }
   }
 
   // status view clamping
@@ -370,6 +375,121 @@ test("view contract: byte-fit truncation sets omitted > 0 and stays under 64KB",
       `Expected byte length ${jsonBytes} <= ${VIEW_MAX_BYTES}`,
     );
     assert.ok((listResult.view.omitted ?? 0) > 0);
+  }
+});
+
+test("view contract: list items may carry status and markdown detail", () => {
+  const rich = validateView({
+    type: "list",
+    title: "Todo 1/3",
+    items: [
+      "plain row stays valid",
+      { text: "Port the icon renderer", status: "active", detail: "## Why\nGlance rows need host icons." },
+      { text: "Ship it", status: "done" },
+    ],
+  });
+  assert.equal(rich.ok, true);
+  if (rich.ok) {
+    assert.equal(rich.view.type, "list");
+    const items = rich.view.items;
+    assert.equal(typeof items[0], "string");
+    const second = items[1];
+    if (typeof second === "object") {
+      assert.equal(second.text, "Port the icon renderer");
+      assert.equal(second.status, "active");
+      assert.equal(second.detail, "## Why\nGlance rows need host icons.");
+    } else {
+      assert.fail("object row should stay an object");
+    }
+  }
+
+  // Shape errors name the offending row
+  assert.equal(validateView({ type: "list", items: ["ok", { text: "x", extra: true }] }).ok, false);
+  assert.equal(validateView({ type: "list", items: [{ text: "x", status: "sleepy" }] }).ok, false);
+  assert.equal(validateView({ type: "list", items: [{ status: "done" }] }).ok, false);
+  assert.equal(validateView({ type: "list", items: [{ text: "x", detail: 7 }] }).ok, false);
+  assert.equal(validateView({ type: "list", items: [42] }).ok, false);
+});
+
+test("view contract: detail clamps at 20k chars and lifts the byte cap for documents", () => {
+  const longDetail = "a".repeat(VIEW_MAX_DETAIL_CHARS + 500);
+  const clamped = validateView({ type: "list", items: [{ text: "spec", detail: longDetail }] });
+  assert.equal(clamped.ok, true);
+  if (clamped.ok && clamped.view.type === "list") {
+    const item = clamped.view.items[0];
+    if (typeof item === "object") {
+      assert.equal((item.detail ?? "").length, VIEW_MAX_DETAIL_CHARS);
+      assert.ok((item.detail ?? "").endsWith("…"));
+    }
+    assert.ok((clamped.warnings?.length ?? 0) >= 1, "truncation is visible");
+  }
+
+  // A detail-bearing document may exceed the plain 64KB cap: 24 × ~19KB passes
+  // only under the document cap, while the same bulk as plain strings does not.
+  const documentView = validateView({
+    type: "list",
+    items: Array.from({ length: 24 }, (_, i) => ({ text: `doc ${i}`, detail: "b".repeat(19_000) })),
+  });
+  assert.equal(documentView.ok, true, "document cap covers detail-bearing views");
+  const plainView = validateView({
+    type: "list",
+    items: Array.from({ length: 160 }, () => "c".repeat(VIEW_MAX_CELL_CHARS)),
+  });
+  assert.equal(plainView.ok, true);
+  if (plainView.ok && plainView.view.type === "list") {
+    assert.ok((plainView.view.omitted ?? 0) > 0, "plain rows still drop under 64KB");
+  }
+});
+
+test("view contract: graph views validate nodes, edges and references", () => {
+  const graph = validateView({
+    type: "graph",
+    title: "Delegation",
+    nodes: [
+      { id: "parent", label: "Orchestrator", kind: "parent", status: "active" },
+      { id: "child-1", label: "worker", kind: "child", status: "active", detail: "Milestone: landed" },
+      { id: "child-2", label: "reviewer", kind: "review", status: "done" },
+    ],
+    edges: [
+      { from: "parent", to: "child-1", label: "handoff" },
+      { from: "child-1", to: "child-2", label: "review" },
+    ],
+  });
+  assert.equal(graph.ok, true);
+  if (graph.ok) {
+    assert.equal(graph.view.type, "graph");
+    if (graph.view.type === "graph") {
+      assert.equal(graph.view.nodes.length, 3);
+      assert.equal(graph.view.edges.length, 2);
+      assert.equal(graph.view.edges[0].label, "handoff");
+    }
+  }
+
+  // Structural errors
+  assert.equal(validateView({ type: "graph", nodes: "nope", edges: [] }).ok, false);
+  assert.equal(validateView({ type: "graph", nodes: [{ id: "a", label: "A" }], edges: [{ from: "a", to: "ghost" }] }).ok, false);
+  assert.equal(validateView({
+    type: "graph",
+    nodes: [{ id: "a", label: "A" }, { id: "a", label: "Again" }],
+    edges: [],
+  }).ok, false, "duplicate node ids are rejected");
+  assert.equal(validateView({ type: "graph", nodes: [{ id: "a", label: "A", role: "boss" }], edges: [] }).ok, false);
+  assert.equal(validateView({ type: "graph", nodes: [{ id: "a", label: "A", kind: "robot" }], edges: [] }).ok, false);
+  assert.equal(validateView({ type: "graph", nodes: [{ id: "a", label: "A", status: "sleepy" }], edges: [] }).ok, false);
+  assert.equal(validateView({ type: "graph", nodes: [{ label: "no id" }], edges: [] }).ok, false);
+  assert.equal(validateView({ type: "graph", nodes: [{ id: "a", label: "A" }], edges: [{ from: "a" }] }).ok, false);
+
+  // Node and edge caps report omissions instead of failing
+  const many = validateView({
+    type: "graph",
+    nodes: Array.from({ length: 120 }, (_, i) => ({ id: `n${i}`, label: `N${i}` })),
+    edges: Array.from({ length: 220 }, (_, i) => ({ from: "n0", to: `n${(i % 100) + 1}` })),
+  });
+  assert.equal(many.ok, true);
+  if (many.ok && many.view.type === "graph") {
+    assert.equal(many.view.nodes.length, 100);
+    assert.equal(many.view.edges.length, 200);
+    assert.ok((many.view.omitted ?? 0) >= 40);
   }
 });
 

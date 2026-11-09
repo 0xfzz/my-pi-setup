@@ -107,10 +107,29 @@ test("validateActions: invalid actions are rejected", () => {
   assert.equal(validateActions([{ id: "valid-id", title: "   ", confirm: "c" }]).ok, false);
   assert.equal(validateActions([{ id: "valid-id", title: 123, confirm: "c" }]).ok, false);
 
-  // Missing or empty confirm
+  // Missing or empty confirm (an omitted confirm is the instant-action form)
   assert.equal(validateActions([{ id: "valid-id", title: "Title", confirm: "" }]).ok, false);
   assert.equal(validateActions([{ id: "valid-id", title: "Title", confirm: "   " }]).ok, false);
   assert.equal(validateActions([{ id: "valid-id", title: "Title", confirm: null }]).ok, false);
+
+  // Invalid keybindings: a bare key, trailing keys, lowercase, or junk
+  assert.equal(validateActions([{ id: "valid-id", title: "Title", keybinding: "M" }]).ok, false);
+  assert.equal(validateActions([{ id: "valid-id", title: "Title", keybinding: "alt+m" }]).ok, false);
+  assert.equal(validateActions([{ id: "valid-id", title: "Title", keybinding: "Alt+M+X" }]).ok, false);
+  assert.equal(validateActions([{ id: "valid-id", title: "Title", keybinding: "Alt" }]).ok, false);
+  assert.equal(validateActions([{ id: "valid-id", title: "Title", keybinding: 9 }]).ok, false);
+});
+
+test("validateActions: an omitted confirm marks an instant action, and a keybinding rides along", () => {
+  const res = validateActions([
+    { id: "toggle-mode", title: "Switch mode", keybinding: "Alt+M" },
+    { id: "toggle-panel", title: "Toggle panel", keybinding: "Ctrl+Shift+9" },
+  ]);
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.deepEqual(res.actions[0], { id: "toggle-mode", title: "Switch mode", keybinding: "Alt+M" });
+    assert.deepEqual(res.actions[1], { id: "toggle-panel", title: "Toggle panel", keybinding: "Ctrl+Shift+9" });
+  }
 });
 
 test("validatePlugin: accepts valid actions and rejects malformed actions", () => {

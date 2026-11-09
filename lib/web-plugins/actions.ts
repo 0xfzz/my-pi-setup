@@ -3,10 +3,23 @@ export const WEB_PLUGIN_ACTION_REQUEST_EVENT = "web-plugin:action-request";
 export const MAX_ACTIONS = 8;
 export const ACTION_ID_REGEX = /^[a-z][a-z0-9-]*$/;
 
+/**
+ * One to three modifiers plus a single letter or digit: "Alt+M", "Ctrl+Shift+P".
+ * A bare key or a trailing extra key is rejected, and so is every lowercase form.
+ */
+export const ACTION_KEYBINDING_REGEX = /^(?:(?:Alt|Ctrl|Meta|Shift)\+){1,3}(?:[A-Z]|[0-9])$/;
+
 export interface ActionDescriptor {
   id: string;
   title: string;
-  confirm: string;
+  /**
+   * Exact string the user must type before the action is submitted. Optional
+   * only for actions a plugin-actions PRD names as instant (reversible,
+   * low blast radius); a declared confirm is still enforced byte-identically.
+   */
+  confirm?: string;
+  /** Host-registered keyboard shortcut that submits this action directly. */
+  keybinding?: string;
 }
 
 export interface ActionRequestPayload {
@@ -57,17 +70,29 @@ export function validateActions(input: unknown): ValidateActionsResult {
       };
     }
 
-    if (typeof raw.confirm !== "string" || raw.confirm.trim().length === 0) {
-      return {
-        ok: false,
-        error: `Action "${raw.id}": confirm is missing or empty`,
-      };
+    if (raw.confirm !== undefined) {
+      if (typeof raw.confirm !== "string" || raw.confirm.trim().length === 0) {
+        return {
+          ok: false,
+          error: `Action "${raw.id}": confirm is missing or empty`,
+        };
+      }
+    }
+
+    if (raw.keybinding !== undefined) {
+      if (typeof raw.keybinding !== "string" || !ACTION_KEYBINDING_REGEX.test(raw.keybinding)) {
+        return {
+          ok: false,
+          error: `Action "${raw.id}": keybinding must look like Alt+M (one to three modifiers, then one letter or digit)`,
+        };
+      }
     }
 
     cleanActions.push({
       id: raw.id,
       title: raw.title,
-      confirm: raw.confirm,
+      ...(typeof raw.confirm === "string" ? { confirm: raw.confirm } : {}),
+      ...(typeof raw.keybinding === "string" ? { keybinding: raw.keybinding } : {}),
     });
   }
 
