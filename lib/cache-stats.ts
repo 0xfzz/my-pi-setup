@@ -97,3 +97,34 @@ export function cacheRows(last: CacheSample | undefined, totals: CacheTotals): C
   }
   return { rows, tone: (last.hitRate ?? 0) >= 0.8 ? "success" : undefined };
 }
+
+export interface CacheWebRow {
+  label: string;
+  value: string;
+}
+
+export interface CacheWebView {
+  title: string;
+  rows: CacheWebRow[];
+}
+
+/**
+ * The same facts as {@link cacheRows}, shaped as label/value rows for the web
+ * plugin surface. The first row is what a compact strip shows, so it answers
+ * "did the last request hit the cache?" on its own.
+ */
+export function cacheWebView(last: CacheSample | undefined, totals: CacheTotals): CacheWebView {
+  if (!last) {
+    return { title: "Cache", rows: [{ label: "Status", value: "No prompt-cache data yet" }] };
+  }
+  const rows: CacheWebRow[] = [
+    { label: "Last request", value: `${percent(last.hitRate)} hit · ${tokens(last.read)} read` },
+    { label: "Session", value: `${percent(totals.prompt ? totals.read / totals.prompt : undefined)} · ${totals.requests} req` },
+  ];
+  if (last.read === 0 && last.write === 0) {
+    rows.push({ label: "Provider", value: "reports no cache" });
+  } else if (isCostlyMiss(last)) {
+    rows.push({ label: "Miss", value: `${tokens(last.fresh)} new${last.write ? ` · ${tokens(last.write)} written` : ""}` });
+  }
+  return { title: `Cache ${percent(last.hitRate)}`, rows };
+}

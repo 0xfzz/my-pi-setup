@@ -7,8 +7,9 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { lastCachePlan, resetCachePlan } from "../lib/cache-anchor.ts";
-import { addSample, cacheRows, emptyTotals, sampleOf, type CacheSample } from "../lib/cache-stats.ts";
+import { addSample, cacheRows, cacheWebView, emptyTotals, sampleOf, type CacheSample } from "../lib/cache-stats.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
+import { publishWebView } from "../lib/web-plugins/publisher.ts";
 
 export default function cacheStatsExtension(pi: ExtensionAPI): void {
   let totals = emptyTotals();
@@ -26,6 +27,10 @@ export default function cacheStatsExtension(pi: ExtensionAPI): void {
       rows: skipped ? [...view.rows, `breakpoint: ${skipped}`] : view.rows,
       hint: "prompt cache · read / new",
     });
+    // The web surface mirrors the sidebar: hidden until a provider reports
+    // prompt tokens, then the last-request row leads because a compact strip
+    // shows only the first row.
+    if (last) publishWebView(pi, "cache-stats", { type: "kv", ...cacheWebView(last, totals) });
   };
 
   pi.on("session_start", () => { totals = emptyTotals(); last = undefined; resetCachePlan(); publish(); });
