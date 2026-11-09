@@ -12,10 +12,21 @@ export const VALID_SLOTS: readonly WebPluginSlot[] = [
   "floating",
 ];
 
+/** Base UI regions a plugin may replace with a declarative view. */
+export type WebPluginRegion = "header" | "status" | "transcript" | "composer";
+
+export const VALID_REGIONS: readonly WebPluginRegion[] = [
+  "header",
+  "status",
+  "transcript",
+  "composer",
+];
+
 export type WebPluginSurface =
   | { kind: "sidebar" }
   | { kind: "page"; path: string }
-  | { kind: "slot"; slot: WebPluginSlot };
+  | { kind: "slot"; slot: WebPluginSlot }
+  | { kind: "override"; region: WebPluginRegion };
 
 export interface WebPluginDescriptor {
   id: string;
@@ -125,6 +136,17 @@ export function validatePlugin(
           };
         }
         cleanSurfaces.push({ kind: "slot", slot: s.slot as WebPluginSlot });
+      } else if (s.kind === "override") {
+        if (
+          typeof s.region !== "string" ||
+          !VALID_REGIONS.includes(s.region as WebPluginRegion)
+        ) {
+          return {
+            ok: false,
+            error: `Plugin "${pluginName}": invalid override region "${String(s.region)}"`,
+          };
+        }
+        cleanSurfaces.push({ kind: "override", region: s.region as WebPluginRegion });
       } else {
         return {
           ok: false,

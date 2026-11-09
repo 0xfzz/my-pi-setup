@@ -13,7 +13,8 @@ import {
   type AgentEventLike,
 } from "./wire.ts";
 import type { SessionCore } from "./sessions.ts";
-import { recordExtensionUi, webUiStore } from "./plugin-host.ts";
+import { getRegisteredPlugins, recordExtensionUi, webUiStore } from "./plugin-host.ts";
+import { resolveRegionOverrides } from "../shared/regions.ts";
 
 const TOOL_UPDATE_COALESCE_MS = 150;
 const STREAM_HIGH_WATER_MARK_BYTES = 512 * 1024;
@@ -164,12 +165,17 @@ export function attachAgentEventStream(
       const sendPluginState = (): void => {
         const snapshot = webUiStore.snapshot();
         const sessionState = snapshot.sessions[sessionId];
+        const views = sessionState?.views ?? {};
         const frame = {
           type: "plugin_state" as const,
           revision: snapshot.revision,
-          views: sessionState?.views ?? {},
+          views,
           working: sessionState?.working ?? null,
           running: sessionState?.running ?? false,
+          // Region override conflicts are host-resolved diagnostics: the
+          // client renders overrides from the same views, and every conflict
+          // (several plugins overriding one region) stays visible here.
+          regionConflicts: resolveRegionOverrides(getRegisteredPlugins(), views).conflicts,
         };
         const json = JSON.stringify(frame);
         if (json === lastPluginStateJson) return;

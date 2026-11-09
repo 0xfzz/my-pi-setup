@@ -486,6 +486,15 @@ export function checkAndSeedFixtures(store = webPluginsStore): void {
     if (!store.getView(testSessionId, "subagent-monitor")) {
       store.recordView(testSessionId, "subagent-monitor", monitorFixtureGraph("seeded"));
     }
+    // The reference override plugin, seeded so the e2e can prove the
+    // composer region renders a plugin view instead of the built-in input.
+    if (!store.getView(testSessionId, "example-override")) {
+      store.recordView(testSessionId, "example-override", {
+        type: "status",
+        tone: "accent",
+        text: "Composer replaced (fixture)",
+      });
+    }
     if (!seededWorkingSessions.has(testSessionId)) {
       recordWorkingUi(testSessionId, { message: "Ratiocinating..." });
       seededWorkingSessions.add(testSessionId);

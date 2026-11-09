@@ -1,6 +1,7 @@
 import { artifactsPlugin } from "./artifacts.ts";
 import { bubblySpinnerPlugin } from "./bubbly-spinner.ts";
 import { cacheStatsPlugin } from "./cache-stats.ts";
+import { exampleOverridePlugin } from "./example-override.ts";
 import { modesPlugin } from "./modes.ts";
 import { subagentCheckpointsPlugin } from "./subagent-checkpoints.ts";
 import { subagentMonitorPlugin } from "./subagent-monitor.ts";
@@ -15,6 +16,7 @@ export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [
   subagentMonitorPlugin,
   bubblySpinnerPlugin,
   modesPlugin,
+  exampleOverridePlugin,
 ];
 
 export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {

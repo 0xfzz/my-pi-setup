@@ -11,5 +11,5 @@
     "types": ["node"],
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
-  "include": ["client/**/*.ts", "client/**/*.tsx", "server/**/*.ts"]
+  "include": ["client/**/*.ts", "client/**/*.tsx", "server/**/*.ts", "shared/**/*.ts"]
 }

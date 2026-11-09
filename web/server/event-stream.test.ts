@@ -169,6 +169,9 @@ test("events stream carries plugin_state frames for the session's views", async 
   // handleEvent), not on the extension bus — capture it so the test can
   // emit agent lifecycle events the way a real session would.
   let sessionListener: ((event: unknown) => void) | null = null;
+  const emitSessionEvent = (event: unknown): void => {
+    sessionListener?.(event);
+  };
   const core: SessionCore = {
     sessionId: "plugin-stream",
     subscribe: (next: (event: unknown) => void) => {
@@ -209,7 +212,7 @@ test("events stream carries plugin_state frames for the session's views", async 
 
     // Lifecycle events arrive on the session event listener; the stream
     // records them and the running flag flips in the next plugin_state frame.
-    sessionListener?.({ type: "agent_start" });
+    emitSessionEvent({ type: "agent_start" });
     await readUntil(
       (text) => text.includes("\"type\":\"plugin_state\"") && text.includes("\"running\":true"),
     );

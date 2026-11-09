@@ -241,6 +241,35 @@ body {
   animation: msg-toolcall-pulse 1.2s ease-in-out infinite;
 }
 
+/* Region overrides: a plugin's declarative view replaces a base region. */
+.app-region-override {
+  width: 100%;
+  min-width: 0;
+}
+
+.app-header .app-region-override .plugin-view {
+  margin: 0;
+}
+
+.app-header-status .app-region-override {
+  display: inline-flex;
+}
+
+.app-region-conflicts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 16px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-region-conflict {
+  color: var(--error);
+  opacity: 0.85;
+  font-size: 11px;
+}
+
 /* Base region: composer */
 .app-composer {
   flex: none;

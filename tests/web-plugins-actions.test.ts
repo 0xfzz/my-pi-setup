@@ -302,7 +302,7 @@ test("AC4: dashboard extension ignores unrecognised action requests and guards p
 });
 
 test("phase 6 slot surfaces: validation and placement mapping", () => {
-  const known = ["cache-stats.ts", "todo.ts", "artifacts.ts", "subagent-checkpoints.ts", "dashboard.ts"];
+  const known = ["cache-stats.ts", "todo.ts", "artifacts.ts", "subagent-checkpoints.ts", "dashboard.ts", "example-override.ts"];
 
   // Valid slot surfaces
   for (const slot of ["top", "center", "bottom", "floating"] as const) {
@@ -353,4 +353,43 @@ test("phase 6 slot surfaces: validation and placement mapping", () => {
   const pageSurface = monitor.surfaces.find((s) => s.kind === "page");
   assert.ok(pageSurface && pageSurface.kind === "page", "the monitor must keep its page surface");
   assert.equal(pageSurface.path, "/plugins/subagent-monitor");
+});
+
+test("override surfaces validate against the region vocabulary", () => {
+  const known = ["cache-stats.ts", "todo.ts", "artifacts.ts", "subagent-checkpoints.ts", "dashboard.ts", "example-override.ts"];
+
+  for (const region of ["header", "status", "transcript", "composer"] as const) {
+    const valid = validatePlugin(
+      {
+        id: "override-demo",
+        extension: "cache-stats",
+        title: "Override demo",
+        surfaces: [{ kind: "override", region }],
+      },
+      known,
+    );
+    assert.ok(valid.ok, `region ${region} must validate`);
+  }
+
+  for (const bad of ["sidebar", "top", "nonsense"]) {
+    const invalid = validatePlugin(
+      {
+        id: "override-demo",
+        extension: "cache-stats",
+        title: "Override demo",
+        surfaces: [{ kind: "override", region: bad }],
+      },
+      known,
+    );
+    assert.equal(invalid.ok, false, `region ${bad} must be rejected`);
+    assert.match(invalid.error, /invalid override region/);
+  }
+
+  // The reference plugin is registered and passes the same validation.
+  const example = WEB_PLUGINS.find((p) => p.id === "example-override");
+  assert.ok(example, "the example-override plugin must be registered");
+  const overrideSurface = example?.surfaces.find((s) => s.kind === "override");
+  assert.ok(overrideSurface && overrideSurface.kind === "override");
+  assert.equal(overrideSurface.region, "composer");
+  assert.equal(example?.actions?.some((a) => a.id === "replace-composer"), true);
 });

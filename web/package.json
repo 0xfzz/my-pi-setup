@@ -13,7 +13,7 @@
     "start": "tsx server/main.ts",
     "dev": "npm run build && npm run start",
     "check": "tsc --noEmit",
-    "test": "npm run build && node --experimental-strip-types --test server/*.test.ts client/*.test.ts"
+    "test": "npm run build && node --experimental-strip-types --test server/*.test.ts client/*.test.ts shared/*.test.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.5.0",
