@@ -3,6 +3,7 @@ import { validateView, type WebView } from "./view.ts";
 
 export const WEB_UI_EVENT = "web-ui:event";
 export interface WorkingModel { message: string | null; visible: boolean; frames: string[] | null; intervalMs: number }
+export interface WebNotification { id: string; message: string; level: "info" | "warning" | "error"; timestamp: number }
 export interface WebUiPayloads {
   "ui.working.changed": Partial<WorkingModel>;
   "ui.status.changed": { key: string; text: string | null };
@@ -14,6 +15,8 @@ export interface WebUiPayloads {
   "ui.layout.changed": { pluginId: string; contributionId: string; placement: WebPluginPlacement };
   "ui.session.lifecycle": { running: boolean; closed?: boolean; project?: string };
   "ui.plugin.action-requested": { pluginId: string; actionId: string; requestId: string };
+  /** Transient toast; the host keeps a bounded per-session list. */
+  "ui.notify": { message: string; level: "info" | "warning" | "error" };
 }
 export type WebUiType = keyof WebUiPayloads;
 export type WebUiEvent<K extends WebUiType = WebUiType> = K extends WebUiType ? {
@@ -62,6 +65,7 @@ export function validateWebUiEvent(input: unknown): UiValidation {
       "ui.title.changed": ["text"], "ui.editor.changed": ["text"], "ui.view.changed": ["pluginId", "view"],
       "ui.layout.changed": ["pluginId", "contributionId", "placement"], "ui.session.lifecycle": ["running", "closed", "project"],
       "ui.plugin.action-requested": ["pluginId", "actionId", "requestId"],
+      "ui.notify": ["message", "level"],
     };
     const allowed = fields[e.type as WebUiType];
     if (!allowed || Object.keys(p).some(k => !allowed.includes(k))) throw new Error("unknown event type or payload fields");
@@ -87,6 +91,7 @@ export function validateWebUiEvent(input: unknown): UiValidation {
       }
       case "ui.session.lifecycle": valid = typeof p.running === "boolean" && (p.closed === undefined || typeof p.closed === "boolean") && (p.project === undefined || text(p.project, 4096)); break;
       case "ui.plugin.action-requested": valid = key(p.pluginId) && key(p.actionId) && key(p.requestId); break;
+      case "ui.notify": valid = text(p.message, 2000) && ["info", "warning", "error"].includes(String(p.level)); break;
     }
     if (!valid) throw new Error(`invalid ${String(e.type)} payload`);
     return { ok: true, event: e as WebUiEvent };

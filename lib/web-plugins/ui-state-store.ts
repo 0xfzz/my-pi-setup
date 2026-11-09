@@ -1,4 +1,4 @@
-import { validateWebUiEvent, type WebUiEvent, type WebUiType, type WorkingModel } from "./ui-event-models.ts";
+import { validateWebUiEvent, type WebUiEvent, type WebUiType, type WorkingModel, type WebNotification } from "./ui-event-models.ts";
 import type { WebPluginPlacement } from "./ui-contracts.ts";
 import type { WebView } from "./view.ts";
 
@@ -11,6 +11,8 @@ export interface WebUiSessionState {
   title: string; editor: string;
   views: Record<string, WebView>;
   layouts: Record<string, WebPluginPlacement>;
+  /** Transient toasts, newest last, bounded; the client expires them. */
+  notifications: WebNotification[];
 }
 export interface WebUiDiagnostic { sessionId: string; sourceKey: string; message: string; timestamp: number }
 export interface WebUiSnapshot {
@@ -21,7 +23,7 @@ export interface WebUiSnapshot {
 }
 interface StoredEvent { revision: number; event: WebUiEvent }
 function freshSession(): WebUiSessionState {
-  return { revision: 0, running: false, closed: false, working: { message: null, visible: true, frames: null, intervalMs: 80 }, statuses: {}, widgets: {}, custom: {}, title: "", editor: "", views: {}, layouts: {} };
+  return { revision: 0, running: false, closed: false, working: { message: null, visible: true, frames: null, intervalMs: 80 }, statuses: {}, widgets: {}, custom: {}, title: "", editor: "", views: {}, layouts: {}, notifications: [] };
 }
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === "object") { Object.freeze(value); for (const v of Object.values(value)) deepFreeze(v); }
@@ -90,6 +92,23 @@ export class WebUiStore {
       case "ui.layout.changed": s.layouts[`${e.payload.pluginId}/${e.payload.contributionId}`] = e.payload.placement; break;
       case "ui.session.lifecycle": s.running = e.payload.running; s.closed = e.payload.closed ?? false; if (e.payload.project !== undefined) s.project = e.payload.project; break;
       case "ui.plugin.action-requested": break;
+      case "ui.notify": {
+        // Newest last; identical consecutive messages replace their twin so
+        // a looping producer cannot stack duplicates.
+        const last = s.notifications[s.notifications.length - 1];
+        if (last !== undefined && last.message === e.payload.message && last.level === e.payload.level) {
+          s.notifications[s.notifications.length - 1] = { ...last, timestamp: e.timestamp };
+        } else {
+          s.notifications.push({
+            id: e.eventId,
+            message: e.payload.message,
+            level: e.payload.level,
+            timestamp: e.timestamp,
+          });
+        }
+        if (s.notifications.length > 8) s.notifications.splice(0, s.notifications.length - 8);
+        break;
+      }
     }
     this.state.sessions[e.sessionId] = s;
     this.state.metrics.accepted++;

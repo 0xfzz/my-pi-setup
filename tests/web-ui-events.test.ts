@@ -29,6 +29,28 @@ test("UI store: working message, visibility, frames, interval and resets survive
   assert.equal(store.snapshot().sessions["session-a"].working.message, null);
   assert.throws(() => { store.snapshot().sessions["session-a"].working.message = "mutated"; });
 });
+
+test("UI store: ui.notify toasts are bounded and consecutive duplicates refresh", () => {
+  const store = new WebUiStore();
+  assert.equal(store.publish("session-a", "ui.notify", { message: "saved", level: "info" }), true);
+  assert.equal(store.publish("session-a", "ui.notify", { message: "failed", level: "error" }), true);
+  // An identical repeat refreshes the twin instead of stacking.
+  assert.equal(store.publish("session-a", "ui.notify", { message: "failed", level: "error" }), true);
+  let notifications = store.snapshot().sessions["session-a"].notifications;
+  assert.equal(notifications.length, 2);
+  assert.deepEqual(
+    notifications.map(n => ({ message: n.message, level: n.level })),
+    [{ message: "saved", level: "info" }, { message: "failed", level: "error" }],
+  );
+  // Invalid payloads are rejected, not stored.
+  assert.equal(store.publish("session-a", "ui.notify", { message: "x", level: "loud" }), false);
+  assert.equal(store.publish("session-a", "ui.notify", { message: "x" }), false);
+  // Bounded: a burst keeps only the last 8.
+  for (let i = 0; i < 12; i++) store.publish("session-a", "ui.notify", { message: `m${i}`, level: "info" });
+  notifications = store.snapshot().sessions["session-a"].notifications;
+  assert.equal(notifications.length, 8);
+  assert.equal(notifications[notifications.length - 1].message, "m11");
+});
 test("UI store: sessions, views, status/widget clears and layout revisions are isolated", () => {
   const store = new WebUiStore();
   for (const id of ["a", "b"]) {

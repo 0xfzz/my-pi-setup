@@ -160,6 +160,22 @@ async function run() {
     await working.waitFor({ state: "visible", timeout: 15_000 });
     assert.ok((await working.textContent())?.includes("Ratiocinating"));
 
+    step("4d: popups — toast, status chip, editor widget");
+    // 4d. The web UI primitives: a seeded toast, a status chip in the header
+    //     and an editor widget above the composer.
+    const fixtureToast = page.locator(".app-toast", { hasText: "Fixture toast" });
+    await fixtureToast.waitFor({ state: "visible", timeout: 10_000 });
+    await page.locator(".app-status-chip", { hasText: "fixture ready" }).waitFor({
+      state: "visible",
+      timeout: 10_000,
+    });
+    await page.locator(".app-widget-lines", { hasText: "fixture widget line" }).waitFor({
+      state: "visible",
+      timeout: 10_000,
+    });
+    // The toast expires client-side.
+    await fixtureToast.waitFor({ state: "hidden", timeout: 12_000 });
+
     step("4b: realtime streaming + markdown + tool calls");
     // 4b. Realtime streaming, markdown and collapsible tool calls: the
     //     fixture session simulates a full agent turn when prompted (its

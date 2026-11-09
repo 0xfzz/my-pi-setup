@@ -168,6 +168,29 @@ conflict is reported in the `plugin_state` frame and shown as a banner.
 spinner's TUI data through the unified UI store); the transcript's
 working line animates them while the session reports itself running.
 
+## Popups and the web UI primitives
+
+The web core ports pi's TUI interaction primitives, so any extension can
+bridge its TUI UI to the web without web-specific code. Extensions publish
+the same `ui.*` events in both hosts (`publishWebUi` in
+`lib/web-plugins/publisher.ts`); the unified store keeps per-session state
+and the event stream ships it in every `plugin_state` frame. The client
+renders them in the same slots the TUI uses:
+
+| Event | TUI primitive | Web rendering |
+| --- | --- | --- |
+| `ui.notify` | `ctx.ui.notify` | bottom-right toast, auto-expires after 6s, level-colored |
+| `ui.status.changed` | `ctx.ui.setStatus` (footer) | status chips in the header |
+| `ui.widget.changed` | `ctx.ui.setWidget` | bordered line blocks above/below the composer |
+| `ui.custom.changed` | custom full-screen view | centered popup panel(s) of lines |
+| `ui_prompt_start`/`end` (forwarded by the web extension) | select/confirm/input dialog | banner: pi is blocked on a terminal dialog |
+
+This is the "TUI design system" surface: a new dialog-ish primitive lands
+in the event model + store + client once, and every extension can use it
+from either host. The TUI's own `ctx.ui.notify`/`setStatus`/`setWidget`
+calls do not emit events, so bridging them means also calling `publishWebUi`
+from the extension — the contract lives in `lib/web-plugins/ui-contracts.ts`.
+
 ## Verification
 
 The root gate covers the whole repo:

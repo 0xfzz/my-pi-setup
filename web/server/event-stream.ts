@@ -172,6 +172,13 @@ export function attachAgentEventStream(
           views,
           working: sessionState?.working ?? null,
           running: sessionState?.running ?? false,
+          // The web port of the TUI's UI primitives: footer statuses, editor
+          // widgets, custom popups and transient notifications, all driven
+          // by the same ui.* events extensions publish.
+          statuses: sessionState?.statuses ?? {},
+          widgets: sessionState?.widgets ?? {},
+          custom: sessionState?.custom ?? {},
+          notifications: sessionState?.notifications ?? [],
           // Region override conflicts are host-resolved diagnostics: the
           // client renders overrides from the same views, and every conflict
           // (several plugins overriding one region) stays visible here.

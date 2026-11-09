@@ -396,6 +396,8 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     if (bridgeSessionId !== null) void postBridgeState(bridgeSessionId, { isStreaming: true });
   });
   pi.on("agent_end", forwardToBridge);
+  pi.on("ui_prompt_start", forwardToBridge);
+  pi.on("ui_prompt_end", forwardToBridge);
   pi.on("agent_settled", (event, ctx) => {
     forwardToBridge(event);
     if (bridgeSessionId !== null) {

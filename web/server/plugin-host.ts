@@ -501,6 +501,15 @@ export function checkAndSeedFixtures(store = webPluginsStore): void {
     }
     if (!seededWorkingSessions.has(testSessionId)) {
       recordWorkingUi(testSessionId, { message: "Ratiocinating..." });
+      // The web UI primitives the e2e checks: a toast, a status chip and an
+      // editor widget, all driven through the same store.
+      webUiStore.publish(testSessionId, "ui.notify", { message: "Fixture toast: sync complete", level: "info" });
+      webUiStore.publish(testSessionId, "ui.status.changed", { key: "fixture-status", text: "fixture ready" });
+      webUiStore.publish(testSessionId, "ui.widget.changed", {
+        key: "fixture-widget",
+        lines: ["fixture widget line"],
+        placement: "aboveEditor",
+      });
       seededWorkingSessions.add(testSessionId);
     }
   }

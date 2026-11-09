@@ -870,6 +870,151 @@ body {
   cursor: default;
 }
 
+/* The web port of the TUI UI primitives. */
+/* Toasts: transient notifications, bottom-right. */
+.app-toasts {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 360px;
+}
+
+.app-toast {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--fg);
+  font-size: 13px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  animation: toast-in 160ms ease-out;
+}
+
+.app-toast-warning {
+  border-color: #d9a03d;
+  color: #e8c37a;
+}
+
+.app-toast-error {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Status chips (the web's footer status line). */
+.app-status-chips {
+  display: inline-flex;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.app-status-chip {
+  color: var(--fg-faint);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+/* Editor widgets: bordered line blocks around the composer. */
+.app-widgets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 812px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 0 16px;
+}
+
+.app-widget-lines {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--fg-dim);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+/* Custom popups: centered stacked panels. */
+.app-custom-popups {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 45;
+  pointer-events: none;
+}
+
+.app-custom-popup {
+  pointer-events: auto;
+  min-width: 280px;
+  max-width: min(560px, calc(100vw - 32px));
+  max-height: 60vh;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-custom-popup-head {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-custom-popup-title {
+  font-weight: 650;
+  font-size: 13px;
+}
+
+.app-custom-popup-lines {
+  margin: 0;
+  padding: 12px 14px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+/* The TUI-dialog banner. */
+.app-tui-prompt-banner {
+  flex: none;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(217, 160, 61, 0.08);
+  color: #d9a03d;
+  font-size: 12px;
+}
+
 /* Markdown bodies: assistant replies and plugin detail. */
 .markdown-body > :first-child {
   margin-top: 0;

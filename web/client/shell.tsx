@@ -10,6 +10,7 @@ import { Transcript } from "./transcript.tsx";
 import { Composer } from "./composer.tsx";
 import { SessionSidebar } from "./sidebar.tsx";
 import { NewSessionDialog } from "./new-session-dialog.tsx";
+import { CustomPopups, EditorWidgets, StatusChips, ToastStack, UiPromptBanner } from "./popups.tsx";
 import { SlotHost } from "./plugins/slots.tsx";
 import { PluginActionShortcuts } from "./plugins/PluginActionShortcuts.tsx";
 import { PluginPage, parsePluginRoute } from "./plugins/PluginLayout.tsx";
@@ -100,6 +101,7 @@ export function AppShell() {
           ) : (
             <header className="app-header">
               {headerCwd !== "" ? <span className="app-subtitle">{headerCwd}</span> : null}
+              <StatusChips statuses={session.statuses} />
               <span className="app-header-status">
                 {regions.status !== undefined ? (
                   <RegionOverrideView override={regions.status} region="status" />
@@ -109,6 +111,7 @@ export function AppShell() {
               </span>
             </header>
           )}
+          <UiPromptBanner prompt={session.uiPrompt} />
           {conflicts.length > 0 ? (
             <div className="app-region-conflicts" role="status">
               {conflicts.map((conflict) => (
@@ -135,6 +138,7 @@ export function AppShell() {
             />
           )}
           <SlotHost slot="center" plugins={session.plugins} views={session.pluginViews} />
+          <EditorWidgets widgets={session.widgets} placement="aboveEditor" />
           {regions.composer !== undefined ? (
             <div className="app-composer app-composer-override">
               <RegionOverrideView override={regions.composer} region="composer" />
@@ -154,10 +158,13 @@ export function AppShell() {
               }}
             />
           )}
+          <EditorWidgets widgets={session.widgets} placement="belowEditor" />
           <SlotHost slot="bottom" plugins={session.plugins} views={session.pluginViews} />
         </div>
       </div>
       <SlotHost slot="floating" plugins={session.plugins} views={session.pluginViews} />
+      <CustomPopups custom={session.custom} />
+      <ToastStack notifications={session.notifications} />
       <PluginActionShortcuts plugins={session.plugins} sessionId={session.selectedId} />
       <NewSessionDialog
         open={newSessionOpen}

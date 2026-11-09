@@ -16,6 +16,28 @@ import {
 import { BUILTIN_COMMANDS, type WebCommand } from "../shared/commands.ts";
 import type { WebPluginDescriptor, WebView, WorkingModelLike } from "./plugins/contract.ts";
 
+export interface WebNotificationLike {
+  id: string;
+  message: string;
+  level: "info" | "warning" | "error";
+  timestamp: number;
+}
+
+export interface WidgetModelLike {
+  lines: string[];
+  placement: "aboveEditor" | "belowEditor";
+}
+
+export interface CustomPanelLike {
+  method: string;
+  lines: string[] | null;
+}
+
+export interface UiPromptLike {
+  kind: string;
+  title?: string;
+}
+
 export interface SessionSummary {
   id: string;
   cwd: string;
@@ -167,6 +189,16 @@ export function usePiSession() {
   const [pluginViews, setPluginViews] = useState<Record<string, WebView>>({});
   const [working, setWorking] = useState<WorkingModelLike | null>(null);
   const [uiRunning, setUiRunning] = useState(false);
+  /** Footer-style status lines (ui.status.changed). */
+  const [statuses, setStatuses] = useState<Record<string, string>>({});
+  /** Editor widgets (ui.widget.changed), rendered above/below the composer. */
+  const [widgets, setWidgets] = useState<Record<string, WidgetModelLike>>({});
+  /** Custom panels (ui.custom.changed) — the web's popup primitive. */
+  const [custom, setCustom] = useState<Record<string, CustomPanelLike>>({});
+  /** Transient toasts (ui.notify). */
+  const [notifications, setNotifications] = useState<WebNotificationLike[]>([]);
+  /** A TUI-side dialog is open (ui_prompt_start); the web can only say so. */
+  const [uiPrompt, setUiPrompt] = useState<UiPromptLike | null>(null);
   const [toolResults, setToolResults] = useState<Record<string, ToolResultLike>>({});
   /** Last prompt delivery failure, shown at the composer until the next send. */
   const [sendError, setSendError] = useState<string | null>(null);
@@ -239,6 +271,11 @@ export function usePiSession() {
     setPluginViews({});
     setWorking(null);
     setUiRunning(false);
+    setStatuses({});
+    setWidgets({});
+    setCustom({});
+    setNotifications([]);
+    setUiPrompt(null);
     setToolResults({});
     setSessionCommands([]);
     streamingRef.current = INITIAL_STREAMING_STATE;
@@ -535,8 +572,24 @@ export function usePiSession() {
           setPluginViews((data.views ?? {}) as Record<string, WebView>);
           setWorking((data.working ?? null) as WorkingModelLike | null);
           setUiRunning(data.running === true);
+          setStatuses((data.statuses ?? {}) as Record<string, string>);
+          setWidgets((data.widgets ?? {}) as Record<string, WidgetModelLike>);
+          setCustom((data.custom ?? {}) as Record<string, CustomPanelLike>);
+          setNotifications((data.notifications ?? []) as WebNotificationLike[]);
           break;
         }
+        case "ui_prompt_start": {
+          // A TUI-side extension dialog opened (select/confirm/input/custom):
+          // pi is blocked on it there; the web can show that it is waiting.
+          setUiPrompt({
+            kind: typeof data.kind === "string" ? data.kind : "dialog",
+            ...(typeof data.title === "string" ? { title: data.title } : {}),
+          });
+          break;
+        }
+        case "ui_prompt_end":
+          setUiPrompt(null);
+          break;
         default:
           // heartbeat and any future event types pass silently.
           break;
@@ -632,6 +685,11 @@ export function usePiSession() {
     pluginViews,
     working,
     uiRunning,
+    statuses,
+    widgets,
+    custom,
+    notifications,
+    uiPrompt,
     toolResults,
     sendError,
     sessionCommands,
