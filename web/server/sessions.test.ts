@@ -142,7 +142,7 @@ test("sendCommand reports unknown sessions", async () => {
   assert.deepEqual(result, { status: "not_found" });
 });
 
-test("readHistory parses user and assistant entries, skipping other roles", async () => {
+test("readHistory parses entries and tool results, skipping other roles", async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-web-history-"));
   const file = join(dir, "2026-11-09T00-00-00-000Z_abcd1234.jsonl");
   await writeFile(
@@ -162,16 +162,27 @@ test("readHistory parses user and assistant entries, skipping other roles", asyn
           ],
         },
       }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "t1",
+          toolName: "bash",
+          content: [{ type: "text", text: "plans.md" }, { type: "image", data: "x" }],
+          isError: false,
+        },
+      }),
+      JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "t2", content: "boom" , isError: true } }),
       JSON.stringify({ type: "message", message: { role: "system", content: "loadout" } }),
       "not json",
       "",
     ].join("\n"),
   );
 
-  const entries = await readHistory(file);
-  assert.equal(entries.length, 2);
-  assert.deepEqual(entries[0], { role: "user", blocks: [{ kind: "text", text: "hello pi" }] });
-  assert.deepEqual(entries[1], {
+  const history = await readHistory(file);
+  assert.equal(history.entries.length, 2);
+  assert.deepEqual(history.entries[0], { role: "user", blocks: [{ kind: "text", text: "hello pi" }] });
+  assert.deepEqual(history.entries[1], {
     role: "assistant",
     blocks: [
       { kind: "thinking", thinking: "pondering" },
@@ -179,10 +190,14 @@ test("readHistory parses user and assistant entries, skipping other roles", asyn
       { kind: "toolCall", toolCallId: "t1", toolName: "bash", rawInput: "ls" },
     ],
   });
+  // Tool results join to their calls by id; text content only, images skipped.
+  assert.deepEqual(history.toolResults.t1, { text: "plans.md", isError: false });
+  assert.deepEqual(history.toolResults.t2, { text: "boom", isError: true });
+  assert.equal(Object.keys(history.toolResults).length, 2);
 });
 
 test("readHistory returns empty for missing files", async () => {
-  assert.deepEqual(await readHistory("/no/such/file.jsonl"), []);
+  assert.deepEqual(await readHistory("/no/such/file.jsonl"), { entries: [], toolResults: {} });
 });
 
 test("listDiskSessions and resolveSessionFile scan the sessions dir", async () => {

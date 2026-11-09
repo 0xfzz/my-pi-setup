@@ -31,6 +31,28 @@ export interface ToolCallStatus {
   toolName: string;
 }
 
+/** A tool call's result, joined by toolCallId. */
+export interface ToolResultLike {
+  text: string;
+  isError: boolean;
+}
+
+/** Tool-result message content → plain text (TextContent blocks only). */
+function toolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const raw of content) {
+    if (typeof raw === "object" && raw !== null) {
+      const block = raw as { type?: unknown; text?: unknown };
+      if (block.type === "text" && typeof block.text === "string") {
+        parts.push(block.text);
+      }
+    }
+  }
+  return parts.join("\n");
+}
+
 export interface SessionStateLike {
   isStreaming: boolean;
   isBashRunning: boolean;
@@ -80,6 +102,7 @@ export function usePiSession() {
   const [pluginViews, setPluginViews] = useState<Record<string, WebView>>({});
   const [working, setWorking] = useState<WorkingModelLike | null>(null);
   const [uiRunning, setUiRunning] = useState(false);
+  const [toolResults, setToolResults] = useState<Record<string, ToolResultLike>>({});
 
   const streamingRef = useRef<StreamingState>(INITIAL_STREAMING_STATE);
   const applyStream = useCallback((action: StreamAction) => {
@@ -144,6 +167,7 @@ export function usePiSession() {
     setPluginViews({});
     setWorking(null);
     setUiRunning(false);
+    setToolResults({});
     streamingRef.current = INITIAL_STREAMING_STATE;
     setStreaming(INITIAL_STREAMING_STATE);
 
@@ -154,13 +178,29 @@ export function usePiSession() {
     let closed = false;
     setConnection("connecting");
 
+    // The history fetch and the event stream race: an assistant reply that
+    // ends while history is still loading must survive the load. Appends are
+    // buffered until the load resolves (or fails), then merged in order.
+    let historyApplied = false;
+    const pendingAppends: HistoryEntryLike[] = [];
+    const applyHistory = (
+      entries: HistoryEntryLike[],
+      diskToolResults: Record<string, ToolResultLike>,
+    ): void => {
+      if (closed) return;
+      historyApplied = true;
+      setHistory([...entries, ...pendingAppends]);
+      // Results captured live win over the disk snapshot.
+      setToolResults((prev) => ({ ...diskToolResults, ...prev }));
+    };
+
     void fetch(`/api/agent/${encodeURIComponent(selectedId)}/history`)
-      .then((res) => res.json() as Promise<{ entries?: HistoryEntryLike[] }>)
+      .then((res) => res.json() as Promise<{ entries?: HistoryEntryLike[]; toolResults?: Record<string, ToolResultLike> }>)
       .then((body) => {
-        if (!closed) setHistory(body.entries ?? []);
+        applyHistory(body.entries ?? [], body.toolResults ?? {});
       })
       .catch(() => {
-        if (!closed) setHistory([]);
+        applyHistory([], {});
       });
 
     const source = new EventSource(`/api/agent/${encodeURIComponent(selectedId)}/events`);
@@ -195,17 +235,36 @@ export function usePiSession() {
           });
           break;
         case "message_end": {
-          const message = data.message as { role?: unknown; content?: unknown } | undefined;
+          const message = data.message as {
+            role?: unknown;
+            content?: unknown;
+            toolCallId?: unknown;
+            isError?: unknown;
+          } | undefined;
           if (message?.role === "assistant") {
-            setHistory((prev) => [
-              ...prev,
-              { role: "assistant", blocks: toAssistantBlocks(message.content) },
-            ]);
+            const entry: HistoryEntryLike = {
+              role: "assistant",
+              blocks: toAssistantBlocks(message.content),
+            };
+            if (!historyApplied) {
+              pendingAppends.push(entry);
+            } else {
+              setHistory((prev) => [...prev, entry]);
+            }
             applyStream({ type: "end" });
             void fetchState(selectedId);
+          } else if (message?.role === "toolResult" && typeof message.toolCallId === "string") {
+            // Tool results arrive as their own message; join them to the
+            // assistant's tool call by id so the collapsible row can show
+            // both the input and the outcome.
+            const toolCallId = message.toolCallId;
+            const text = toolResultText(message.content);
+            setToolResults((prev) => ({
+              ...prev,
+              [toolCallId]: { text, isError: message.isError === true },
+            }));
           }
-          // User and tool-result ends are not rendered: user messages are
-          // optimistic, tool results surface as tool-call status lines.
+          // User message ends are not rendered: user messages are optimistic.
           break;
         }
         case "tool_execution_start": {
@@ -317,6 +376,7 @@ export function usePiSession() {
     pluginViews,
     working,
     uiRunning,
+    toolResults,
     newSession,
     sendPrompt,
     abort,

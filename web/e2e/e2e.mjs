@@ -135,6 +135,80 @@ async function run() {
     await working.waitFor({ state: "visible", timeout: 15_000 });
     assert.ok((await working.textContent())?.includes("Ratiocinating"));
 
+    // 4b. Realtime streaming, markdown and collapsible tool calls: the
+    //     fixture session simulates a full agent turn when prompted (its
+    //     composer region is overridden, so the prompt goes through the API).
+    await page.setViewportSize({ width: 800, height: 400 });
+    const promptRes = await fetch(`${BASE}/api/agent/__test_session__`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "prompt", message: "show the plan" }),
+    });
+    assert.equal(promptRes.status, 200);
+
+    // The streamed reply is visible before the turn completes (realtime).
+    await page.waitForFunction(
+      () => {
+        const el = document.querySelector(".msg-streaming");
+        return el !== null && (el.textContent ?? "").length > 5;
+      },
+      undefined,
+      { timeout: 10_000 },
+    );
+    const midStream = await page.evaluate(
+      () => document.querySelector(".msg-streaming")?.textContent ?? "",
+    );
+    assert.ok(
+      !midStream.includes("All checks passed"),
+      "mid-stream text must not contain the final line",
+    );
+
+    // The completed turn lands in history as rendered markdown.
+    const done = page.locator(".msg-assistant", { hasText: "All checks passed" });
+    await done.first().waitFor({ state: "visible", timeout: 15_000 });
+    assert.ok((await page.locator(".markdown-body strong").count()) >= 1, "bold renders");
+    assert.ok((await page.locator(".markdown-body li").count()) >= 2, "list items render");
+    assert.ok((await page.locator(".markdown-body pre code").count()) >= 1, "code fences render");
+    assert.ok((await page.locator(".markdown-body tbody tr").count()) >= 2, "tables render");
+    assert.ok((await page.locator(".markdown-body blockquote").count()) >= 1, "blockquotes render");
+
+    // Tool calls start collapsed, expand, and show input + result.
+    const toolToggle = page.locator(".msg-toolcall-toggle").first();
+    await toolToggle.waitFor({ state: "visible", timeout: 10_000 });
+    assert.equal(
+      await toolToggle.getAttribute("aria-expanded"),
+      "false",
+      "tool calls start collapsed",
+    );
+    await toolToggle.click();
+    const toolBody = page.locator(".msg-toolcall-body").first();
+    await toolBody.waitFor({ state: "visible", timeout: 5_000 });
+    const toolBodyText = (await toolBody.textContent()) ?? "";
+    assert.ok(toolBodyText.includes("ls plans/"), "the expanded row shows the tool input");
+    assert.ok(toolBodyText.includes("plans.md"), "the expanded row shows the tool result");
+    assert.equal(await toolToggle.getAttribute("aria-expanded"), "true", "tool calls expand");
+
+    // The jump-to-latest button appears when scrolled up and returns to the
+    // bottom on click.
+    await page.evaluate(() => {
+      const el = document.querySelector(".app-transcript");
+      if (el !== null) el.scrollTop = 0;
+    });
+    const jumpButton = page.locator(".app-jump-latest");
+    await jumpButton.waitFor({ state: "visible", timeout: 5_000 });
+    await jumpButton.click();
+    await page.waitForFunction(
+      () => {
+        const el = document.querySelector(".app-transcript");
+        if (el === null) return false;
+        return el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+      },
+      undefined,
+      { timeout: 5_000 },
+    );
+    await jumpButton.waitFor({ state: "hidden", timeout: 5_000 });
+    await page.setViewportSize({ width: 1280, height: 720 });
+
     // 5. Instant-action shortcut (before the confirmed action, so the
     //    in-flight guard is not involved): Alt+M fires the modes action and
     //    the toast confirms the relay.

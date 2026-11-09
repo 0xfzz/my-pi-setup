@@ -57,6 +57,17 @@ export interface HistoryEntry {
   blocks: HistoryBlock[];
 }
 
+/** A tool call's result, joined to its call by toolCallId. */
+export interface ToolResultEntry {
+  text: string;
+  isError: boolean;
+}
+
+export interface SessionHistory {
+  entries: HistoryEntry[];
+  toolResults: Record<string, ToolResultEntry>;
+}
+
 const liveSessions = new Map<string, SessionHandle>();
 
 function toCore(inner: AgentSession): SessionCore {
@@ -297,15 +308,32 @@ function contentToBlocks(content: unknown): HistoryBlock[] {
   return blocks;
 }
 
-/** Parse the transcript entries (user/assistant messages) from a session file. */
-export async function readHistory(sessionFile: string, limit = 200): Promise<HistoryEntry[]> {
+/** Tool-result message content → plain text (TextContent blocks only). */
+function contentToText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const raw of content) {
+    if (typeof raw === "object" && raw !== null) {
+      const block = raw as { type?: unknown; text?: unknown };
+      if (block.type === "text" && typeof block.text === "string") {
+        parts.push(block.text);
+      }
+    }
+  }
+  return parts.join("\n");
+}
+
+/** Parse the transcript entries and tool results from a session file. */
+export async function readHistory(sessionFile: string, limit = 200): Promise<SessionHistory> {
   let text: string;
   try {
     text = await readFile(sessionFile, "utf-8");
   } catch {
-    return [];
+    return { entries: [], toolResults: {} };
   }
   const entries: HistoryEntry[] = [];
+  const toolResults: Record<string, ToolResultEntry> = {};
   for (const line of text.split("\n")) {
     if (!line) continue;
     if (entries.length >= limit) break;
@@ -319,11 +347,21 @@ export async function readHistory(sessionFile: string, limit = 200): Promise<His
     const message = parsed.message;
     if (typeof message !== "object" || message === null) continue;
     const role = (message as Record<string, unknown>).role;
+    if (role === "toolResult") {
+      const toolCallId = (message as Record<string, unknown>).toolCallId;
+      if (typeof toolCallId === "string" && toolCallId !== "") {
+        toolResults[toolCallId] = {
+          text: contentToText((message as Record<string, unknown>).content),
+          isError: (message as Record<string, unknown>).isError === true,
+        };
+      }
+      continue;
+    }
     if (role !== "user" && role !== "assistant") continue;
     const blocks = contentToBlocks((message as Record<string, unknown>).content);
     if (blocks.length > 0) entries.push({ role, blocks });
   }
-  return entries;
+  return { entries, toolResults };
 }
 
 export type SessionCommand =

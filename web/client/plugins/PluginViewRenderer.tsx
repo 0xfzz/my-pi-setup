@@ -5,7 +5,7 @@
 
 import React, { useState } from "react";
 import type { GraphEdge, GraphNode, ListStatus, WebView } from "./contract.ts";
-import { MarkdownLite } from "./markdown.tsx";
+import { MarkdownBody } from "./markdown.tsx";
 
 export interface SessionStatusDotProps {
   running?: boolean;
@@ -90,7 +90,7 @@ export function StatusIcon({ status, size = 14 }: { status: ListStatus; size?: n
 function DetailBody({ detail }: { detail: string }) {
   return (
     <div className="plugin-item-detail" data-testid="plugin-item-detail">
-      <MarkdownLite text={detail} />
+      <MarkdownBody text={detail} />
     </div>
   );
 }

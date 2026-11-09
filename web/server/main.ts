@@ -275,8 +275,8 @@ async function handleApi(
       sendJson(res, 404, { error: "Session not found" });
       return true;
     }
-    const entries = await readHistory(file);
-    sendJson(res, 200, { sessionId: id, entries });
+    const history = await readHistory(file);
+    sendJson(res, 200, { sessionId: id, entries: history.entries, toolResults: history.toolResults });
     return true;
   }
 
@@ -401,19 +401,123 @@ async function main(): Promise<void> {
  * The fixture session for e2e runs (PI_WEB_TEST_PLUGIN_VIEWS=1): a live
  * session core with no real agent behind it. Its plugin views come from the
  * seeded store, its action requests flow through the seeded fixture bus, and
- * it reports itself running on connect so the working indicator renders.
+ * a prompt simulates a full agent turn — an assistant message with text and
+ * a tool call, the tool execution and result, then a second assistant reply
+ * streamed as markdown — emitted with small delays so realtime streaming,
+ * collapsible tool calls and markdown rendering are observable in a browser.
  */
 function registerFixtureSession(): void {
   const sessionId = "__test_session__";
+  let listener: ((event: unknown) => void) | null = null;
+  const emit = (event: unknown): void => {
+    listener?.(event);
+  };
+  const delay = (ms: number): Promise<void> =>
+    new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    });
+
+  const firstText = "Checking the plans directory first…";
+  const finalMarkdown = [
+    "## Result",
+    "",
+    "The plan is **ready**:",
+    "",
+    "- port the slot adapters",
+    "- verify the e2e suite",
+    "",
+    "```sh",
+    "ls plans/",
+    "```",
+    "",
+    "| step | state |",
+    "| --- | --- |",
+    "| slots | done |",
+    "| e2e | pending |",
+    "",
+    "> verified locally",
+    "",
+    "All checks passed.",
+  ].join("\n");
+
+  const chunks = (text: string, size: number): string[] => {
+    const parts: string[] = [];
+    for (let i = 0; i < text.length; i += size) {
+      parts.push(text.slice(i, i + size));
+    }
+    return parts;
+  };
+
+  const simulateTurn = async (): Promise<void> => {
+    emit({ type: "agent_start" });
+    // Assistant message 1: text + a tool call.
+    emit({ type: "message_start", message: { role: "assistant", content: [] } });
+    emit({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 0 } });
+    for (const chunk of chunks(firstText, 12)) {
+      emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: chunk } });
+      await delay(45);
+    }
+    emit({ type: "message_update", assistantMessageEvent: { type: "text_end", contentIndex: 0, content: firstText } });
+    emit({ type: "message_update", assistantMessageEvent: { type: "toolcall_start", contentIndex: 1, id: "call-1", toolName: "bash" } });
+    emit({ type: "message_update", assistantMessageEvent: { type: "toolcall_delta", contentIndex: 1, delta: '{"cmd":"ls plans/"}' } });
+    emit({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "toolcall_end",
+        contentIndex: 1,
+        toolCall: { id: "call-1", name: "bash", arguments: { cmd: "ls plans/" } },
+      },
+    });
+    emit({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: firstText },
+          { type: "toolCall", toolCallId: "call-1", toolName: "bash", rawInput: '{"cmd":"ls plans/"}' },
+        ],
+      },
+    });
+    // The tool executes and returns its result.
+    emit({ type: "tool_execution_start", toolCallId: "call-1", toolName: "bash" });
+    await delay(150);
+    emit({ type: "tool_execution_update", toolCallId: "call-1", toolName: "bash", partialResult: { stdout: "plans.md" } });
+    await delay(150);
+    emit({ type: "tool_execution_end", toolCallId: "call-1", toolName: "bash", isError: false });
+    emit({
+      type: "message_end",
+      message: {
+        role: "toolResult",
+        toolCallId: "call-1",
+        toolName: "bash",
+        isError: false,
+        content: [{ type: "text", text: "plans.md" }],
+      },
+    });
+    // Assistant message 2: the markdown reply, streamed.
+    emit({ type: "message_start", message: { role: "assistant", content: [] } });
+    emit({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 0 } });
+    for (const chunk of chunks(finalMarkdown, 24)) {
+      emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: chunk } });
+      await delay(35);
+    }
+    emit({ type: "message_update", assistantMessageEvent: { type: "text_end", contentIndex: 0, content: finalMarkdown } });
+    emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: finalMarkdown }] } });
+    emit({ type: "agent_settled" });
+  };
+
   registerSession(
     {
       sessionId,
-      subscribe: (listener: (event: unknown) => void) => {
-        listener({ type: "agent_start" });
-        return () => {};
+      subscribe: (next: (event: unknown) => void) => {
+        listener = next;
+        emit({ type: "agent_start" });
+        return () => {
+          listener = null;
+        };
       },
       prompt: async () => {
-        throw new Error("the fixture session accepts no prompts");
+        void simulateTurn();
       },
       abort: async () => {},
       isStreaming: () => false,

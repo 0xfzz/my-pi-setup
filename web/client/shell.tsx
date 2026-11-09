@@ -135,20 +135,21 @@ export function AppShell() {
         </div>
       ) : null}
       <SlotHost slot="top" plugins={session.plugins} views={session.pluginViews} />
-      <main className="app-transcript" aria-live="polite">
-        {regions.transcript !== undefined ? (
+      {regions.transcript !== undefined ? (
+        <main className="app-transcript" aria-live="polite">
           <RegionOverrideView override={regions.transcript} region="transcript" />
-        ) : (
-          <Transcript
-            history={session.history}
-            userMessages={session.userMessages}
-            streaming={session.streaming}
-            toolStatus={session.toolStatus}
-            working={session.working}
-            showWorking={showWorking}
-          />
-        )}
-      </main>
+        </main>
+      ) : (
+        <Transcript
+          history={session.history}
+          userMessages={session.userMessages}
+          streaming={session.streaming}
+          toolStatus={session.toolStatus}
+          toolResults={session.toolResults}
+          working={session.working}
+          showWorking={showWorking}
+        />
+      )}
       <SlotHost slot="center" plugins={session.plugins} views={session.pluginViews} />
       {regions.composer !== undefined ? (
         <div className="app-composer app-composer-override">
