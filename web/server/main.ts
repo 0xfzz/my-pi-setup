@@ -5,9 +5,17 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { extname, resolve, sep } from "node:path";
-import { WEB_PLUGINS } from "../../web-plugins/index.ts";
+import { extname, join, resolve, sep } from "node:path";
+import {
+  checkAndSetInFlightAction,
+  getPluginDescriptor,
+  getRegisteredPlugins,
+  isKnownSession,
+  recordActionAudit,
+  relayActionRequest,
+} from "./plugin-host.ts";
 import {
   ensureSession,
   getSession,
@@ -86,6 +94,18 @@ async function serveStatic(res: ServerResponse, root: string, pathname: string):
     res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-cache" });
     res.end(data);
   } catch {
+    // SPA fallback: client-side routes (/plugins/todo, …) have no file behind
+    // them; every extension-less GET falls back to the app shell.
+    if (!extname(target)) {
+      try {
+        const index = await readFile(join(root, "index.html"));
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
+        res.end(index);
+        return;
+      } catch {
+        // Fall through to 404.
+      }
+    }
     sendJson(res, 404, { error: "not found" });
   }
 }
@@ -101,6 +121,68 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   }
   if (chunks.length === 0) return {};
   return JSON.parse(Buffer.concat(chunks).toString("utf-8")) as unknown;
+}
+
+/**
+ * POST /api/plugins/action — ported from the vendored app with identical
+ * semantics: 404 before anything else, 403 when a declared confirm does not
+ * match byte-identically, 409 while another action is in flight for the
+ * session, then audit + relay over the session bus.
+ */
+async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  let body: { sessionId?: unknown; pluginId?: unknown; actionId?: unknown; confirm?: unknown };
+  try {
+    body = (await readJsonBody(req)) as typeof body;
+  } catch {
+    sendJson(res, 400, { error: "Invalid JSON body" });
+    return true;
+  }
+  const { sessionId, pluginId, actionId, confirm } = body ?? {};
+
+  // 1. Validate: sessionId/pluginId/actionId known (404 before anything else).
+  if (typeof sessionId !== "string" || !isKnownSession(sessionId)) {
+    sendJson(res, 404, { error: "Session not found" });
+    return true;
+  }
+  if (typeof pluginId !== "string") {
+    sendJson(res, 404, { error: "Plugin not found" });
+    return true;
+  }
+  const descriptor = getPluginDescriptor(pluginId);
+  if (!descriptor) {
+    sendJson(res, 404, { error: "Plugin not found" });
+    return true;
+  }
+  if (typeof actionId !== "string") {
+    sendJson(res, 404, { error: "Action not found" });
+    return true;
+  }
+  const action = descriptor.actions?.find((candidate) => candidate.id === actionId);
+  if (!action) {
+    sendJson(res, 404, { error: "Action not found" });
+    return true;
+  }
+
+  // 2. A declared confirm must match byte-identically (403, nothing emitted).
+  //    An action without a declared confirm is the instant form: it submits
+  //    without a typed string.
+  if (action.confirm !== undefined && (typeof confirm !== "string" || confirm !== action.confirm)) {
+    sendJson(res, 403, { error: "Invalid confirmation string" });
+    return true;
+  }
+
+  // 3. At most one in-flight action per session held for 60 s (409).
+  const requestId = randomUUID();
+  if (!checkAndSetInFlightAction(sessionId, requestId, 60_000)) {
+    sendJson(res, 409, { error: "Action already in flight for this session" });
+    return true;
+  }
+
+  // 4. Audit, then relay to the owning extension over the session event bus.
+  recordActionAudit({ requestId, sessionId, pluginId, actionId, timestamp: Date.now() });
+  const { relayed } = relayActionRequest(sessionId, pluginId, actionId, requestId);
+  sendJson(res, 200, { ok: true, requestId, relayed });
+  return true;
 }
 
 function sessionIdFromPath(segments: RegExpExecArray): string {
@@ -125,8 +207,12 @@ async function handleApi(
   }
   if (pathname === "/api/plugins") {
     if (req.method !== "GET") return methodNotAllowed();
-    sendJson(res, 200, { plugins: WEB_PLUGINS });
+    sendJson(res, 200, { plugins: getRegisteredPlugins() });
     return true;
+  }
+  if (pathname === "/api/plugins/action") {
+    if (req.method !== "POST") return methodNotAllowed();
+    return handlePluginAction(req, res);
   }
   if (pathname === "/api/sessions") {
     if (req.method !== "GET") return methodNotAllowed();
@@ -286,6 +372,10 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
         host,
         close: () =>
           new Promise<void>((resolveClose) => {
+            // SSE streams never end on their own; close() must tear them down
+            // or a lingering event stream keeps the server's close callback
+            // from ever firing.
+            server.closeAllConnections();
             server.close(() => resolveClose());
           }),
       });

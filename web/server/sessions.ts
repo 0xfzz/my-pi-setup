@@ -9,6 +9,7 @@ import { createAgentSession, getAgentDir, SessionManager, type AgentSession } fr
 import { existsSync } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { attachSessionPlugins } from "./plugin-host.ts";
 
 export interface SessionStateLite {
   sessionId: string;
@@ -88,7 +89,7 @@ function toCore(inner: AgentSession): SessionCore {
   };
 }
 
-function register(core: SessionCore, cwd: string, sessionFile: string): SessionCore {
+function register(core: SessionCore, cwd: string, sessionFile: string, inner?: unknown): SessionCore {
   liveSessions.set(core.sessionId, {
     core,
     cwd,
@@ -96,6 +97,17 @@ function register(core: SessionCore, cwd: string, sessionFile: string): SessionC
     startedAt: Date.now(),
     lastActivityAt: Date.now(),
   });
+  // Attach the web-plugin host to the live session's extension event bus so
+  // plugin views and UI events flow into the store. The host reads the
+  // { sessionId, inner, onEvent } wrapper shape itself; fake cores pass no inner.
+  if (inner !== undefined) {
+    void attachSessionPlugins({
+      sessionId: core.sessionId,
+      inner,
+      onEvent: (listener: (event: { type?: string }) => void) =>
+        core.subscribe((event: unknown) => listener(event as { type?: string })),
+    });
+  }
   return core;
 }
 
@@ -108,7 +120,7 @@ export async function startSession(options: {
     cwd: options.cwd,
     ...(options.agentDir !== undefined ? { agentDir: options.agentDir } : {}),
   });
-  return register(toCore(session), options.cwd, session.sessionFile ?? "");
+  return register(toCore(session), options.cwd, session.sessionFile ?? "", session);
 }
 
 /** Resume a session from its .jsonl file. */
@@ -123,7 +135,7 @@ export async function resumeSession(options: {
     sessionManager: manager,
     ...(options.agentDir !== undefined ? { agentDir: options.agentDir } : {}),
   });
-  return register(toCore(session), cwd, options.sessionFile);
+  return register(toCore(session), cwd, options.sessionFile, session);
 }
 
 /** Register a fake core (tests and fixtures). */

@@ -12,6 +12,7 @@ import {
   type StreamingState,
   type StreamAction,
 } from "./streaming.ts";
+import type { WebPluginDescriptor, WebView, WorkingModelLike } from "./plugins/contract.ts";
 
 export interface SessionSummary {
   id: string;
@@ -55,6 +56,10 @@ export function usePiSession() {
   const [toolStatus, setToolStatus] = useState<Record<string, ToolCallStatus>>({});
   const [sessionState, setSessionState] = useState<SessionStateLike | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("idle");
+  const [plugins, setPlugins] = useState<WebPluginDescriptor[]>([]);
+  const [pluginViews, setPluginViews] = useState<Record<string, WebView>>({});
+  const [working, setWorking] = useState<WorkingModelLike | null>(null);
+  const [uiRunning, setUiRunning] = useState(false);
 
   const streamingRef = useRef<StreamingState>(INITIAL_STREAMING_STATE);
   const applyStream = useCallback((action: StreamAction) => {
@@ -93,12 +98,32 @@ export function usePiSession() {
     }
   }, []);
 
+  // The plugin registry is static per page load; the surfaces it declares
+  // drive slots, pages and shortcut bindings.
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/plugins")
+      .then((res) => res.json() as Promise<{ plugins?: WebPluginDescriptor[] }>)
+      .then((body) => {
+        if (!cancelled) setPlugins(body.plugins ?? []);
+      })
+      .catch(() => {
+        // Registry fetch is best-effort; empty means no plugin surfaces.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Open the event stream (and load history) whenever the selection changes.
   useEffect(() => {
     setUserMessages([]);
     setHistory([]);
     setToolStatus({});
     setSessionState(null);
+    setPluginViews({});
+    setWorking(null);
+    setUiRunning(false);
     streamingRef.current = INITIAL_STREAMING_STATE;
     setStreaming(INITIAL_STREAMING_STATE);
 
@@ -187,6 +212,14 @@ export function usePiSession() {
         case "agent_end":
           applyStream({ type: "end" });
           break;
+        case "plugin_state": {
+          // Plugin views, the working indicator model and the running flag,
+          // all scoped to this stream's session.
+          setPluginViews((data.views ?? {}) as Record<string, WebView>);
+          setWorking((data.working ?? null) as WorkingModelLike | null);
+          setUiRunning(data.running === true);
+          break;
+        }
         default:
           // heartbeat and any future event types pass silently.
           break;
@@ -260,6 +293,10 @@ export function usePiSession() {
     toolStatus,
     sessionState,
     connection,
+    plugins,
+    pluginViews,
+    working,
+    uiRunning,
     newSession,
     sendPrompt,
     abort,

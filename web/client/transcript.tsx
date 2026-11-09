@@ -1,11 +1,47 @@
-// Transcript renderer: history entries, optimistic user messages and the
-// live streaming reply. Tool calls render as status lines driven by the
-// tool_execution_* wire events.
+// Transcript renderer: history entries, optimistic user messages, the
+// live streaming reply, and the working indicator. Tool calls render as
+// status lines driven by the tool_execution_* wire events.
 
+import { useEffect, useState } from "react";
 import type { AssistantBlock, ToolCallBlock } from "./streaming.ts";
 import type { HistoryEntryLike, ToolCallStatus } from "./use-session.ts";
+import type { WorkingModelLike } from "./plugins/contract.ts";
 
 const RAW_INPUT_PREVIEW_LIMIT = 400;
+const DEFAULT_WORKING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/** The transcript's working line: animated frames plus the streamed message. */
+export function WorkingIndicator({
+  working,
+  fallback,
+}: {
+  working: WorkingModelLike | null;
+  fallback: string;
+}) {
+  const frames = working?.frames ?? DEFAULT_WORKING_FRAMES;
+  const intervalMs = working?.intervalMs ?? 80;
+  const [frameIndex, setFrameIndex] = useState(0);
+  const signature = frames.join("\u0000");
+
+  useEffect(() => {
+    if (frames.length < 2) return;
+    const timer = setInterval(
+      () => setFrameIndex((frame) => (frame + 1) % frames.length),
+      intervalMs,
+    );
+    return () => clearInterval(timer);
+  }, [signature, intervalMs, frames.length]);
+
+  const message = working?.message ?? fallback;
+  return (
+    <span className="plugin-working-line">
+      <span className="plugin-working-frame" aria-hidden="true">
+        {frames[frameIndex] ?? ""}
+      </span>
+      {message}
+    </span>
+  );
+}
 
 function truncate(text: string, limit: number): string {
   return text.length > limit ? `${text.slice(0, limit)}…` : text;
@@ -68,9 +104,11 @@ export interface TranscriptProps {
   userMessages: Array<{ key: number; text: string }>;
   streaming: { isStreaming: boolean; streamingMessage: { content: AssistantBlock[] } | null };
   toolStatus: Record<string, ToolCallStatus>;
+  working: WorkingModelLike | null;
+  showWorking: boolean;
 }
 
-export function Transcript({ history, userMessages, streaming, toolStatus }: TranscriptProps) {
+export function Transcript({ history, userMessages, streaming, toolStatus, working, showWorking }: TranscriptProps) {
   const entries: Array<{ key: string; role: "user" | "assistant"; blocks: AssistantBlock[] }> = [
     ...history.map((entry, index) => ({
       key: `history-${index}`,
@@ -86,7 +124,7 @@ export function Transcript({ history, userMessages, streaming, toolStatus }: Tra
 
   return (
     <div className="app-transcript-inner">
-      {entries.length === 0 && !streaming.isStreaming ? (
+      {entries.length === 0 && !streaming.isStreaming && !showWorking ? (
         <div className="app-empty">No messages yet.</div>
       ) : null}
       {entries.map((entry) => (
@@ -107,10 +145,9 @@ export function Transcript({ history, userMessages, streaming, toolStatus }: Tra
           <AssistantBlocks blocks={streaming.streamingMessage.content} toolStatus={toolStatus} />
         </div>
       ) : null}
-      {streaming.isStreaming ? (
+      {showWorking ? (
         <div className="msg-working">
-          <span className="msg-working-dot" aria-label="working" />
-          pi is working…
+          <WorkingIndicator working={working} fallback="pi is working…" />
         </div>
       ) : null}
     </div>

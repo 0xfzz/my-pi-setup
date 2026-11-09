@@ -22,3 +22,4 @@ await build({
 
 await cp("client/index.html", "client/dist/index.html");
 await cp("client/base.css", "client/dist/app.css");
+await cp("client/plugins/plugins.css", "client/dist/plugins.css");

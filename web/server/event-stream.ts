@@ -13,6 +13,7 @@ import {
   type AgentEventLike,
 } from "./wire.ts";
 import type { SessionCore } from "./sessions.ts";
+import { recordExtensionUi, webUiStore } from "./plugin-host.ts";
 
 const TOOL_UPDATE_COALESCE_MS = 150;
 const STREAM_HIGH_WATER_MARK_BYTES = 512 * 1024;
@@ -43,6 +44,7 @@ export function attachAgentEventStream(
   let closed = false;
   let heartbeat: ReturnType<typeof setInterval> | null = null;
   let unsubscribe: (() => void) | null = null;
+  let unsubscribeUi: (() => void) | null = null;
   let toolUpdateTimer: ReturnType<typeof setTimeout> | null = null;
   const pendingToolUpdates = new Map<unknown, AgentEventLike>();
 
@@ -54,6 +56,8 @@ export function attachAgentEventStream(
     pendingToolUpdates.clear();
     unsubscribe?.();
     unsubscribe = null;
+    unsubscribeUi?.();
+    unsubscribeUi = null;
     if (finish) res.end();
   };
 
@@ -122,6 +126,15 @@ export function attachAgentEventStream(
       let announced = false;
       const handleEvent = (event: unknown): void => {
         const typed = event as AgentEventLike;
+        // Lifecycle events drive the unified UI state (running flag, working
+        // indicator reset) for every plugin surface following this stream.
+        if (
+          typed.type === "agent_start"
+          || typed.type === "agent_settled"
+          || typed.type === "session_shutdown"
+        ) {
+          recordExtensionUi(sessionId, typed as Record<string, unknown>);
+        }
         if (typed.type === "session_shutdown") {
           cleanup(true);
           return;
@@ -142,6 +155,31 @@ export function attachAgentEventStream(
       send({ type: "connected", sessionId, isStreaming: session.isStreaming() });
       announced = true;
       for (const event of buffered) forwardEvent(event);
+
+      // Plugin surfaces ride the same stream: one snapshot after connect,
+      // then every store revision pushes the session's views and working
+      // model. Frames are deduplicated so other sessions' revisions cost
+      // nothing on the wire.
+      let lastPluginStateJson = "";
+      const sendPluginState = (): void => {
+        const snapshot = webUiStore.snapshot();
+        const sessionState = snapshot.sessions[sessionId];
+        const frame = {
+          type: "plugin_state" as const,
+          revision: snapshot.revision,
+          views: sessionState?.views ?? {},
+          working: sessionState?.working ?? null,
+          running: sessionState?.running ?? false,
+        };
+        const json = JSON.stringify(frame);
+        if (json === lastPluginStateJson) return;
+        lastPluginStateJson = json;
+        send(frame);
+      };
+      sendPluginState();
+      unsubscribeUi = webUiStore.subscribe(() => {
+        sendPluginState();
+      });
     } catch (error) {
       if (closed) return;
       send({
