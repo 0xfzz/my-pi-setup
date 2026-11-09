@@ -190,14 +190,79 @@ test("readHistory parses entries and tool results, skipping other roles", async 
       { kind: "toolCall", toolCallId: "t1", toolName: "bash", rawInput: "ls" },
     ],
   });
-  // Tool results join to their calls by id; text content only, images skipped.
-  assert.deepEqual(history.toolResults.t1, { text: "plans.md", isError: false });
+  // Tool results join to their calls by id; text plus image blocks.
+  assert.deepEqual(history.toolResults.t1, {
+    text: "plans.md",
+    isError: false,
+    images: [{ data: "x", mimeType: "image/png" }],
+  });
   assert.deepEqual(history.toolResults.t2, { text: "boom", isError: true });
   assert.equal(Object.keys(history.toolResults).length, 2);
 });
 
 test("readHistory returns empty for missing files", async () => {
   assert.deepEqual(await readHistory("/no/such/file.jsonl"), { entries: [], toolResults: {} });
+});
+
+test("readHistory reads pi's on-disk shapes: toolCall id/name/arguments, images, bash executions", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-history-"));
+  const file = join(dir, "2026-11-09T00-00-00-000Z_abcd1234.jsonl");
+  await writeFile(
+    file,
+    [
+      JSON.stringify({ type: "session", id: "abcd1234", cwd: "/tmp/x", timestamp: "2026-11-09T00:00:00Z" }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "user",
+          content: [
+            { type: "text", text: "see this" },
+            { type: "image", data: "aGk=", mimeType: "image/jpeg" },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          stopReason: "aborted",
+          content: [{ type: "toolCall", id: "call-9", name: "bash", arguments: { command: "echo hi" } }],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "call-9",
+          content: [{ type: "text", text: "hi" }],
+          isError: false,
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "bashExecution", command: "git status", output: "clean", exitCode: 0, cancelled: false, truncated: false },
+      }),
+    ].join("\n"),
+  );
+
+  const history = await readHistory(file);
+  assert.deepEqual(history.entries[0], {
+    role: "user",
+    blocks: [
+      { kind: "text", text: "see this" },
+      { kind: "image", data: "aGk=", mimeType: "image/jpeg" },
+    ],
+  });
+  assert.deepEqual(history.entries[1], {
+    role: "assistant",
+    blocks: [{ kind: "toolCall", toolCallId: "call-9", toolName: "bash", rawInput: '{"command":"echo hi"}' }],
+    aborted: true,
+  });
+  assert.deepEqual(history.entries[2], {
+    role: "user",
+    blocks: [{ kind: "bash", command: "git status", output: "clean", exitCode: 0 }],
+  });
+  assert.deepEqual(history.toolResults["call-9"], { text: "hi", isError: false });
 });
 
 test("listDiskSessions and resolveSessionFile scan the sessions dir", async () => {

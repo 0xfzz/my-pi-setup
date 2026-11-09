@@ -245,6 +245,81 @@ body {
   border-color: var(--error);
 }
 
+/* The headline of a tool row: its file (edit/read/write) or its command
+   (bash), ellipsized in the header — the body repeats the full text. */
+.msg-toolcall-file,
+.msg-toolcall-command-inline {
+  color: var(--fg-dim);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.msg-toolcall-command-inline {
+  color: var(--fg);
+}
+
+.msg-toolcall-command-inline::before {
+  content: "$ ";
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* A bash command body: `$ <command>` in full. */
+.msg-toolcall-command {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--fg);
+  background: #0c0e10;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.msg-toolcall-params {
+  color: var(--fg-faint);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The edit tool's diff. */
+.msg-diff {
+  margin: 0;
+  white-space: pre;
+  overflow-x: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  background: #0c0e10;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.msg-diff-line {
+  display: block;
+  color: var(--fg-faint);
+}
+
+.msg-diff-line.is-add {
+  color: var(--ok);
+  background: rgba(94, 194, 105, 0.08);
+}
+
+.msg-diff-line.is-remove {
+  color: var(--error);
+  background: rgba(240, 112, 90, 0.08);
+}
+
 .msg-toolcall-chevron {
   margin-left: auto;
   color: var(--fg-faint);
@@ -280,6 +355,110 @@ body {
 
 .msg-toolcall-result.is-error {
   color: var(--error);
+}
+
+.msg-toolcall-result.is-partial {
+  color: var(--fg-faint);
+  border-style: dashed;
+}
+
+/* User-run `!` bash rows: `$ command` with exit code, output collapsible. */
+.msg-bash {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.msg-bash-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 10px;
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.msg-bash-prompt {
+  color: var(--accent);
+  font-weight: 600;
+  flex: none;
+}
+
+.msg-bash-command {
+  color: var(--fg);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  overflow-wrap: break-word;
+}
+
+.msg-bash.is-running .msg-bash-command {
+  color: var(--accent);
+}
+
+.msg-bash-exit {
+  margin-left: auto;
+  color: var(--fg-faint);
+  flex: none;
+}
+
+.msg-bash-exit.is-error {
+  color: var(--error);
+}
+
+.msg-bash-output {
+  margin: 0 10px 8px;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--fg-faint);
+  background: #0c0e10;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+/* Inline images (user attachments, tool results). */
+.msg-image {
+  display: inline-block;
+  max-width: min(320px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.msg-image img {
+  max-width: 100%;
+  max-height: 240px;
+}
+
+/* The abort marker: the run was interrupted (Escape in the TUI, Stop here). */
+.msg-aborted {
+  color: var(--error);
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+/* Thinking inside the live streaming message is expanded by default; the
+   summary line gets the accent so "pi is thinking" is visibly alive. */
+.msg-streaming .msg-thinking summary {
+  color: var(--accent);
+}
+
+.msg-streaming .msg-thinking-body {
+  color: var(--fg-dim);
 }
 
 /* Jump-to-latest: appears when the user scrolls away from the bottom. */
@@ -478,6 +657,7 @@ body {
   max-width: 812px;
   margin: 0 auto;
   width: 100%;
+  position: relative;
 }
 
 .app-composer-input {
@@ -500,6 +680,18 @@ body {
 
 .app-composer-input:disabled {
   opacity: 0.5;
+}
+
+.app-composer-error {
+  position: absolute;
+  top: -26px;
+  left: 16px;
+  right: 16px;
+  color: var(--error);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .app-composer-abort {

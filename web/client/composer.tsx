@@ -1,16 +1,18 @@
 // Composer: the message input with Enter-to-send (Shift+Enter for a newline)
-// and a Stop button while a run is streaming.
+// and a Stop button while the session is busy (streaming, thinking, tools).
 
 import { useState, type KeyboardEvent } from "react";
 
 export interface ComposerProps {
   disabled: boolean;
-  streaming: boolean;
+  /** Any UI state that means the session is busy: streaming, thinking, tools. */
+  busy: boolean;
+  error?: string | null;
   onSend: (text: string) => void;
   onAbort: () => void;
 }
 
-export function Composer({ disabled, streaming, onSend, onAbort }: ComposerProps) {
+export function Composer({ disabled, busy, error, onSend, onAbort }: ComposerProps) {
   const [text, setText] = useState("");
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -24,7 +26,7 @@ export function Composer({ disabled, streaming, onSend, onAbort }: ComposerProps
   };
 
   return (
-    <div className="app-composer">
+    <div className="app-composer" data-busy={busy ? "true" : undefined}>
       <textarea
         className="app-composer-input"
         placeholder={disabled ? "Select or start a session…" : "Message pi…"}
@@ -34,11 +36,17 @@ export function Composer({ disabled, streaming, onSend, onAbort }: ComposerProps
         onKeyDown={handleKeyDown}
         aria-label="Message pi"
       />
-      {streaming ? (
-        <button type="button" className="app-composer-abort" onClick={onAbort}>
+      {busy ? (
+        <button
+          type="button"
+          className="app-composer-abort"
+          onClick={onAbort}
+          title="Interrupt the running turn (like Escape in the TUI)"
+        >
           Stop
         </button>
       ) : null}
+      {error ? <div className="app-composer-error" role="alert">{error}</div> : null}
     </div>
   );
 }

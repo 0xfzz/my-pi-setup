@@ -19,9 +19,13 @@ const OMITTED_EVENT_TYPES = new Set([
   "turn_start",
   "turn_end",
   // Carries the whole appended entry (an extension custom entry can be
-  // 1 MiB) and the browser transcript never reads it.
+  // 1 MiB) and the browser transcript never reads it — except bash
+  // executions, which project to a slim `bash_execution_end` below.
   "entry_appended",
 ]);
+
+/** Cap on a bash execution's output on the wire (display previews less). */
+const BASH_OUTPUT_LIMIT = 8_000;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -76,6 +80,57 @@ function toClientToolExecutionEvent(event: AgentEventLike): AgentEventLike | nul
   };
 }
 
+/**
+ * Normalize one message content block to the browser's shape. pi serializes
+ * tool calls as `{ type: "toolCall", id, name, arguments }` both live (in
+ * `message_end`) and on disk; the browser block carries `toolCallId`,
+ * `toolName` and `rawInput`, so the two spellings meet here. Image blocks
+ * pass through (the browser renders them inline).
+ */
+function normalizeContentBlock(block: Record<string, unknown>): Record<string, unknown> {
+  if (block.type === "toolCall") {
+    const arguments_ = isObject(block.arguments) ? block.arguments : undefined;
+    const rawInput = typeof block.rawInput === "string"
+      ? block.rawInput
+      : arguments_ !== undefined && Object.keys(arguments_).length > 0
+        ? JSON.stringify(arguments_)
+        : "";
+    return {
+      type: "toolCall",
+      toolCallId: typeof block.toolCallId === "string"
+        ? block.toolCallId
+        : (typeof block.id === "string" ? block.id : ""),
+      toolName: typeof block.toolName === "string"
+        ? block.toolName
+        : (typeof block.name === "string" ? block.name : "tool"),
+      rawInput,
+    };
+  }
+  return block;
+}
+
+/** Message content → the browser's block shapes (string content stays). */
+function normalizeContent(content: unknown): unknown {
+  if (!Array.isArray(content)) return content;
+  return content.map((raw) => (isObject(raw) ? normalizeContentBlock(raw) : raw));
+}
+
+/** Slim `entry_appended` for a bash execution to its terminal event, or null. */
+function toBashExecutionEnd(event: AgentEventLike): AgentEventLike | null {
+  const entry = isObject(event.entry) ? event.entry : undefined;
+  const message = entry !== undefined && isObject(entry.message) ? entry.message : undefined;
+  if (message === undefined || message.role !== "bashExecution") return null;
+  const output = typeof message.output === "string" ? message.output : "";
+  return {
+    type: "bash_execution_end",
+    command: typeof message.command === "string" ? message.command : "",
+    output: output.length > BASH_OUTPUT_LIMIT ? `${output.slice(0, BASH_OUTPUT_LIMIT)}…` : output,
+    exitCode: typeof message.exitCode === "number" ? message.exitCode : undefined,
+    cancelled: message.cancelled === true,
+    truncated: message.truncated === true,
+  };
+}
+
 /** The `message_update` delta for a streaming tool call, with its ids kept. */
 function toolCallMetadata(event: Record<string, unknown>): { id: string; toolName: string } | null {
   if (
@@ -111,6 +166,9 @@ export function isSystemMessageEvent(event: AgentEventLike): boolean {
  * Returns null when the event should not be sent at all.
  */
 export function toClientAgentEvent(event: AgentEventLike): AgentEventLike | null {
+  if (event.type === "entry_appended") {
+    return toBashExecutionEnd(event);
+  }
   if (OMITTED_EVENT_TYPES.has(event.type)) return null;
   // Pi appends the prompt and tool loadout to the transcript as system
   // messages; the browser never renders them, so drop them before they cost
@@ -123,8 +181,16 @@ export function toClientAgentEvent(event: AgentEventLike): AgentEventLike | null
     return { type: "message_start", message: { role: event.message.role } };
   }
   // Assistant starts carry the full message content, which the snapshot
-  // replay also sends; slim to the message itself.
+  // replay also sends; slim to the message itself. The content blocks are
+  // normalized (pi's toolCall spelling → the browser's) so live `message_end`
+  // and the disk history render identically.
   if (event.type === "message_start" || event.type === "message_end") {
+    if (isObject(event.message)) {
+      return {
+        type: event.type,
+        message: { ...event.message, content: normalizeContent(event.message.content) },
+      };
+    }
     return event;
   }
 
@@ -176,6 +242,7 @@ export function isEventIncludedInSnapshot(event: AgentEventLike, snapshot: unkno
  */
 export function isDroppableEvent(event: AgentEventLike): boolean {
   if (event.type === "tool_execution_update") return true;
+  if (event.type === "bash_execution_update") return true;
   if (event.type !== "message_update") return false;
   const update = event.assistantMessageEvent;
   return typeof update === "object"

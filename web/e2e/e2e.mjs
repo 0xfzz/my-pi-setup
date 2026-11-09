@@ -7,10 +7,18 @@
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 
 const PORT = 30_000 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
+// Isolated plugin state per run: the manager's crash-loop guard otherwise
+// counts every e2e server start against the real ~/.pi/agent state and a
+// re-run within 60 s boots in safe mode (no plugins, failing the suite).
+const pluginStateDir = await mkdtemp(join(tmpdir(), "pi-web-e2e-"));
+const PLUGIN_STATE = join(pluginStateDir, "plugins.json");
 
 /** Step marker: an e2e log that pinpoints where a stall happens. */
 const step = (name) => console.log(`[e2e] ${name}`);
@@ -65,6 +73,7 @@ async function run() {
     env: {
       ...process.env,
       PI_WEB_PORT: String(PORT),
+      PI_WEB_PLUGIN_STATE: PLUGIN_STATE,
       PI_WEB_TEST_PLUGIN_VIEWS: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -194,21 +203,22 @@ async function run() {
     assert.ok((await page.locator(".markdown-body tbody tr").count()) >= 2, "tables render");
     assert.ok((await page.locator(".markdown-body blockquote").count()) >= 1, "blockquotes render");
 
-    // Tool calls start collapsed, expand, and show input + result.
+    // Tool calls are expanded by default — the bash command and result are
+    // the point of the row — and collapse on toggle.
     const toolToggle = page.locator(".msg-toolcall-toggle").first();
     await toolToggle.waitFor({ state: "visible", timeout: 10_000 });
     assert.equal(
       await toolToggle.getAttribute("aria-expanded"),
-      "false",
-      "tool calls start collapsed",
+      "true",
+      "tool calls start expanded",
     );
-    await toolToggle.click();
     const toolBody = page.locator(".msg-toolcall-body").first();
     await toolBody.waitFor({ state: "visible", timeout: 5_000 });
     const toolBodyText = (await toolBody.textContent()) ?? "";
     assert.ok(toolBodyText.includes("ls plans/"), "the expanded row shows the tool input");
     assert.ok(toolBodyText.includes("plans.md"), "the expanded row shows the tool result");
-    assert.equal(await toolToggle.getAttribute("aria-expanded"), "true", "tool calls expand");
+    await toolToggle.click();
+    assert.equal(await toolToggle.getAttribute("aria-expanded"), "false", "tool calls collapse");
 
     // The jump-to-latest button appears when scrolled up and returns to the
     // bottom on click.

@@ -50,17 +50,25 @@ export interface DiskSession {
 export type HistoryBlock =
   | { kind: "text"; text: string }
   | { kind: "thinking"; thinking: string }
-  | { kind: "toolCall"; toolCallId: string; toolName: string; rawInput: string };
+  | { kind: "toolCall"; toolCallId: string; toolName: string; rawInput: string }
+  | { kind: "image"; data: string; mimeType: string }
+  | { kind: "bash"; command: string; output: string; exitCode?: number; cancelled?: boolean; truncated?: boolean };
 
 export interface HistoryEntry {
   role: "user" | "assistant";
   blocks: HistoryBlock[];
+  /** Set when the assistant reply ended because the run was aborted. */
+  aborted?: boolean;
 }
 
 /** A tool call's result, joined to its call by toolCallId. */
 export interface ToolResultEntry {
   text: string;
   isError: boolean;
+  /** The edit tool's diff, from the result's `details.diff`. */
+  diff?: string;
+  /** Image blocks the tool returned (read on an image file, screenshots). */
+  images?: Array<{ data: string; mimeType: string }>;
 }
 
 export interface SessionHistory {
@@ -329,35 +337,62 @@ function contentToBlocks(content: unknown): HistoryBlock[] {
       blocks.push({ kind: "text", text: block.text });
     } else if (block.type === "thinking" && typeof block.thinking === "string") {
       blocks.push({ kind: "thinking", thinking: block.thinking });
+    } else if (block.type === "image" && typeof block.data === "string") {
+      blocks.push({
+        kind: "image",
+        data: block.data,
+        mimeType: typeof block.mimeType === "string" ? block.mimeType : "image/png",
+      });
     } else if (block.type === "toolCall") {
-      const toolName = typeof block.toolName === "string"
-        ? block.toolName
-        : (typeof block.name === "string" ? block.name : "tool");
+      // pi's on-disk spelling is { id, name, arguments }; the browser's is
+      // { toolCallId, toolName, rawInput }. Accept both.
+      const args = typeof block.arguments === "object" && block.arguments !== null
+        ? (block.arguments as Record<string, unknown>)
+        : undefined;
       blocks.push({
         kind: "toolCall",
-        toolCallId: typeof block.toolCallId === "string" ? block.toolCallId : "",
-        toolName,
-        rawInput: typeof block.rawInput === "string" ? block.rawInput : "",
+        toolCallId: typeof block.toolCallId === "string"
+          ? block.toolCallId
+          : (typeof block.id === "string" ? block.id : ""),
+        toolName: typeof block.toolName === "string"
+          ? block.toolName
+          : (typeof block.name === "string" ? block.name : "tool"),
+        rawInput: typeof block.rawInput === "string"
+          ? block.rawInput
+          : args !== undefined && Object.keys(args).length > 0 ? JSON.stringify(args) : "",
       });
     }
   }
   return blocks;
 }
 
-/** Tool-result message content → plain text (TextContent blocks only). */
-function contentToText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
+/** Tool-result message content → plain text, images and the edit diff. */
+function contentToResult(content: unknown): {
+  text: string;
+  images: Array<{ data: string; mimeType: string }>;
+} {
+  if (typeof content === "string") return { text: content, images: [] };
+  if (!Array.isArray(content)) return { text: "", images: [] };
   const parts: string[] = [];
+  const images: Array<{ data: string; mimeType: string }> = [];
   for (const raw of content) {
     if (typeof raw === "object" && raw !== null) {
-      const block = raw as { type?: unknown; text?: unknown };
+      const block = raw as { type?: unknown; text?: unknown; data?: unknown; mimeType?: unknown };
       if (block.type === "text" && typeof block.text === "string") {
         parts.push(block.text);
+      } else if (block.type === "image" && typeof block.data === "string") {
+        images.push({ data: block.data, mimeType: typeof block.mimeType === "string" ? block.mimeType : "image/png" });
       }
     }
   }
-  return parts.join("\n");
+  return { text: parts.join("\n"), images };
+}
+
+/** The edit tool's diff from a tool result's `details`. */
+function detailsDiff(details: unknown): string | undefined {
+  if (typeof details !== "object" || details === null) return undefined;
+  const diff = (details as { diff?: unknown }).diff;
+  return typeof diff === "string" && diff !== "" ? diff : undefined;
 }
 
 /** Parse the transcript entries and tool results from a session file. */
@@ -382,20 +417,41 @@ export async function readHistory(sessionFile: string, limit = 200): Promise<Ses
     if (parsed.type !== "message") continue;
     const message = parsed.message;
     if (typeof message !== "object" || message === null) continue;
-    const role = (message as Record<string, unknown>).role;
+    const messageRecord = message as Record<string, unknown>;
+    const role = messageRecord.role;
     if (role === "toolResult") {
-      const toolCallId = (message as Record<string, unknown>).toolCallId;
+      const toolCallId = messageRecord.toolCallId;
       if (typeof toolCallId === "string" && toolCallId !== "") {
+        const { text, images } = contentToResult(messageRecord.content);
+        const diff = detailsDiff(messageRecord.details);
         toolResults[toolCallId] = {
-          text: contentToText((message as Record<string, unknown>).content),
-          isError: (message as Record<string, unknown>).isError === true,
+          text,
+          isError: messageRecord.isError === true,
+          ...(diff !== undefined ? { diff } : {}),
+          ...(images.length > 0 ? { images } : {}),
         };
       }
       continue;
     }
+    if (role === "bashExecution") {
+      // `!` commands the user ran in the TUI: shown in the transcript as a
+      // user-side bash row (command, output, exit code).
+      const blocks: HistoryBlock[] = [{
+        kind: "bash",
+        command: typeof messageRecord.command === "string" ? messageRecord.command : "",
+        output: typeof messageRecord.output === "string" ? messageRecord.output : "",
+        ...(typeof messageRecord.exitCode === "number" ? { exitCode: messageRecord.exitCode } : {}),
+        ...(messageRecord.cancelled === true ? { cancelled: true } : {}),
+        ...(messageRecord.truncated === true ? { truncated: true } : {}),
+      }];
+      entries.push({ role: "user", blocks });
+      continue;
+    }
     if (role !== "user" && role !== "assistant") continue;
-    const blocks = contentToBlocks((message as Record<string, unknown>).content);
-    if (blocks.length > 0) entries.push({ role, blocks });
+    const blocks = contentToBlocks(messageRecord.content);
+    const entry: HistoryEntry = { role, blocks };
+    if (role === "assistant" && messageRecord.stopReason === "aborted") entry.aborted = true;
+    if (blocks.length > 0) entries.push(entry);
   }
   return { entries, toolResults };
 }

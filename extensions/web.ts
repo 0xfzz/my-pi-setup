@@ -20,6 +20,7 @@
  * That is what keeps the web UI and the CLI in sync, in realtime, both ways.
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createLocalBashOperations } from "@earendil-works/pi-coding-agent";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../lib/web-plugins/actions.ts";
 import { WEB_PLUGIN_VIEW_EVENT } from "../lib/web-plugins/view.ts";
 import { WEB_UI_EVENT } from "../lib/web-plugins/ui-event-models.ts";
@@ -367,6 +368,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     forwardToBridge(event);
     if (bridgeSessionId !== null) void postBridgeState(bridgeSessionId, { isStreaming: true });
   });
+  pi.on("agent_end", forwardToBridge);
   pi.on("agent_settled", (event, ctx) => {
     forwardToBridge(event);
     if (bridgeSessionId !== null) {
@@ -379,6 +381,51 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   pi.on("tool_execution_start", forwardToBridge);
   pi.on("tool_execution_update", forwardToBridge);
   pi.on("tool_execution_end", forwardToBridge);
+  // User-run bash (`!` commands): pi's extension events only announce the
+  // command, so the web extension supplies pi's local shell as custom
+  // operations and wraps it — the TUI keeps its own stream (onData is
+  // forwarded), while the web receives the same live deltas plus a closing
+  // event with the output and exit code, exactly like the wire's projection
+  // of `entry_appended` for in-process sessions.
+  pi.on("user_bash", (event) => {
+    forwardToBridge({
+      type: "user_bash",
+      command: event.command,
+      excludeFromContext: event.excludeFromContext,
+      cwd: event.cwd,
+    });
+    const local = createLocalBashOperations({ shellPath: pi.getSettings().shellPath });
+    return {
+      operations: {
+        exec: async (command: string, cwd: string, options: {
+          onData: (data: Buffer) => void;
+          signal?: AbortSignal;
+          timeout?: number;
+          env?: NodeJS.ProcessEnv;
+        }) => {
+          let output = "";
+          const result = await local.exec(command, cwd, {
+            ...options,
+            onData: (data: Buffer) => {
+              const delta = data.toString("utf-8");
+              output += delta;
+              forwardToBridge({ type: "bash_execution_update", delta });
+              options.onData(data);
+            },
+          });
+          forwardToBridge({
+            type: "bash_execution_end",
+            command: event.command,
+            output: output.length > 8_000 ? `${output.slice(0, 8_000)}…` : output,
+            exitCode: typeof result.exitCode === "number" ? result.exitCode : undefined,
+            cancelled: false,
+            truncated: false,
+          });
+          return result;
+        },
+      },
+    };
+  });
   // Plugin views and UI events from the TUI-side publishers, so the web's
   // plugin surfaces work for a bridged session exactly like an in-process one.
   pi.events?.on(WEB_PLUGIN_VIEW_EVENT, (payload: unknown) => {

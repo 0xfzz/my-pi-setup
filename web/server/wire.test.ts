@@ -39,6 +39,94 @@ test("toClientAgentEvent keeps assistant message_start intact", () => {
   assert.deepEqual(toClientAgentEvent(event), event);
 });
 
+test("toClientAgentEvent normalizes pi toolCall blocks to the browser shape", () => {
+  const projected = toClientAgentEvent({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [
+        { type: "text", text: "run it" },
+        { type: "toolCall", id: "call-1", name: "bash", arguments: { command: "ls" } },
+      ],
+    },
+  });
+  assert.deepEqual(projected, {
+    type: "message_end",
+    message: {
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [
+        { type: "text", text: "run it" },
+        { type: "toolCall", toolCallId: "call-1", toolName: "bash", rawInput: '{"command":"ls"}' },
+      ],
+    },
+  });
+});
+
+test("toClientAgentEvent keeps already-normalized toolCall blocks and empty arguments", () => {
+  const projected = toClientAgentEvent({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [
+        { type: "toolCall", toolCallId: "c9", toolName: "read", rawInput: '{"path":"a"}' },
+        { type: "toolCall", id: "c10", name: "bash", arguments: {} },
+      ],
+    },
+  });
+  const message = projected?.message as { content: unknown[] } | undefined;
+  assert.deepEqual(message?.content, [
+    { type: "toolCall", toolCallId: "c9", toolName: "read", rawInput: '{"path":"a"}' },
+    { type: "toolCall", toolCallId: "c10", toolName: "bash", rawInput: "" },
+  ]);
+});
+
+test("toClientAgentEvent keeps user message content (text and image blocks)", () => {
+  const event = {
+    type: "message_end",
+    message: {
+      role: "user",
+      content: [
+        { type: "text", text: "look at this" },
+        { type: "image", data: "aGk=", mimeType: "image/png" },
+      ],
+    },
+  };
+  assert.deepEqual(toClientAgentEvent(event), event);
+});
+
+test("entry_appended projects only bash executions, capped", () => {
+  assert.equal(toClientAgentEvent({ type: "entry_appended", entry: { type: "message", message: { role: "assistant" } } }), null);
+  const projected = toClientAgentEvent({
+    type: "entry_appended",
+    entry: {
+      type: "message",
+      message: {
+        role: "bashExecution",
+        command: "ls",
+        output: "x".repeat(9_000),
+        exitCode: 0,
+        cancelled: false,
+        truncated: true,
+      },
+    },
+  });
+  assert.equal(projected?.type, "bash_execution_end");
+  const bash = projected as unknown as {
+    output: string;
+    command: string;
+    exitCode: number;
+    cancelled: boolean;
+    truncated: boolean;
+  };
+  assert.equal(bash.output.length, 8_001);
+  assert.deepEqual(
+    { command: bash.command, exitCode: bash.exitCode, cancelled: bash.cancelled, truncated: bash.truncated },
+    { command: "ls", exitCode: 0, cancelled: false, truncated: true },
+  );
+});
+
 test("toClientAgentEvent strips partial and keeps toolcall metadata on message_update", () => {
   const projected = toClientAgentEvent({
     type: "message_update",

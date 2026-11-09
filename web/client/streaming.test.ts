@@ -109,12 +109,54 @@ test("toolcall start, delta and end build a tool block", () => {
       toolCall: { id: "call-1", name: "bash", arguments: { cmd: "ls" } },
     },
   });
+  // The end's parsed arguments are authoritative; an aborted mid-argument
+  // call without them keeps the streamed JSON.
   assert.deepEqual(state.streamingMessage?.content[0], {
     kind: "toolCall",
     toolCallId: "call-1",
     toolName: "bash",
-    rawInput: "",
+    rawInput: '{"cmd":"ls"}',
   });
+});
+
+test("toolcall_end without arguments keeps the streamed raw input", () => {
+  let state = streamReducer(INITIAL_STREAMING_STATE, {
+    type: "snapshot",
+    message: { role: "assistant", content: [] },
+  });
+  state = streamReducer(state, {
+    type: "delta",
+    event: { type: "toolcall_start", contentIndex: 0, id: "call-2", toolName: "read" },
+  });
+  state = streamReducer(state, {
+    type: "delta",
+    event: { type: "toolcall_delta", contentIndex: 0, delta: '{"path":"a.ts"' },
+  });
+  state = streamReducer(state, {
+    type: "delta",
+    event: { type: "toolcall_end", contentIndex: 0, toolCall: { id: "call-2", name: "read" } },
+  });
+  assert.deepEqual(state.streamingMessage?.content[0], {
+    kind: "toolCall",
+    toolCallId: "call-2",
+    toolName: "read",
+    rawInput: '{"path":"a.ts"',
+  });
+});
+
+test("toAssistantBlocks accepts pi's toolCall spelling and image blocks", () => {
+  const blocks = toAssistantBlocks([
+    { type: "text", text: "hi" },
+    { type: "toolCall", id: "c1", name: "bash", arguments: { command: "ls" } },
+    { type: "toolCall", id: "c2", name: "bash", arguments: {} },
+    { type: "image", data: "aGk=", mimeType: "image/png" },
+  ]);
+  assert.deepEqual(blocks, [
+    { kind: "text", text: "hi" },
+    { kind: "toolCall", toolCallId: "c1", toolName: "bash", rawInput: '{"command":"ls"}' },
+    { kind: "toolCall", toolCallId: "c2", toolName: "bash", rawInput: "" },
+    { kind: "image", data: "aGk=", mimeType: "image/png" },
+  ]);
 });
 
 test("delta events without a snapshot are ignored", () => {

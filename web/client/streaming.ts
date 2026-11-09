@@ -17,7 +17,21 @@ export interface ToolCallBlock {
   toolName: string;
   rawInput: string;
 }
-export type AssistantBlock = TextBlock | ThinkingBlock | ToolCallBlock;
+export interface ImageBlock {
+  kind: "image";
+  data: string;
+  mimeType: string;
+}
+/** A user-run `!` command from the TUI: command, output, exit code. */
+export interface BashBlock {
+  kind: "bash";
+  command: string;
+  output: string;
+  exitCode?: number;
+  cancelled?: boolean;
+  truncated?: boolean;
+}
+export type AssistantBlock = TextBlock | ThinkingBlock | ToolCallBlock | ImageBlock | BashBlock;
 
 export interface AssistantMessageLite {
   role: "assistant";
@@ -51,7 +65,12 @@ export const INITIAL_STREAMING_STATE: StreamingState = {
   streamingMessage: null,
 };
 
-/** Normalize pi's native message content to the client's block shapes. */
+/**
+ * Normalize pi's native message content to the client's block shapes. Tool
+ * calls arrive in two spellings — pi's `{ id, name, arguments }` (live wire
+ * before normalization, disk history) and the browser's
+ * `{ toolCallId, toolName, rawInput }` — and both are accepted.
+ */
 export function toAssistantBlocks(content: unknown): AssistantBlock[] {
   if (typeof content === "string") {
     return content ? [{ kind: "text", text: content }] : [];
@@ -65,15 +84,27 @@ export function toAssistantBlocks(content: unknown): AssistantBlock[] {
       blocks.push({ kind: "text", text: block.text });
     } else if (block.type === "thinking" && typeof block.thinking === "string") {
       blocks.push({ kind: "thinking", thinking: block.thinking });
+    } else if (block.type === "image" && typeof block.data === "string") {
+      blocks.push({
+        kind: "image",
+        data: block.data,
+        mimeType: typeof block.mimeType === "string" ? block.mimeType : "image/png",
+      });
     } else if (block.type === "toolCall") {
-      const toolName = typeof block.toolName === "string"
-        ? block.toolName
-        : (typeof block.name === "string" ? block.name : "tool");
+      const args = typeof block.arguments === "object" && block.arguments !== null
+        ? (block.arguments as Record<string, unknown>)
+        : undefined;
       blocks.push({
         kind: "toolCall",
-        toolCallId: typeof block.toolCallId === "string" ? block.toolCallId : "",
-        toolName,
-        rawInput: typeof block.rawInput === "string" ? block.rawInput : "",
+        toolCallId: typeof block.toolCallId === "string"
+          ? block.toolCallId
+          : (typeof block.id === "string" ? block.id : ""),
+        toolName: typeof block.toolName === "string"
+          ? block.toolName
+          : (typeof block.name === "string" ? block.name : "tool"),
+        rawInput: typeof block.rawInput === "string"
+          ? block.rawInput
+          : args !== undefined && Object.keys(args).length > 0 ? JSON.stringify(args) : "",
       });
     }
   }
@@ -157,11 +188,15 @@ function applyDelta(state: StreamingState, event: ClientAssistantEventLike): Str
           : null
       ));
     case "toolcall_end":
-      return updateContentBlock(state, event.contentIndex, () => ({
+      return updateContentBlock(state, event.contentIndex, (current) => ({
         kind: "toolCall",
-        toolCallId: event.toolCall?.id ?? "",
-        toolName: event.toolCall?.name ?? "tool",
-        rawInput: "",
+        toolCallId: event.toolCall?.id ?? (current?.kind === "toolCall" ? current.toolCallId : ""),
+        toolName: event.toolCall?.name ?? (current?.kind === "toolCall" ? current.toolName : "tool"),
+        // The end's parsed arguments are authoritative; keep the streamed
+        // JSON when the end carries none (aborted mid-argument).
+        rawInput: event.toolCall?.arguments !== undefined && typeof event.toolCall.arguments === "object"
+          ? JSON.stringify(event.toolCall.arguments)
+          : (current?.kind === "toolCall" ? current.rawInput : ""),
       }));
     default:
       return state;

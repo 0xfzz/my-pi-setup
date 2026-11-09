@@ -158,7 +158,8 @@ export function AppShell() {
       ) : (
         <Composer
           disabled={session.selectedId === null || session.connection !== "connected"}
-          streaming={session.streaming.isStreaming}
+          busy={session.streaming.isStreaming || session.uiRunning}
+          error={session.sendError}
           onSend={(text) => {
             void session.sendPrompt(text);
           }}
