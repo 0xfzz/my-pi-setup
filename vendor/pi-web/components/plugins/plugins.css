@@ -454,17 +454,25 @@
   overflow-y: auto;
 }
 
-/* Floating slot: collapsible corner widget */
+/* Floating slot: collapsible utility chip docked above the composer. It sits in
+   the chat column's flow instead of over the input, so it can never cover the
+   send controls at any viewport height. */
 .plugin-slot-floating {
-  position: fixed;
-  right: 20px;
-  bottom: 20px;
-  z-index: 800;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 8px;
+  flex-shrink: 0;
+  padding: 0 12px 4px;
+  box-sizing: border-box;
   pointer-events: auto;
+}
+
+/* Expanded cards open upward into the conversation: the chip stays on the
+   composer's edge and the panel never pushes the input out of view. */
+.plugin-slot-floating-widget {
+  display: flex;
+  flex-direction: column-reverse;
 }
 
 .plugin-slot-floating-chip {
@@ -655,7 +663,6 @@
 }
 .web-ui-overlay { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px; flex-shrink: 1; }
 .web-ui-overlay-safe:focus { outline: none; }
-.web-ui-anchor.plugin-slot-floating { position: absolute; bottom: 80px; right: 12px; z-index: 15; max-height: calc(100% - 120px); overflow: auto; }
 .web-ui-contribution[data-collision="hide"] { flex-shrink: 0; }
 @media (max-width: 767px) {
   .web-ui-contribution[data-collision="hide"] { display: none; }

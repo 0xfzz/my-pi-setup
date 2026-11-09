@@ -47,11 +47,14 @@ function Working({ value, compact = false }: { value: WorkingModel; compact?: bo
     <span className="web-ui-working-message">{value.message ?? "Working…"}</span>
   </span>;
 }
-function compactView(view: WebView): string {
+export function compactView(view: WebView): string {
   switch (view.type) {
     case "status": return view.text;
     case "kv": return view.rows[0] ? `${view.rows[0].label}: ${view.rows[0].value}` : "";
-    case "list": return `${view.items.length} items${view.items[0] ? ` (${view.items[0]})` : ""}`;
+    case "list": {
+      const count = view.items.length;
+      return `${count} ${count === 1 ? "item" : "items"}${view.items[0] ? ` (${view.items[0]})` : ""}`;
+    }
   }
 }
 function strategy(model: UiModel, mode: "default" | "compact" | "card", children?: ReactNode): ReactNode {

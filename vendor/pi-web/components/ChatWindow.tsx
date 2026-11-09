@@ -1516,6 +1516,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             </div>
           </div>
         )}
+        <PluginAnchor region="floating" sessionId={session?.id ?? sessionIdRef.current} project={messageCwd} />
         <PluginAnchor anchor="chat.after" sessionId={session?.id ?? sessionIdRef.current} project={messageCwd} />
         <PluginAnchor anchor="chat.composer" sessionId={session?.id ?? sessionIdRef.current} project={messageCwd} />
         {chatInputElement}

@@ -2937,15 +2937,6 @@ export function AppShell() {
             preferredSessionId={selectedSession?.id}
           />
         </div>
-
-        {/* Floating slot widget: collapsible corner widget */}
-        <SlotHost
-          slot="floating"
-          plugins={pluginsData.plugins}
-          views={pluginsData.views}
-          sessions={pluginsData.sessions}
-          preferredSessionId={selectedSession?.id}
-        />
       </div>
 
       <div

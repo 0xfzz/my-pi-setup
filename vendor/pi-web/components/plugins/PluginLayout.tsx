@@ -8,7 +8,7 @@ import type { WebView } from "@/lib/web-ui-views";
 import { useWebUiState } from "@/hooks/useWebUiState";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { SessionStatusDot } from "./PluginViewRenderer";
-import { UiComponent } from "./UiComponent";
+import { UiComponent, compactView } from "./UiComponent";
 import "./plugins.css";
 
 /** Anchors inside the chat column. They take the composer's width and side padding so they line up with it. */
@@ -53,7 +53,7 @@ function Contribution({ plugin, contribution: c, state, sessionId, view, place, 
   }
   const compact = (region === "top" || region === "bottom") && model.kind === "view";
   const page = plugin.surfaces.find(s => s.kind === "page");
-  const content = <UiComponent component={c.component} sessionId={sessionId} model={model} renderStrategy={c.strategy} fallback={compact && !c.strategy && model.kind === "view" ? <span className="plugin-slot-content">{model.value.type === "status" ? model.value.text : model.value.type === "kv" ? model.value.rows[0] ? `${model.value.rows[0].label}: ${model.value.rows[0].value}` : "" : `${model.value.items.length} items (${model.value.items[0] ?? ""})`}</span> : undefined} />;
+  const content = <UiComponent component={c.component} sessionId={sessionId} model={model} renderStrategy={c.strategy} fallback={compact && !c.strategy && model.kind === "view" ? <span className="plugin-slot-content">{compactView(model.value)}</span> : undefined} />;
   const title = <span className="plugin-slot-title-row"><SessionStatusDot sessionId={sessionId} running={running} /><span className={region === "center" ? "plugin-slot-center-title" : "plugin-slot-title"}>{plugin.title}</span></span>;
   return <section tabIndex={overlay ? 0 : undefined} data-plugin-id={plugin.id} data-contribution-id={c.id} data-ui-owner={owner} data-scope={c.scope} data-collision={place.collision ?? "stack"}
     className={`web-ui-contribution ${overlay ? "web-ui-overlay" : ""} ${region === "center" ? "plugin-slot-center-panel" : region === "floating" ? "plugin-slot-floating-widget" : "plugin-slot-row"}`}
