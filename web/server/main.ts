@@ -384,6 +384,21 @@ async function handleApi(
     return true;
   }
 
+  const commandsMatch = /^\/api\/agent\/([^/]+)\/commands$/.exec(pathname);
+  if (commandsMatch !== null) {
+    if (req.method !== "GET") return methodNotAllowed();
+    const id = sessionIdFromPath(commandsMatch);
+    // Live sessions only — a disk-only session has no process to dispatch
+    // a command, and resuming one just to list them is a heavy side effect.
+    const core = getSession(id)?.core;
+    if (core === undefined) {
+      sendJson(res, 404, { error: "Session not found" });
+      return true;
+    }
+    sendJson(res, 200, { sessionId: id, commands: core.getCommands?.() ?? [] });
+    return true;
+  }
+
   const agentMatch = /^\/api\/agent\/([^/]+)$/.exec(pathname);
   if (agentMatch !== null) {
     if (req.method !== "POST" && req.method !== "GET") return methodNotAllowed();

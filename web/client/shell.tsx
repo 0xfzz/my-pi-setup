@@ -144,6 +144,8 @@ export function AppShell() {
               disabled={session.selectedId === null || session.connection !== "connected"}
               busy={session.streaming.isStreaming || session.uiRunning}
               error={session.sendError}
+              sessionCommands={session.sessionCommands}
+              builtinCommands={session.builtinCommands}
               onSend={(text) => {
                 void session.sendPrompt(text);
               }}

@@ -217,6 +217,19 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       bridgePoster = createBridgePoster(sessionId);
       bridgePoster.start();
       void postBridgeState(sessionId, bridgeStateOf(ctx));
+      // The session's dispatchable slash commands (extension, prompt
+      // templates, skills), so the web composer can offer them.
+      try {
+        bridgePoster.post({
+          type: "web_commands",
+          commands: pi.getCommands().map((command) => ({
+            name: command.name,
+            ...(command.description !== undefined ? { description: command.description } : {}),
+          })),
+        });
+      } catch {
+        // A failed listing must never fail the attach.
+      }
       void runBridgeStream(ctx, sessionId, bridgeController.signal);
     } catch (error) {
       // The bridge must never take the pi session down with it.
@@ -318,8 +331,13 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     if (command.type === "prompt" && typeof command.message === "string") {
       // A prompt typed in the browser runs on THIS session — the TUI sees
       // the same turn it would see if the user had typed it locally.
+      // expandPromptTemplates dispatches "/command …" like the TUI's prompt
+      // path; steer queues it when a run is already streaming.
       try {
-        pi.sendUserMessage(command.message);
+        pi.sendUserMessage(command.message, {
+          deliverAs: "steer",
+          expandPromptTemplates: true,
+        });
       } catch (error) {
         ctxNotify(`web bridge: prompt failed: ${String(error)}`);
       }

@@ -30,6 +30,8 @@ export interface SessionCore {
   abort(): Promise<void>;
   isStreaming(): boolean;
   getState(): SessionStateLite;
+  /** Slash commands the session can dispatch (extension/prompt/skill). */
+  getCommands?(): Array<{ name: string; description?: string }>;
 }
 
 export interface SessionHandle {
@@ -79,10 +81,20 @@ export interface SessionHistory {
 const liveSessions = new Map<string, SessionHandle>();
 
 function toCore(inner: AgentSession): SessionCore {
+  const getCommands = (): Array<{ name: string; description?: string }> =>
+    inner.extensionRunner
+      .getRegisteredCommands()
+      .map((command) => ({
+        name: command.invocationName,
+        ...(command.description !== undefined ? { description: command.description } : {}),
+      }));
   return {
     sessionId: inner.sessionId,
     subscribe: (listener: (event: unknown) => void) => inner.subscribe(listener),
-    prompt: (text: string) => inner.prompt(text),
+    // Prompts pass through AgentSession.prompt with its default
+    // expandPromptTemplates: "/command …" dispatches extension commands;
+    // steer queues the message when a run is already streaming, like the TUI.
+    prompt: (text: string) => inner.prompt(text, { streamingBehavior: "steer" }),
     abort: () => inner.abort(),
     isStreaming: () => inner.isStreaming,
     getState: () => {
@@ -105,6 +117,7 @@ function toCore(inner: AgentSession): SessionCore {
         thinkingLevel: agentState?.thinkingLevel ?? "off",
       };
     },
+    getCommands,
   };
 }
 

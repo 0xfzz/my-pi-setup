@@ -86,6 +86,49 @@ async function postEvents(baseUrl: string, sessionId: string, events: unknown[])
   assert.equal(res.status, 200);
 }
 
+test("web_commands events surface through /api/agent/:id/commands", async () => {
+  await withServer(async (baseUrl) => {
+    await attachFakeTui(baseUrl, "bridge-commands");
+    await postEvents(baseUrl, "bridge-commands", [
+      {
+        type: "web_commands",
+        commands: [
+          { name: "web", description: "Manage pi-web UI server" },
+          { name: "todo" },
+          { name: "", description: "invalid: no name" },
+          "not-an-object",
+        ],
+      },
+    ]);
+
+    const res = await fetch(`${baseUrl}/api/agent/bridge-commands/commands`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      commands?: Array<{ name: string; description?: string }>;
+    };
+    assert.deepEqual(body.commands, [
+      { name: "web", description: "Manage pi-web UI server" },
+      { name: "todo" },
+    ]);
+
+    // A later posting replaces the list (extension reload).
+    await postEvents(baseUrl, "bridge-commands", [
+      { type: "web_commands", commands: [{ name: "modes" }] },
+    ]);
+    const updated = (await (await fetch(`${baseUrl}/api/agent/bridge-commands/commands`)).json()) as {
+      commands?: Array<{ name: string }>;
+    };
+    assert.deepEqual(updated.commands, [{ name: "modes" }]);
+  });
+});
+
+test("commands route is 404 for sessions that are not live", async () => {
+  await withServer(async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/agent/unknown-session/commands`);
+    assert.equal(res.status, 404);
+  });
+});
+
 test("an attached bridge is the live session, and detaching drops it", async () => {
   await withServer(async (baseUrl) => {
     const tui = await attachFakeTui(baseUrl, "bridge-a");

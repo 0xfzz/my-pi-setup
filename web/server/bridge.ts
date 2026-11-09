@@ -53,6 +53,8 @@ export interface BridgeConnection {
   sendCommand(command: BridgeCommand): void;
   postEvent(event: unknown): void;
   postState(state: Partial<BridgeState>): void;
+  /** Slash commands the owning pi process posted (web_commands events). */
+  getCommands(): Array<{ name: string; description?: string }>;
   subscribe(listener: (event: unknown) => void): () => void;
   close(): void;
 }
@@ -86,6 +88,12 @@ export function attachBridge(options: {
     model: metadata.model,
     thinkingLevel: metadata.thinkingLevel,
     contextUsage: null,
+  };
+  // The commands the extension posts at attach (web_commands events);
+  // bridgeSessionCore serves them to /api/agent/:id/commands.
+  let commands: Array<{ name: string; description?: string }> = [];
+  const setCommands = (next: Array<{ name: string; description?: string }>): void => {
+    commands = next;
   };
 
   res.writeHead(200, {
@@ -141,6 +149,21 @@ export function attachBridge(options: {
     },
     postEvent(event: unknown): void {
       if (closed) return;
+      // web_commands needs this connection's closure; the rest of the
+      // lifecycle/plugin projection is module-scope.
+      if (event !== null && typeof event === "object") {
+        const e = event as { type?: unknown; commands?: unknown };
+        if (e.type === "web_commands" && Array.isArray(e.commands)) {
+          const valid = e.commands.filter(
+            (command): command is { name: string; description?: string } =>
+              typeof command === "object"
+              && command !== null
+              && typeof (command as { name?: unknown }).name === "string"
+              && (command as { name?: unknown }).name !== "",
+          );
+          if (valid.length > 0) setCommands(valid);
+        }
+      }
       handleBridgeEvent(metadata.sessionId, event);
       // Snapshot: a listener may unsubscribe itself (browser stream cleanup)
       // while the fan-out runs, which would skip entries mid-iteration.
@@ -155,6 +178,9 @@ export function attachBridge(options: {
     postState(partial: Partial<BridgeState>): void {
       if (closed) return;
       Object.assign(state, partial);
+    },
+    getCommands(): Array<{ name: string; description?: string }> {
+      return commands;
     },
     subscribe(listener: (event: unknown) => void): () => void {
       listeners.add(listener);
@@ -275,5 +301,6 @@ export function bridgeSessionCore(connection: BridgeConnection): SessionCore {
       contextUsage: connection.state.contextUsage ?? null,
       thinkingLevel: connection.state.thinkingLevel ?? metadata.thinkingLevel ?? "off",
     }),
+    getCommands: () => connection.getCommands(),
   };
 }

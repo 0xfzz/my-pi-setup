@@ -13,6 +13,7 @@ import {
   type StreamingState,
   type StreamAction,
 } from "./streaming.ts";
+import { BUILTIN_COMMANDS, type WebCommand } from "../shared/commands.ts";
 import type { WebPluginDescriptor, WebView, WorkingModelLike } from "./plugins/contract.ts";
 
 export interface SessionSummary {
@@ -167,6 +168,8 @@ export function usePiSession() {
   const [toolResults, setToolResults] = useState<Record<string, ToolResultLike>>({});
   /** Last prompt delivery failure, shown at the composer until the next send. */
   const [sendError, setSendError] = useState<string | null>(null);
+  /** Slash commands the selected live session can dispatch. */
+  const [sessionCommands, setSessionCommands] = useState<WebCommand[]>([]);
   // Bumped when the TUI-side bridge reconnects after a gap: the effect
   // re-runs, reloading history in case events were missed while it was away.
   const [historyEpoch, setHistoryEpoch] = useState(0);
@@ -235,6 +238,7 @@ export function usePiSession() {
     setWorking(null);
     setUiRunning(false);
     setToolResults({});
+    setSessionCommands([]);
     streamingRef.current = INITIAL_STREAMING_STATE;
     setStreaming(INITIAL_STREAMING_STATE);
 
@@ -244,6 +248,18 @@ export function usePiSession() {
     }
     let closed = false;
     setConnection("connecting");
+
+    // The live session's dispatchable slash commands (extension/prompt/
+    // skill); built-ins come from the shared list. Best-effort: a failed
+    // fetch just leaves the built-ins.
+    void fetch(`/api/agent/${encodeURIComponent(selectedId)}/commands`)
+      .then((res) => (res.ok ? (res.json() as Promise<{ commands?: WebCommand[] }>) : { commands: [] }))
+      .then((body) => {
+        if (!closed) setSessionCommands(body.commands ?? []);
+      })
+      .catch(() => {
+        // The palette falls back to the built-ins.
+      });
 
     // The history fetch and the event stream race: an assistant reply that
     // ends while history is still loading must survive the load. Appends are
@@ -605,6 +621,8 @@ export function usePiSession() {
     uiRunning,
     toolResults,
     sendError,
+    sessionCommands,
+    builtinCommands: BUILTIN_COMMANDS,
     newSession,
     sendPrompt,
     abort,
