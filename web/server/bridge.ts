@@ -42,7 +42,7 @@ export interface BridgeState {
 }
 
 export type BridgeCommand =
-  | { type: "prompt"; message: string }
+  | { type: "prompt"; message: string; images?: Array<{ data: string; mimeType: string }> }
   | { type: "abort" }
   | { type: "action"; requestId: string; pluginId: string; actionId: string };
 
@@ -284,8 +284,12 @@ export function bridgeSessionCore(connection: BridgeConnection): SessionCore {
   return {
     sessionId: metadata.sessionId,
     subscribe: (listener: (event: unknown) => void) => connection.subscribe(listener),
-    prompt: async (text: string) => {
-      connection.sendCommand({ type: "prompt", message: text });
+    prompt: async (text: string, images?: Array<{ data: string; mimeType: string }>) => {
+      connection.sendCommand({
+        type: "prompt",
+        message: text,
+        ...(images !== undefined && images.length > 0 ? { images } : {}),
+      });
     },
     abort: async () => {
       connection.sendCommand({ type: "abort" });

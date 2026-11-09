@@ -44,7 +44,8 @@ const MIME_TYPES: Record<string, string> = {
 
 const DEFAULT_PORT = Number(process.env.PI_WEB_PORT ?? 30142);
 const DEFAULT_HOST = process.env.PI_WEB_HOST ?? "127.0.0.1";
-const MAX_BODY_BYTES = 1_000_000;
+// Prompts can carry base64 images (downscaled client-side, ~6 MB each).
+const MAX_BODY_BYTES = 60_000_000;
 
 export interface WebServerHandle {
   readonly port: number;

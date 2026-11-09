@@ -3,16 +3,25 @@
 // Typing "/" opens the slash-command palette: the live session's dispatchable
 // commands first, then pi's built-ins (marked TUI); ArrowUp/Down move, Tab or
 // Enter completes, Esc dismisses.
+// Images attach by pasting into the input or picking files; they are
+// downscaled client-side (max 1568px, JPEG re-encode when still large) so a
+// screenshot never needs a multi-megabyte request.
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { filterCommands, type WebCommand } from "../shared/commands.ts";
+
+export interface PendingImage {
+  id: number;
+  data: string;
+  mimeType: string;
+}
 
 export interface ComposerProps {
   disabled: boolean;
   /** Any UI state that means the session is busy: streaming, thinking, tools. */
   busy: boolean;
   error?: string | null;
-  onSend: (text: string) => void;
+  onSend: (text: string, images: PendingImage[]) => void;
   onAbort: () => void;
   /** Commands the selected session dispatches (extension/prompt/skill). */
   sessionCommands?: WebCommand[];
@@ -21,6 +30,55 @@ export interface ComposerProps {
 }
 
 const PALETTE_LIMIT = 8;
+/** The longest edge an attachment keeps; larger images are scaled down. */
+const IMAGE_MAX_EDGE = 1568;
+/** Re-encode as JPEG when the PNG data URL is still above this. */
+const IMAGE_PNG_SOFT_LIMIT = 1_200_000;
+
+interface ReadImage {
+  data: string;
+  mimeType: string;
+}
+
+async function readAsDataUrl(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("could not read the file"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("could not decode the image"));
+    image.src = src;
+  });
+}
+
+/** Downscale a data-URL image: cap the long edge, re-encode when still big. */
+async function downscaleDataUrl(dataUrl: string, mimeType: string): Promise<ReadImage> {
+  const image = await loadImage(dataUrl);
+  const longest = Math.max(image.width, image.height);
+  if (longest <= IMAGE_MAX_EDGE && dataUrl.length <= IMAGE_PNG_SOFT_LIMIT) {
+    return { data: dataUrl.slice(dataUrl.indexOf(",") + 1), mimeType };
+  }
+  const scale = Math.min(1, IMAGE_MAX_EDGE / longest);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.width * scale));
+  canvas.height = Math.max(1, Math.round(image.height * scale));
+  const context = canvas.getContext("2d");
+  if (context === null) return { data: dataUrl.slice(dataUrl.indexOf(",") + 1), mimeType };
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  let encoded = canvas.toDataURL("image/png");
+  if (encoded.length > IMAGE_PNG_SOFT_LIMIT) {
+    encoded = canvas.toDataURL("image/jpeg", 0.85);
+    return { data: encoded.slice(encoded.indexOf(",") + 1), mimeType: "image/jpeg" };
+  }
+  return { data: encoded.slice(encoded.indexOf(",") + 1), mimeType: "image/png" };
+}
 
 export function Composer({
   disabled,
@@ -32,9 +90,11 @@ export function Composer({
   builtinCommands,
 }: ComposerProps) {
   const [text, setText] = useState("");
+  const [images, setImages] = useState<PendingImage[]>([]);
   const [paletteIndex, setPaletteIndex] = useState(0);
   const [paletteDismissed, setPaletteDismissed] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Session commands first (they dispatch), built-ins after, deduped by name.
   const commands = useMemo(() => {
@@ -67,10 +127,35 @@ export function Composer({
     inputRef.current?.focus();
   };
 
+  const addImages = async (files: Blob[]): Promise<void> => {
+    const next: PendingImage[] = [];
+    for (const file of files.slice(0, 8)) {
+      try {
+        const dataUrl = await readAsDataUrl(file);
+        const read = await downscaleDataUrl(dataUrl, file.type || "image/png");
+        next.push({ id: Date.now() + next.length + Math.random(), data: read.data, mimeType: read.mimeType });
+      } catch {
+        // A file that cannot be decoded is skipped; the send still works.
+      }
+    }
+    if (next.length > 0) setImages((prev) => [...prev, ...next].slice(0, 8));
+  };
+
+  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>): void => {
+    const files = Array.from(event.clipboardData?.items ?? [])
+      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+    if (files.length === 0) return;
+    event.preventDefault();
+    void addImages(files);
+  };
+
   const send = (): void => {
-    if (text.trim() === "") return;
-    onSend(text);
+    if (text.trim() === "" && images.length === 0) return;
+    onSend(text, images);
     setText("");
+    setImages([]);
     setPaletteDismissed(false);
   };
 
@@ -107,7 +192,7 @@ export function Composer({
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      if (!disabled && text.trim() !== "") {
+      if (!disabled && (text.trim() !== "" || images.length > 0)) {
         send();
       }
     }
@@ -136,9 +221,27 @@ export function Composer({
           ))}
         </div>
       ) : null}
+      {images.length > 0 ? (
+        <div className="app-attachments">
+          {images.map((image) => (
+            <span key={image.id} className="app-attachment">
+              <img src={`data:${image.mimeType};base64,${image.data}`} alt="attachment" />
+              <button
+                type="button"
+                className="app-attachment-remove"
+                aria-label="Remove attachment"
+                onClick={() => setImages((prev) => prev.filter((item) => item.id !== image.id))}
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <div className="app-composer-row">
       <textarea
         className="app-composer-input"
-        placeholder={disabled ? "Select or start a session…" : "Message pi… (/ for commands)"}
+        placeholder={disabled ? "Select or start a session…" : "Message pi… (/ for commands, paste to attach)"}
         disabled={disabled}
         value={text}
         ref={inputRef}
@@ -146,9 +249,32 @@ export function Composer({
           setText(event.target.value);
           setPaletteDismissed(false);
         }}
+        onPaste={handlePaste}
         onKeyDown={handleKeyDown}
         aria-label="Message pi"
       />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="app-attach-input"
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []);
+          event.target.value = "";
+          if (files.length > 0) void addImages(files);
+        }}
+      />
+      <button
+        type="button"
+        className="app-attach-button"
+        onClick={() => fileInputRef.current?.click()}
+        disabled={disabled}
+        title="Attach images"
+        aria-label="Attach images"
+      >
+        📎
+      </button>
       {busy ? (
         <button
           type="button"
@@ -159,6 +285,7 @@ export function Composer({
           Stop
         </button>
       ) : null}
+      </div>
       {error ? <div className="app-composer-error" role="alert">{error}</div> : null}
     </div>
   );

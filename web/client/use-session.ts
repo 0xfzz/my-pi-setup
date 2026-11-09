@@ -130,6 +130,8 @@ export type ConnectionState = "idle" | "connecting" | "connected" | "error";
 interface OptimisticUserMessage {
   key: number;
   text: string;
+  /** Images attached to the prompt (base64, already downscaled). */
+  images?: Array<{ data: string; mimeType: string }>;
 }
 
 /** localStorage key for the selected session: reloads and plugin-page navigation keep the session context. */
@@ -408,24 +410,24 @@ export function usePiSession() {
             void fetchState(selectedId);
           } else if (message?.role === "user") {
             // A prompt typed in the TUI (or the confirmed echo of one sent
-            // from here): render it, dropping the optimistic twin.
+            // from here): render it, dropping the optimistic twin (matched on
+            // text and image count — an image-only prompt has empty text).
             const entry: HistoryEntryLike = {
               role: "user",
               blocks: toAssistantBlocks(message.content),
             };
             const text = messageText(entry.blocks);
-            if (text !== "") {
-              setUserMessages((prev) => {
-                for (let i = prev.length - 1; i >= 0; i--) {
-                  if (prev[i].text === text) {
-                    const next = [...prev];
-                    next.splice(i, 1);
-                    return next;
-                  }
+            const imageCount = entry.blocks.filter((block) => block.kind === "image").length;
+            setUserMessages((prev) => {
+              for (let i = prev.length - 1; i >= 0; i--) {
+                if (prev[i].text === text && (prev[i].images?.length ?? 0) === imageCount) {
+                  const next = [...prev];
+                  next.splice(i, 1);
+                  return next;
                 }
-                return prev;
-              });
-            }
+              }
+              return prev;
+            });
             appendEntry(entry);
           } else if (message?.role === "toolResult" && typeof message.toolCallId === "string") {
             // Tool results arrive as their own message; join them to the
@@ -571,16 +573,27 @@ export function usePiSession() {
     }
   }, [refreshSessions]);
 
-  const sendPrompt = useCallback(async (text: string) => {
+  const sendPrompt = useCallback(async (text: string, images: Array<{ data: string; mimeType: string }> = []) => {
     const id = selectedId;
-    if (id === null || text.trim() === "") return;
-    setUserMessages((prev) => [...prev, { key: Date.now() + prev.length, text }]);
+    if (id === null || (text.trim() === "" && images.length === 0)) return;
+    setUserMessages((prev) => [
+      ...prev,
+      {
+        key: Date.now() + prev.length,
+        text,
+        ...(images.length > 0 ? { images } : {}),
+      },
+    ]);
     setSendError(null);
     try {
       const res = await fetch(`/api/agent/${encodeURIComponent(id)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "prompt", message: text }),
+        body: JSON.stringify({
+          type: "prompt",
+          message: text,
+          ...(images.length > 0 ? { images } : {}),
+        }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };

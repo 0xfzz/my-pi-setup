@@ -146,8 +146,8 @@ export function AppShell() {
               error={session.sendError}
               sessionCommands={session.sessionCommands}
               builtinCommands={session.builtinCommands}
-              onSend={(text) => {
-                void session.sendPrompt(text);
+              onSend={(text, images) => {
+                void session.sendPrompt(text, images);
               }}
               onAbort={() => {
                 void session.abort();

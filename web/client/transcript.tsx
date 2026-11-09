@@ -318,9 +318,15 @@ export interface TranscriptEntry {
   aborted?: boolean;
 }
 
+export interface TranscriptUserMessage {
+  key: number;
+  text: string;
+  images?: Array<{ data: string; mimeType: string }>;
+}
+
 export interface TranscriptProps {
   history: HistoryEntryLike[];
-  userMessages: Array<{ key: number; text: string }>;
+  userMessages: TranscriptUserMessage[];
   streaming: { isStreaming: boolean; streamingMessage: { content: AssistantBlock[] } | null };
   toolStatus: Record<string, ToolCallStatus>;
   toolResults: Record<string, ToolResultLike>;
@@ -379,7 +385,14 @@ export function Transcript({
     ...userMessages.map((message) => ({
       key: `user-${message.key}`,
       role: "user" as const,
-      blocks: [{ kind: "text" as const, text: message.text }],
+      blocks: [
+        ...(message.text.trim() !== "" ? [{ kind: "text" as const, text: message.text }] : []),
+        ...(message.images ?? []).map((image) => ({
+          kind: "image" as const,
+          data: image.data,
+          mimeType: image.mimeType,
+        })),
+      ],
     })),
   ];
 

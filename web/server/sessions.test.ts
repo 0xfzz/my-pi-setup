@@ -54,16 +54,34 @@ test("parseSessionCommand accepts prompt, abort and get_state", () => {
 test("parseSessionCommand rejects malformed commands", () => {
   const cases: Array<[unknown, RegExp]> = [
     [null, /body must be an object/],
-    [{ type: "prompt" }, /non-empty message/],
+    [{ type: "prompt" }, /requires a message/],
     [{ type: "prompt", message: "  " }, /non-empty message/],
     [{ type: "nonsense" }, /unknown command type/],
     [{}, /unknown command type/],
+    [{ type: "prompt", message: "hi", images: "nope" }, /images must be an array/],
+    [{ type: "prompt", message: "hi", images: [{ data: "x" }] }, /mimeType/],
+    [{ type: "prompt", message: "hi", images: [{ data: "x", mimeType: "text/plain" }] }, /image\/\*/],
+    [{ type: "prompt", message: "hi", images: Array.from({ length: 9 }, () => ({ data: "x", mimeType: "image/png" })) }, /too many images/],
   ];
   for (const [body, pattern] of cases) {
     const parsed = parseSessionCommand(body);
     assert.ok("error" in parsed, `expected an error for ${JSON.stringify(body)}`);
     assert.match(parsed.error, pattern);
   }
+});
+
+test("parseSessionCommand accepts image-only prompts", () => {
+  const parsed = parseSessionCommand({
+    type: "prompt",
+    message: "",
+    images: [{ data: "aGk=", mimeType: "image/png" }],
+  });
+  assert.ok(!("error" in parsed));
+  assert.deepEqual(parsed, {
+    type: "prompt",
+    message: "",
+    images: [{ data: "aGk=", mimeType: "image/png" }],
+  });
 });
 
 test("sendCommand routes prompt to the core and reports acceptance", async () => {

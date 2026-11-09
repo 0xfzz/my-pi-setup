@@ -319,6 +319,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
         requestId?: unknown;
         pluginId?: unknown;
         actionId?: unknown;
+        images?: unknown;
       };
     };
     try {
@@ -332,9 +333,17 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       // A prompt typed in the browser runs on THIS session — the TUI sees
       // the same turn it would see if the user had typed it locally.
       // expandPromptTemplates dispatches "/command …" like the TUI's prompt
-      // path; steer queues it when a run is already streaming.
+      // path; steer queues it when a run is already streaming. Image
+      // attachments ride along as content blocks.
       try {
-        pi.sendUserMessage(command.message, {
+        const content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>
+          = [{ type: "text", text: command.message }];
+        for (const image of Array.isArray(command.images) ? command.images : []) {
+          if (typeof image?.data === "string" && typeof image?.mimeType === "string") {
+            content.push({ type: "image", data: image.data, mimeType: image.mimeType });
+          }
+        }
+        pi.sendUserMessage(content, {
           deliverAs: "steer",
           expandPromptTemplates: true,
         });

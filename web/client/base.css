@@ -1037,12 +1037,18 @@ body {
   border-top: 1px solid var(--border);
   background: var(--bg-raised);
   display: flex;
+  flex-direction: column;
   gap: 8px;
-  align-items: flex-end;
   max-width: 812px;
   margin: 0 auto;
   width: 100%;
   position: relative;
+}
+
+.app-composer-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
 }
 
 .app-composer-input {
@@ -1136,6 +1142,66 @@ body {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0 4px;
+}
+
+/* Attachments: thumbnails above the input row, removable. */
+.app-attach-input {
+  display: none;
+}
+
+.app-attach-button {
+  flex: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--fg-dim);
+  font: inherit;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.app-attach-button:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+.app-attachments {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.app-attachment {
+  position: relative;
+  line-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.app-attachment img {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  display: block;
+}
+
+.app-attachment-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.65);
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
 }
 
 .app-composer-error {

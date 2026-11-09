@@ -26,7 +26,7 @@ export interface SessionStateLite {
 export interface SessionCore {
   readonly sessionId: string;
   subscribe(listener: (event: unknown) => void): () => void;
-  prompt(text: string): Promise<void>;
+  prompt(text: string, images?: Array<{ data: string; mimeType: string }>): Promise<void>;
   abort(): Promise<void>;
   isStreaming(): boolean;
   getState(): SessionStateLite;
@@ -94,7 +94,13 @@ function toCore(inner: AgentSession): SessionCore {
     // Prompts pass through AgentSession.prompt with its default
     // expandPromptTemplates: "/command …" dispatches extension commands;
     // steer queues the message when a run is already streaming, like the TUI.
-    prompt: (text: string) => inner.prompt(text, { streamingBehavior: "steer" }),
+    prompt: (text: string, images?: Array<{ data: string; mimeType: string }>) =>
+      inner.prompt(text, {
+        streamingBehavior: "steer",
+        ...(images !== undefined && images.length > 0
+          ? { images: images.map((image) => ({ type: "image" as const, ...image })) }
+          : {}),
+      }),
     abort: () => inner.abort(),
     isStreaming: () => inner.isStreaming,
     getState: () => {
@@ -472,8 +478,13 @@ export async function readHistory(sessionFile: string, limit = 200): Promise<Ses
   return { entries, toolResults };
 }
 
+export interface PromptImage {
+  data: string;
+  mimeType: string;
+}
+
 export type SessionCommand =
-  | { type: "prompt"; message: string }
+  | { type: "prompt"; message: string; images?: PromptImage[] }
   | { type: "abort" }
   | { type: "get_state" };
 
@@ -482,14 +493,47 @@ export type CommandResult =
   | { status: "not_found" }
   | { status: "error"; error: string };
 
+/** Prompt attachments: base64 image blocks, bounded in count and size. */
+function parsePromptImages(images: unknown): PromptImage[] | { error: string } {
+  if (images === undefined) return [];
+  if (!Array.isArray(images)) return { error: "images must be an array" };
+  if (images.length > 8) return { error: "too many images (max 8)" };
+  const parsed: PromptImage[] = [];
+  for (const raw of images) {
+    if (typeof raw !== "object" || raw === null) return { error: "images entries must be objects" };
+    const image = raw as { data?: unknown; mimeType?: unknown };
+    if (typeof image.data !== "string" || image.data === "") {
+      return { error: "images entries require non-empty data" };
+    }
+    if (typeof image.mimeType !== "string" || !image.mimeType.startsWith("image/")) {
+      return { error: "images entries require an image/* mimeType" };
+    }
+    if (image.data.length > 6_000_000) {
+      return { error: "image too large (max ~6 MB of base64 per image)" };
+    }
+    parsed.push({ data: image.data, mimeType: image.mimeType });
+  }
+  return parsed;
+}
+
 export function parseSessionCommand(body: unknown): SessionCommand | { error: string } {
   if (typeof body !== "object" || body === null) return { error: "body must be an object" };
   const command = body as Record<string, unknown>;
   if (command.type === "prompt") {
-    if (typeof command.message !== "string" || command.message.trim() === "") {
+    if (typeof command.message !== "string") {
+      return { error: "prompt requires a message" };
+    }
+    // An image-only prompt carries an empty message.
+    if (command.message.trim() === "" && !Array.isArray(command.images)) {
       return { error: "prompt requires a non-empty message" };
     }
-    return { type: "prompt", message: command.message };
+    const images = parsePromptImages(command.images);
+    if ("error" in images) return { error: images.error };
+    return {
+      type: "prompt",
+      message: command.message,
+      ...(images.length > 0 ? { images } : {}),
+    };
   }
   if (command.type === "abort") return { type: "abort" };
   if (command.type === "get_state") return { type: "get_state" };
@@ -512,7 +556,7 @@ export function sendCommand(id: string, command: SessionCommand): Promise<Comman
         });
       }
       return core
-        .prompt(command.message)
+        .prompt(command.message, command.images)
         .then(() => ({ status: "ok", data: { accepted: true } }) as const)
         .catch((error: unknown) => ({
           status: "error",
