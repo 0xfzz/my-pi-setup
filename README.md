@@ -124,6 +124,7 @@ diff record, not documentation.
 | Document | Answers |
 | --- | --- |
 | [Delegation](docs/delegation.md) | How delegated work runs: parent and child, the handoff, re-spawn on a missed handoff, the escalation ladder, and every guardrail. **Start here.** |
+| [Auto title](docs/auto-title.md) | How an untitled session is named from its first exchange, what it refuses, and how to turn it off. |
 | [Modes](docs/modes.md) | What Normal and Plan allow, how a switch is enforced, and why delegation is not a mode. |
 | [Todo](docs/todo.md) | The intent graph: `todo_plan` / `todo_act` / `todo_next`, leases, derived state, typed evidence, and the v1 shim. |
 | [Questions](docs/questions.md) | When the agent must ask, how a child routes a question to the parent, and why a cancelled dialog is never consent. |

@@ -1,4 +1,5 @@
 import { artifactsPlugin } from "./artifacts.ts";
+import { autoTitlePlugin } from "./auto-title.ts";
 import { bubblySpinnerPlugin } from "./bubbly-spinner.ts";
 import { cacheStatsPlugin } from "./cache-stats.ts";
 import { exampleOverridePlugin } from "./example-override.ts";
@@ -16,6 +17,7 @@ export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [
   subagentMonitorPlugin,
   bubblySpinnerPlugin,
   modesPlugin,
+  autoTitlePlugin,
   exampleOverridePlugin,
 ];
 
