@@ -500,15 +500,10 @@ async function run() {
       state: "visible",
       timeout: 5_000,
     });
-    // A genuinely TUI-only command is still blocked with an honest notice.
-    await composerInput.fill("/share");
-    await composerInput.press("Enter");
-    const notice = page.locator(".app-composer-error");
-    await notice.waitFor({ state: "visible", timeout: 5_000 });
-    assert.ok(
-      (await notice.textContent())?.includes("TUI command"),
-      "the TUI-only command is blocked with a notice",
-    );
+    // Every built-in is now dispatchable from the web (13 web-ported +
+    // 11 web-channel); nothing is TUI-only anymore, so /share dispatches
+    // through the web channel like the other core commands rather than
+    // being blocked. (Its bridge-channel assertion lives with 8e2.)
     await composerInput.fill("");
 
     step("8c: extension dialog view (the web extension surface)");

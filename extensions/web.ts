@@ -20,7 +20,26 @@
  * That is what keeps the web UI and the CLI in sync, in realtime, both ways.
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { createLocalBashOperations } from "@earendil-works/pi-coding-agent";
+import { createLocalBashOperations, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+// pi's own share/bug primitives — deep imports, since the package "exports"
+// map only opens the main entry. These are pi's code, not reimplementations.
+import { exportSessionToJsonl, serializeSessionBranch } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/session-export.js";
+import {
+  bugReportArchiveFileName,
+  collectBugReportDiagnostics,
+  collectBugReportMetadata,
+  writeBugReportArchive,
+} from "../node_modules/@earendil-works/pi-coding-agent/dist/core/bug-report.js";
+import { uploadBugReport } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/bug-report-upload.js";
+import { readCrashLog } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/crash-log.js";
+import { getRadiusGatewayUrl, RADIUS_PROVIDER_ID } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/radius.js";
+import { getShareViewerUrl } from "../node_modules/@earendil-works/pi-coding-agent/dist/config.js";
+import { getAuthCredential } from "../node_modules/@earendil-works/pi-coding-agent/dist/cli/auth-command.js";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../lib/web-plugins/actions.ts";
 import { WEB_PLUGIN_VIEW_EVENT, type DialogWebView, type WebView } from "../lib/web-plugins/view.ts";
 import { publishWebView } from "../lib/web-plugins/publisher.ts";
@@ -883,6 +902,28 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
         ctx.shutdown();
       },
     },
+    {
+      // pi's /share: export the session branch (pi's exportSessionToJsonl)
+      // and hand the URL to Radius or a GitHub gist. The result is a web
+      // dialog carrying the share URL — no terminal loader.
+      name: "share",
+      dispatch: "direct",
+      description: "Share the session via Radius or a GitHub gist (web core)",
+      handler: async (_args, ctx) => {
+        await runShare(ctx);
+      },
+    },
+    {
+      // pi's /bug: build pi's own bug-report bundle (metadata + diagnostics
+      // + session branch) and upload it or write a zip, then report the
+      // result. args is JSON: {description?, delivery? "upload"|"zip"}.
+      name: "bug",
+      dispatch: "direct",
+      description: "Report a bug to the Pi developers (web core)",
+      handler: async (args, ctx) => {
+        await runBug(args, ctx);
+      },
+    },
   ];
   const webCoreCommand = (name: string): (typeof WEB_CORE_COMMANDS)[number] | undefined =>
     WEB_CORE_COMMANDS.find((command) => command.name === name);
@@ -911,6 +952,179 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     return view;
   };
 
+  // A simple result dialog (no picker): lines + a Close action. Used by
+  // /share and /bug to hand a URL or report id back to the web frontend.
+  const resultDialog = (title: string, lines: string[]): WebView => ({
+    type: "dialog",
+    title,
+    lines,
+    actions: [{ id: "web-core-close", label: "Close" }],
+    open: true,
+  });
+
+  // The Radus/share trailing entry: the session's system prompt and tool
+  // schemas, so the viewer renders tool calls. Built from the extension's
+  // own surfaces (ctx.getSystemPrompt + pi.getAllTools) — pi's own data.
+  const shareTrailingEntries = (ctx: WebCommandContext): ((parentId: string | null, timestamp: string) => readonly object[]) => {
+    const tools = pi
+      .getAllTools()
+      .map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters }));
+    const systemPrompt = ctx.getSystemPrompt();
+    return (parentId, timestamp) => [{
+      type: "custom",
+      customType: "pi.share",
+      id: randomUUID().slice(0, 8),
+      parentId,
+      timestamp,
+      data: { systemPrompt, tools },
+    }];
+  };
+
+  const tryShareViaRadius = async (jsonlFile: string, ctx: WebCommandContext): Promise<string | null> => {
+    try {
+      const auth = await ctx.modelRegistry.getProviderAuth(RADIUS_PROVIDER_ID);
+      const token = getAuthCredential(auth);
+      if (!token) return null;
+      const body = readFileSync(jsonlFile);
+      const url = new URL("/v1/artifacts", getRadiusGatewayUrl());
+      url.searchParams.set("visibility", "organization");
+      url.searchParams.set("title", "Pi session");
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/x-ndjson",
+          "Content-Length": String(body.byteLength),
+        },
+        body,
+      });
+      const json = (await response.json().catch(() => null)) as { artifact?: { canonical_url?: string } } | null;
+      if (!response.ok || !json?.artifact?.canonical_url) return null;
+      return json.artifact.canonical_url;
+    } catch {
+      return null;
+    }
+  };
+
+  const shareViaGist = (jsonlFile: string): Promise<string | null> =>
+    new Promise((resolve) => {
+      const proc = spawn("gh", ["gist", "create", "--public=false", jsonlFile]);
+      let stdout = "";
+      proc.stdout?.on("data", (data: Buffer) => {
+        stdout += data.toString();
+      });
+      proc.on("error", () => resolve(null));
+      proc.on("close", (code) => resolve(code === 0 ? stdout.trim() : null));
+    });
+
+  const runShare = async (ctx: WebCommandContext): Promise<void> => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "pi-share-"));
+    const jsonlFile = join(tmpDir, "session.jsonl");
+    try {
+      const exportJsonl = exportSessionToJsonl as unknown as (
+        sm: unknown,
+        outputPath: string,
+        trailing: (parentId: string | null, timestamp: string) => readonly object[],
+      ) => string;
+      exportJsonl(ctx.sessionManager, jsonlFile, shareTrailingEntries(ctx));
+      const destination = pi.getSettings().sessionShareDestination ?? "auto";
+      if (destination !== "gist") {
+        const radiusUrl = await tryShareViaRadius(jsonlFile, ctx);
+        if (radiusUrl !== null) {
+          publishWebView(pi, WEB_CORE_PLUGIN_ID, resultDialog("Share complete", [`Share URL: ${radiusUrl}`]));
+          return;
+        }
+        if (destination === "radius") {
+          publishWebView(pi, WEB_CORE_PLUGIN_ID, resultDialog("Share failed", ["Radius authentication is not configured. Run /login radius first."]));
+          return;
+        }
+      }
+      const gistUrl = await shareViaGist(jsonlFile);
+      if (gistUrl === null || gistUrl === "") {
+        publishWebView(pi, WEB_CORE_PLUGIN_ID, resultDialog("Share failed", ["GitHub CLI (gh) is not installed or not logged in. Run 'gh auth login' first."]));
+        return;
+      }
+      const gistId = gistUrl.split("/").pop();
+      const previewUrl = gistId !== undefined && gistId !== "" ? getShareViewerUrl(gistId) : gistUrl;
+      publishWebView(pi, WEB_CORE_PLUGIN_ID, resultDialog("Share complete", [`Share URL: ${previewUrl}`, `Gist: ${gistUrl}`]));
+    } catch (error) {
+      publishWebView(pi, WEB_CORE_PLUGIN_ID, resultDialog("Share failed", [error instanceof Error ? error.message : String(error)]));
+    } finally {
+      try {
+        rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // tmp cleanup is best-effort
+      }
+    }
+  };
+
+  const runBug = async (args: string, ctx: WebCommandContext): Promise<void> => {
+    let parsed: unknown = {};
+    try {
+      parsed = JSON.parse(args);
+    } catch {
+      // Plain text: "--zip <description>" chooses a local zip, otherwise
+      // the description is the rest of the line and delivery is upload.
+      const trimmed = args.trim();
+      if (trimmed.startsWith("--zip")) parsed = { delivery: "zip", description: trimmed.slice(4).trim() };
+      else parsed = { description: trimmed };
+    }
+    const request = (typeof parsed === "object" && parsed !== null ? parsed : {}) as {
+      description?: unknown;
+      delivery?: unknown;
+    };
+    const description = typeof request.description === "string" && request.description.trim() !== "" ? request.description.trim() : undefined;
+    const delivery = request.delivery === "zip" ? "zip" : "upload";
+    try {
+      const settings = SettingsManager.create(ctx.cwd, getAgentDir());
+      const collectMetadata = collectBugReportMetadata as unknown as (
+        options: Record<string, unknown>,
+      ) => { id: string };
+      const sessionManager = ctx.sessionManager as unknown as {
+        getEntries(): Array<{ type: string }>;
+      } & { getSessionId?: () => string };
+      const metadata = collectMetadata({
+        hint: description,
+        sessionId: sessionManager.getSessionId?.() ?? "session",
+        cwd: ctx.cwd,
+        includeSession: true,
+        includeSummary: false,
+        messageCount: sessionManager.getEntries().filter((entry) => entry.type === "message").length,
+        model: ctx.model,
+        modelRuntime: {
+          getProvider: (id: string) => ctx.modelRegistry.getProvider(id),
+          getProviderAuthStatus: (id: string) => ctx.modelRegistry.getProviderAuthStatus(id),
+          isUsingOAuth: (id: string) => {
+            const model = ctx.modelRegistry.getAll().find((candidate) => candidate.provider === id);
+            return model !== undefined ? ctx.modelRegistry.isUsingOAuth(model) : false;
+          },
+          getRegisteredProviderIds: () => ctx.modelRegistry.getRegisteredProviderIds(),
+        },
+        thinkingLevel: ctx.thinkingLevel ?? "off",
+        extensions: [],
+        extensionErrors: [],
+        globalSettings: settings.getGlobalSettings(),
+        projectSettings: settings.getProjectSettings(),
+      });
+      const diagnostics = collectBugReportDiagnostics(ctx.sessionManager as never, readCrashLog());
+      const sessionJsonl = (serializeSessionBranch as unknown as (
+        sm: unknown,
+        trailing?: (parentId: string | null, timestamp: string) => readonly object[],
+      ) => string)(ctx.sessionManager, shareTrailingEntries(ctx));
+      const bundle = { metadata, diagnostics, sessionJsonl };
+      if (delivery === "upload") {
+        const result = await uploadBugReport(bundle as never, { signal: AbortSignal.timeout(30_000) });
+        publishWebView(pi, WEB_CORE_PLUGIN_ID, resultDialog("Bug report uploaded", [`Report ID: ${result.id}`]));
+      } else {
+        const outPath = join(process.cwd(), bugReportArchiveFileName((metadata as { id: string }).id));
+        await writeBugReportArchive(bundle as never, outPath);
+        publishWebView(pi, WEB_CORE_PLUGIN_ID, resultDialog("Bug report exported", [`Saved to: ${outPath}`]));
+      }
+    } catch (error) {
+      publishWebView(pi, WEB_CORE_PLUGIN_ID, resultDialog("Bug report failed", [error instanceof Error ? error.message : String(error)]));
+    }
+  };
+
   // A picker's answer: the action id encodes <kind>@<entryId>. Dispatch
   // through pi's own command runner (the hidden web-core-fork/tree
   // commands) so the handler runs with a fresh, valid command context —
@@ -919,7 +1133,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     const request = data as Partial<ActionRequestPayload> | undefined;
     if (request?.pluginId !== WEB_CORE_PLUGIN_ID) return;
     const actionId = typeof request.actionId === "string" ? request.actionId : "";
-    if (actionId === "web-core-cancel") {
+    if (actionId === "web-core-cancel" || actionId === "web-core-close") {
       void publishWebView(pi, WEB_CORE_PLUGIN_ID, { type: "dialog", open: false });
     } else if (actionId.startsWith("fork@")) {
       const entryId = actionId.slice("fork@".length);
