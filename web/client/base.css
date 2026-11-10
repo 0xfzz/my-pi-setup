@@ -618,29 +618,34 @@ body {
   border-style: dashed;
 }
 
-/* The /tree picker: pi's session tree, searchable and navigable. */
+/* The /tree picker: pi's session tree, searchable and navigable. The rows
+   are a git-graph-style tree — guide cells per ancestor level, a role tag,
+   the snippet, relative time, and the current leaf chip. */
 .app-tree-list {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 0;
   max-height: 55vh;
   overflow-y: auto;
+  overflow-x: hidden;
   min-width: 0;
   margin-top: 8px;
+  padding: 2px 0;
 }
 
 .app-tree-node {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  padding: 2px 8px;
+  padding: 3px 10px 3px 4px;
   background: transparent;
   border: none;
   border-radius: 5px;
-  color: var(--fg-dim);
+  color: var(--fg);
   font: inherit;
   font-size: 12px;
+  line-height: 1.45;
   text-align: left;
   cursor: pointer;
   min-width: 0;
@@ -648,50 +653,109 @@ body {
 
 .app-tree-node.is-highlighted {
   background: var(--bg-input);
-  color: var(--fg);
 }
 
 .app-tree-node.is-current {
-  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-.app-tree-structure {
+/* The guides: one 18px cell per ancestor level, each a centered hairline;
+   the arm is the last cell — a corner that connects the node to its line. */
+.app-tree-guides {
+  display: inline-flex;
+  align-items: center;
   flex: none;
-  color: var(--fg-faint);
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 11px;
-  white-space: pre;
+  height: 18px;
 }
 
-.app-tree-node.is-current .app-tree-structure {
+.app-tree-guide {
+  display: inline-block;
+  width: 18px;
+  height: 100%;
+  background:
+    linear-gradient(to right, transparent 8px, var(--border) 8px, var(--border) 9px, transparent 9px);
+}
+
+.app-tree-arm {
+  display: inline-block;
+  width: 18px;
+  height: 100%;
+  /* The arm: a short horizontal line at the row's middle, meeting the
+     ancestor's vertical guide. */
+  background:
+    linear-gradient(to bottom, transparent 8px, var(--border) 8px, var(--border) 9px, transparent 9px),
+    linear-gradient(to right, transparent 8px, var(--border) 8px, var(--border) 9px, transparent 9px);
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+}
+
+/* A branch point joins two guides; mark it with a dot. */
+.app-tree-arm.is-branch {
+  background:
+    linear-gradient(to right, transparent 8px, var(--border) 8px, var(--border) 9px, transparent 9px);
+  position: relative;
+}
+
+.app-tree-arm.is-branch::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  background: var(--bg-raised);
+}
+
+/* The role tag: a small fixed-width pill so the snippets align. */
+.app-tree-role {
+  flex: none;
+  width: 52px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
+.app-tree-role.role-user {
   color: var(--accent);
 }
 
-.app-tree-label {
+.app-tree-role.role-assistant {
+  color: var(--ok);
+}
+
+.app-tree-text {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--fg);
 }
 
-.app-tree-role-user {
-  color: var(--accent);
+.app-tree-node.is-highlighted .app-tree-text,
+.app-tree-node.is-current .app-tree-text {
+  color: var(--fg);
 }
 
-.app-tree-role-assistant {
-  color: var(--ok);
-}
-
-.app-tree-role-bash,
-.app-tree-role-other {
-  color: var(--fg-dim);
+.app-tree-time {
+  flex: none;
+  color: var(--fg-faint);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .app-tree-current {
   flex: none;
   color: var(--accent);
   font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 999px;
 }
 
 .app-tree-empty {

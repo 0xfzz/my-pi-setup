@@ -641,6 +641,16 @@ export function usePiSession() {
           bashOpen = false;
           break;
         }
+        case "session_tree": {
+          // A tree navigation (/tree, a fork): pi moved the session's
+          // position — reload the history to the new branch, exactly like
+          // the TUI redraws its transcript. Optimistic messages come back
+          // with the reload.
+          setUserMessages([]);
+          setHistoryEpoch((epoch) => epoch + 1);
+          void fetchState(selectedId);
+          break;
+        }
         case "bridge_resync":
           // The TUI-side bridge re-attached after a drop; reload the history
           // in case events were missed while it was away. Optimistic user

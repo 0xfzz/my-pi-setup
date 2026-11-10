@@ -729,9 +729,9 @@ async function run() {
           {
             type: "web_tree",
             nodes: [
-              { entryId: "e1", label: "user: pick a branch", role: "user", depth: 0, isCurrent: false, isBranch: true },
-              { entryId: "e2", label: "assistant: first", role: "assistant", depth: 1, isCurrent: true, isBranch: false },
-              { entryId: "e3", label: "assistant: second", role: "assistant", depth: 1, isCurrent: false, isBranch: false },
+              { entryId: "e1", label: "user: pick a branch", text: "pick a branch", role: "user", depth: 0, isCurrent: false, isBranch: true },
+              { entryId: "e2", label: "assistant: first", text: "first", role: "assistant", depth: 1, isCurrent: true, isBranch: false },
+              { entryId: "e3", label: "assistant: second", text: "second", role: "assistant", depth: 1, isCurrent: false, isBranch: false },
             ],
           },
         ],

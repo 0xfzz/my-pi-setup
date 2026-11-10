@@ -55,20 +55,22 @@ const isSettingsEntry = (entry: PiTreeNodeLike["entry"]): boolean =>
   || entry.type === "thinking_level_change"
   || entry.type === "session_info";
 
-const nodeLabel = (node: PiTreeNodeLike): { label: string; role: WebTreeNode["role"] } => {
+const nodeLabel = (node: PiTreeNodeLike): { label: string; text?: string; role: WebTreeNode["role"] } => {
   const entry = node.entry;
   if (entry.type === "message") {
     const message = entry.message ?? {};
     const role = message.role;
     if (role === "user") {
-      return { label: `user: ${snippet(message.content) || "(empty)"}`, role: "user" };
+      const text = snippet(message.content) || "(empty)";
+      return { label: `user: ${text}`, text, role: "user" };
     }
     if (role === "assistant") {
-      const text = snippet(message.content);
-      return { label: `assistant: ${text || "(no content)"}`, role: "assistant" };
+      const text = snippet(message.content) || "(no content)";
+      return { label: `assistant: ${text}`, text, role: "assistant" };
     }
     if (role === "bashExecution") {
-      return { label: `[bash]: ${snippet(message.command ?? "")}`, role: "bash" };
+      const text = snippet(message.command ?? "");
+      return { label: `[bash]: ${text}`, text, role: "bash" };
     }
     if (role === "toolResult") {
       return { label: `tool result · ${entry.id.slice(0, 8)}`, role: "tool" };
@@ -77,10 +79,12 @@ const nodeLabel = (node: PiTreeNodeLike): { label: string; role: WebTreeNode["ro
   }
   if (entry.type === "compaction") return { label: "compaction", role: "compaction" };
   if (entry.type === "branch_summary") {
-    return { label: `branch summary: ${snippet(entry.summary, 60)}`, role: "summary" };
+    const text = snippet(entry.summary, 60);
+    return { label: `branch summary: ${text}`, text, role: "summary" };
   }
   if (entry.type === "custom_message") {
-    return { label: `[${entry.customType ?? "custom"}]: ${snippet(entry.content, 60)}`, role: "other" };
+    const text = snippet(entry.content, 60);
+    return { label: `[${entry.customType ?? "custom"}]: ${text}`, text, role: "other" };
   }
   return { label: node.label ?? entry.type.replace(/_/g, " "), role: "other" };
 };
@@ -117,10 +121,11 @@ export function buildWebTree(
       ? (child.children as readonly PiTreeNodeLike[])
       : [];
     if (!isSettingsEntry(entry)) {
-      const { label, role } = nodeLabel(child);
+      const { label, text, role } = nodeLabel(child);
       nodes.push({
         entryId: entry.id,
         label: child.label !== undefined && child.label !== "" ? `${child.label} — ${label}` : label,
+        ...(text !== undefined ? { text } : {}),
         role,
         depth,
         isCurrent: entry.id === leafId,

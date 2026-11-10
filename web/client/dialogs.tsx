@@ -69,6 +69,7 @@ export function TreeSelectorDialog({
   nodes: Array<{
     entryId: string;
     label: string;
+    text?: string;
     role: "user" | "assistant" | "tool" | "bash" | "compaction" | "summary" | "other";
     depth: number;
     isCurrent: boolean;
@@ -142,23 +143,44 @@ export function TreeSelectorDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [index, results, onPick, onClose]);
 
-  const roleClass = (role: string): string =>
+  // The relative time, TUI-style: "2h", "3d".
+  const relativeTime = (timestamp?: string): string => {
+    if (timestamp === undefined) return "";
+    const ms = Date.now() - Date.parse(timestamp);
+    if (Number.isNaN(ms)) return "";
+    const minutes = Math.round(ms / 60_000);
+    if (minutes < 1) return "now";
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours}h`;
+    return `${Math.round(hours / 24)}d`;
+  };
+
+  const roleTag = (role: string): string =>
     role === "user"
-      ? "app-tree-role-user"
+      ? "user"
       : role === "assistant"
-        ? "app-tree-role-assistant"
+        ? "pi"
         : role === "bash"
-          ? "app-tree-role-bash"
-          : "app-tree-role-other";
+          ? "bash"
+          : role === "compaction"
+            ? "compact"
+            : role === "summary"
+              ? "summary"
+              : role === "tool"
+                ? "tool"
+                : "";
 
   return (
     <DialogFrame
-      title={`Session tree — ${results.length}/${nodes.length} nodes`}
+      title="Session tree"
       onClose={onClose}
       wide
       footer={
         <span className="app-dialog-hint">
-          {results.length > 0 ? "enter navigate · esc close · type to filter" : "esc close"}
+          {results.length > 0
+            ? `${results.length}/${nodes.length} · enter navigate · esc close · type to filter`
+            : "esc close"}
         </span>
       }
     >
@@ -179,15 +201,25 @@ export function TreeSelectorDialog({
               type="button"
               className={`app-tree-node${i === index ? " is-highlighted" : ""}${node.isCurrent ? " is-current" : ""}`}
               data-index={i}
+              data-depth={node.depth}
               onMouseEnter={() => setIndex(i)}
               onClick={() => onPick(node.entryId)}
               title={node.timestamp ?? undefined}
             >
-              <span className="app-tree-structure" aria-hidden="true">
-                {`${"│ ".repeat(node.depth)}${node.isBranch ? "◇" : "·"}`}
+              {/* The git-graph guides: one cell per ancestor level, the
+                  last carrying the arm into this node. */}
+              <span className="app-tree-guides" aria-hidden="true">
+                {Array.from({ length: node.depth }, (_, level) => (
+                  <span key={level} className="app-tree-guide" />
+                ))}
+                <span className={`app-tree-arm${node.isBranch ? " is-branch" : ""}`} />
               </span>
-              <span className={`app-tree-label ${roleClass(node.role)}`}>{node.label}</span>
-              {node.isCurrent ? <span className="app-tree-current">● current</span> : null}
+              <span className={`app-tree-role role-${node.role}`}>
+                {roleTag(node.role) || node.role}
+              </span>
+              <span className="app-tree-text">{node.text ?? node.label}</span>
+              <span className="app-tree-time">{relativeTime(node.timestamp)}</span>
+              {node.isCurrent ? <span className="app-tree-current">current</span> : null}
             </button>
           ))}
       </div>

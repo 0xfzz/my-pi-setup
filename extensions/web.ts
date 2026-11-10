@@ -613,6 +613,9 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     postSessionState(ctx);
   });
   pi.on("agent_end", forwardToBridge);
+  // A tree navigation (/tree, a fork): the session's position moved — the
+  // web's transcript must reload to the new branch, like the TUI redraws.
+  pi.on("session_tree", forwardToBridge);
   pi.on("ui_prompt_start", forwardToBridge);
   pi.on("ui_prompt_end", forwardToBridge);
   pi.on("agent_settled", (event, ctx) => {

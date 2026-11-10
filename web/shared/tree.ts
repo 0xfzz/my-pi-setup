@@ -10,6 +10,8 @@ export interface WebTreeNode {
   entryId: string;
   /** The display label: `role: snippet` for messages, the entry's own text otherwise. */
   label: string;
+  /** The message snippet alone (the label minus the role prefix), for tag rendering. */
+  text?: string;
   /** The node's role, for coloring and filtering like the TUI's selector. */
   role: "user" | "assistant" | "tool" | "bash" | "compaction" | "summary" | "other";
   /** Branch depth (0 at the root chain; +1 past each branch point). */
