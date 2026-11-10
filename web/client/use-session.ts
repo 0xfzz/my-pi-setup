@@ -3,6 +3,7 @@
 // messages render optimistically and assistant replies stream in via deltas.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getAuth } from "./auth.ts";
 import {
   INITIAL_STREAMING_STATE,
   streamReducer,
@@ -745,6 +746,15 @@ export function usePiSession() {
     source.onerror = () => {
       // EventSource reconnects on its own; surface the gap as "connecting".
       setConnection((prev) => (prev === "connected" ? "connecting" : "error"));
+      // But it gives up for good on a 401 (CLOSED, no retry) — an access token that expired
+      // while the stream was down. Refresh the session and open a fresh stream.
+      if (source.readyState === EventSource.CLOSED && !closed) {
+        void getAuth()
+          .recoverStream()
+          .then((recovered) => {
+            if (recovered && !closed) setHistoryEpoch((epoch) => epoch + 1);
+          });
+      }
     };
 
     return () => {

@@ -4,6 +4,7 @@
 
 import { useState } from "react";
 import type { SessionSummary } from "./use-session.ts";
+import { useAuth } from "./auth-gate.tsx";
 import { toggleTheme, type Theme } from "./theme.ts";
 
 function shortCwd(cwd: string): string {
@@ -42,6 +43,7 @@ export function SessionSidebar({
   const [theme, setTheme] = useState<Theme>(() =>
     document.documentElement.dataset.theme === "light" ? "light" : "dark",
   );
+  const auth = useAuth();
   const now = Date.now();
   const ordered = [...sessions].sort((a, b) => {
     // Live sessions first, then most recently active.
@@ -65,6 +67,16 @@ export function SessionSidebar({
         >
           {theme === "dark" ? "☾" : "☀"}
         </button>
+        {auth.required ? (
+          <button
+            type="button"
+            className="app-signout"
+            title="Sign out of this pi-web"
+            onClick={auth.signOut}
+          >
+            sign out
+          </button>
+        ) : null}
       </div>
       <button
         type="button"

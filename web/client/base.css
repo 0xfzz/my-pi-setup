@@ -131,6 +131,24 @@ body {
   border-color: var(--fg-faint);
 }
 
+.app-signout {
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--fg-dim);
+  border-radius: 6px;
+  height: 22px;
+  padding: 0 7px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  align-self: center;
+}
+
+.app-signout:hover {
+  color: var(--fg);
+  border-color: var(--fg-faint);
+}
+
 .app-title {
   font-weight: 650;
   letter-spacing: 0.02em;
@@ -2135,4 +2153,92 @@ body {
   border-radius: 8px;
   padding: 6px 12px;
   align-self: flex-start;
+}
+
+/* The sign-in screen (only when the server has a web password). */
+.auth-screen {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.auth-card {
+  width: min(360px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 24px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.auth-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.auth-title-dim {
+  color: var(--fg-dim);
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.auth-lede,
+.auth-notice,
+.auth-error {
+  margin: 0;
+  font-size: 13px;
+}
+
+.auth-lede {
+  color: var(--fg-dim);
+}
+
+.auth-notice {
+  color: var(--warning);
+}
+
+.auth-error {
+  color: var(--error);
+}
+
+.auth-label {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.auth-input {
+  padding: 8px 10px;
+  background: var(--bg-input);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+}
+
+.auth-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.auth-submit {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.auth-submit:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
