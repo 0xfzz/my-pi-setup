@@ -28,11 +28,11 @@ export interface WebCommand {
 
 /** The web's presentation flags per built-in name — policy, not data. */
 export const COMMAND_META: Readonly<Record<string, Omit<WebCommand, "name" | "description">>> = {
-  settings: { tuiOnly: true },
+  settings: { webPorted: true },
   model: { webPorted: true },
   tree: { web: true },
   thinking: { webPorted: true },
-  "scoped-models": { tuiOnly: true },
+  "scoped-models": { webPorted: true },
   export: { webPorted: true },
   import: { web: true },
   share: { tuiOnly: true },

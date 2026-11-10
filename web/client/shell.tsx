@@ -11,7 +11,7 @@ import { Composer } from "./composer.tsx";
 import { SessionSidebar } from "./sidebar.tsx";
 import { NewSessionDialog } from "./new-session-dialog.tsx";
 import { CustomPopups, EditorWidgets, StatusChips, ToastStack, UiPromptBanner } from "./popups.tsx";
-import { DialogLayer, InfoDialog, ModelPickerDialog, ThinkingPickerDialog, TreeSelectorDialog } from "./dialogs.tsx";
+import { DialogLayer, InfoDialog, ModelPickerDialog, ScopedModelsDialog, SettingsDialog, ThinkingPickerDialog, TreeSelectorDialog } from "./dialogs.tsx";
 import type { WebTreeNode } from "../shared/tree.ts";
 import { SlotHost } from "./plugins/slots.tsx";
 import { PluginActionShortcuts } from "./plugins/PluginActionShortcuts.tsx";
@@ -56,6 +56,8 @@ export function AppShell() {
   const [treeNodes, setTreeNodes] = useState<WebTreeNode[] | null>(null);
   const [treeError, setTreeError] = useState<string | null>(null);
   const [thinkingPickerOpen, setThinkingPickerOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [scopedModelsOpen, setScopedModelsOpen] = useState(false);
   const [infoDialog, setInfoDialog] = useState<{ title: string; markdown?: string; lines?: string[] } | null>(null);
   const [modelBusy, setModelBusy] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
@@ -73,13 +75,13 @@ export function AppShell() {
     session.clearDialogRequest();
   }, [dialogRequest, session]);
 
-  // Opening the model picker refreshes the list (sessions that attach
-  // without posting web_models still get one).
+  // Opening the model picker (or /scoped-models) refreshes the list
+  // (sessions that attach without posting web_models still get one).
   useEffect(() => {
-    if (modelPickerOpen && session.selectedId !== null) {
+    if ((modelPickerOpen || scopedModelsOpen) && session.selectedId !== null) {
       void session.fetchModels(session.selectedId);
     }
-  }, [modelPickerOpen, session.selectedId, session.fetchModels]);
+  }, [modelPickerOpen, scopedModelsOpen, session.selectedId, session.fetchModels]);
 
   // Crossing from wide to narrow closes the sidebar instead of leaving an
   // overlay + scrim stranded over the shrunken layout.
@@ -165,6 +167,14 @@ export function AppShell() {
     }
     if (name === "resume") {
       setSidebarOpen(true);
+      return;
+    }
+    if (name === "settings") {
+      setSettingsOpen(true);
+      return;
+    }
+    if (name === "scoped-models") {
+      setScopedModelsOpen(true);
       return;
     }
   };
@@ -491,6 +501,20 @@ export function AppShell() {
             void pickThinking(level);
           }}
           onClose={() => setThinkingPickerOpen(false)}
+        />
+      ) : null}
+      {settingsOpen ? (
+        <SettingsDialog
+          sessionId={session.selectedId}
+          onClose={() => setSettingsOpen(false)}
+        />
+      ) : null}
+      {scopedModelsOpen ? (
+        <ScopedModelsDialog
+          sessionId={session.selectedId}
+          models={session.models.models}
+          current={session.models.current ?? session.sessionState?.model}
+          onClose={() => setScopedModelsOpen(false)}
         />
       ) : null}
       {treeNodes !== null ? (

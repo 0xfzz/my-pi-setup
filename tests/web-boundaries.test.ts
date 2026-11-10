@@ -167,8 +167,11 @@ const ZONES: readonly ZoneRules[] = [
 
 function allowed(zone: ZoneRules, edge: ImportEdge): boolean {
   // Type-only edges get the runtime allowances too (intra-zone types are
-  // always fine); runtime edges get only the runtime list.
-  const allow = edge.kind === "runtime" ? zone.runtimeAllow : union(zone.runtimeAllow, zone.typeOnlyAllow);
+  // always fine); runtime edges get only the runtime list. A zone's
+  // allowance list is declared nullable but every zone sets one; coalesce
+  // defensively so the declared type cannot fault the import audit.
+  const runtime = zone.runtimeAllow ?? [];
+  const allow = edge.kind === "runtime" ? runtime : union(runtime, zone.typeOnlyAllow);
   const isPiPackage = edge.specifier.startsWith("@earendil-works/")
     || edge.target.startsWith("node_modules/@earendil-works/");
   if (isPiPackage) return allow.includes("@earendil-works/");

@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handlePiApiRequest } from "./pi-api.ts";
 import { parsePiApiBody } from "../shared/pi-api.ts";
-
 test("parsePiApiBody validates the wire form", () => {
   assert.deepEqual(parsePiApiBody({ api: "commands.builtin", params: {} }), {
     api: "commands.builtin",
@@ -65,4 +64,109 @@ test("pi_api rejects unknown apis and bad params", async () => {
   const bad = await handlePiApiRequest("/tmp", { api: "autocomplete.suggestions", params: {} });
   assert.equal(bad.status, 400);
   assert.ok(!bad.body.ok);
+});
+
+test("pi_api settings.read/write round-trip through pi's SettingsManager", async () => {
+  // The settings facade writes pi's GLOBAL settings file; point pi's agent
+  // dir at a throwaway directory so the round-trip never touches the user's
+  // real ~/.pi/agent/settings.json.
+  const agentDir = await mkdtemp(join(tmpdir(), "piapi-settings-"));
+  const cwd = await mkdtemp(join(tmpdir(), "piapi-settings-cwd-"));
+  const envKey = "PI_CODING_AGENT_DIR";
+  const previous = process.env[envKey];
+  process.env[envKey] = agentDir;
+  try {
+    const read = await handlePiApiRequest(cwd, { api: "settings.read", params: {} });
+    assert.equal(read.status, 200);
+    assert.ok(read.body.ok);
+    if (read.body.ok) {
+      const { settings } = read.body.result as { settings: Array<{ key: string; kind: string; value: unknown }> };
+      // pi's settings surface — the web port reads what pi's TUI selector shows.
+      const byKey = new Map(settings.map((entry) => [entry.key, entry]));
+      for (const key of [
+        "transport", "sessionShareDestination", "compactionEnabled", "defaultProjectTrust",
+        "editorPaddingX", "theme", "defaultThinkingLevel",
+      ]) {
+        assert.ok(byKey.has(key), `settings surface includes ${key}`);
+      }
+      // A toggle is read as a boolean.
+      const autocompact = byKey.get("compactionEnabled");
+      assert.equal(autocompact?.kind, "toggle");
+      assert.equal(typeof autocompact?.value, "boolean");
+    }
+
+    // A write goes through pi's setter and flushes to the (throwaway) file;
+    // the response reflects the stored value, and a re-read confirms it.
+    const write = await handlePiApiRequest(cwd, {
+      api: "settings.write",
+      params: { key: "hideThinkingBlock", value: true },
+    });
+    assert.equal(write.status, 200);
+    assert.ok(write.body.ok);
+    if (write.body.ok) {
+      const result = write.body.result as { key: string; value: unknown };
+      assert.equal(result.key, "hideThinkingBlock");
+      assert.equal(result.value, true);
+    }
+
+    const reread = await handlePiApiRequest(cwd, { api: "settings.read", params: {} });
+    assert.ok(reread.body.ok);
+    if (reread.body.ok) {
+      const { settings } = reread.body.result as { settings: Array<{ key: string; value: unknown }> };
+      const hideThinking = settings.find((entry) => entry.key === "hideThinkingBlock");
+      assert.equal(hideThinking?.value, true);
+    }
+
+    // Bad writes are rejected at the wire layer AND by the facade.
+    const badKey = await handlePiApiRequest(cwd, { api: "settings.write", params: { key: "nope", value: true } });
+    assert.equal(badKey.status, 500);
+    assert.ok(!badKey.body.ok);
+  } finally {
+    if (previous === undefined) delete process.env[envKey];
+    else process.env[envKey] = previous;
+  }
+});
+
+test("pi_api settings.models round-trips the enabledModels patterns", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "piapi-models-"));
+  const cwd = await mkdtemp(join(tmpdir(), "piapi-models-cwd-"));
+  const envKey = "PI_CODING_AGENT_DIR";
+  const previous = process.env[envKey];
+  process.env[envKey] = agentDir;
+  try {
+    const initial = await handlePiApiRequest(cwd, { api: "settings.models.read", params: {} });
+    assert.equal(initial.status, 200);
+    assert.ok(initial.body.ok);
+    if (initial.body.ok) {
+      // Unscoped default: null (every available model).
+      assert.equal((initial.body.result as { enabled: string[] | null }).enabled, null);
+    }
+
+    const write = await handlePiApiRequest(cwd, {
+      api: "settings.models.write",
+      params: { patterns: ["openai/gpt-5", "anthropic/claude"] },
+    });
+    assert.equal(write.status, 200);
+    assert.ok(write.body.ok);
+    if (write.body.ok) {
+      const { enabled } = write.body.result as { enabled: string[] | null };
+      assert.deepEqual(enabled, ["openai/gpt-5", "anthropic/claude"]);
+    }
+
+    // Clearing scoping: null patterns → pi's unscoped default.
+    const clear = await handlePiApiRequest(cwd, { api: "settings.models.write", params: { patterns: null } });
+    assert.equal(clear.status, 200);
+    assert.ok(clear.body.ok);
+    if (clear.body.ok) {
+      assert.equal((clear.body.result as { enabled: string[] | null }).enabled, null);
+    }
+
+    // Empty-string patterns are rejected.
+    const bad = await handlePiApiRequest(cwd, { api: "settings.models.write", params: { patterns: [""] } });
+    assert.equal(bad.status, 400);
+    assert.ok(!bad.body.ok);
+  } finally {
+    if (previous === undefined) delete process.env[envKey];
+    else process.env[envKey] = previous;
+  }
 });

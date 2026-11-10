@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { MarkdownBody } from "./plugins/markdown.tsx";
 import { postPluginAction } from "./plugins/actionClient.ts";
 import type { DialogWebView } from "./plugins/contract.ts";
+import type { PiSettingEntry } from "../shared/pi-api.ts";
 
 export interface ModelRefLike {
   provider: string;
@@ -402,6 +403,315 @@ export function ThinkingPickerDialog({
             {level === current ? <span className="app-dialog-item-current">current</span> : null}
           </button>
         ))}
+      </div>
+    </DialogFrame>
+  );
+}
+
+/** The web /settings port: pi's settings surface, read and written through
+ * the pi_api facade (SettingsManager). One row per setting, each edited with
+ * a control matched to its kind — a toggle, a select chip row, or a text
+ * field — and committed through pi's own setter. */
+export function SettingsDialog({
+  sessionId,
+  onClose,
+}: {
+  sessionId: string | null;
+  onClose: () => void;
+}) {
+  const [entries, setEntries] = useState<PiSettingEntry[] | null>(null);
+  const [query, setQuery] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState<string | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    searchRef.current?.focus();
+    if (sessionId === null) {
+      setError("no session selected");
+      return;
+    }
+    fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api: "settings.read", params: {} }),
+    })
+      .then(async (res) => {
+        const body = (await res.json().catch(() => ({}))) as { ok?: boolean; result?: { settings?: PiSettingEntry[] } };
+        if (!res.ok || body.ok !== true || body.result?.settings === undefined) {
+          throw new Error("settings unavailable");
+        }
+        setEntries(body.result.settings);
+      })
+      .catch(() => setError("settings could not be read — is the server reachable?"));
+  }, [sessionId]);
+
+  const results = useMemo(() => {
+    if (entries === null) return [] as PiSettingEntry[];
+    const needle = query.trim().toLowerCase();
+    return needle === ""
+      ? entries
+      : entries.filter((entry) => entry.label.toLowerCase().includes(needle) || entry.key.toLowerCase().includes(needle));
+  }, [entries, query]);
+
+  const write = (key: string, value: string | number | boolean | null): void => {
+    if (sessionId === null) return;
+    setSaving(key);
+    setError(null);
+    const previous = entries;
+    // Optimistic: flip the displayed value now, revert on failure.
+    setEntries((prev) => prev?.map((entry) => (entry.key === key ? { ...entry, value } : entry)) ?? prev);
+    fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api: "settings.write", params: { key, value } }),
+    })
+      .then(async (res) => {
+        const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; result?: { key?: string; value?: PiSettingEntry["value"] } };
+        if (!res.ok || body.ok !== true) {
+          throw new Error(body.error ?? "write rejected");
+        }
+        const confirmed = body.result?.value;
+        if (confirmed !== undefined) {
+          setEntries((prev) => prev?.map((entry) => (entry.key === key ? { ...entry, value: confirmed } : entry)) ?? prev);
+        }
+      })
+      .catch((err: unknown) => {
+        setEntries(previous);
+        setError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => setSaving(null));
+  };
+
+  if (error !== null && entries === null) {
+    return (
+      <DialogFrame title="Settings" onClose={onClose} footer={<span className="app-dialog-hint">esc close</span>}>
+        <div className="app-dialog-error" role="alert">{error}</div>
+      </DialogFrame>
+    );
+  }
+
+  return (
+    <DialogFrame
+      title="Settings"
+      onClose={onClose}
+      wide
+      footer={<span className="app-dialog-hint">{entries === null ? "reading…" : `${results.length}/${entries.length} · changes save immediately · esc close`}</span>}
+    >
+      {error !== null ? <div className="app-dialog-error" role="alert">{error}</div> : null}
+      <input
+        ref={searchRef}
+        className="app-dialog-search"
+        type="text"
+        placeholder="Filter settings…"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        aria-label="Filter settings"
+      />
+      <div className="app-settings-list" role="list" aria-label="Settings">
+        {results.map((entry) => (
+          <SettingRow key={entry.key} entry={entry} saving={saving === entry.key} onWrite={write} />
+        ))}
+        {results.length === 0 ? <div className="app-dialog-empty">no settings match "{query}"</div> : null}
+      </div>
+    </DialogFrame>
+  );
+}
+
+function SettingRow({
+  entry,
+  saving,
+  onWrite,
+}: {
+  entry: PiSettingEntry;
+  saving: boolean;
+  onWrite: (key: string, value: string | number | boolean | null) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+
+  const commitText = (): void => {
+    if (draft !== null) onWrite(entry.key, draft.trim() === "" ? null : draft.trim());
+    setDraft(null);
+  };
+
+  return (
+    <div className="app-setting-row">
+      <div className="app-setting-meta">
+        <span className="app-setting-label">{entry.label}</span>
+        {entry.description !== undefined ? <span className="app-setting-desc">{entry.description}</span> : null}
+      </div>
+      <div className="app-setting-control">
+        {entry.kind === "toggle" ? (
+          <button
+            type="button"
+            className={`app-toggle${entry.value === true ? " is-on" : ""}`}
+            aria-pressed={entry.value === true}
+            disabled={saving}
+            onClick={() => onWrite(entry.key, entry.value !== true)}
+          >
+            <span className="app-toggle-knob" />
+            <span className="app-toggle-text">{entry.value === true ? "on" : "off"}</span>
+          </button>
+        ) : entry.kind === "select" ? (
+          <div className="app-setting-options" role="radiogroup" aria-label={entry.label}>
+            {(entry.options ?? []).map((option) => {
+              const selected = option.value === entry.value;
+              return (
+                <button
+                  key={option.label}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  disabled={saving}
+                  className={`app-setting-option${selected ? " is-selected" : ""}`}
+                  onClick={() => onWrite(entry.key, option.value)}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <input
+            className="app-setting-input"
+            type="text"
+            value={draft ?? (entry.value === null ? "" : String(entry.value))}
+            disabled={saving}
+            placeholder={entry.kind === "model" ? "provider/model" : ""}
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={commitText}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                commitText();
+              }
+              if (event.key === "Escape") {
+                setDraft(null);
+                (event.target as HTMLInputElement).blur();
+              }
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The web /scoped-models port: which models Ctrl+P (and the TUI cycle) may
+ * pick, persisted as pi's enabledModels patterns through its own setter. null
+ * = unscoped (every available model); a list = the selected provider/id set. */
+export function ScopedModelsDialog({
+  sessionId,
+  models,
+  current,
+  onClose,
+}: {
+  sessionId: string | null;
+  models: ModelRefLike[];
+  current?: ModelRefLike;
+  onClose: () => void;
+}) {
+  const [enabled, setEnabled] = useState<string[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (sessionId === null) {
+      setError("no session selected");
+      return;
+    }
+    fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api: "settings.models.read", params: {} }),
+    })
+      .then(async (res) => {
+        const body = (await res.json().catch(() => ({}))) as { ok?: boolean; result?: { enabled?: string[] | null } };
+        if (!res.ok || body.ok !== true) throw new Error("scoped models unavailable");
+        setEnabled(body.result?.enabled ?? null);
+      })
+      .catch(() => setError("scoped models could not be read"));
+  }, [sessionId]);
+
+  const isSelected = (model: ModelRefLike): boolean => {
+    if (enabled === null) return true;
+    const full = `${model.provider}/${model.id}`;
+    return enabled.includes(full) || enabled.includes(model.id);
+  };
+
+  const toggle = (model: ModelRefLike): void => {
+    const full = `${model.provider}/${model.id}`;
+    if (isSelected(model)) {
+      // Deselect: drop this model's concrete id (and a bare-id alias).
+      setEnabled((prev) => (prev === null ? models.filter((m) => `${m.provider}/${m.id}` !== full).map((m) => `${m.provider}/${m.id}`) : prev.filter((pattern) => pattern !== full && pattern !== model.id)));
+    } else {
+      setEnabled((prev) => [...(prev ?? []), full]);
+    }
+    setError(null);
+  };
+
+  const save = (): void => {
+    if (sessionId === null) return;
+    setSaving(true);
+    setError(null);
+    // All available models selected → clear scoping (pi's unscoped default).
+    const allSelected = enabled === null || models.every((m) => isSelected(m));
+    const patterns = allSelected ? null : (enabled ?? models.map((m) => `${m.provider}/${m.id}`));
+    fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api: "settings.models.write", params: { patterns } }),
+    })
+      .then(async (res) => {
+        const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; result?: { enabled?: string[] | null } };
+        if (!res.ok || body.ok !== true) throw new Error(body.error ?? "save rejected");
+        setEnabled(body.result?.enabled ?? null);
+        onClose();
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setSaving(false));
+  };
+
+  return (
+    <DialogFrame
+      title="Scoped models"
+      onClose={onClose}
+      wide
+      footer={
+        <span className="app-dialog-hint">
+          select which models Ctrl+P cycles · click a row to toggle · then save
+        </span>
+      }
+    >
+      {error !== null ? <div className="app-dialog-error" role="alert">{error}</div> : null}
+      <div className="app-scoped-list" role="list" aria-label="Scoped models">
+        {models.length === 0
+          ? <div className="app-dialog-empty">no models available</div>
+          : models.map((model) => {
+            const selected = isSelected(model);
+            return (
+              <button
+                key={`${model.provider}/${model.id}`}
+                type="button"
+                className={`app-scoped-row${selected ? " is-selected" : ""}`}
+                aria-pressed={selected}
+                onClick={() => toggle(model)}
+              >
+                <span className="app-scoped-check" aria-hidden="true">{selected ? "✓" : ""}</span>
+                <span className="app-dialog-item-provider">{model.provider}</span>
+                <span className="app-dialog-item-id">{model.id}</span>
+                {current !== undefined && model.provider === current.provider && model.id === current.id
+                  ? <span className="app-dialog-item-current">current</span>
+                  : null}
+              </button>
+            );
+          })}
+      </div>
+      <div className="app-dialog-foot app-dialog-actions">
+        <button type="button" className="app-dialog-action" disabled={saving} onClick={onClose}>Cancel</button>
+        <button type="button" className="app-dialog-action app-dialog-action-primary" disabled={saving || models.length === 0} onClick={save}>
+          {saving ? "Saving…" : "Save"}
+        </button>
       </div>
     </DialogFrame>
   );

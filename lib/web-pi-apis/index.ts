@@ -5,6 +5,7 @@
  */
 import { autocompleteApi } from "./autocomplete.ts";
 import { builtinCommandsApi } from "./builtin-commands.ts";
+import { settingsApi, settingsModelsApi, settingsModelsWriteApi, settingsWriteApi } from "./settings.ts";
 import type { PiApiModule } from "./types.ts";
 
 export { createPiApiRegistry } from "./registry.ts";
@@ -14,4 +15,11 @@ export type { PiBuiltinCommand } from "./builtin-commands.ts";
 export type { PiApiContext, PiApiModule } from "./types.ts";
 
 /** Every api the web can call into pi — one entry per module. */
-export const PI_API_MODULES: readonly PiApiModule[] = [autocompleteApi, builtinCommandsApi];
+export const PI_API_MODULES: readonly PiApiModule[] = [
+  autocompleteApi,
+  builtinCommandsApi,
+  settingsApi,
+  settingsWriteApi,
+  settingsModelsApi,
+  settingsModelsWriteApi,
+];

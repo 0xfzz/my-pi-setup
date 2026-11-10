@@ -1865,3 +1865,171 @@ body {
 .app-composer-abort:hover {
   border-color: var(--error);
 }
+
+/* The web /settings and /scoped-models dialogs (the TUI settings ports). */
+.app-settings-list {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.app-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+
+.app-setting-row:hover {
+  background: var(--bg-input);
+}
+
+.app-setting-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.app-setting-label {
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.app-setting-desc {
+  color: var(--fg-faint);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.app-setting-control {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.app-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 4px 3px 3px;
+  cursor: pointer;
+  min-width: 54px;
+}
+
+.app-toggle-knob {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  transition: background 0.12s ease;
+}
+
+.app-toggle.is-on {
+  border-color: var(--accent);
+}
+
+.app-toggle.is-on .app-toggle-knob {
+  background: var(--accent);
+}
+
+.app-toggle-text {
+  color: var(--fg-dim);
+  font-size: 11px;
+  min-width: 18px;
+  text-align: left;
+}
+
+.app-setting-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.app-setting-option {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  border-radius: 6px;
+  padding: 4px 9px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.app-setting-option:hover {
+  border-color: var(--fg-faint);
+  color: var(--fg);
+}
+
+.app-setting-option.is-selected {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.app-setting-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 5px 8px;
+  width: 180px;
+  outline: none;
+}
+
+.app-setting-input:focus {
+  border-color: var(--accent);
+}
+
+.app-scoped-list {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.app-scoped-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.app-scoped-row:hover {
+  background: var(--bg-input);
+}
+
+.app-scoped-row.is-selected {
+  color: var(--fg);
+}
+
+.app-scoped-check {
+  flex: none;
+  width: 16px;
+  color: var(--accent);
+  font-weight: 700;
+}
