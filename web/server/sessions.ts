@@ -547,7 +547,14 @@ function detailsDiff(details: unknown): string | undefined {
   return typeof diff === "string" && diff !== "" ? diff : undefined;
 }
 
-/** Parse the transcript entries and tool results from a session file. */
+/**
+ * Parse the transcript entries and tool results from a session file — the
+ * LAST `limit` entries, not the first. A session file grows unboundedly
+ * (thousands of entries over a working day); the visible window is its
+ * tail. Reading from the head would show the conversation's opening and
+ * silently drop every later message — the web looking "not synced" on any
+ * long-running session.
+ */
 export async function readHistory(sessionFile: string, limit = 200): Promise<SessionHistory> {
   let text: string;
   try {
@@ -555,11 +562,37 @@ export async function readHistory(sessionFile: string, limit = 200): Promise<Ses
   } catch {
     return { entries: [], toolResults: {} };
   }
-  const entries: HistoryEntry[] = [];
+  // A rolling window over the file in order: the newest `limit` entries
+  // survive, the rest roll off. Tool results attach to their calls, which
+  // appear earlier in the file than the results, so results are collected
+  // while the call is still inside the window.
+  const window: HistoryEntry[] = [];
+  const windowToolCallIds = new Set<string>();
   const toolResults: Record<string, ToolResultEntry> = {};
+  const pushEntry = (entry: HistoryEntry): void => {
+    window.push(entry);
+    for (const block of entry.blocks) {
+      if (block.kind === "toolCall") windowToolCallIds.add(block.toolCallId);
+    }
+    if (window.length > limit) {
+      const rolledOff = window.shift();
+      for (const block of rolledOff?.blocks ?? []) {
+        if (block.kind === "toolCall") {
+          windowToolCallIds.delete(block.toolCallId);
+          // Its result leaves with it — the map stays exactly the results
+          // of the visible conversation.
+          delete toolResults[block.toolCallId];
+        }
+      }
+    }
+  };
+  const collectToolResult = (toolCallId: string, result: ToolResultEntry): void => {
+    // Only results whose calls are (still) in the window — the window and
+    // the map stay bounded to the visible conversation.
+    if (windowToolCallIds.has(toolCallId)) toolResults[toolCallId] = result;
+  };
   for (const line of text.split("\n")) {
     if (!line) continue;
-    if (entries.length >= limit) break;
     let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(line) as Record<string, unknown>;
@@ -576,12 +609,12 @@ export async function readHistory(sessionFile: string, limit = 200): Promise<Ses
       if (typeof toolCallId === "string" && toolCallId !== "") {
         const { text, images } = contentToResult(messageRecord.content);
         const diff = detailsDiff(messageRecord.details);
-        toolResults[toolCallId] = {
+        collectToolResult(toolCallId, {
           text,
           isError: messageRecord.isError === true,
           ...(diff !== undefined ? { diff } : {}),
           ...(images.length > 0 ? { images } : {}),
-        };
+        });
       }
       continue;
     }
@@ -596,16 +629,16 @@ export async function readHistory(sessionFile: string, limit = 200): Promise<Ses
         ...(messageRecord.cancelled === true ? { cancelled: true } : {}),
         ...(messageRecord.truncated === true ? { truncated: true } : {}),
       }];
-      entries.push({ role: "user", blocks });
+      pushEntry({ role: "user", blocks });
       continue;
     }
     if (role !== "user" && role !== "assistant") continue;
     const blocks = contentToBlocks(messageRecord.content);
     const entry: HistoryEntry = { role, blocks };
     if (role === "assistant" && messageRecord.stopReason === "aborted") entry.aborted = true;
-    if (blocks.length > 0) entries.push(entry);
+    if (blocks.length > 0) pushEntry(entry);
   }
-  return { entries, toolResults };
+  return { entries: window, toolResults };
 }
 
 export interface PromptImage {

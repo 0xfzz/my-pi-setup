@@ -7,7 +7,7 @@
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, rmdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
@@ -654,6 +654,31 @@ async function run() {
       "the browser prompt must reach the TUI as a bridge command",
     );
 
+    // The confirmed echo: the real pi writes the prompt to the session and
+    // the extension forwards message_end (role user) back — the optimistic
+    // row dedupes against it and the transcript shows exactly ONE row.
+    await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          { type: "message_start", message: { role: "user", content: [] } },
+          {
+            type: "message_end",
+            message: { role: "user", content: [{ type: "text", text: "hello from the web" }] },
+          },
+        ],
+      }),
+    });
+    await page.waitForFunction(
+      () =>
+        Array.from(document.querySelectorAll(".msg-user")).filter((el) =>
+          (el.textContent ?? "").includes("hello from the web"),
+        ).length === 1,
+      undefined,
+      { timeout: 10_000 },
+    );
+
     step("8f: reload mid-stream — the partial replays after the reload");
     // 8f. The classic desync: the turn is in flight, the user reloads. The
     //     reattached browser stream never saw message_start, so before the
@@ -768,13 +793,21 @@ async function run() {
       { timeout: 10_000 },
     );
 
-    step("8: command received, streaming reply");
-    // The TUI streams its reply; the browser renders it.
+    step("8: command received, TUI-side prompt, streaming reply");
+    // The TUI streams its reply; the browser renders it. The user's prompt
+    // (typed in the TUI) rides the same wire — pi emits message_start/end
+    // with role user for it — and must render as a user row, 1:1 with the
+    // TUI transcript.
     await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         events: [
+          { type: "message_start", message: { role: "user", content: [] } },
+          {
+            type: "message_end",
+            message: { role: "user", content: [{ type: "text", text: "hello from the TUI side" }] },
+          },
           { type: "agent_start" },
           { type: "message_start", message: { role: "assistant", content: [] } },
           { type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 0 } },
@@ -788,6 +821,11 @@ async function run() {
     });
     const tuiReply = page.locator(".msg-assistant", { hasText: "Hello from the TUI!" });
     await tuiReply.first().waitFor({ state: "visible", timeout: 15_000 });
+    // The TUI-side prompt rendered too — the user's own side of the turn.
+    await page
+      .locator(".msg-user", { hasText: "hello from the TUI side" })
+      .first()
+      .waitFor({ state: "visible", timeout: 15_000 });
 
     step("8: reply rendered, detaching");
     // Detach: the browser stream ends and the session falls back to disk.
@@ -795,6 +833,54 @@ async function run() {
     assert.equal(detachRes.status, 200);
     bridgeController.abort();
     await bridgeReadLoop.catch(() => undefined);
+
+    step("9: long session — the tail is the window, not the head");
+    // 9. A session file longer than the history limit (a long working day)
+    // must render its LAST entries — the newest user message visible, the
+    // rolled-off head absent. Reading from the head showed the session's
+    // opening instead and looked "not synced" after every reload.
+    const longDir = join(
+      process.env.HOME ?? "/home/faiz",
+      ".pi/agent/sessions/--tmp-pi-web-e2e-long--",
+    );
+    // Hex-only: pi's session ids are UUID-shaped and the resolver only
+    // accepts hex+dash, like the real files it scans.
+    const longId = `e2e${Date.now().toString(16)}`;
+    const longFile = join(longDir, `2026-11-10T00-00-00-000Z_${longId}.jsonl`);
+    await mkdir(longDir, { recursive: true });
+    try {
+      const lines = [
+        JSON.stringify({ type: "session", id: longId, cwd: "/tmp/pi-web-e2e-long", timestamp: "2026-11-10T00:00:00Z" }),
+      ];
+      for (let i = 1; i <= 250; i++) {
+        lines.push(
+          JSON.stringify({
+            type: "message",
+            message: {
+              role: i % 2 === 0 ? "assistant" : "user",
+              content: [{ type: "text", text: `entry ${i}` }],
+            },
+          }),
+        );
+      }
+      await writeFile(longFile, lines.join("\n"));
+
+      await page.reload();
+      const longRow = page.locator(`.app-session-item[data-id="${longId}"]`);
+      await longRow.waitFor({ state: "visible", timeout: 15_000 });
+      await longRow.click();
+      // The newest user message (249) is in the window; the head (1..50)
+      // rolled off. Bounded: 200 rendered entries.
+      await page.locator(".msg-user", { hasText: "entry 249" }).first().waitFor({
+        state: "visible",
+        timeout: 15_000,
+      });
+      assert.equal(await page.locator(".msg-user, .msg-assistant").count(), 200);
+      assert.equal(await page.locator(".msg-user", { hasText: "entry 50" }).count(), 0);
+    } finally {
+      await rm(longFile, { force: true });
+      await rmdir(longDir, { recursive: true, force: true });
+    }
 
     step("closing browser");
     await browser.close();

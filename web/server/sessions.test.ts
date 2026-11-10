@@ -266,8 +266,103 @@ test("readHistory parses entries and tool results, skipping other roles", async 
     isError: false,
     images: [{ data: "x", mimeType: "image/png" }],
   });
-  assert.deepEqual(history.toolResults.t2, { text: "boom", isError: true });
-  assert.equal(Object.keys(history.toolResults).length, 2);
+  // t2 has no matching call anywhere in the transcript: a result without a
+  // rendered row is unusable, and the window must stay bounded to the
+  // visible conversation — orphans drop.
+  assert.equal(history.toolResults.t2, undefined);
+  assert.equal(Object.keys(history.toolResults).length, 1);
+});
+
+test("readHistory returns the TAIL when the file exceeds the limit — long sessions stay synced", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-history-"));
+  const file = join(dir, "2026-11-09T00-00-00-000Z_tail12345.jsonl");
+  // 250 user/assistant entries: a long working session. The visible window
+  // is the LAST 200 — the newest user message and everything after it must
+  // be there, or the web looks "not synced" after a reload.
+  const lines = [
+    JSON.stringify({ type: "session", id: "tail12345", cwd: "/tmp/x", timestamp: "2026-11-09T00:00:00Z" }),
+  ];
+  for (let i = 1; i <= 250; i++) {
+    lines.push(
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: i % 2 === 0 ? "assistant" : "user",
+          content: [
+            {
+              type: "text",
+              text: `entry ${i}`,
+            },
+          ],
+        },
+      }),
+    );
+  }
+  await writeFile(file, lines.join("\n"));
+
+  const history = await readHistory(file);
+  assert.equal(history.entries.length, 200);
+  // The head rolled off; the tail is exactly entries 51..250 in order.
+  assert.deepEqual(history.entries[0], {
+    role: "user",
+    blocks: [{ kind: "text", text: "entry 51" }],
+  });
+  assert.deepEqual(history.entries[199], {
+    role: "assistant",
+    blocks: [{ kind: "text", text: "entry 250" }],
+  });
+  // The newest user message is visible — the sync invariant the window
+  // exists to protect.
+  const newestUser = [...history.entries].reverse().find((entry) => entry.role === "user");
+  assert.deepEqual(newestUser?.blocks, [{ kind: "text", text: "entry 249" }]);
+  // No entry from the head survives.
+  assert.ok(!history.entries.some((entry) => JSON.stringify(entry).includes("entry 50")),
+    "the first 50 entries rolled off");
+});
+
+test("readHistory drops tool results whose calls rolled off the window, keeps those inside it", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-history-"));
+  const file = join(dir, "2026-11-09T00-00-00-000Z_window123.jsonl");
+  const lines: string[] = [
+    JSON.stringify({ type: "session", id: "window123", cwd: "/tmp/x", timestamp: "2026-11-09T00:00:00Z" }),
+  ];
+  const toolCall = (id: string): string =>
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", toolCallId: id, name: "bash", rawInput: "true" }],
+      },
+    });
+  const toolResult = (id: string, text: string): string =>
+    JSON.stringify({
+      type: "message",
+      message: { role: "toolResult", toolCallId: id, content: [{ type: "text", text }], isError: false },
+    });
+  // 200 filler entries (the default limit) push the early call+result out;
+  // the late call+result stays inside.
+  lines.push(toolCall("old-call"), toolResult("old-call", "old result"));
+  for (let i = 0; i < 200; i++) {
+    lines.push(
+      JSON.stringify({
+        type: "message",
+        message: { role: "user", content: [{ type: "text", text: `filler ${i}` }] },
+      }),
+    );
+  }
+  lines.push(toolCall("new-call"), toolResult("new-call", "new result"));
+  await writeFile(file, lines.join("\n"));
+
+  const history = await readHistory(file);
+  assert.equal(history.entries.length, 200);
+  // The late call is the newest entry; its result joined it.
+  assert.deepEqual(history.entries[199], {
+    role: "assistant",
+    blocks: [{ kind: "toolCall", toolCallId: "new-call", toolName: "bash", rawInput: "true" }],
+  });
+  assert.deepEqual(history.toolResults["new-call"], { text: "new result", isError: false });
+  // The early call rolled off — its result must not linger.
+  assert.equal(history.toolResults["old-call"], undefined);
 });
 
 test("readHistory returns empty for missing files", async () => {
