@@ -205,14 +205,20 @@ export function Composer({
     const suffix = isDirectory ? "" : " ";
     const next = `${text.slice(0, start)}${item.value}${suffix}${text.slice(caret)}`;
     setText(next);
-    setMentionToken(null);
     setMentionResult(null);
     setFileDismissed(false);
-    // Caret lands after the inserted mention.
+    const position = start + item.value.length + suffix.length;
+    if (!isDirectory) {
+      // A completed file closes the picker, like pi's editor.
+      setMentionToken(null);
+    }
+    // Caret lands after the inserted mention; a directory keeps completing
+    // immediately (pi's editor re-queries after applyCompletion).
     requestAnimationFrame(() => {
-      const position = start + item.value.length + suffix.length;
       input?.focus();
       input?.setSelectionRange(position, position);
+      setCaretCol(position);
+      if (isDirectory) setMentionToken(activeMentionToken(next.slice(0, position)));
     });
   };
 
