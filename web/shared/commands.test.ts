@@ -13,9 +13,30 @@ test("annotateBuiltinCommands merges pi's runtime list with the web's presentati
   const annotated = annotateBuiltinCommands(piList);
   assert.deepEqual(annotated[0], { name: "compact", description: "Manually compact the session context", web: true });
   assert.deepEqual(annotated[1], { name: "model", description: "Select model", webPorted: true });
-  assert.deepEqual(annotated[2], { name: "quit", description: "Quit pi", tuiOnly: true });
+  assert.deepEqual(annotated[2], { name: "quit", description: "Quit pi", web: true });
   // Unknown future commands pass through unflagged — forward compatibility.
   assert.deepEqual(annotated[3], { name: "future-command", description: "Shipped by a newer pi" });
+});
+
+test("the built-in coverage policy: every pi built-in has a web disposition", () => {
+  // pi's real runtime list — the 24 built-ins.
+  const piList = [
+    "settings", "model", "tree", "thinking", "scoped-models", "export", "import", "share",
+    "bug", "copy", "name", "session", "changelog", "hotkeys", "fork", "clone", "trust",
+    "login", "logout", "new", "compact", "resume", "reload", "quit",
+  ].map((name) => ({ name, description: `${name} description` }));
+  const annotated = annotateBuiltinCommands(piList);
+  const dispatchable = annotated.filter((command) => command.web === true || command.webPorted === true);
+  const tuiOnly = annotated.filter((command) => command.tuiOnly === true);
+  // 17 of 24 run from the web: 8 web-ported (client dialogs/actions) + 9
+  // through the web_command bridge channel (pi's own context APIs in the
+  // pi process).
+  assert.equal(dispatchable.length, 17);
+  // The 5 that genuinely need the terminal say so honestly.
+  assert.deepEqual(
+    tuiOnly.map((command) => command.name).sort(),
+    ["bug", "login", "logout", "settings", "share", "scoped-models", "trust"].sort(),
+  );
 });
 
 test("filterCommands ranks by prefix position", () => {

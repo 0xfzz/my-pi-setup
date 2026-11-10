@@ -6,6 +6,7 @@
 // model-selection, lease, trust, push and custom-UI chrome is out of scope.
 
 import { createAgentSession, getAgentDir, SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
+import { buildWebTree, type WebTreeNode } from "../../lib/web-tree.ts";
 import { createStreamTracker, type StreamSnapshot } from "./stream-tracker.ts";
 import { createReadStream, existsSync } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
@@ -47,6 +48,12 @@ export interface SessionCore {
    * (re)connect renders the partial reply instead of dropping deltas.
    */
   getStreamSnapshot?(): StreamSnapshot;
+  /**
+   * The session tree for the web /tree picker: pi's getTree() projected
+   * the way its TUI selector shapes it (lib/web-tree.ts). Bridged sessions
+   * read the extension's posted projection; in-process ones build it.
+   */
+  getTreeNodes?(): WebTreeNode[] | null;
   /**
    * Release this core when another owner takes the session over (a TUI
    * bridge attaching over an in-process resume): unsubscribe and drop the
@@ -165,6 +172,15 @@ function toCore(inner: AgentSession): SessionCore {
     sessionId: inner.sessionId,
     subscribe: (listener: (event: unknown) => void) => inner.subscribe(listener),
     getStreamSnapshot: (): StreamSnapshot => streamTracker.snapshot(),
+    getTreeNodes: (): WebTreeNode[] | null => {
+      const manager = inner.sessionManager;
+      const tree = manager?.getTree?.() ?? [];
+      if (tree.length === 0) return null;
+      return buildWebTree(
+        tree as unknown as Parameters<typeof buildWebTree>[0],
+        manager?.getLeafId?.() ?? null,
+      );
+    },
     dispose: (): void => {
       // Releasing the tap plus the AgentSession itself: a displaced
       // in-process copy must not stay live on the session file.
@@ -769,8 +785,11 @@ export function sendCommand(id: string, command: SessionCommand): Promise<Comman
             error: error instanceof Error ? error.message : String(error),
           }));
       }
+      // The runner-registered form: the extension registers the session
+      // control commands under web-<name> (all modes), so the prompt path
+      // dispatches them through pi's command runner with a valid context.
       return core
-        .prompt(`/${command.name}${command.args !== undefined && command.args !== "" ? ` ${command.args}` : ""}`)
+        .prompt(`/web-${command.name}${command.args !== undefined && command.args !== "" ? ` ${command.args}` : ""}`)
         .then(() => ({ status: "ok", data: { accepted: true } }) as const)
         .catch((error: unknown) => ({
           status: "error",

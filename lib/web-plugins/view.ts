@@ -197,8 +197,16 @@ export function validateView(input: unknown): ValidateViewResult {
           return { ok: false, error: "dialog lines must be an array of strings" };
         }
       }
-      if (raw.body === undefined && raw.lines === undefined) {
-        return { ok: false, error: "dialog needs a body or lines" };
+      // A dialog needs SOMETHING to show or close: body, lines, or actions.
+      // A bodyless close ({open: false}) and an actions-only picker are
+      // both legitimate shapes.
+      if (
+        raw.body === undefined
+        && raw.lines === undefined
+        && (raw.actions === undefined || (Array.isArray(raw.actions) && raw.actions.length === 0))
+        && raw.open !== false
+      ) {
+        return { ok: false, error: "dialog needs a body, lines, or actions" };
       }
       if (raw.actions !== undefined) {
         if (!Array.isArray(raw.actions) || raw.actions.length > 8) {

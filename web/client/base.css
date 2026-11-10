@@ -618,6 +618,88 @@ body {
   border-style: dashed;
 }
 
+/* The /tree picker: pi's session tree, searchable and navigable. */
+.app-tree-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 55vh;
+  overflow-y: auto;
+  min-width: 0;
+  margin-top: 8px;
+}
+
+.app-tree-node {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.app-tree-node.is-highlighted {
+  background: var(--bg-input);
+  color: var(--fg);
+}
+
+.app-tree-node.is-current {
+  color: var(--fg);
+}
+
+.app-tree-structure {
+  flex: none;
+  color: var(--fg-faint);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  white-space: pre;
+}
+
+.app-tree-node.is-current .app-tree-structure {
+  color: var(--accent);
+}
+
+.app-tree-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-tree-role-user {
+  color: var(--accent);
+}
+
+.app-tree-role-assistant {
+  color: var(--ok);
+}
+
+.app-tree-role-bash,
+.app-tree-role-other {
+  color: var(--fg-dim);
+}
+
+.app-tree-current {
+  flex: none;
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.app-tree-empty {
+  padding: 12px 8px;
+  color: var(--fg-faint);
+  font-size: 12px;
+}
+
 /* User-run `!` bash rows: `$ command` with exit code, output collapsible. */
 .msg-bash {
   display: flex;

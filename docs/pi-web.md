@@ -117,6 +117,20 @@ both frontends. `extensions/web.ts` does the bridging:
   client refetches `/api/agent/:id/commands`, so a `/reload` in the TUI
   refreshes the web palette too.
 
+**Built-in commands.** pi's 24 built-ins all have a web disposition: 8 are
+web-ported (model, thinking, session, changelog, copy, export, resume,
+hotkeys — client dialogs/actions), 9 dispatch through the web-command
+channel into pi's own command runner (compact, name, new, clone, reload,
+fork, tree, import, quit — `ctx.compact`, `setSessionName`, `newSession`,
+`fork`, `navigateTree`, `switchSession`, `reload`, `shutdown`), and the 7
+that genuinely need the terminal (settings, scoped-models, share, bug,
+trust, login, logout) say so honestly. Session-control commands run with a
+valid command context by dispatching through pi's runner
+(`/web-<name>` registered commands reached via the prompt path), never a
+captured context; `/tree` renders a searchable, keyboard-navigable tree
+picker from pi's own `getTree()` projection, and `/fork` picks through the
+extension dialog pipeline — answerable from either frontend.
+
 While a bridge is attached, the web's `/api/agent/:id` routes proxy into it
 and the session is listed as live. **The bridge owns the session**: while
 it is attached — or within a 10 s self-heal window after it drops —

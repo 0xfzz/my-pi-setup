@@ -10,6 +10,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createStreamTracker, type StreamSnapshot } from "./stream-tracker.ts";
+import type { WebTreeNode } from "../../lib/web-tree.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../../lib/web-plugins/actions.ts";
 import type { WebUiType } from "../../lib/web-plugins/ui-event-models.ts";
 import {
@@ -70,6 +71,8 @@ export interface BridgeConnection {
   getCommands(): Array<{ name: string; description?: string }>;
   /** The model list for the web picker (web_models events). */
   getModels(): BridgeModels | null;
+  /** The session tree for the web /tree picker (web_tree events). */
+  getTreeNodes(): WebTreeNode[] | null;
   /** The in-flight streaming message, for mid-turn stream replay. */
   getStreamSnapshot(): StreamSnapshot;
   subscribe(listener: (event: unknown) => void): () => void;
@@ -145,6 +148,12 @@ export function attachBridge(options: {
   const setModels = (next: BridgeModels): void => {
     models = next;
   };
+  // The session tree the extension posts (web_tree events, from pi's own
+  // getTree); served to /api/agent/:id/tree for the web /tree picker.
+  let treeNodes: WebTreeNode[] | null = null;
+  const setTreeNodes = (next: WebTreeNode[]): void => {
+    treeNodes = next;
+  };
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -218,6 +227,19 @@ export function attachBridge(options: {
             commandsChanged = true;
           }
         }
+        if (e.type === "web_tree") {
+          const payload = event as { nodes?: unknown };
+          if (Array.isArray(payload.nodes)) {
+            const valid = payload.nodes.filter(
+              (node): node is WebTreeNode =>
+                typeof node === "object"
+                && node !== null
+                && typeof (node as { entryId?: unknown }).entryId === "string"
+                && typeof (node as { label?: unknown }).label === "string",
+            );
+            if (valid.length > 0) setTreeNodes(valid);
+          }
+        }
         if (e.type === "web_models") {
           const payload = event as { current?: unknown; models?: unknown };
           const list = Array.isArray(payload.models)
@@ -267,6 +289,9 @@ export function attachBridge(options: {
     },
     getModels(): BridgeModels | null {
       return models;
+    },
+    getTreeNodes(): WebTreeNode[] | null {
+      return treeNodes;
     },
     subscribe(listener: (event: unknown) => void): () => void {
       listeners.add(listener);
@@ -412,6 +437,7 @@ export function bridgeSessionCore(connection: BridgeConnection): SessionCore {
       thinkingLevel: connection.state.thinkingLevel ?? metadata.thinkingLevel ?? "off",
     }),
     getCommands: () => connection.getCommands(),
+    getTreeNodes: () => connection.getTreeNodes(),
     getModels: () => {
       const posted = connection.getModels();
       if (posted !== null) return posted;

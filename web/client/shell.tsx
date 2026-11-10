@@ -11,7 +11,8 @@ import { Composer } from "./composer.tsx";
 import { SessionSidebar } from "./sidebar.tsx";
 import { NewSessionDialog } from "./new-session-dialog.tsx";
 import { CustomPopups, EditorWidgets, StatusChips, ToastStack, UiPromptBanner } from "./popups.tsx";
-import { DialogLayer, InfoDialog, ModelPickerDialog, ThinkingPickerDialog } from "./dialogs.tsx";
+import { DialogLayer, InfoDialog, ModelPickerDialog, ThinkingPickerDialog, TreeSelectorDialog } from "./dialogs.tsx";
+import type { WebTreeNode } from "../shared/tree.ts";
 import { SlotHost } from "./plugins/slots.tsx";
 import { PluginActionShortcuts } from "./plugins/PluginActionShortcuts.tsx";
 import { PluginPage, parsePluginRoute } from "./plugins/PluginLayout.tsx";
@@ -52,6 +53,8 @@ export function AppShell() {
 
   // The web-ported TUI dialogs. One open dialog at a time — like the TUI.
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [treeNodes, setTreeNodes] = useState<WebTreeNode[] | null>(null);
+  const [treeError, setTreeError] = useState<string | null>(null);
   const [thinkingPickerOpen, setThinkingPickerOpen] = useState(false);
   const [infoDialog, setInfoDialog] = useState<{ title: string; markdown?: string; lines?: string[] } | null>(null);
   const [modelBusy, setModelBusy] = useState(false);
@@ -144,6 +147,10 @@ export function AppShell() {
       openSessionInfo();
       return;
     }
+    if (name === "hotkeys") {
+      setInfoDialog({ title: "Web Keybindings", lines: WEB_HOTKEYS });
+      return;
+    }
     if (name === "changelog") {
       void openChangelog();
       return;
@@ -160,6 +167,38 @@ export function AppShell() {
       setSidebarOpen(true);
       return;
     }
+  };
+
+  const openTreePicker = (): void => {
+    const id = session.selectedId;
+    if (id === null) return;
+    setTreeError(null);
+    setTreeNodes(null);
+    // The dispatch reached the pi process; its tree projection follows
+    // within a bridge round trip — poll briefly for it.
+    let attempts = 0;
+    const poll = (): void => {
+      attempts += 1;
+      void fetch(`/api/agent/${encodeURIComponent(id)}/tree`)
+        .then(async (res) => {
+          if (res.status === 404 && attempts < 12) {
+            setTimeout(poll, 250);
+            return;
+          }
+          if (!res.ok) {
+            setTreeError(`tree unavailable (HTTP ${res.status})`);
+            return;
+          }
+          const body = (await res.json()) as { nodes?: WebTreeNode[] };
+          if (body.nodes !== undefined && body.nodes.length > 0) setTreeNodes(body.nodes);
+          else if (attempts < 12) setTimeout(poll, 250);
+        })
+        .catch(() => {
+          if (attempts < 12) setTimeout(poll, 250);
+          else setTreeError("tree could not be fetched");
+        });
+    };
+    poll();
   };
 
   // /model <ref>: the TUI's exact-match semantics, applied through the
@@ -199,6 +238,21 @@ export function AppShell() {
       setModelError(error);
     }
   };
+
+  // The web frontend's keymap — /hotkeys for the web, mirroring the TUI's
+  // own reference for its keys. Web-side data, like /session and /copy.
+  const WEB_HOTKEYS = [
+    "Enter — send the prompt",
+    "Shift+Enter — newline",
+    "Escape — abort the running turn (like the TUI)",
+    "Up / Down — browse palette and history",
+    "Tab — complete palette selection",
+    "/ — open the command palette",
+    "@ — mention a file (pi's autocomplete)",
+    "! — run a shell command (bash row)",
+    "Ctrl+V — paste images",
+    "Ctrl+K — copy last reply",
+  ];
 
   // /session: the client's own data — session identity, model, context
   // usage, message count. Works for bridge and in-process sessions alike.
@@ -392,6 +446,10 @@ export function AppShell() {
               onOpenThinkingPicker={() => setThinkingPickerOpen(true)}
               onWebCommand={handleWebCommand}
               onWebCommandDispatch={(name, args) => {
+                // The tree's pick carries the entry id; a bare /tree
+                // dispatch asks the pi process for its tree and the
+                // picker opens when the projection lands.
+                if (name === "tree" && args.trim() === "") openTreePicker();
                 void session.sendWebCommand(name, args);
               }}
               onSend={(text, images) => {
@@ -434,6 +492,21 @@ export function AppShell() {
           }}
           onClose={() => setThinkingPickerOpen(false)}
         />
+      ) : null}
+      {treeNodes !== null ? (
+        <TreeSelectorDialog
+          nodes={treeNodes}
+          onPick={(entryId) => {
+            setTreeNodes(null);
+            if (session.selectedId !== null) {
+              void session.sendWebCommand("tree", entryId);
+            }
+          }}
+          onClose={() => setTreeNodes(null)}
+        />
+      ) : null}
+      {treeError !== null ? (
+        <InfoDialog title="Session tree" lines={[treeError]} onClose={() => setTreeError(null)} />
       ) : null}
       {infoDialog !== null ? (
         <InfoDialog

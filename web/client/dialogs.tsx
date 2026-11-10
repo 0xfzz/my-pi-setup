@@ -55,6 +55,146 @@ function DialogFrame({
 }
 
 /** The web model picker: search, keyboard navigation, current marker. */
+/**
+ * The /tree picker: pi's session tree (getTree, projected like its TUI
+ * selector — user/assistant/tool nodes, branch structure, the current
+ * leaf) rendered as a searchable, keyboard-navigable tree. Enter
+ * navigates to the highlighted node (pi's navigateTree).
+ */
+export function TreeSelectorDialog({
+  nodes,
+  onPick,
+  onClose,
+}: {
+  nodes: Array<{
+    entryId: string;
+    label: string;
+    role: "user" | "assistant" | "tool" | "bash" | "compaction" | "summary" | "other";
+    depth: number;
+    isCurrent: boolean;
+    isBranch: boolean;
+    timestamp?: string;
+  }>;
+  onPick: (entryId: string) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [index, setIndex] = useState(0);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const results = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return needle === ""
+      ? nodes
+      : nodes.filter((node) => node.label.toLowerCase().includes(needle));
+  }, [nodes, query]);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    setIndex(0);
+  }, [query]);
+
+  // The current leaf starts highlighted — Enter re-confirms the position,
+  // like the TUI's selector opening on the leaf.
+  useEffect(() => {
+    const currentIdx = results.findIndex((node) => node.isCurrent);
+    if (currentIdx >= 0) setIndex(currentIdx);
+  }, [nodes]);
+
+  // Keep the highlighted row in view while navigating.
+  useEffect(() => {
+    const row = listRef.current?.querySelector<HTMLElement>(
+      `[data-index="${Math.min(index, Math.max(results.length - 1, 0))}"]`,
+    );
+    row?.scrollIntoView({ block: "nearest" });
+  }, [index, results.length]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (results.length === 0) return;
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setIndex((value) => Math.min(value + 1, results.length - 1));
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setIndex((value) => Math.max(value - 1, 0));
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const node = results[Math.min(index, results.length - 1)];
+        if (node !== undefined) onPick(node.entryId);
+        return;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [index, results, onPick, onClose]);
+
+  const roleClass = (role: string): string =>
+    role === "user"
+      ? "app-tree-role-user"
+      : role === "assistant"
+        ? "app-tree-role-assistant"
+        : role === "bash"
+          ? "app-tree-role-bash"
+          : "app-tree-role-other";
+
+  return (
+    <DialogFrame
+      title={`Session tree — ${results.length}/${nodes.length} nodes`}
+      onClose={onClose}
+      wide
+      footer={
+        <span className="app-dialog-hint">
+          {results.length > 0 ? "enter navigate · esc close · type to filter" : "esc close"}
+        </span>
+      }
+    >
+      <input
+        ref={inputRef}
+        className="app-model-search"
+        type="text"
+        placeholder="Filter the tree…"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      <div className="app-tree-list" ref={listRef}>
+        {results.length === 0
+          ? <div className="app-tree-empty">no nodes match "{query}"</div>
+          : results.map((node, i) => (
+            <button
+              key={node.entryId}
+              type="button"
+              className={`app-tree-node${i === index ? " is-highlighted" : ""}${node.isCurrent ? " is-current" : ""}`}
+              data-index={i}
+              onMouseEnter={() => setIndex(i)}
+              onClick={() => onPick(node.entryId)}
+              title={node.timestamp ?? undefined}
+            >
+              <span className="app-tree-structure" aria-hidden="true">
+                {`${"│ ".repeat(node.depth)}${node.isBranch ? "◇" : "·"}`}
+              </span>
+              <span className={`app-tree-label ${roleClass(node.role)}`}>{node.label}</span>
+              {node.isCurrent ? <span className="app-tree-current">● current</span> : null}
+            </button>
+          ))}
+      </div>
+    </DialogFrame>
+  );
+}
+
 export function ModelPickerDialog({
   models,
   current,

@@ -21,8 +21,10 @@
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createLocalBashOperations } from "@earendil-works/pi-coding-agent";
-import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../lib/web-plugins/actions.ts";
-import { WEB_PLUGIN_VIEW_EVENT } from "../lib/web-plugins/view.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../lib/web-plugins/actions.ts";
+import { WEB_PLUGIN_VIEW_EVENT, type DialogWebView, type WebView } from "../lib/web-plugins/view.ts";
+import { publishWebView } from "../lib/web-plugins/publisher.ts";
+import { buildWebTree, type PiTreeNodeLike } from "../lib/web-tree.ts";
 import { WEB_UI_EVENT } from "../lib/web-plugins/ui-event-models.ts";
 import { defaultServerDir, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiDeps } from "../lib/web-ui.ts";
 import { repoRootFromServerDir, sourceWatchRoots, watchSources, type SourceWatcher } from "../lib/web-ui-reload.ts";
@@ -332,10 +334,16 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
             // pi core commands (extension, prompt templates, skills) — the
             // web dispatches these as prompt text through the session's
             // expandPromptTemplates path.
-            ...pi.getCommands().map((command) => ({
-              name: command.name,
-              ...(command.description !== undefined ? { description: command.description } : {}),
-            })),
+            ...pi
+              .getCommands()
+              // The web-* registrations are dispatch targets for the bridge
+              // channel; the display name below carries them. Hidden
+              // picker resolvers never surface.
+              .filter((command) => !command.name.startsWith("web-"))
+              .map((command) => ({
+                name: command.name,
+                ...(command.description !== undefined ? { description: command.description } : {}),
+              })),
             // web core commands — dispatched through the web's own bridge
             // channel ({type: "web_command"}), never through pi's runner.
             ...WEB_CORE_COMMANDS.map((command) => ({
@@ -530,20 +538,29 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       command.type === "web_command"
       && typeof command.name === "string"
     ) {
-      // The web core's own command channel: the registry runs in this pi
-      // process with a live session context — distinct from pi commands,
-      // which the web dispatches as prompt text.
+      // The web core's own command channel. Runner-dispatched commands go
+      // through pi's own command runner (a fresh, valid command context —
+      // session control methods only exist there); direct ones run on the
+      // captured session context.
       const entry = webCoreCommand(command.name);
-      const ctx = lastCtxForCommands as WebCommandContext | null;
       if (entry === undefined) {
         ctxNotify(`unknown web command: ${command.name}`);
         return;
       }
+      const args = typeof command.args === "string" ? command.args : "";
+      if (entry.dispatch === "runner") {
+        // pi.sendUserMessage returns void (fire-and-forget); its errors
+        // surface through the runner's own error reporting.
+        pi.sendUserMessage(`/web-${command.name}${args.trim() !== "" ? ` ${args.trim()}` : ""}`, {
+          expandPromptTemplates: true,
+        });
+        return;
+      }
+      const ctx = lastCtxForCommands as WebCommandContext | null;
       if (ctx === null) {
         ctxNotify(`web command ${command.name}: no session context yet`);
         return;
       }
-      const args = typeof command.args === "string" ? command.args : "";
       void Promise.resolve(entry.handler(args, ctx)).catch((error: unknown) => {
         ctxNotify(`web command ${command.name} failed: ${String(error)}`);
       });
@@ -670,25 +687,35 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   });
 
   // ── The web core command registry ────────────────────────────────────────
-  // These are pi's interactive built-ins implemented FOR THE WEB. They are
-  // deliberately NOT pi.registerCommand'd in the TUI: pi's own /compact,
-  // /name, /new, /clone and /reload already own those names there (the
-  // "conflicts with built-in" warnings were exactly this). The web core
-  // dispatches them through its own bridge channel ({type: "web_command"}),
-  // and in-process sessions register them into pi's runner (mode-gated)
-  // because that host dispatches through expandPromptTemplates.
+  // pi's interactive built-ins, wired for the web. Two kinds:
+  //
+  //  runner — needs pi's COMMAND context (newSession, fork, navigateTree,
+  //  switchSession, reload exist only there). Registered as real pi
+  //  commands under prefixed names (web-<name>) so the TUI's own built-ins
+  //  keep their names, and dispatched through pi's own runner:
+  //  pi.sendUserMessage("/web-<name>", {expandPromptTemplates: true}) →
+  //  AgentSession._tryExecuteExtensionCommand → the handler with a fresh,
+  //  valid command context. Never a stale captured ctx.
+  //
+  //  direct — runs on the plain extension context (compact, setSessionName,
+  //  shutdown all exist there); the bridge channel executes it directly.
   type WebCommandContext = ExtensionContext & {
     newSession(): Promise<{ cancelled: boolean }>;
     fork(entryId: string, options: { position: string }): Promise<{ cancelled: boolean }>;
+    navigateTree(targetId: string): Promise<{ cancelled: boolean }>;
+    switchSession(sessionPath: string): Promise<void>;
     reload(): Promise<void>;
   };
   const WEB_CORE_COMMANDS: Array<{
     name: string;
     description: string;
+    /** "runner" dispatches through pi's command runner; "direct" runs on the captured ctx. */
+    dispatch: "runner" | "direct";
     handler: (args: string, ctx: WebCommandContext) => void | Promise<void>;
   }> = [
     {
       name: "compact",
+      dispatch: "direct",
       description: "Compact the session context (web core)",
       handler: (args, ctx) => {
         const instructions = args.trim();
@@ -697,6 +724,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     },
     {
       name: "name",
+      dispatch: "direct",
       description: "Set the session display name (web core)",
       handler: (args) => {
         const name = args.trim();
@@ -710,6 +738,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     },
     {
       name: "new",
+      dispatch: "runner",
       description: "Start a new session (web core)",
       handler: async (_args, ctx) => {
         const result = await ctx.newSession();
@@ -718,6 +747,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     },
     {
       name: "clone",
+      dispatch: "runner",
       description: "Duplicate the current session at the current position (web core)",
       handler: async (_args, ctx) => {
         const leafId = ctx.sessionManager?.getLeafId?.();
@@ -736,6 +766,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     },
     {
       name: "reload",
+      dispatch: "runner",
       description: "Reload keybindings, extensions, skills, prompts and themes (web core)",
       handler: async (_args, ctx) => {
         try {
@@ -746,14 +777,187 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
         }
       },
     },
+    {
+      // pi's /fork: pick a previous user message, branch there. The picker
+      // is the web dialog pipeline (pi's extension dialog surface): both
+      // frontends render it, either can answer, and the pick resolves
+      // through ctx.fork — pi's own branching API.
+      name: "fork",
+      dispatch: "runner",
+      description: "Fork from a previous user message (web core)",
+      handler: (_args, ctx) => {
+        const entries = ctx.sessionManager?.getEntries?.() ?? [];
+        const userMessages = entries.flatMap((entry) => {
+          if (entry.type !== "message" || entry.message.role !== "user") return [];
+          return [{
+            id: entry.id,
+            message: entry.message as { role: string; content: unknown },
+          }];
+        });
+        if (userMessages.length === 0) {
+          ctxNotify("no user messages to fork from yet");
+          return;
+        }
+        const actions = userMessages.slice(-50).reverse().map((entry) => {
+          const content = entry.message.content;
+          const text =
+            typeof content === "string"
+              ? content
+              : Array.isArray(content)
+                ? content
+                    .filter(
+                      (block): block is { type?: string; text?: string } =>
+                        typeof block === "object" && block !== null,
+                    )
+                    .map((block) => (block.type === "text" && typeof block.text === "string" ? block.text : ""))
+                    .join(" ")
+                    .trim()
+                : "";
+          return { id: `fork@${entry.id}`, label: `${text.slice(0, 60) || "(empty)"} · ${entry.id.slice(0, 8)}` };
+        });
+        publishWebView(pi, WEB_CORE_PLUGIN_ID, pickerDialog("Fork from which message?", actions.map((a) => a.label), actions));
+      },
+    },
+    {
+      // pi's /tree: navigate the session's branch structure. Bare: pi's own
+      // tree (getTree) projected the way its TUI selector shapes it — the
+      // web renders its picker from that data. With an entry id (the pick):
+      // pi's navigateTree moves there.
+      name: "tree",
+      dispatch: "runner",
+      description: "Navigate the session tree (web core)",
+      handler: async (args, ctx) => {
+        const targetId = args.trim();
+        if (targetId !== "") {
+          try {
+            const result = await ctx.navigateTree(targetId);
+            if (result.cancelled) ctxNotify("tree navigation cancelled");
+            else ctxNotify(`navigated to ${targetId.slice(0, 8)}`);
+          } catch (error) {
+            ctxNotify(`tree navigation failed: ${String(error)}`);
+          }
+          return;
+        }
+        const manager = ctx.sessionManager;
+        const tree = manager?.getTree?.() ?? [];
+        if (tree.length === 0) {
+          ctxNotify("the session tree is empty");
+          return;
+        }
+        const leafId = manager?.getLeafId?.() ?? null;
+        const nodes = buildWebTree(tree as unknown as readonly PiTreeNodeLike[], leafId);
+        bridgePoster?.post({ type: "web_tree", nodes });
+      },
+    },
+    {
+      // pi's /import: resume a session from a JSONL file. The path as the
+      // command's argument (the web composer's palette offers the hint);
+      // the takeover through pi's switchSession.
+      name: "import",
+      dispatch: "runner",
+      description: "Import and resume a session from a JSONL file (web core)",
+      handler: async (args, ctx) => {
+        const path = args.trim();
+        if (path === "") {
+          ctxNotify("usage: /import /path/to/session.jsonl");
+          return;
+        }
+        try {
+          await ctx.switchSession(path);
+          ctxNotify(`resumed ${path}`);
+        } catch (error) {
+          ctxNotify(`import failed: ${String(error)}`);
+        }
+      },
+    },
+    {
+      // pi's /quit: the graceful shutdown pi itself exposes on the context.
+      name: "quit",
+      dispatch: "direct",
+      description: "Gracefully shut down this pi session (web core)",
+      handler: async (_args, ctx) => {
+        ctxNotify("shutting down");
+        ctx.shutdown();
+      },
+    },
   ];
   const webCoreCommand = (name: string): (typeof WEB_CORE_COMMANDS)[number] | undefined =>
     WEB_CORE_COMMANDS.find((command) => command.name === name);
+
+  // The web dialog pipeline's dialog for the core pickers: entries as
+  // actions, answered from either frontend through the plugin action
+  // pipeline — pi's extension dialog surface, no bespoke protocol.
+  const WEB_CORE_PLUGIN_ID = "web-core";
+  const pickerDialog = (title: string, labels: string[], actions: Array<{ id: string; label: string }>): WebView => {
+    // The dialog contract caps actions at 8: the newest 7 entries are
+    // pickable (a cancel action takes the last slot); the rest are listed
+    // as lines for context.
+    const view: DialogWebView = {
+      type: "dialog",
+      title,
+      lines: labels.length > 7 ? labels.slice(7, 20) : [],
+      actions: [
+        ...actions.slice(0, 7).map((action) => ({
+          id: action.id,
+          label: action.label.slice(0, 60),
+        })),
+        { id: "web-core-cancel", label: "Cancel" },
+      ],
+      open: true,
+    };
+    return view;
+  };
+
+  // A picker's answer: the action id encodes <kind>@<entryId>. Dispatch
+  // through pi's own command runner (the hidden web-core-fork/tree
+  // commands) so the handler runs with a fresh, valid command context —
+  // never a captured one that may have gone stale across session switches.
+  pi.events?.on(WEB_PLUGIN_ACTION_REQUEST_EVENT, (data: unknown) => {
+    const request = data as Partial<ActionRequestPayload> | undefined;
+    if (request?.pluginId !== WEB_CORE_PLUGIN_ID) return;
+    const actionId = typeof request.actionId === "string" ? request.actionId : "";
+    if (actionId === "web-core-cancel") {
+      void publishWebView(pi, WEB_CORE_PLUGIN_ID, { type: "dialog", open: false });
+    } else if (actionId.startsWith("fork@")) {
+      const entryId = actionId.slice("fork@".length);
+      void publishWebView(pi, WEB_CORE_PLUGIN_ID, { type: "dialog", open: false });
+      pi.sendUserMessage(`/web-core-fork ${entryId}`, { expandPromptTemplates: true });
+    } else if (actionId.startsWith("tree@")) {
+      const targetId = actionId.slice("tree@".length);
+      void publishWebView(pi, WEB_CORE_PLUGIN_ID, { type: "dialog", open: false });
+      pi.sendUserMessage(`/web-tree ${targetId}`, { expandPromptTemplates: true });
+    }
+  });
 
   // /model and /thinking are fully web-ported: the composer intercepts them
   // client-side (bare opens the picker, args POST to the model/thinking
   // routes), and the bridge's set_model/set_thinking commands apply them —
   // so no pi command registration and no dialog-request round trip.
+
+  // The runner-dispatched web core commands: real pi commands under
+  // prefixed names. pi's TUI built-ins keep their own names; these are the
+  // web's dispatch targets and also work typed directly in the TUI. The
+  // hidden web-core-fork/tree pair resolves picker actions (never listed).
+  for (const command of WEB_CORE_COMMANDS) {
+    if (command.dispatch !== "runner") continue;
+    pi.registerCommand(`web-${command.name}`, {
+      description: command.description,
+      handler: async (args: string, ctx: ExtensionContext) => {
+        await command.handler(args, ctx as WebCommandContext);
+      },
+    });
+  }
+  pi.registerCommand("web-core-fork", {
+    description: "Resolve a web fork picker action (internal).",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const entryId = args.trim();
+      if (entryId === "") return;
+      const result = await (ctx as WebCommandContext).fork(entryId, { position: "before" });
+      if (result.cancelled) ctxNotify("fork cancelled");
+      else ctxNotify("forked to a new session");
+    },
+  });
+
 
   pi.registerCommand("web", {
     description: "Manage pi-web UI server (built client): /web start | reload [--rebuild] | stop | status",
@@ -810,20 +1014,6 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
 
   pi.on("session_start", (_event, ctx) => {
     lastCtxForCommands = ctx;
-    // In non-TUI hosts (the web server's in-process sessions) the web core
-    // commands ride pi's runner so the expandPromptTemplates path — the one
-    // that host dispatches — reaches them. The TUI host never registers
-    // them: its built-ins own the names and the web uses the bridge channel.
-    if (ctx.mode !== "tui") {
-      for (const command of WEB_CORE_COMMANDS) {
-        pi.registerCommand(command.name, {
-          description: command.description,
-          handler: async (args: string, commandCtx: ExtensionContext) => {
-            await command.handler(args, commandCtx as WebCommandContext);
-          },
-        });
-      }
-    }
     if (autoReloadEnabled && !watcher) {
       const serverDir = options.deps?.serverDir ?? defaultServerDir();
       watcher = watchSources({

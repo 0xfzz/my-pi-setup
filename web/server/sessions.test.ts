@@ -112,14 +112,16 @@ test("sendCommand routes web_command through the web channel, falling back to pr
   assert.deepEqual(webCommands, [{ name: "name", args: "renamed" }]);
 
   // An in-process core (no webCommand): re-route as prompt text for the
-  // expandPromptTemplates path.
+  // expandPromptTemplates path — under the runner-registered name
+  // (/web-<name>), which pi's command runner dispatches with a valid
+  // command context.
   const prompts: string[] = [];
   registerSession(
     fakeCore({ sessionId: "inproc", prompt: async (text) => { prompts.push(text); } }),
     "/tmp/project",
   );
   await sendCommand("inproc", { type: "web_command", name: "compact", args: "focus on code" });
-  assert.deepEqual(prompts, ["/compact focus on code"]);
+  assert.deepEqual(prompts, ["/web-compact focus on code"]);
 });
 
 test("sendCommand passes @mentions through as typed — the model reads them with pi's read tool", async () => {

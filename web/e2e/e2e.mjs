@@ -679,6 +679,98 @@ async function run() {
       { timeout: 10_000 },
     );
 
+    step("8e2: all built-in commands — bridge channel and web dialogs");
+    // 8e2. The built-in coverage: /fork, /tree, /import and /quit are
+    //     dispatched through the web_command channel (pi's own context APIs
+    //     execute them in the pi process), /hotkeys opens the web's own
+    //     keybinding dialog. The composer never feeds them to the model.
+    await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          {
+            type: "web_commands",
+            commands: [
+              { name: "fork", description: "Fork from a previous user message (web core)", web: true },
+              { name: "tree", description: "Navigate the session tree (web core)", web: true },
+              { name: "import", description: "Import and resume a session from a JSONL file (web core)", web: true },
+              { name: "quit", description: "Gracefully shut down this pi session (web core)", web: true },
+            ],
+          },
+        ],
+      }),
+    });
+    for (const name of ["fork", "tree", "import", "quit"]) {
+      await composerInput.fill(`/${name}`);
+      await page.locator(".app-command-item", { hasText: name }).first().waitFor({
+        state: "visible",
+        timeout: 5_000,
+      });
+      await composerInput.press("Enter");
+      const dispatched = await waitForBridgeCommand(
+        bridgeCommands,
+        (command) => command.type === "web_command" && command.name === name,
+      );
+      assert.deepEqual(
+        dispatched,
+        { type: "web_command", name },
+        `/${name} dispatches through the bridge channel, not prompt text`,
+      );
+    }
+    // /tree: the web picker fed by pi's tree (the extension posts
+    // web_tree; the fake bridge posts it like the real one does). The
+    // pick dispatches back with the entry id — pi's navigateTree.
+    await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          {
+            type: "web_tree",
+            nodes: [
+              { entryId: "e1", label: "user: pick a branch", role: "user", depth: 0, isCurrent: false, isBranch: true },
+              { entryId: "e2", label: "assistant: first", role: "assistant", depth: 1, isCurrent: true, isBranch: false },
+              { entryId: "e3", label: "assistant: second", role: "assistant", depth: 1, isCurrent: false, isBranch: false },
+            ],
+          },
+        ],
+      }),
+    });
+    await composerInput.fill("/tree");
+    await page.locator(".app-command-item", { hasText: "tree" }).first().waitFor({
+      state: "visible",
+      timeout: 5_000,
+    });
+    await composerInput.press("Enter");
+    const treeDialog = page.locator(".app-dialog", { hasText: "Session tree" });
+    await treeDialog.waitFor({ state: "visible", timeout: 10_000 });
+    const treeNodes = await page.locator(".app-tree-node").allTextContents();
+    assert.equal(treeNodes.length, 3, "the picker renders pi's posted tree");
+    assert.ok(
+      (await page.locator(".app-tree-current").count()) === 1,
+      "the current leaf is marked",
+    );
+    // The pick: dispatches /tree <entryId> back to the pi process.
+    await page.locator(".app-tree-node", { hasText: "pick a branch" }).click();
+    const treePick = await waitForBridgeCommand(
+      bridgeCommands,
+      (command) => command.type === "web_command" && command.name === "tree" && command.args === "e1",
+    );
+    assert.deepEqual(
+      treePick,
+      { type: "web_command", name: "tree", args: "e1" },
+      "the tree pick navigates by entry id through pi's navigateTree",
+    );
+
+    // /hotkeys: the web's own keymap, a client-side dialog like /session.
+    await composerInput.fill("/hotkeys");
+    await composerInput.press("Enter");
+    await page.locator(".app-dialog", { hasText: "Web Keybindings" }).waitFor({
+      state: "visible",
+      timeout: 10_000,
+    });
+
     step("8f: reload mid-stream — the partial replays after the reload");
     // 8f. The classic desync: the turn is in flight, the user reloads. The
     //     reattached browser stream never saw message_start, so before the

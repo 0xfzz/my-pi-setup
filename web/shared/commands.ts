@@ -30,19 +30,19 @@ export interface WebCommand {
 export const COMMAND_META: Readonly<Record<string, Omit<WebCommand, "name" | "description">>> = {
   settings: { tuiOnly: true },
   model: { webPorted: true },
-  tree: { tuiOnly: true },
+  tree: { web: true },
   thinking: { webPorted: true },
   "scoped-models": { tuiOnly: true },
   export: { webPorted: true },
-  import: { tuiOnly: true },
+  import: { web: true },
   share: { tuiOnly: true },
   bug: { tuiOnly: true },
   copy: { webPorted: true },
   name: { web: true },
   session: { webPorted: true },
   changelog: { webPorted: true },
-  hotkeys: { tuiOnly: true },
-  fork: { tuiOnly: true },
+  hotkeys: { webPorted: true },
+  fork: { web: true },
   clone: { web: true },
   trust: { tuiOnly: true },
   login: { tuiOnly: true },
@@ -51,7 +51,7 @@ export const COMMAND_META: Readonly<Record<string, Omit<WebCommand, "name" | "de
   compact: { web: true },
   resume: { webPorted: true },
   reload: { web: true },
-  quit: { tuiOnly: true },
+  quit: { web: true },
 };
 
 /**

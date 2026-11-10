@@ -17,6 +17,7 @@ import {
   recordActionAudit,
   relayActionRequest,
 } from "./plugin-host.ts";
+import { webPluginsStore } from "./plugin-host.ts";
 import {
   ensureSession,
   getSession,
@@ -154,8 +155,14 @@ async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Pr
     sendJson(res, 404, { error: "Plugin not found" });
     return true;
   }
-  const descriptor = getPluginDescriptor(pluginId);
-  if (!descriptor) {
+  // The web core channel: the bridge's own built-in pickers. Its action
+  // ids are dynamic (session entries: "fork@<entryId>"), so the extension
+  // that published the picker is the validator — the static descriptor
+  // registry is for external plugins. The in-flight guard and audit below
+  // still apply.
+  const isWebCore = pluginId === "web-core";
+  const descriptor = isWebCore ? undefined : getPluginDescriptor(pluginId);
+  if (!isWebCore && !descriptor) {
     sendJson(res, 404, { error: "Plugin not found" });
     return true;
   }
@@ -163,29 +170,41 @@ async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Pr
     sendJson(res, 404, { error: "Action not found" });
     return true;
   }
-  const action = descriptor.actions?.find((candidate) => candidate.id === actionId);
-  if (!action) {
+  const action = descriptor?.actions?.find((candidate) => candidate.id === actionId);
+  if (!isWebCore && !action) {
     sendJson(res, 404, { error: "Action not found" });
     return true;
   }
 
   // 2. A declared confirm must match byte-identically (403, nothing emitted).
   //    An action without a declared confirm is the instant form: it submits
-  //    without a typed string.
-  if (action.confirm !== undefined && (typeof confirm !== "string" || confirm !== action.confirm)) {
+  //    without a typed string. The web core channel has no declared
+  //    confirms — its picks are instant.
+  if (action?.confirm !== undefined && (typeof confirm !== "string" || confirm !== action.confirm)) {
     sendJson(res, 403, { error: "Invalid confirmation string" });
     return true;
   }
 
-  // 3. At most one in-flight action per session held for 60 s (409).
+  // 3. At most one in-flight action per session held for 60 s (409). The
+  //    web core channel is exempt: its picker answers are instant
+  //    fire-and-forget dispatches, not long-running plugin actions — a
+  //    60 s lock there would block the next picker answer.
   const requestId = randomUUID();
-  if (!checkAndSetInFlightAction(sessionId, requestId, 60_000)) {
+  if (!isWebCore && !checkAndSetInFlightAction(sessionId, requestId, 60_000)) {
     sendJson(res, 409, { error: "Action already in flight for this session" });
     return true;
   }
 
   // 4. Audit, then relay to the owning extension over the session event bus.
   recordActionAudit({ requestId, sessionId, pluginId, actionId, timestamp: Date.now() });
+  if (isWebCore) {
+    // The picker closes here, server-side: the picked action's side effect
+    // (a fork, a tree navigation) can switch the pi's session and rebind
+    // its poster before the extension's own queued open:false flushes —
+    // this close is immediate and race-free. The relay still notifies the
+    // extension (the TUI-side dialog close).
+    webPluginsStore.recordView(sessionId, "web-core", { type: "dialog", open: false });
+  }
   const { relayed } = relayActionRequest(sessionId, pluginId, actionId, requestId);
   sendJson(res, 200, { ok: true, requestId, relayed });
   return true;
@@ -419,6 +438,26 @@ async function handleApi(
     // session's live commands (extension/prompt/skill + web core registry).
     const builtins = annotateBuiltinCommands(await piBuiltinCommands());
     sendJson(res, 200, { sessionId: id, commands: [...builtins, ...(core.getCommands?.() ?? [])] });
+    return true;
+  }
+
+  const treeMatch = /^\/api\/agent\/([^/]+)\/tree$/.exec(pathname);
+  if (treeMatch !== null) {
+    if (req.method !== "GET") return methodNotAllowed();
+    const id = sessionIdFromPath(treeMatch);
+    const core = getSession(id)?.core;
+    if (core === undefined) {
+      sendJson(res, 404, { error: "Session not found" });
+      return true;
+    }
+    // pi's tree, projected for the web picker; the extension posts it for
+    // bridged sessions (web_tree), the server builds it in-process.
+    const nodes = core.getTreeNodes?.() ?? null;
+    if (nodes === null) {
+      sendJson(res, 404, { error: "Tree not posted yet" });
+      return true;
+    }
+    sendJson(res, 200, { sessionId: id, nodes });
     return true;
   }
 
