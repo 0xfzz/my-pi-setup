@@ -11,6 +11,11 @@ This replaces the vendored Next.js fork (`vendor/pi-web`, deleted in Phase
 E; git history preserves it). The design and migration record live in
 [`docs/prds/minimal-pi-web.md`](prds/minimal-pi-web.md).
 
+The division of labor is codified in
+[`docs/web-plugin-architecture.md`](web-plugin-architecture.md) — **the web
+is interface, pi extensions are behavior** — and enforced on the import
+graph by `tests/web-boundaries.test.ts`.
+
 ## Quick start
 
 ```sh
@@ -200,6 +205,11 @@ ambient.
   `{ok: false, error}` — the bridge and the web stay up.
 
 ## The plugin system
+
+> One rule: **web plugins are interface bridging (declarative
+> descriptors); pi extensions are behavior.** The boundary, the lifecycle
+> and the decision test are specified in
+> [`docs/web-plugin-architecture.md`](web-plugin-architecture.md).
 
 A descriptor (`web-plugins/*.ts`) declares **surfaces**:
 

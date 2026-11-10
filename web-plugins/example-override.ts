@@ -1,7 +1,8 @@
 import type { WebPluginDescriptor } from "../lib/web-plugins/descriptor.ts";
-
-export const EXAMPLE_OVERRIDE_PLUGIN_ID = "example-override";
-export const EXAMPLE_OVERRIDE_SHOW_ACTION = "replace-composer";
+import {
+  EXAMPLE_OVERRIDE_PLUGIN_ID,
+  EXAMPLE_OVERRIDE_SHOW_ACTION,
+} from "../lib/example-override-web-view.ts";
 
 /**
  * Reference override plugin: while its view is published, the minimal web

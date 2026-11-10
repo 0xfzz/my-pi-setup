@@ -1,6 +1,6 @@
 # Web plugin extension-point catalog
 
-> Part of [pi-workflow-extensions](../README.md). Every extension point a web plugin can use, with its stability, version and whether it is protected.
+> Part of [pi-workflow-extensions](../README.md). Every extension point a web plugin can use, with its stability, version and whether it is protected. Web plugins are interface bridging — the boundary rule lives in [web-plugin-architecture.md](web-plugin-architecture.md).
 
 Generated from `lib/web-plugins/kernel/catalog.ts` by `scripts/gen-web-plugin-catalog.mjs`. Do not edit by hand.
 
