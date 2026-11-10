@@ -117,19 +117,21 @@ both frontends. `extensions/web.ts` does the bridging:
   client refetches `/api/agent/:id/commands`, so a `/reload` in the TUI
   refreshes the web palette too.
 
-**Built-in commands.** pi's 24 built-ins all have a web disposition: 8 are
+**Built-in commands.** All 24 pi built-ins dispatch from the web: 13 are
 web-ported (model, thinking, session, changelog, copy, export, resume,
-hotkeys — client dialogs/actions), 9 dispatch through the web-command
-channel into pi's own command runner (compact, name, new, clone, reload,
-fork, tree, import, quit — `ctx.compact`, `setSessionName`, `newSession`,
-`fork`, `navigateTree`, `switchSession`, `reload`, `shutdown`), and the 7
-that genuinely need the terminal (settings, scoped-models, share, bug,
-trust, login, logout) say so honestly. Session-control commands run with a
-valid command context by dispatching through pi's runner
-(`/web-<name>` registered commands reached via the prompt path), never a
-captured context; `/tree` renders a searchable, keyboard-navigable tree
-picker from pi's own `getTree()` projection, and `/fork` picks through the
-extension dialog pipeline — answerable from either frontend.
+hotkeys, settings, scoped-models, trust, login, logout — client dialogs
+or actions), and 11 dispatch through the web-command channel into the web
+core registry in the pi process (compact, name, new, clone, reload, fork,
+tree, import, quit + share and bug). Nothing is terminal-only anymore.
+Session-control commands run with a valid command context by dispatching
+through pi's runner (`/web-<name>` registered commands reached via the
+prompt path), never a captured context; `/tree` renders a searchable,
+keyboard-navigable tree picker from pi's own `getTree()` projection,
+`/fork` picks through the extension dialog pipeline (answerable from
+either frontend), `/settings` and `/scoped-models` edit pi's own
+SettingsManager, `/trust` writes pi's trust store, `/login`/`/logout`
+drive pi's ModelRuntime credential flows, and `/share`/`/bug` run pi's
+export and report machinery — each posting a result dialog.
 
 While a bridge is attached, the web's `/api/agent/:id` routes proxy into it
 and the session is listed as live. **The bridge owns the session**: while
@@ -180,6 +182,10 @@ The contract lives in `web/shared/pi-api.ts` (names, params, results);
 |---|---|---|
 | `autocomplete.suggestions` | `CombinedAutocompleteProvider` from `@earendil-works/pi-tui` — the TUI editor's own completion: @ file mentions, paths, quoted paths, fd walk (gitignore-aware, located via pi's `ensureTool`), pi's fuzzy ranking | the composer's `@` picker |
 | `commands.builtin` | `BUILTIN_SLASH_COMMANDS` from pi's core | the command palette's built-in list |
+| `settings.read` / `settings.write` | `SettingsManager` — pi's effective settings, written through its setter methods | the web `/settings` dialog |
+| `settings.models.read` / `settings.models.write` | `SettingsManager.getEnabledModels` / `setEnabledModels` | the web `/scoped-models` dialog |
+| `trust.read` / `trust.write` | `ProjectTrustStore` + `getProjectTrustOptions` from pi's trust-manager | the web `/trust` dialog |
+| `auth.read` / `auth.login` / `auth.state` / `auth.answer` / `auth.logout` | `ModelRuntime` (`listCredentials`, `login`, `logout`) against pi's shared auth.json | the web `/login` and `/logout` dialogs |
 
 Two consequences worth stating:
 
