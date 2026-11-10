@@ -28,14 +28,15 @@ test("the built-in coverage policy: every pi built-in has a web disposition", ()
   const annotated = annotateBuiltinCommands(piList);
   const dispatchable = annotated.filter((command) => command.web === true || command.webPorted === true);
   const tuiOnly = annotated.filter((command) => command.tuiOnly === true);
-  // 20 of 24 run from the web: 11 web-ported (client dialogs/actions,
-  // including /settings, /scoped-models and /trust through pi's own
-  // SettingsManager / trust store) + 9 through the web_command channel.
-  assert.equal(dispatchable.length, 20);
-  // The 4 that still need the terminal say so honestly.
+  // 22 of 24 run from the web: 13 web-ported (client dialogs/actions,
+  // including /settings, /scoped-models, /trust, /login and /logout
+  // through pi's own SettingsManager / trust store / ModelRuntime) +
+  // 9 through the web_command channel.
+  assert.equal(dispatchable.length, 22);
+  // The 2 that still need the terminal say so honestly.
   assert.deepEqual(
     tuiOnly.map((command) => command.name).sort(),
-    ["bug", "login", "logout", "share"].sort(),
+    ["bug", "share"].sort(),
   );
 });
 

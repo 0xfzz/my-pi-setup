@@ -19,7 +19,12 @@ export type PiApiName =
   | "settings.models.read"
   | "settings.models.write"
   | "trust.read"
-  | "trust.write";
+  | "trust.write"
+  | "auth.read"
+  | "auth.login"
+  | "auth.state"
+  | "auth.answer"
+  | "auth.logout";
 
 /** pi-tui's AutocompleteItem, wire form. */
 export interface PiAutocompleteItem {
@@ -57,6 +62,14 @@ export interface PiApiParams {
     /** A label offered by trust.read; the server re-derives pi's option list. */
     label: string;
   };
+  "auth.read": Record<string, never>;
+  "auth.login": {
+    providerId: string;
+    authType: "oauth" | "api_key";
+  };
+  "auth.state": { loginId: string };
+  "auth.answer": { loginId: string; value: string };
+  "auth.logout": { providerId: string };
 }
 
 /** results per api — one entry per PiApiName. */
@@ -69,6 +82,11 @@ export interface PiApiResult {
   "settings.models.write": { enabled: string[] | null };
   "trust.read": PiTrustState;
   "trust.write": { savedDecision: PiTrustEntry | null };
+  "auth.read": { providers: PiAuthProvider[]; credentials: PiAuthCredential[] };
+  "auth.login": { loginId: string };
+  "auth.state": PiAuthLoginState;
+  "auth.answer": { ok: true };
+  "auth.logout": { ok: true };
 }
 
 /** One entry of pi's settings surface, as the web dialog renders it. */
@@ -100,6 +118,48 @@ export interface PiTrustState {
   options: PiTrustOption[];
 }
 
+/** pi's login providers, as its own /login selector lists them. */
+export interface PiAuthProvider {
+  id: string;
+  name: string;
+  authType: "oauth" | "api_key";
+  configured: boolean;
+}
+
+export interface PiAuthCredential {
+  providerId: string;
+  type: "oauth" | "api_key";
+}
+
+/** A login prompt pi's ModelRuntime needs answered. */
+export interface PiAuthPrompt {
+  type: "text" | "secret" | "select" | "manual_code";
+  message: string;
+  placeholder?: string;
+  options?: Array<{ id: string; label: string; description?: string }>;
+}
+
+/** An informational/auth-url/device-code event pi's flow notifies. */
+export interface PiAuthEvent {
+  type: "info" | "auth_url" | "device_code" | "progress";
+  message?: string;
+  links?: Array<{ url: string; label?: string }>;
+  url?: string;
+  instructions?: string;
+  userCode?: string;
+  verificationUri?: string;
+  intervalSeconds?: number;
+  expiresInSeconds?: number;
+}
+
+/** The state of one in-flight login. */
+export interface PiAuthLoginState {
+  status: "pending" | "done" | "error";
+  error?: string | null;
+  prompt?: PiAuthPrompt | null;
+  event?: PiAuthEvent | null;
+}
+
 export type PiApiRequest = {
   id: number;
   api: PiApiName;
@@ -123,6 +183,11 @@ export function parsePiApiBody(body: unknown): { api: PiApiName; params: unknown
     "settings.models.write",
     "trust.read",
     "trust.write",
+    "auth.read",
+    "auth.login",
+    "auth.state",
+    "auth.answer",
+    "auth.logout",
   ];
   if (typeof api !== "string" || !known.includes(api)) {
     return { error: `unknown pi api: ${String(api)}` };
@@ -165,6 +230,27 @@ export function parsePiApiBody(body: unknown): { api: PiApiName; params: unknown
     const p = params as { label?: unknown } | undefined;
     if (typeof p?.label !== "string" || p.label.trim() === "") {
       return { error: "trust.write params: {label: string}" };
+    }
+  }
+  if (api === "auth.login") {
+    const p = params as { providerId?: unknown; authType?: unknown } | undefined;
+    if (typeof p?.providerId !== "string" || p.providerId.trim() === "") {
+      return { error: "auth.login params: {providerId: string, authType: 'oauth' | 'api_key'}" };
+    }
+    if (p?.authType !== "oauth" && p?.authType !== "api_key") {
+      return { error: "authType must be 'oauth' or 'api_key'" };
+    }
+  }
+  if (api === "auth.state" || api === "auth.answer" || api === "auth.logout") {
+    const p = params as { loginId?: unknown; value?: unknown; providerId?: unknown } | undefined;
+    if (api === "auth.state" && typeof p?.loginId !== "string") {
+      return { error: "auth.state params: {loginId: string}" };
+    }
+    if (api === "auth.answer" && (typeof p?.loginId !== "string" || typeof p?.value !== "string")) {
+      return { error: "auth.answer params: {loginId: string, value: string}" };
+    }
+    if (api === "auth.logout" && (typeof p?.providerId !== "string" || p.providerId.trim() === "")) {
+      return { error: "auth.logout params: {providerId: string}" };
     }
   }
   return { api: apiName, params };

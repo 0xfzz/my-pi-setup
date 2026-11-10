@@ -127,6 +127,85 @@ test("pi_api settings.read/write round-trip through pi's SettingsManager", async
   }
 });
 
+test("pi_api auth.read/logout round-trips pi's credential store", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "piapi-auth-"));
+  const cwd = await mkdtemp(join(tmpdir(), "piapi-auth-cwd-"));
+  const envKey = "PI_CODING_AGENT_DIR";
+  const previous = process.env[envKey];
+  process.env[envKey] = agentDir;
+  try {
+    // Seed pi's auth.json with one stored api-key credential.
+    await writeFile(
+      join(agentDir, "auth.json"),
+      JSON.stringify({ openai: { type: "api_key", key: "sk-test" } }),
+      "utf8",
+    );
+
+    const read = await handlePiApiRequest(cwd, { api: "auth.read", params: {} });
+    assert.equal(read.status, 200);
+    assert.ok(read.body.ok);
+    if (read.body.ok) {
+      const { providers, credentials } = read.body.result as {
+        providers: Array<{ id: string; name: string; authType: string }>;
+        credentials: Array<{ providerId: string; type: string }>;
+      };
+      // pi's catalog advertises login providers; the web lists whatever pi does.
+      assert.ok(Array.isArray(providers));
+      // The seeded credential is listed (read from pi's own auth.json).
+      assert.ok(credentials.some((credential) => credential.providerId === "openai" && credential.type === "api_key"));
+    }
+
+    const logout = await handlePiApiRequest(cwd, { api: "auth.logout", params: { providerId: "openai" } });
+    assert.equal(logout.status, 200);
+    assert.ok(logout.body.ok);
+
+    const after = await handlePiApiRequest(cwd, { api: "auth.read", params: {} });
+    assert.ok(after.body.ok);
+    if (after.body.ok) {
+      const { credentials } = after.body.result as { credentials: Array<{ providerId: string }> };
+      assert.ok(!credentials.some((credential) => credential.providerId === "openai"), "openai credential removed");
+    }
+
+    // Bad logout params are rejected at the wire layer.
+    const bad = await handlePiApiRequest(cwd, { api: "auth.logout", params: { providerId: "" } });
+    assert.equal(bad.status, 400);
+    assert.ok(!bad.body.ok);
+  } finally {
+    if (previous === undefined) delete process.env[envKey];
+    else process.env[envKey] = previous;
+  }
+});
+
+test("pi_api auth.login/state validation rejects unknown flows", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "piapi-auth-val-"));
+  const cwd = await mkdtemp(join(tmpdir(), "piapi-auth-val-cwd-"));
+  const envKey = "PI_CODING_AGENT_DIR";
+  const previous = process.env[envKey];
+  process.env[envKey] = agentDir;
+  try {
+    // A provider pi's catalog lacks outright.
+    const unknown = await handlePiApiRequest(cwd, { api: "auth.login", params: { providerId: "no-such-provider", authType: "api_key" } });
+    assert.equal(unknown.status, 500);
+    assert.ok(!unknown.body.ok);
+
+    // A nonexistent loginId has no state.
+    const state = await handlePiApiRequest(cwd, { api: "auth.state", params: { loginId: "missing" } });
+    assert.equal(state.status, 200);
+    assert.ok(state.body.ok);
+    if (state.body.ok) {
+      assert.equal((state.body.result as { status: string }).status, "error");
+    }
+
+    // Wire validation rejects bad answer params.
+    const bad = await handlePiApiRequest(cwd, { api: "auth.answer", params: { loginId: "x" } });
+    assert.equal(bad.status, 400);
+    assert.ok(!bad.body.ok);
+  } finally {
+    if (previous === undefined) delete process.env[envKey];
+    else process.env[envKey] = previous;
+  }
+});
+
 test("pi_api trust.read/write round-trips pi's project-trust store", async () => {
   const agentDir = await mkdtemp(join(tmpdir(), "piapi-trust-"));
   const cwd = await mkdtemp(join(tmpdir(), "piapi-trust-cwd-"));

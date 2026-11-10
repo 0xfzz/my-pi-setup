@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { MarkdownBody } from "./plugins/markdown.tsx";
 import { postPluginAction } from "./plugins/actionClient.ts";
 import type { DialogWebView } from "./plugins/contract.ts";
-import type { PiSettingEntry, PiTrustState } from "../shared/pi-api.ts";
+import type { PiAuthLoginState, PiSettingEntry, PiTrustState } from "../shared/pi-api.ts";
 
 export interface ModelRefLike {
   provider: string;
@@ -813,6 +813,304 @@ export function TrustDialog({
             })}
           </div>
         </>
+      )}
+    </DialogFrame>
+  );
+}
+
+/** The web /login port: pi's ModelRuntime login flows. The page lists pi's
+ * login providers (getProviders, same shape as its /login selector), starts
+ * a login, then renders whatever pi's flow emits — an auth URL, a device
+ * code, a prompt (text/secret/select) — and posts the answers back. */
+export function LoginDialog({
+  sessionId,
+  onClose,
+}: {
+  sessionId: string | null;
+  onClose: () => void;
+}) {
+  const [providers, setProviders] = useState<Array<{ id: string; name: string; authType: "oauth" | "api_key" }> | null>(null);
+  const [phase, setPhase] = useState<"pick" | "running">("pick");
+  const [loginId, setLoginId] = useState<string | null>(null);
+  const [state, setState] = useState<PiAuthLoginState | null>(null);
+  const [answer, setAnswer] = useState("");
+  const [events, setEvents] = useState<Array<{ type: string; message?: string }>>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const api = (body: unknown): Promise<{ ok?: boolean; error?: string; result?: unknown }> => {
+    if (sessionId === null) return Promise.resolve({ ok: false, error: "no session selected" });
+    return fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((res) => res.json().catch(() => ({})));
+  };
+
+  useEffect(() => {
+    void (async () => {
+      if (sessionId === null) {
+        setError("no session selected");
+        return;
+      }
+      const body = await api({ api: "auth.read", params: {} });
+      if (body.ok !== true || !Array.isArray((body.result as { providers?: unknown })?.providers)) {
+        setError("login providers could not be read");
+        return;
+      }
+      setProviders((body.result as { providers: Array<{ id: string; name: string; authType: "oauth" | "api_key" }> }).providers);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
+  const start = async (providerId: string, authType: "oauth" | "api_key"): Promise<void> => {
+    setError(null);
+    setEvents([]);
+    setState(null);
+    setAnswer("");
+    const body = await api({ api: "auth.login", params: { providerId, authType } });
+    if (body.ok !== true) {
+      setError(body.error ?? "login could not be started");
+      return;
+    }
+    const id = (body.result as { loginId: string }).loginId;
+    setLoginId(id);
+    setPhase("running");
+  };
+
+  // Poll the pending login; render each outstanding prompt / notify event.
+  useEffect(() => {
+    if (loginId === null || phase !== "running") return;
+    let cancelled = false;
+    const poll = (): void => {
+      void api({ api: "auth.state", params: { loginId } }).then((body) => {
+        if (cancelled) return;
+        if (body.ok !== true) {
+          setError(body.error ?? "login state unavailable");
+          return;
+        }
+        const next = body.result as PiAuthLoginState;
+        setState(next);
+        const event = next.event;
+        if (event !== undefined && event !== null && event.message !== undefined) {
+          setEvents((prev) => {
+            const last = prev[prev.length - 1];
+            if (last !== undefined && last.type === event.type && last.message === event.message) return prev;
+            return [...prev, { type: event.type, message: event.message }];
+          });
+        }
+        if (next.status === "pending") setTimeout(poll, 400);
+        else if (next.status === "done") {
+          // The credential is stored; stay on a success screen.
+        }
+      });
+    };
+    poll();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loginId, phase]);
+
+  const submit = async (): Promise<void> => {
+    if (loginId === null) return;
+    const body = await api({ api: "auth.answer", params: { loginId, value: answer } });
+    if (body.ok !== true) {
+      setError(body.error ?? "answer rejected");
+      return;
+    }
+    setAnswer("");
+  };
+
+  const promptBlock = state?.prompt;
+  const eventBlock = state?.event;
+
+  return (
+    <DialogFrame
+      title="Login"
+      onClose={onClose}
+      wide
+      footer={<span className="app-dialog-hint">esc close · login runs against pi's own credential store</span>}
+    >
+      {error !== null ? <div className="app-dialog-error" role="alert">{error}</div> : null}
+      {phase === "pick" ? (
+        providers === null ? (
+          <div className="app-dialog-empty">reading login providers…</div>
+        ) : providers.length === 0 ? (
+          <div className="app-dialog-empty">no login providers available</div>
+        ) : (
+          <div className="app-dialog-list" role="listbox" aria-label="Login providers">
+            {providers.map((provider) => (
+              <button
+                key={`${provider.id}:${provider.authType}`}
+                type="button"
+                role="option"
+                className="app-dialog-item"
+                onClick={() => void start(provider.id, provider.authType)}
+              >
+                <span className="app-dialog-item-id">{provider.name}</span>
+                <span className="app-dialog-item-provider">{provider.authType === "oauth" ? "account" : "api key"}</span>
+              </button>
+            ))}
+          </div>
+        )
+      ) : state === null ? (
+        <div className="app-dialog-empty">starting login…</div>
+      ) : state.status === "done" ? (
+        <div className="app-dialog-empty">Logged in. You can close this dialog.</div>
+      ) : state.status === "error" ? (
+        <div className="app-dialog-error" role="alert">{state.error ?? "login failed"}</div>
+      ) : (
+        <div className="app-auth-flow">
+          {/* Outstanding prompt: text/secret input, or a select. */}
+          {promptBlock !== undefined && promptBlock !== null ? (
+            <div className="app-auth-prompt">
+              <span className="app-setting-label">{promptBlock.message}</span>
+              {promptBlock.options !== undefined ? (
+                <div className="app-dialog-list" role="listbox" aria-label={promptBlock.message}>
+                  {promptBlock.options.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className="app-dialog-item"
+                      onClick={() => {
+                        setAnswer(option.id);
+                        void (async () => {
+                          if (loginId === null) return;
+                          const body = await api({ api: "auth.answer", params: { loginId, value: option.id } });
+                          if (body.ok !== true) setError(body.error ?? "answer rejected");
+                        })();
+                      }}
+                    >
+                      <span className="app-dialog-item-id">{option.label}</span>
+                      {option.description !== undefined ? <span className="app-dialog-item-provider">{option.description}</span> : null}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="app-auth-answer">
+                  <input
+                    type={promptBlock.type === "secret" ? "password" : "text"}
+                    className="app-setting-input"
+                    value={answer}
+                    placeholder={promptBlock.placeholder ?? ""}
+                    onChange={(event) => setAnswer(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") void submit();
+                    }}
+                    autoFocus
+                  />
+                  <button type="button" className="app-dialog-action app-dialog-action-primary" onClick={() => void submit()}>
+                    Continue
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : null}
+          {/* An auth URL or device code pi's flow emitted. */}
+          {eventBlock?.type === "auth_url" ? (
+            <div className="app-auth-event">
+              <span className="app-setting-label">Visit the link to sign in</span>
+              <a className="app-auth-link" href={eventBlock.url} target="_blank" rel="noreferrer">
+                {eventBlock.url}
+              </a>
+            </div>
+          ) : eventBlock?.type === "device_code" ? (
+            <div className="app-auth-event">
+              <span className="app-setting-label">Enter this code at {eventBlock.verificationUri}</span>
+              <span className="app-auth-code">{eventBlock.userCode}</span>
+              {eventBlock.verificationUri !== undefined ? (
+                <a className="app-auth-link" href={eventBlock.verificationUri} target="_blank" rel="noreferrer">
+                  {eventBlock.verificationUri}
+                </a>
+              ) : null}
+            </div>
+          ) : null}
+          {/* Rolling status lines (info/progress). */}
+          {events.length > 0 ? (
+            <pre className="app-dialog-lines">{events.map((line) => line.message ?? "").join("\n")}</pre>
+          ) : null}
+        </div>
+      )}
+    </DialogFrame>
+  );
+}
+
+/** The web /logout port: pi's stored credentials (listCredentials), removed
+ * through pi's ModelRuntime.logout — the same file the TUI's /logout clears. */
+export function LogoutDialog({
+  sessionId,
+  onClose,
+}: {
+  sessionId: string | null;
+  onClose: () => void;
+}) {
+  const [credentials, setCredentials] = useState<Array<{ providerId: string; type: "oauth" | "api_key" }> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = (): void => {
+    if (sessionId === null) return;
+    fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api: "auth.read", params: {} }),
+    })
+      .then(async (res) => {
+        const body = (await res.json().catch(() => ({}))) as { ok?: boolean; result?: { credentials?: Array<{ providerId: string; type: "oauth" | "api_key" }> } };
+        if (!res.ok || body.ok !== true) throw new Error("credentials unavailable");
+        setCredentials(body.result?.credentials ?? []);
+      })
+      .catch(() => setError("stored credentials could not be read"));
+  };
+
+  useEffect(load, [sessionId]);
+
+  const logout = (providerId: string): void => {
+    if (sessionId === null) return;
+    setBusy(providerId);
+    setError(null);
+    fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api: "auth.logout", params: { providerId } }),
+    })
+      .then(async (res) => {
+        const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+        if (!res.ok || body.ok !== true) throw new Error(body.error ?? "logout rejected");
+        setCredentials((prev) => prev?.filter((credential) => credential.providerId !== providerId) ?? prev);
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusy(null));
+  };
+
+  return (
+    <DialogFrame
+      title="Logout"
+      onClose={onClose}
+      footer={<span className="app-dialog-hint">removes credentials saved by /login · env vars and models.json are unchanged</span>}
+    >
+      {error !== null ? <div className="app-dialog-error" role="alert">{error}</div> : null}
+      {credentials === null ? (
+        <div className="app-dialog-empty">reading credentials…</div>
+      ) : credentials.length === 0 ? (
+        <div className="app-dialog-empty">no stored credentials to remove</div>
+      ) : (
+        <div className="app-dialog-list" role="listbox" aria-label="Stored credentials">
+          {credentials.map((credential) => (
+            <button
+              key={credential.providerId}
+              type="button"
+              role="option"
+              disabled={busy === credential.providerId}
+              className="app-dialog-item"
+              onClick={() => logout(credential.providerId)}
+            >
+              <span className="app-dialog-item-id">{credential.providerId}</span>
+              <span className="app-dialog-item-provider">{credential.type === "oauth" ? "account" : "api key"}</span>
+              {busy === credential.providerId ? <span className="app-dialog-item-current">removing…</span> : null}
+            </button>
+          ))}
+        </div>
       )}
     </DialogFrame>
   );

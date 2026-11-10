@@ -11,7 +11,7 @@ import { Composer } from "./composer.tsx";
 import { SessionSidebar } from "./sidebar.tsx";
 import { NewSessionDialog } from "./new-session-dialog.tsx";
 import { CustomPopups, EditorWidgets, StatusChips, ToastStack, UiPromptBanner } from "./popups.tsx";
-import { DialogLayer, InfoDialog, ModelPickerDialog, ScopedModelsDialog, SettingsDialog, ThinkingPickerDialog, TreeSelectorDialog, TrustDialog } from "./dialogs.tsx";
+import { DialogLayer, InfoDialog, LoginDialog, LogoutDialog, ModelPickerDialog, ScopedModelsDialog, SettingsDialog, ThinkingPickerDialog, TreeSelectorDialog, TrustDialog } from "./dialogs.tsx";
 import type { WebTreeNode } from "../shared/tree.ts";
 import { SlotHost } from "./plugins/slots.tsx";
 import { PluginActionShortcuts } from "./plugins/PluginActionShortcuts.tsx";
@@ -59,6 +59,8 @@ export function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [scopedModelsOpen, setScopedModelsOpen] = useState(false);
   const [trustOpen, setTrustOpen] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [logoutOpen, setLogoutOpen] = useState(false);
   const [infoDialog, setInfoDialog] = useState<{ title: string; markdown?: string; lines?: string[] } | null>(null);
   const [modelBusy, setModelBusy] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
@@ -180,6 +182,14 @@ export function AppShell() {
     }
     if (name === "trust") {
       setTrustOpen(true);
+      return;
+    }
+    if (name === "login") {
+      setLoginOpen(true);
+      return;
+    }
+    if (name === "logout") {
+      setLogoutOpen(true);
       return;
     }
   };
@@ -526,6 +536,18 @@ export function AppShell() {
         <TrustDialog
           sessionId={session.selectedId}
           onClose={() => setTrustOpen(false)}
+        />
+      ) : null}
+      {loginOpen ? (
+        <LoginDialog
+          sessionId={session.selectedId}
+          onClose={() => setLoginOpen(false)}
+        />
+      ) : null}
+      {logoutOpen ? (
+        <LogoutDialog
+          sessionId={session.selectedId}
+          onClose={() => setLogoutOpen(false)}
         />
       ) : null}
       {treeNodes !== null ? (

@@ -4,6 +4,7 @@
  * all see it through the shared api names; see docs/pi-web.md.
  */
 import { autocompleteApi } from "./autocomplete.ts";
+import { authAnswerApi, authLoginApi, authLogoutApi, authReadApi, authStateApi } from "./auth.ts";
 import { builtinCommandsApi } from "./builtin-commands.ts";
 import { settingsApi, settingsModelsApi, settingsModelsWriteApi, settingsWriteApi } from "./settings.ts";
 import { trustApi, trustWriteApi } from "./trust.ts";
@@ -25,4 +26,9 @@ export const PI_API_MODULES: readonly PiApiModule[] = [
   settingsModelsWriteApi,
   trustApi,
   trustWriteApi,
+  authReadApi,
+  authLoginApi,
+  authStateApi,
+  authAnswerApi,
+  authLogoutApi,
 ];

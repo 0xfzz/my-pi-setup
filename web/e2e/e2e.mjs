@@ -501,7 +501,7 @@ async function run() {
       timeout: 5_000,
     });
     // A genuinely TUI-only command is still blocked with an honest notice.
-    await composerInput.fill("/settings");
+    await composerInput.fill("/share");
     await composerInput.press("Enter");
     const notice = page.locator(".app-composer-error");
     await notice.waitFor({ state: "visible", timeout: 5_000 });
