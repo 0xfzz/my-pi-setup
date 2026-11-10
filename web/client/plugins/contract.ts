@@ -10,6 +10,8 @@ export type {
   GraphNode,
   GraphEdge,
   ListStatus,
+  DialogWebView,
+  DialogAction,
 } from "../../../lib/web-plugins/view.ts";
 export type { ActionDescriptor } from "../../../lib/web-plugins/actions.ts";
 export type { WebPluginDescriptor } from "../../../lib/web-plugins/descriptor.ts";

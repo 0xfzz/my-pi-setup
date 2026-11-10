@@ -44,7 +44,15 @@ export interface BridgeState {
 export type BridgeCommand =
   | { type: "prompt"; message: string; images?: Array<{ data: string; mimeType: string }> }
   | { type: "abort" }
-  | { type: "action"; requestId: string; pluginId: string; actionId: string };
+  | { type: "action"; requestId: string; pluginId: string; actionId: string }
+  | { type: "set_model"; provider: string; id: string }
+  | { type: "set_thinking"; level: string };
+
+/** Model list for the web picker, posted by the extension (web_models). */
+export interface BridgeModels {
+  current?: { provider: string; id: string };
+  models: Array<{ provider: string; id: string }>;
+}
 
 export interface BridgeConnection {
   readonly metadata: BridgeMetadata;
@@ -55,6 +63,8 @@ export interface BridgeConnection {
   postState(state: Partial<BridgeState>): void;
   /** Slash commands the owning pi process posted (web_commands events). */
   getCommands(): Array<{ name: string; description?: string }>;
+  /** The model list for the web picker (web_models events). */
+  getModels(): BridgeModels | null;
   subscribe(listener: (event: unknown) => void): () => void;
   close(): void;
 }
@@ -94,6 +104,12 @@ export function attachBridge(options: {
   let commands: Array<{ name: string; description?: string }> = [];
   const setCommands = (next: Array<{ name: string; description?: string }>): void => {
     commands = next;
+  };
+  // The model list the extension posts (web_models events); served to
+  // /api/agent/:id/models for the web picker.
+  let models: BridgeModels | null = null;
+  const setModels = (next: BridgeModels): void => {
+    models = next;
   };
 
   res.writeHead(200, {
@@ -163,6 +179,23 @@ export function attachBridge(options: {
           );
           if (valid.length > 0) setCommands(valid);
         }
+        if (e.type === "web_models") {
+          const payload = event as { current?: unknown; models?: unknown };
+          const list = Array.isArray(payload.models)
+            ? payload.models.filter(
+              (ref): ref is { provider: string; id: string } =>
+                typeof ref === "object" && ref !== null
+                && typeof (ref as { provider?: unknown }).provider === "string"
+                && typeof (ref as { id?: unknown }).id === "string",
+            )
+            : [];
+          const current = typeof payload.current === "object" && payload.current !== null
+            && typeof (payload.current as { provider?: unknown }).provider === "string"
+            && typeof (payload.current as { id?: unknown }).id === "string"
+            ? (payload.current as { provider: string; id: string })
+            : undefined;
+          setModels({ current, models: list.slice(0, 500) });
+        }
       }
       handleBridgeEvent(metadata.sessionId, event);
       // Snapshot: a listener may unsubscribe itself (browser stream cleanup)
@@ -181,6 +214,9 @@ export function attachBridge(options: {
     },
     getCommands(): Array<{ name: string; description?: string }> {
       return commands;
+    },
+    getModels(): BridgeModels | null {
+      return models;
     },
     subscribe(listener: (event: unknown) => void): () => void {
       listeners.add(listener);
@@ -273,6 +309,10 @@ function handleBridgeEvent(sessionId: string, event: unknown): void {
     }
     return;
   }
+  if (e.type === "web_models") {
+    // Handled in postEvent: the models list is this connection's state.
+    return;
+  }
   if (e.type === "agent_start" || e.type === "agent_settled" || e.type === "session_shutdown") {
     recordExtensionUi(sessionId, e);
   }
@@ -306,5 +346,23 @@ export function bridgeSessionCore(connection: BridgeConnection): SessionCore {
       thinkingLevel: connection.state.thinkingLevel ?? metadata.thinkingLevel ?? "off",
     }),
     getCommands: () => connection.getCommands(),
+    getModels: () => {
+      const posted = connection.getModels();
+      if (posted !== null) return posted;
+      // The extension has not posted a list yet; the current model still
+      // makes a one-row picker.
+      const current = connection.state.model ?? metadata.model;
+      return { models: current ? [current] : [], ...(current !== undefined ? { current } : {}) };
+    },
+    setModel: async (provider: string, id: string) => {
+      // The extension resolves, applies and reports back (session_state);
+      // the command channel is fire-and-forget like the TUI's own path.
+      connection.sendCommand({ type: "set_model", provider, id });
+      return true;
+    },
+    setThinkingLevel: async (level: string) => {
+      connection.sendCommand({ type: "set_thinking", level });
+      return true;
+    },
   };
 }

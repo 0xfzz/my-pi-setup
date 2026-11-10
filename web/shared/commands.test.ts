@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { BUILTIN_COMMANDS, filterCommands } from "./commands.ts";
 
-test("builtin commands mirror pi's set and are TUI-only", () => {
+test("builtin commands mirror pi's set; ported and TUI-only are marked", () => {
   const names = BUILTIN_COMMANDS.map((command) => command.name);
   for (const expected of [
     "settings",
@@ -16,7 +16,19 @@ test("builtin commands mirror pi's set and are TUI-only", () => {
   ]) {
     assert.ok(names.includes(expected), `/ ${expected} must be listed`);
   }
-  assert.ok(BUILTIN_COMMANDS.every((command) => command.tuiOnly === true));
+  // Every command carries exactly one disposition: web-ported (the web
+  // dialog port), TUI-only, or dispatchable via the session.
+  for (const command of BUILTIN_COMMANDS) {
+    assert.ok(
+      command.webPorted === true || command.tuiOnly === true || (command.webPorted === undefined && command.tuiOnly === undefined),
+      `/ ${command.name} must be webPorted, tuiOnly, or dispatchable`,
+    );
+  }
+  // The ported set: their TUI dialogs have web equivalents.
+  for (const expected of ["model", "thinking", "session", "changelog", "copy", "export", "resume"]) {
+    const command = BUILTIN_COMMANDS.find((entry) => entry.name === expected);
+    assert.ok(command !== undefined && command.webPorted === true, `/ ${expected} is web-ported`);
+  }
   assert.ok(BUILTIN_COMMANDS.every((command) => command.description !== undefined));
 });
 

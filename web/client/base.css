@@ -769,6 +769,13 @@ body {
   padding: 16px;
 }
 
+.app-dialog-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .app-dialog-head {
   display: flex;
   align-items: center;
@@ -794,6 +801,161 @@ body {
 .app-dialog-close:hover {
   color: var(--fg);
   background: var(--bg-input);
+}
+
+/* The picker dialogs (the TUI selector port): search, list, actions. */
+.app-dialog-wide {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.app-dialog-search {
+  flex: none;
+  width: 100%;
+  background: var(--bg-input);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  margin-bottom: 10px;
+}
+
+.app-dialog-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.app-dialog-list {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 4px;
+}
+
+.app-dialog-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.app-dialog-item.is-active {
+  background: var(--bg-input);
+  color: var(--fg);
+  border-color: var(--border);
+}
+
+.app-dialog-item.is-current .app-dialog-item-id {
+  color: var(--fg);
+}
+
+.app-dialog-item-provider {
+  flex: none;
+  color: var(--fg-faint);
+  font-size: 11px;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-dialog-item-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-dialog-item-current {
+  margin-left: auto;
+  flex: none;
+  color: var(--accent);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.app-dialog-empty {
+  color: var(--fg-faint);
+  font-size: 12px;
+  padding: 12px 4px;
+}
+
+.app-dialog-foot {
+  flex: none;
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-dialog-hint {
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+
+.app-dialog-error {
+  color: var(--error);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.app-dialog-lines {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.app-dialog-markdown {
+  overflow-y: auto;
+}
+
+.app-dialog-actions {
+  justify-content: flex-end;
+}
+
+.app-dialog-action {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.app-dialog-action:hover:not(:disabled) {
+  border-color: var(--fg-faint);
+}
+
+.app-dialog-action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.app-dialog-action-primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.app-dialog-action-danger {
+  border-color: var(--error);
+  color: var(--error);
 }
 
 .app-dialog-section {
@@ -1291,6 +1453,57 @@ body {
 }
 
 /* Base region: composer */
+/* Composer meta chips: the live model and thinking level, synced with the
+ * terminal session — the model picker opens on click. */
+.app-composer-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.app-model-chip,
+.app-thinking-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+  max-width: 280px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.app-model-chip:hover,
+.app-thinking-chip:hover {
+  color: var(--fg);
+  border-color: var(--fg-faint);
+}
+
+.app-model-chip-provider {
+  color: var(--fg-faint);
+  flex: none;
+}
+
+.app-model-chip-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-thinking-chip {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  flex: none;
+}
+
 .app-composer {
   flex: none;
   padding: 12px 16px;

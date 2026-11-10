@@ -57,7 +57,34 @@ export interface StatusWebView {
   text: string;
 }
 
-export type WebView = KvWebView | ListWebView | StatusWebView | GraphWebView;
+/** A dialog action button; dispatches through the plugin action pipeline. */
+export interface DialogAction {
+  id: string;
+  label: string;
+  /** Visual weight; "primary" is the suggested confirm. */
+  tone?: "default" | "primary" | "danger";
+}
+
+/**
+ * A modal dialog — the extension surface for web popups. The body is
+ * markdown (rendered by the host's sanitising renderer, never HTML);
+ * actions route back through the plugin action pipeline with the plugin id
+ * and action id, so an extension can ask, answer, and clear by publishing
+ * the view again with `open: false`.
+ */
+export interface DialogWebView {
+  type: "dialog";
+  title?: string;
+  /** Markdown body. */
+  body?: string;
+  /** Plain-line body when markdown is overkill. */
+  lines?: string[];
+  actions?: DialogAction[];
+  /** `true` (default) shows the dialog; `false` closes it. */
+  open?: boolean;
+}
+
+export type WebView = KvWebView | ListWebView | StatusWebView | GraphWebView | DialogWebView;
 
 /** What a node is in the graph; the host groups and styles by it. */
 export const GRAPH_NODE_KINDS = ["parent", "child", "review", "escalation"] as const;
@@ -153,6 +180,61 @@ export function validateView(input: unknown): ValidateViewResult {
         type: "status",
         tone: raw.tone as StatusTone,
         text: cleanText,
+      };
+      return {
+        ok: true,
+        view,
+        ...(warnings.length > 0 ? { warnings } : {}),
+      };
+    }
+
+    if (raw.type === "dialog") {
+      if (raw.body !== undefined && typeof raw.body !== "string") {
+        return { ok: false, error: "dialog body must be a string" };
+      }
+      if (raw.lines !== undefined) {
+        if (!Array.isArray(raw.lines) || raw.lines.some((line) => typeof line !== "string")) {
+          return { ok: false, error: "dialog lines must be an array of strings" };
+        }
+      }
+      if (raw.body === undefined && raw.lines === undefined) {
+        return { ok: false, error: "dialog needs a body or lines" };
+      }
+      if (raw.actions !== undefined) {
+        if (!Array.isArray(raw.actions) || raw.actions.length > 8) {
+          return { ok: false, error: "dialog actions must be an array of at most 8" };
+        }
+        for (const action of raw.actions) {
+          if (
+            typeof action !== "object"
+            || action === null
+            || typeof action.id !== "string"
+            || typeof action.label !== "string"
+            || (action.tone !== undefined && !["default", "primary", "danger"].includes(action.tone))
+          ) {
+            return { ok: false, error: "dialog actions must be {id, label, tone?}" };
+          }
+        }
+      }
+      const view: DialogWebView = {
+        type: "dialog",
+        ...(cleanTitle !== undefined ? { title: cleanTitle } : {}),
+        ...(raw.body !== undefined ? { body: clampDetail(raw.body, "Dialog body", warnings) } : {}),
+        ...(raw.lines !== undefined
+          ? { lines: raw.lines.slice(0, VIEW_MAX_ROWS).map((line: string, index: number) => clampCell(line, `Dialog line ${index}`, warnings)) }
+          : {}),
+        ...(raw.actions !== undefined
+          ? {
+            actions: raw.actions.map(
+              (action: { id: string; label: string; tone?: string }) => ({
+                id: clampId(action.id, "Action id", warnings),
+                label: clampCell(action.label, "Action label", warnings),
+                ...(action.tone !== undefined ? { tone: action.tone as DialogAction["tone"] } : {}),
+              }),
+            ),
+          }
+          : {}),
+        open: raw.open !== false,
       };
       return {
         ok: true,

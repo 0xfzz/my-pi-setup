@@ -38,6 +38,21 @@ export interface UiPromptLike {
   title?: string;
 }
 
+export interface ModelRefLike {
+  provider: string;
+  id: string;
+}
+
+export interface ModelsState {
+  models: ModelRefLike[];
+  current?: ModelRefLike;
+}
+
+export interface DialogRequest {
+  dialog: string;
+  nonce: number;
+}
+
 export interface SessionSummary {
   id: string;
   cwd: string;
@@ -189,6 +204,10 @@ export function usePiSession() {
   const [pluginViews, setPluginViews] = useState<Record<string, WebView>>({});
   const [working, setWorking] = useState<WorkingModelLike | null>(null);
   const [uiRunning, setUiRunning] = useState(false);
+  /** Model list for the web picker (web_models events + /models fetch). */
+  const [models, setModels] = useState<ModelsState>({ models: [] });
+  /** A session-side command asked the web to open one of its dialogs. */
+  const [dialogRequest, setDialogRequest] = useState<DialogRequest | null>(null);
   /** Footer-style status lines (ui.status.changed). */
   const [statuses, setStatuses] = useState<Record<string, string>>({});
   /** Editor widgets (ui.widget.changed), rendered above/below the composer. */
@@ -239,7 +258,17 @@ export function usePiSession() {
     try {
       const res = await fetch(`/api/agent/${encodeURIComponent(id)}`);
       const body = (await res.json()) as { running?: boolean; state?: SessionStateLike };
-      setSessionState(body.state ?? null);
+      // Merge, not replace: a session_state push may have landed before this
+      // fetch (or between its read and now), and the fetched bridge state
+      // can lag a just-applied model. The push is the fresher truth.
+      setSessionState((prev) => ({
+        isStreaming: body.state?.isStreaming ?? prev?.isStreaming ?? false,
+        isBashRunning: body.state?.isBashRunning ?? prev?.isBashRunning ?? false,
+        isCompacting: body.state?.isCompacting ?? prev?.isCompacting ?? false,
+        model: body.state?.model ?? prev?.model,
+        contextUsage: body.state?.contextUsage ?? prev?.contextUsage ?? null,
+        thinkingLevel: body.state?.thinkingLevel ?? prev?.thinkingLevel ?? "off",
+      }));
     } catch {
       // State reads are best-effort; the stream reports connection health.
     }
@@ -374,6 +403,9 @@ export function usePiSession() {
       .catch(() => {
         applyHistory([], {});
       });
+    // The initial state read (model, thinking, context): the model chip
+    // renders from it before any session_state push arrives.
+    void fetchState(selectedId);
 
     const source = new EventSource(`/api/agent/${encodeURIComponent(selectedId)}/events`);
     source.onmessage = (event: MessageEvent<string>) => {
@@ -566,6 +598,49 @@ export function usePiSession() {
           setUserMessages([]);
           setHistoryEpoch((epoch) => epoch + 1);
           break;
+        case "session_state": {
+          // The TUI-side model/thinking state, pushed at attach, at each
+          // turn start and after any change — this is the sync that keeps
+          // the model chip honest in both directions.
+          const pushed = data as { model?: { provider?: unknown; id?: unknown }; thinkingLevel?: unknown };
+          const pushedModel = typeof pushed.model?.provider === "string" && typeof pushed.model?.id === "string"
+            ? { provider: pushed.model.provider, id: pushed.model.id }
+            : undefined;
+          setSessionState((prev) => ({
+            isStreaming: prev?.isStreaming ?? false,
+            isBashRunning: prev?.isBashRunning ?? false,
+            isCompacting: prev?.isCompacting ?? false,
+            model: pushedModel ?? prev?.model,
+            contextUsage: prev?.contextUsage ?? null,
+            thinkingLevel: typeof pushed.thinkingLevel === "string" ? pushed.thinkingLevel : prev?.thinkingLevel ?? "off",
+          }));
+          break;
+        }
+        case "web_models": {
+          // The extension's model list for the picker: scoped models when
+          // scoping is active, else the available catalogue.
+          const pushed = data as { models?: unknown; current?: { provider?: unknown; id?: unknown } };
+          const models = Array.isArray(pushed.models)
+            ? (pushed.models as ModelRefLike[]).filter(
+              (ref) => typeof ref?.provider === "string" && typeof ref?.id === "string",
+            )
+            : [];
+          setModels({
+            models,
+            current: typeof pushed.current?.provider === "string" && typeof pushed.current?.id === "string"
+              ? { provider: pushed.current.provider, id: pushed.current.id }
+              : undefined,
+          });
+          break;
+        }
+        case "web_dialog_request": {
+          // A command dispatched to the session asked the web to open one of
+          // its native dialogs (bare /model, /thinking …).
+          if (typeof data.dialog === "string") {
+            setDialogRequest({ dialog: data.dialog, nonce: Date.now() });
+          }
+          break;
+        }
         case "plugin_state": {
           // Plugin views, the working indicator model and the running flag,
           // all scoped to this stream's session.
@@ -671,6 +746,70 @@ export function usePiSession() {
     }
   }, [selectedId]);
 
+  // The web picker's model list. The SSE already streams web_models; the
+  // fetch is for sessions that attach without one (in-process) and for a
+  // fresh read on open.
+  const fetchModels = useCallback(async (id: string) => {
+    try {
+      const response = await fetch(`/api/agent/${encodeURIComponent(id)}/models`);
+      if (!response.ok) return;
+      const data = (await response.json()) as ModelsState;
+      setModels((prev) => ({
+        models: Array.isArray(data.models) ? data.models : prev.models,
+        current: data.current ?? prev.current,
+      }));
+    } catch {
+      // The picker falls back to what the SSE already delivered.
+    }
+  }, []);
+
+  // Apply a model from the web picker. The session acknowledges via the
+  // session_state push; the optimistic update keeps the chip instant.
+  const setModel = useCallback(async (provider: string, id: string): Promise<string | null> => {
+    const sessionId = selectedId;
+    if (sessionId === null) return "no session selected";
+    setSessionState((prev) => prev === null ? prev : { ...prev, model: { provider, id } });
+    try {
+      const response = await fetch(`/api/agent/${encodeURIComponent(sessionId)}/model`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, id }),
+      });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        return data.error ?? "model not available";
+      }
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }, [selectedId]);
+
+  const setThinking = useCallback(async (level: string): Promise<string | null> => {
+    const sessionId = selectedId;
+    if (sessionId === null) return "no session selected";
+    // Optimistic like setModel: the session_state push confirms or corrects.
+    setSessionState((prev) => prev === null ? prev : { ...prev, thinkingLevel: level });
+    try {
+      const response = await fetch(`/api/agent/${encodeURIComponent(sessionId)}/thinking`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ level }),
+      });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        return data.error ?? "thinking level rejected";
+      }
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }, [selectedId]);
+
+  const clearDialogRequest = useCallback((): void => {
+    setDialogRequest(null);
+  }, []);
+
   return {
     sessions,
     selectedId,
@@ -685,6 +824,12 @@ export function usePiSession() {
     pluginViews,
     working,
     uiRunning,
+    models,
+    fetchModels,
+    setModel,
+    setThinking,
+    dialogRequest,
+    clearDialogRequest,
     statuses,
     widgets,
     custom,

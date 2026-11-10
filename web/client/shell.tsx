@@ -11,6 +11,7 @@ import { Composer } from "./composer.tsx";
 import { SessionSidebar } from "./sidebar.tsx";
 import { NewSessionDialog } from "./new-session-dialog.tsx";
 import { CustomPopups, EditorWidgets, StatusChips, ToastStack, UiPromptBanner } from "./popups.tsx";
+import { DialogLayer, InfoDialog, ModelPickerDialog, ThinkingPickerDialog } from "./dialogs.tsx";
 import { SlotHost } from "./plugins/slots.tsx";
 import { PluginActionShortcuts } from "./plugins/PluginActionShortcuts.tsx";
 import { PluginPage, parsePluginRoute } from "./plugins/PluginLayout.tsx";
@@ -49,6 +50,34 @@ export function AppShell() {
   // Narrow screens: the sidebar starts collapsed and opens as an overlay.
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 720);
 
+  // The web-ported TUI dialogs. One open dialog at a time — like the TUI.
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [thinkingPickerOpen, setThinkingPickerOpen] = useState(false);
+  const [infoDialog, setInfoDialog] = useState<{ title: string; markdown?: string; lines?: string[] } | null>(null);
+  const [modelBusy, setModelBusy] = useState(false);
+  const [modelError, setModelError] = useState<string | null>(null);
+  /** Client-dismissed extension dialogs: dialogId → the dismissed view
+   * object. A NEW publish (different object) shows it again. */
+  const [dismissedDialogs, setDismissedDialogs] = useState<Map<string, unknown>>(new Map());
+
+  // A session-side bare /model or /thinking (dispatched through the
+  // composer) asked the web to open its dialog.
+  const dialogRequest = session.dialogRequest;
+  useEffect(() => {
+    if (dialogRequest === null) return;
+    if (dialogRequest.dialog === "models") setModelPickerOpen(true);
+    else if (dialogRequest.dialog === "thinking") setThinkingPickerOpen(true);
+    session.clearDialogRequest();
+  }, [dialogRequest, session]);
+
+  // Opening the model picker refreshes the list (sessions that attach
+  // without posting web_models still get one).
+  useEffect(() => {
+    if (modelPickerOpen && session.selectedId !== null) {
+      void session.fetchModels(session.selectedId);
+    }
+  }, [modelPickerOpen, session.selectedId, session.fetchModels]);
+
   // Crossing from wide to narrow closes the sidebar instead of leaving an
   // overlay + scrim stranded over the shrunken layout.
   useEffect(() => {
@@ -86,6 +115,184 @@ export function AppShell() {
     : session.connection;
   const selected = session.sessions.find((summary) => summary.id === session.selectedId);
   const headerCwd = selected ? selected.cwd : "";
+
+  // The web side of the ported TUI commands: /model, /thinking, /session,
+  // /changelog, /copy, /export, /resume. Each maps to a web dialog or
+  // action; dispatchable session commands (/compact, /name, …) still go
+  // through the prompt path.
+  const handleWebCommand = (name: string, args: string): void => {
+    if (name === "model") {
+      if (args.trim() !== "" && session.selectedId !== null) {
+        // /model <provider/id>: apply directly, like the TUI's exact match.
+        void applyModelByRef(args.trim());
+      } else {
+        setModelPickerOpen(true);
+      }
+      return;
+    }
+    if (name === "thinking") {
+      if (args.trim() !== "" && session.selectedId !== null) {
+        void session.setThinking(args.trim().toLowerCase()).then((error) => {
+          if (error !== null) setModelError(error);
+        });
+      } else {
+        setThinkingPickerOpen(true);
+      }
+      return;
+    }
+    if (name === "session") {
+      openSessionInfo();
+      return;
+    }
+    if (name === "changelog") {
+      void openChangelog();
+      return;
+    }
+    if (name === "copy") {
+      void copyLastAssistant();
+      return;
+    }
+    if (name === "export") {
+      exportTranscript();
+      return;
+    }
+    if (name === "resume") {
+      setSidebarOpen(true);
+      return;
+    }
+  };
+
+  // /model <ref>: the TUI's exact-match semantics, applied through the
+  // same POST the picker uses (so it works for bridge and in-process).
+  const applyModelByRef = async (ref: string): Promise<void> => {
+    const [provider, ...rest] = ref.split("/");
+    if (rest.length === 0) {
+      setModelError("usage: /model provider/model-id");
+      return;
+    }
+    const id = rest.join("/");
+    setModelBusy(true);
+    setModelError(null);
+    const error = await session.setModel(provider, id);
+    setModelBusy(false);
+    if (error !== null) setModelError(error);
+  };
+
+  const pickModel = async (provider: string, id: string): Promise<void> => {
+    setModelBusy(true);
+    setModelError(null);
+    const error = await session.setModel(provider, id);
+    setModelBusy(false);
+    if (error === null) {
+      setModelPickerOpen(false);
+    } else {
+      setModelError(error);
+    }
+  };
+
+  const pickThinking = async (level: string): Promise<void> => {
+    const error = await session.setThinking(level);
+    if (error === null) {
+      setThinkingPickerOpen(false);
+      setModelError(null);
+    } else {
+      setModelError(error);
+    }
+  };
+
+  // /session: the client's own data — session identity, model, context
+  // usage, message count. Works for bridge and in-process sessions alike.
+  const openSessionInfo = (): void => {
+    const state = session.sessionState;
+    const entries = session.history.length;
+    const usage = state?.contextUsage;
+    setInfoDialog({
+      title: "Session Info",
+      lines: [
+        `ID: ${session.selectedId ?? "—"}`,
+        selected !== undefined ? `Cwd: ${selected.cwd}` : "Cwd: —",
+        state?.model !== undefined ? `Model: ${state.model.provider}/${state.model.id}` : "Model: —",
+        state?.thinkingLevel !== undefined ? `Thinking: ${state.thinkingLevel}` : "Thinking: —",
+        `Messages: ${entries}`,
+        usage !== null && usage !== undefined
+          ? `Context: ${Math.round(usage.percent)}% of ${(usage.contextWindow / 1000).toFixed(0)}k (${(usage.tokens / 1000).toFixed(1)}k tokens)`
+          : "Context: —",
+      ],
+    });
+  };
+
+  // /changelog: the installed pi package's changelog, from the server.
+  const openChangelog = async (): Promise<void> => {
+    try {
+      const response = await fetch("/api/changelog");
+      if (!response.ok) {
+        setInfoDialog({ title: "Changelog", lines: ["No changelog found."] });
+        return;
+      }
+      const data = (await response.json()) as { markdown?: string };
+      setInfoDialog({
+        title: "What's New",
+        ...(data.markdown !== undefined ? { markdown: data.markdown } : { lines: ["No changelog entries found."] }),
+      });
+    } catch {
+      setInfoDialog({ title: "Changelog", lines: ["Changelog unavailable."] });
+    }
+  };
+
+  // /copy: the last assistant message, straight into the browser clipboard.
+  const copyLastAssistant = async (): Promise<void> => {
+    let text = "";
+    for (let i = session.history.length - 1; i >= 0 && text === ""; i--) {
+      const entry = session.history[i];
+      if (entry?.role === "assistant") {
+        text = entry.blocks
+          .filter((block) => block.kind === "text")
+          .map((block) => (block.kind === "text" ? block.text : ""))
+          .join("\n\n")
+          .trim();
+      }
+    }
+    if (text === "") {
+      setModelError("No agent messages to copy yet.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setModelError(null);
+    } catch {
+      setModelError("Clipboard write failed.");
+    }
+  };
+
+  // /export: the transcript as a markdown download.
+  const exportTranscript = (): void => {
+    const parts: string[] = [];
+    for (const entry of session.history) {
+      if (entry.role === "user") {
+        parts.push("## User\n");
+        for (const block of entry.blocks) {
+          if (block.kind === "text") parts.push(block.text);
+        }
+      } else {
+        parts.push("## pi\n");
+        for (const block of entry.blocks) {
+          if (block.kind === "text") parts.push(block.text);
+          else if (block.kind === "bash") parts.push("```\n$ " + block.command + "\n" + block.output + "\n```");
+          else if (block.kind === "toolCall") parts.push("```\n[tool] " + block.toolName + " " + block.rawInput + "\n```");
+        }
+      }
+      parts.push("");
+    }
+    const blob = new Blob([`# pi session — ${session.selectedId ?? ""}\n\n${parts.join("\n")}`], {
+      type: "text/markdown",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `pi-session-${session.selectedId ?? "export"}.md`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   // The transcript's working line shows while a reply streams or the session
   // reports itself running (ui.session.lifecycle); a hidden working model
@@ -180,6 +387,11 @@ export function AppShell() {
               error={session.sendError}
               sessionCommands={session.sessionCommands}
               builtinCommands={session.builtinCommands}
+              model={session.sessionState?.model}
+              thinkingLevel={session.sessionState?.thinkingLevel}
+              onOpenModelPicker={() => setModelPickerOpen(true)}
+              onOpenThinkingPicker={() => setThinkingPickerOpen(true)}
+              onWebCommand={handleWebCommand}
               onSend={(text, images) => {
                 void session.sendPrompt(text, images);
               }}
@@ -195,6 +407,48 @@ export function AppShell() {
       <SlotHost slot="floating" plugins={session.plugins} views={session.pluginViews} />
       <CustomPopups custom={session.custom} />
       <ToastStack notifications={session.notifications} />
+      {/* The web-ported TUI dialogs. */}
+      {modelPickerOpen ? (
+        <ModelPickerDialog
+          models={session.models.models}
+          current={session.models.current ?? session.sessionState?.model}
+          busy={modelBusy}
+          error={modelError}
+          onPick={(provider, id) => {
+            void pickModel(provider, id);
+          }}
+          onClose={() => {
+            setModelPickerOpen(false);
+            setModelError(null);
+          }}
+        />
+      ) : null}
+      {thinkingPickerOpen ? (
+        <ThinkingPickerDialog
+          current={session.sessionState?.thinkingLevel}
+          onPick={(level) => {
+            void pickThinking(level);
+          }}
+          onClose={() => setThinkingPickerOpen(false)}
+        />
+      ) : null}
+      {infoDialog !== null ? (
+        <InfoDialog
+          title={infoDialog.title}
+          {...(infoDialog.markdown !== undefined ? { markdown: infoDialog.markdown } : {})}
+          {...(infoDialog.lines !== undefined ? { lines: infoDialog.lines } : {})}
+          onClose={() => setInfoDialog(null)}
+        />
+      ) : null}
+      {/* Extension-published dialogs: the web UI extension surface. */}
+      <DialogLayer
+        pluginViews={session.pluginViews}
+        sessionId={session.selectedId}
+        dismissed={dismissedDialogs}
+        onDismiss={(dialogId, view) => {
+          setDismissedDialogs((prev) => new Map(prev).set(dialogId, view));
+        }}
+      />
       <PluginActionShortcuts plugins={session.plugins} sessionId={session.selectedId} />
       <NewSessionDialog
         open={newSessionOpen}

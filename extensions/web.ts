@@ -98,6 +98,38 @@ function bridgeStateOf(ctx: ExtensionContext): Record<string, unknown> {
   };
 }
 
+/** A minimal model reference: enough for the web picker and setModel. */
+interface ModelRef {
+  provider: string;
+  id: string;
+}
+
+/**
+ * The models the web picker offers — the same set the TUI's selector and
+ * Ctrl+P cycling use: the session's scoped models when scoping is active,
+ * otherwise everything available (configured auth or local providers).
+ */
+function modelRefs(ctx: ExtensionContext): ModelRef[] {
+  const scoped = ctx.scopedModels ?? [];
+  const models = scoped.length > 0 ? scoped.map((scopedModel) => scopedModel.model) : ctx.modelRegistry.getAvailable();
+  return models.map((model) => ({ provider: model.provider, id: model.id }));
+}
+
+/** Resolve a model reference the way the TUI does: exact `provider/id`, or a
+ * unique bare `id` across providers. */
+function findModelRef(ctx: ExtensionContext, term: string): ModelRef | undefined {
+  const refs = modelRefs(ctx);
+  const trimmed = term.trim();
+  const exact = refs.find((ref) => `${ref.provider}/${ref.id}` === trimmed);
+  if (exact !== undefined) return exact;
+  const bare = refs.filter((ref) => ref.id === trimmed);
+  return bare.length === 1 ? bare[0] : undefined;
+}
+
+/** pi's thinking levels, in cycle order. */
+const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+/** Push the current model/thinking to the web client (SSE `session_state`). */
 async function postBridgeState(sessionId: string, state: Record<string, unknown>): Promise<void> {
   await fetch(`${bridgeServerUrl()}/api/bridge/${encodeURIComponent(sessionId)}/events`, {
     method: "POST",
@@ -199,6 +231,46 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     }
   };
 
+  // Push the current model/thinking to the web client (SSE `session_state`).
+  const postSessionState = (ctx: ExtensionContext): void => {
+    bridgePoster?.post({
+      type: "session_state",
+      model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
+      thinkingLevel: ctx.thinkingLevel,
+    });
+  };
+
+  // Push the model list for the web picker (SSE `web_models`).
+  const postModelsEvent = (ctx: ExtensionContext): void => {
+    bridgePoster?.post({
+      type: "web_models",
+      current: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
+      models: modelRefs(ctx),
+    });
+  };
+
+  // Ask the web client to open one of its native dialogs (the web port of
+  // the TUI selector: bare `/model`, `/thinking` from the web composer).
+  const postWebDialogRequest = (dialog: "models" | "thinking"): void => {
+    bridgePoster?.post({ type: "web_dialog_request", dialog });
+  };
+
+  // Apply a model reference to this session and push the fresh state to
+  // the web; returns a user-facing message either way.
+  const applyModelRef = async (ctx: ExtensionContext, ref: ModelRef): Promise<string> => {
+    try {
+      const model = ctx.modelRegistry.find(ref.provider, ref.id);
+      if (model === undefined) return `model not found: ${ref.provider}/${ref.id}`;
+      const applied = await pi.setModel(model);
+      if (!applied) return `no auth configured for ${ref.provider}`;
+      postSessionState(ctx);
+      postModelsEvent(ctx);
+      return `model: ${ref.provider}/${ref.id}`;
+    } catch (error) {
+      return `set model failed: ${String(error)}`;
+    }
+  };
+
   const attachBridge = async (ctx: ExtensionContext): Promise<void> => {
     if (!bridgeEnabled || bridgeController !== null) return;
     try {
@@ -229,6 +301,14 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
         });
       } catch {
         // A failed listing must never fail the attach.
+      }
+      // The model picker's data and the live model/thinking state: the web
+      // chip and selector start correct and stay synced with this session.
+      try {
+        postModelsEvent(ctx);
+        postSessionState(ctx);
+      } catch {
+        // Model listing is best-effort; the picker falls back to fetching.
       }
       void runBridgeStream(ctx, sessionId, bridgeController.signal);
     } catch (error) {
@@ -320,6 +400,9 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
         pluginId?: unknown;
         actionId?: unknown;
         images?: unknown;
+        provider?: unknown;
+        id?: unknown;
+        level?: unknown;
       };
     };
     try {
@@ -361,6 +444,36 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       return;
     }
     if (
+      command.type === "set_model"
+      && typeof command.provider === "string"
+      && typeof command.id === "string"
+    ) {
+      const ctx = lastCtxForCommands;
+      if (ctx === null) return;
+      const ref = findModelRef(ctx, `${command.provider}/${command.id}`);
+      if (ref === undefined) {
+        ctxNotify(`model not found: ${command.provider}/${command.id}`);
+        return;
+      }
+      void applyModelRef(ctx, ref).then(ctxNotify);
+      return;
+    }
+    if (command.type === "set_thinking" && typeof command.level === "string") {
+      const level = command.level as (typeof THINKING_LEVELS)[number];
+      if (!THINKING_LEVELS.includes(level)) {
+        ctxNotify(`unknown thinking level: ${command.level}`);
+        return;
+      }
+      try {
+        pi.setThinkingLevel(level);
+        ctxNotify(`thinking level: ${level}`);
+        if (lastCtxForCommands !== null) postSessionState(lastCtxForCommands);
+      } catch (error) {
+        ctxNotify(`set thinking failed: ${String(error)}`);
+      }
+      return;
+    }
+    if (
       command.type === "action" &&
       typeof command.pluginId === "string" &&
       typeof command.actionId === "string"
@@ -391,9 +504,20 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   const forwardToBridge = (event: unknown): void => {
     bridgePoster?.post(event);
   };
-  pi.on("agent_start", (event) => {
+  pi.on("agent_start", (event, ctx) => {
     forwardToBridge(event);
-    if (bridgeSessionId !== null) void postBridgeState(bridgeSessionId, { isStreaming: true });
+    // The server-side state AND the web client both get the current
+    // model/thinking: a turn started is the sync point after any TUI-side
+    // change (its own /model, Ctrl+P), and the state fetch on settle would
+    // otherwise resurrect the attach-time model.
+    if (bridgeSessionId !== null) {
+      void postBridgeState(bridgeSessionId, {
+        isStreaming: true,
+        model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
+        thinkingLevel: ctx.thinkingLevel,
+      });
+    }
+    postSessionState(ctx);
   });
   pi.on("agent_end", forwardToBridge);
   pi.on("ui_prompt_start", forwardToBridge);
@@ -401,7 +525,12 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   pi.on("agent_settled", (event, ctx) => {
     forwardToBridge(event);
     if (bridgeSessionId !== null) {
-      void postBridgeState(bridgeSessionId, { isStreaming: false, ...contextUsageOf(ctx) });
+      void postBridgeState(bridgeSessionId, {
+        isStreaming: false,
+        model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
+        thinkingLevel: ctx.thinkingLevel,
+        ...contextUsageOf(ctx),
+      });
     }
   });
   pi.on("message_start", forwardToBridge);
@@ -490,7 +619,50 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     },
   });
 
-  const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
+  pi.registerCommand("model", {
+    description: "Set the session model — bare /model opens the web picker, /model <provider/id> sets directly",
+    getArgumentCompletions(prefix) {
+      const ctx = lastCtxForCommands;
+      if (ctx === null) return [];
+      const needle = prefix.trim().toLowerCase();
+      return modelRefs(ctx)
+        .filter((ref) => `${ref.provider}/${ref.id}`.toLowerCase().includes(needle))
+        .slice(0, 30)
+        .map((ref) => ({ value: `${ref.provider}/${ref.id}`, label: `${ref.provider}/${ref.id}` }));
+    },
+    handler: async (args, ctx) => {
+      const term = args.trim();
+      if (term === "") {
+        // Bare /model from the web composer: the web's own selector opens
+        // (the web port of the TUI model picker). In the TUI the built-in
+        // /model handles this before extension commands ever run.
+        postWebDialogRequest("models");
+        return;
+      }
+      const ref = findModelRef(ctx, term);
+      if (ref === undefined) {
+        ctxNotify(`no unique model match: ${term}`);
+        return;
+      }
+      try {
+        const model = ctx.modelRegistry.find(ref.provider, ref.id);
+        if (model === undefined) {
+          ctxNotify(`model not found: ${ref.provider}/${ref.id}`);
+          return;
+        }
+        const applied = await pi.setModel(model);
+        if (applied) {
+          ctxNotify(`model: ${ref.provider}/${ref.id}`);
+          postSessionState(ctx);
+          postModelsEvent(ctx);
+        } else {
+          ctxNotify(`no auth configured for ${ref.provider}`);
+        }
+      } catch (error) {
+        ctxNotify(`set model failed: ${String(error)}`);
+      }
+    },
+  });
 
   pi.registerCommand("thinking", {
     description: "Set the thinking level (works from the web)",
@@ -499,14 +671,52 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
         .filter((level) => level.startsWith(prefix.trim().toLowerCase()))
         .map((level) => ({ value: level, label: level }));
     },
-    handler: async (args) => {
+    handler: async (args, ctx) => {
       const level = args.trim().toLowerCase();
+      if (level === "") {
+        // Bare /thinking from the web composer: the web's level picker opens
+        // (in the TUI the built-in /thinking cycles levels instead).
+        void ctx;
+        postWebDialogRequest("thinking");
+        return;
+      }
       if (!THINKING_LEVELS.includes(level as (typeof THINKING_LEVELS)[number])) {
         ctxNotify(`usage: /thinking <${THINKING_LEVELS.join("|")}>`);
         return;
       }
       pi.setThinkingLevel(level as (typeof THINKING_LEVELS)[number]);
       ctxNotify(`thinking level: ${level}`);
+      postSessionState(ctx);
+    },
+  });
+
+  pi.registerCommand("clone", {
+    description: "Duplicate the current session at the current position (works from the web)",
+    handler: async (_args, ctx) => {
+      const leafId = ctx.sessionManager?.getLeafId?.();
+      if (leafId === undefined || leafId === null) {
+        ctxNotify("nothing to clone yet");
+        return;
+      }
+      try {
+        const result = await ctx.fork(leafId, { position: "at" });
+        if (result.cancelled) ctxNotify("clone cancelled");
+        else ctxNotify("cloned to new session");
+      } catch (error) {
+        ctxNotify(`clone failed: ${String(error)}`);
+      }
+    },
+  });
+
+  pi.registerCommand("reload", {
+    description: "Reload keybindings, extensions, skills, prompts and themes (works from the web)",
+    handler: async (_args, ctx) => {
+      try {
+        await ctx.reload();
+        ctxNotify("reloaded");
+      } catch (error) {
+        ctxNotify(`reload failed: ${String(error)}`);
+      }
     },
   });
 

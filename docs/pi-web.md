@@ -191,6 +191,44 @@ from either host. The TUI's own `ctx.ui.notify`/`setStatus`/`setWidget`
 calls do not emit events, so bridging them means also calling `publishWebUi`
 from the extension — the contract lives in `lib/web-plugins/ui-contracts.ts`.
 
+## Dialogs — the TUI command port and the model picker
+
+pi's TUI answers several commands with a selector or dialog; the web now
+answers them with its own. The composer intercepts the ported names
+(`webPorted` in `web/shared/commands.ts`) and runs the web side:
+
+| Command | TUI | Web |
+| --- | --- | --- |
+| `/model` (bare) | model selector | model picker (search, ↑↓/enter, current marker) |
+| `/model <provider/id>` | exact-match apply | same apply via POST /api/agent/:id/model |
+| `/thinking` (bare) | level cycle | level picker |
+| `/session` | stats page | info dialog (client data) |
+| `/changelog` | changelog page | dialog from GET /api/changelog |
+| `/copy` | clipboard | browser clipboard (last assistant text) |
+| `/export` | file export | markdown transcript download |
+| `/resume` | session selector | the session sidebar |
+| `/compact`, `/name`, `/new`, `/clone`, `/reload`, `/web` | direct | dispatched as session commands |
+
+Genuinely TUI-only commands (`/settings`, `/tree`, `/share`, …) still get an
+honest notice instead of being fed to the model.
+
+**The model chip** sits at the composer with the thinking level, both live:
+the extension posts `web_models` (the picker's list: scoped or available
+models) and `session_state` (current model/thinking) at attach, at every
+turn start and after any change; picking a model POSTs to the session and
+the TUI applies it (`pi.setModel`) — footer included. A model changed in
+the terminal (its own `/model`, Ctrl+P) reaches the web at the next turn's
+`session_state` push, and the state the fetch-on-settle reads carries the
+same model so nothing resurrects a stale one.
+
+**Extensions can open web dialogs too** — the web's extensibility surface:
+publish a `dialog` view (title, markdown body or lines, up to 8 actions,
+`open: false` to close) through the same view events as every other view.
+The web renders it modally; its action buttons dispatch through the plugin
+action pipeline back to the extension. That, plus slots, region overrides,
+pages, toasts, statuses, widgets and the ui.* events, is the full kit an
+extension uses to extend the web UI.
+
 ## Themes
 
 Dark and light palettes are both defined in `web/client/base.css` as the

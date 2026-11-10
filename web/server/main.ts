@@ -400,6 +400,102 @@ async function handleApi(
     return true;
   }
 
+  const modelsMatch = /^\/api\/agent\/([^/]+)\/models$/.exec(pathname);
+  if (modelsMatch !== null) {
+    if (req.method !== "GET") return methodNotAllowed();
+    const id = sessionIdFromPath(modelsMatch);
+    const core = getSession(id)?.core;
+    if (core === undefined) {
+      sendJson(res, 404, { error: "Session not found" });
+      return true;
+    }
+    sendJson(res, 200, { sessionId: id, ...(core.getModels?.() ?? { models: [] }) });
+    return true;
+  }
+
+  const setModelMatch = /^\/api\/agent\/([^/]+)\/model$/.exec(pathname);
+  if (setModelMatch !== null) {
+    if (req.method !== "POST") return methodNotAllowed();
+    const id = sessionIdFromPath(setModelMatch);
+    const core = getSession(id)?.core;
+    if (core === undefined || core.setModel === undefined) {
+      sendJson(res, 404, { error: "Session not found" });
+      return true;
+    }
+    try {
+      const body = (await readJsonBody(req)) as { provider?: unknown; id?: unknown };
+      if (typeof body.provider !== "string" || typeof body.id !== "string") {
+        sendJson(res, 400, { error: "provider and id are required" });
+        return true;
+      }
+      const applied = await core.setModel(body.provider, body.id);
+      if (!applied) {
+        sendJson(res, 400, { error: "model not available in this session" });
+        return true;
+      }
+      sendJson(res, 200, { ok: true });
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
+
+  const setThinkingMatch = /^\/api\/agent\/([^/]+)\/thinking$/.exec(pathname);
+  if (setThinkingMatch !== null) {
+    if (req.method !== "POST") return methodNotAllowed();
+    const id = sessionIdFromPath(setThinkingMatch);
+    const core = getSession(id)?.core;
+    if (core === undefined || core.setThinkingLevel === undefined) {
+      sendJson(res, 404, { error: "Session not found" });
+      return true;
+    }
+    try {
+      const body = (await readJsonBody(req)) as { level?: unknown };
+      if (typeof body.level !== "string") {
+        sendJson(res, 400, { error: "level is required" });
+        return true;
+      }
+      const applied = await core.setThinkingLevel(body.level);
+      if (!applied) {
+        sendJson(res, 400, { error: "thinking level rejected" });
+        return true;
+      }
+      sendJson(res, 200, { ok: true });
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
+
+  if (pathname === "/api/changelog") {
+    // The web port of /changelog: the installed pi package's changelog,
+    // rendered as a dialog client-side. The package exports do not expose
+    // the file, so resolve the entry and walk up to the package root.
+    if (req.method !== "GET") return methodNotAllowed();
+    try {
+      const { dirname, join } = await import("node:path");
+      const { fileURLToPath } = await import("node:url");
+      // The package exports are ESM-only; import.meta.resolve gives the
+      // entry, and the changelog sits at the package root beside dist/.
+      let dir = dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent")));
+      let changelogPath: string | null = null;
+      for (let i = 0; i < 3 && dir !== "/"; i++) {
+        dir = dirname(dir);
+        const candidate = join(dir, "CHANGELOG.md");
+        if (existsSync(candidate)) {
+          changelogPath = candidate;
+          break;
+        }
+      }
+      if (changelogPath === null) throw new Error("CHANGELOG.md not found next to the package");
+      const content = await readFile(changelogPath, "utf8");
+      sendJson(res, 200, { markdown: content.slice(0, 512_000) });
+    } catch {
+      sendJson(res, 404, { error: "changelog not found" });
+    }
+    return true;
+  }
+
   const agentMatch = /^\/api\/agent\/([^/]+)$/.exec(pathname);
   if (agentMatch !== null) {
     if (req.method !== "POST" && req.method !== "GET") return methodNotAllowed();

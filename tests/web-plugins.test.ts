@@ -255,6 +255,50 @@ test("registry validation: detects duplicate plugin ids and duplicate page paths
   assert.ok(errorsDupPath.some((e) => e.includes('Duplicate page path: "/plugins/shared-page"')));
 });
 
+test("view contract: dialog views validate body, lines, actions and open flag", () => {
+  const okResult = validateView({
+    type: "dialog",
+    title: "Deploy",
+    body: "## Ready\nShip it?",
+    actions: [
+      { id: "deploy", label: "Deploy now", tone: "primary" },
+      { id: "cancel", label: "Cancel" },
+    ],
+  });
+  assert.equal(okResult.ok, true);
+  if (okResult.ok) {
+    assert.equal(okResult.view.type, "dialog");
+    assert.equal(okResult.view.title, "Deploy");
+    assert.equal(okResult.view.body, "## Ready\nShip it?");
+    assert.equal(okResult.view.open, true);
+    assert.deepEqual(okResult.view.actions, [
+      { id: "deploy", label: "Deploy now", tone: "primary" },
+      { id: "cancel", label: "Cancel" },
+    ]);
+  }
+
+  const linesResult = validateView({ type: "dialog", title: "Info", lines: ["a", "b"] });
+  assert.equal(linesResult.ok, true);
+  if (linesResult.ok && linesResult.view.type === "dialog") {
+    assert.deepEqual(linesResult.view.lines, ["a", "b"]);
+  }
+
+  // open: false closes it — the dismissal path.
+  const closedResult = validateView({ type: "dialog", lines: ["x"], open: false });
+  assert.equal(closedResult.ok, true);
+  if (closedResult.ok && closedResult.view.type === "dialog") assert.equal(closedResult.view.open, false);
+
+  // Rejections: no body, bad action shapes, too many actions.
+  assert.equal(validateView({ type: "dialog" }).ok, false);
+  assert.equal(validateView({ type: "dialog", body: "x", actions: [{ id: "a" }] }).ok, false);
+  assert.equal(
+    validateView({ type: "dialog", body: "x", actions: Array.from({ length: 9 }, (_, i) => ({ id: `a${i}`, label: `a${i}` })) }).ok,
+    false,
+  );
+  assert.equal(validateView({ type: "dialog", body: 5 }).ok, false);
+  assert.equal(validateView({ type: "dialog", lines: ["ok", 5] }).ok, false);
+});
+
 test("view contract: cell clamping at 500 characters with ellipsis", () => {
   assert.equal(VIEW_MAX_CELL_CHARS, 500);
 

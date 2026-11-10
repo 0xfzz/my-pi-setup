@@ -23,6 +23,17 @@ const PLUGIN_STATE = join(pluginStateDir, "plugins.json");
 /** Step marker: an e2e log that pinpoints where a stall happens. */
 const step = (name) => console.log(`[e2e] ${name}`);
 
+/** Wait for a bridge command matching the predicate (10s deadline). */
+async function waitForBridgeCommand(commands, matches, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const found = commands.find(matches);
+    if (found !== undefined) return found;
+    if (Date.now() > deadline) throw new Error(`bridge command not received within ${timeoutMs}ms`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 /**
  * Stall watchdog: if the run stops making progress while the event loop is
  * still alive, dump the pending libuv handles so the stuck await is
@@ -424,10 +435,36 @@ async function run() {
       { timeout: 15_000 },
     );
 
-    step("8b: slash command palette");
-    // 8b. The palette on the real composer: "/" lists pi's built-ins; a
-    //     TUI-only one is blocked with an honest notice instead of being
-    //     fed to the model as a prompt.
+    step("8b: slash command palette, model picker, web dialogs");
+    // 8b. The palette on the real composer: "/" lists pi's built-ins; the
+    //     TUI dialog port opens web dialogs. The fake TUI posts its model
+    //     list (web_models) and current state (session_state) like the real
+    //     extension does, so the chip and picker have data.
+    await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          {
+            type: "web_models",
+            current: { provider: "anthropic", id: "claude-4-5" },
+            models: [
+              { provider: "anthropic", id: "claude-4-5" },
+              { provider: "google", id: "gemini-3-pro" },
+              { provider: "openai", id: "gpt-6" },
+            ],
+          },
+          { type: "session_state", model: { provider: "anthropic", id: "claude-4-5" }, thinkingLevel: "low" },
+        ],
+      }),
+    });
+    // The model chip at the composer shows the synced current model.
+    const modelChip = page.locator(".app-model-chip");
+    await modelChip.waitFor({ state: "visible", timeout: 10_000 });
+    assert.ok(
+      (await modelChip.textContent())?.includes("claude-4-5"),
+      "the model chip shows the synced current model",
+    );
     await composerInput.fill("/");
     await page.waitForSelector(".app-command-palette", { timeout: 5_000 });
     assert.ok(
@@ -439,7 +476,32 @@ async function run() {
       state: "visible",
       timeout: 5_000,
     });
+    // Bare /model now opens the web picker (the TUI dialog port) instead of
+    // being blocked as TUI-only.
     await composerInput.fill("/model");
+    await composerInput.press("Enter");
+    const picker = page.locator(".app-dialog[role='dialog']");
+    await picker.waitFor({ state: "visible", timeout: 5_000 });
+    assert.ok(
+      (await page.locator(".app-dialog-item", { hasText: "gemini-3-pro" }).count()) > 0,
+      "the picker lists the posted models",
+    );
+    // Search narrows it; picking sends set_model to the TUI and updates the
+    // chip optimistically.
+    await page.locator(".app-dialog-search").fill("gemini");
+    await page.locator(".app-dialog-item", { hasText: "gemini-3-pro" }).first().click();
+    const modelCommand = await waitForBridgeCommand(bridgeCommands, (command) => command.type === "set_model");
+    assert.deepEqual(
+      modelCommand,
+      { type: "set_model", provider: "google", id: "gemini-3-pro" },
+      "the picked model reaches the TUI as a set_model command",
+    );
+    await page.locator(".app-model-chip", { hasText: "gemini-3-pro" }).waitFor({
+      state: "visible",
+      timeout: 5_000,
+    });
+    // A genuinely TUI-only command is still blocked with an honest notice.
+    await composerInput.fill("/settings");
     await composerInput.press("Enter");
     const notice = page.locator(".app-composer-error");
     await notice.waitFor({ state: "visible", timeout: 5_000 });
@@ -449,18 +511,75 @@ async function run() {
     );
     await composerInput.fill("");
 
+    step("8c: extension dialog view (the web extension surface)");
+    // 8c. An extension publishes a dialog view with actions; the web renders
+    //     it modally and the action dispatches through the plugin pipeline
+    //     back to the TUI. The modes plugin is registered with a
+    //     "toggle-mode" action, so its dialog button dispatches for real.
+    await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          {
+            type: "web_plugin_view",
+            payload: {
+              pluginId: "modes",
+              view: {
+                type: "dialog",
+                title: "Switch input mode?",
+                body: "**Alt+M does this instantly.**",
+                actions: [
+                  { id: "toggle-mode", label: "Switch mode", tone: "primary" },
+                ],
+              },
+            },
+          },
+        ],
+      }),
+    });
+    const extDialog = page.locator(".app-dialog", { hasText: "Switch input mode?" });
+    await extDialog.waitFor({ state: "visible", timeout: 10_000 });
+    assert.ok(
+      (await page.locator(".app-dialog-action", { hasText: "Switch mode" }).count()) === 1,
+      "the dialog view renders its actions",
+    );
+    await page.locator(".app-dialog-action", { hasText: "Switch mode" }).click();
+    const actionCommand = await waitForBridgeCommand(bridgeCommands, (command) => command.type === "action");
+    assert.equal(actionCommand.pluginId, "modes", "the action routes back with its plugin id");
+    assert.equal(actionCommand.actionId, "toggle-mode", "the action routes back with its action id");
+    // Publishing open:false closes it.
+    await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          {
+            type: "web_plugin_view",
+            payload: {
+              pluginId: "modes",
+              view: { type: "dialog", title: "Switch input mode?", lines: ["x"], open: false },
+            },
+          },
+        ],
+      }),
+    });
+    await extDialog.waitFor({ state: "hidden", timeout: 10_000 });
+
     step("8: prompting from browser");
     // Prompt in the browser → the fake TUI receives it as a bridge command.
     await composerInput.fill("hello from the web");
     await composerInput.press("Enter");
     const promptEcho = page.locator(".msg-user", { hasText: "hello from the web" });
     await promptEcho.first().waitFor({ state: "visible", timeout: 10_000 });
-    const commandDeadline = Date.now() + 10_000;
-    while (bridgeCommands.length === 0 && Date.now() < commandDeadline) {
-      await page.waitForTimeout(100);
-    }
+    // Earlier steps (set_model, plugin action) already sent commands; find
+    // THIS prompt among them.
+    const promptCommand = await waitForBridgeCommand(
+      bridgeCommands,
+      (command) => command.type === "prompt",
+    );
     assert.deepEqual(
-      bridgeCommands[0],
+      promptCommand,
       { type: "prompt", message: "hello from the web" },
       "the browser prompt must reach the TUI as a bridge command",
     );

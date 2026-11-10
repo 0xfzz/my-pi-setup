@@ -32,6 +32,12 @@ export interface SessionCore {
   getState(): SessionStateLite;
   /** Slash commands the session can dispatch (extension/prompt/skill). */
   getCommands?(): Array<{ name: string; description?: string }>;
+  /** Model list for the web picker + the current model. */
+  getModels?(): { current?: { provider: string; id: string }; models: Array<{ provider: string; id: string }> };
+  /** Apply a model to the session; false when it could not be applied. */
+  setModel?(provider: string, id: string): Promise<boolean>;
+  /** Apply a thinking level; false when rejected. */
+  setThinkingLevel?(level: string): Promise<boolean>;
 }
 
 export interface SessionHandle {
@@ -88,6 +94,14 @@ function toCore(inner: AgentSession): SessionCore {
         name: command.invocationName,
         ...(command.description !== undefined ? { description: command.description } : {}),
       }));
+  // The same list the TUI's /model picker offers: scoped models when
+  // scoping is active, otherwise the available catalogue snapshot.
+  const modelRefs = (): Array<{ provider: string; id: string }> => {
+    const scoped = inner.scopedModels;
+    const source = scoped.length > 0 ? scoped.map((scopedModel) => scopedModel.model) : inner.modelRuntime.getAvailableSnapshot();
+    return source.map((model) => ({ provider: model.provider, id: model.id }));
+  };
+  const findModel = (provider: string, id: string) => modelRefs().find((ref) => ref.provider === provider && ref.id === id);
   return {
     sessionId: inner.sessionId,
     subscribe: (listener: (event: unknown) => void) => inner.subscribe(listener),
@@ -124,6 +138,24 @@ function toCore(inner: AgentSession): SessionCore {
       };
     },
     getCommands,
+    getModels: () => ({
+      models: modelRefs(),
+      ...(inner.model !== undefined ? { current: { provider: inner.model.provider, id: inner.model.id } } : {}),
+    }),
+    setModel: async (provider: string, id: string) => {
+      const ref = findModel(provider, id);
+      if (ref === undefined) return false;
+      const model = inner.modelRuntime.getAvailableSnapshot().find(
+        (candidate) => candidate.provider === provider && candidate.id === id,
+      );
+      if (model === undefined) return false;
+      await inner.setModel(model, { persist: false });
+      return true;
+    },
+    setThinkingLevel: async (level: string) => {
+      await inner.setThinkingLevel(level as never, { persist: false });
+      return true;
+    },
   };
 }
 

@@ -27,6 +27,16 @@ export interface ComposerProps {
   sessionCommands?: WebCommand[];
   /** pi's built-in slash commands (TUI-side; listed for discovery). */
   builtinCommands?: readonly WebCommand[];
+  /** The current model, shown as a chip that opens the web picker. */
+  model?: { provider: string; id: string };
+  /** The current thinking level, shown as a chip that opens its picker. */
+  thinkingLevel?: string;
+  /** Opens the web model picker (the chip or bare /model). */
+  onOpenModelPicker?: () => void;
+  /** Opens the web thinking picker (the chip or bare /thinking). */
+  onOpenThinkingPicker?: () => void;
+  /** A web-ported command was invoked: the shell runs the web side of it. */
+  onWebCommand?: (name: string, args: string) => void;
 }
 
 const PALETTE_LIMIT = 8;
@@ -88,6 +98,11 @@ export function Composer({
   onAbort,
   sessionCommands,
   builtinCommands,
+  model,
+  thinkingLevel,
+  onOpenModelPicker,
+  onOpenThinkingPicker,
+  onWebCommand,
 }: ComposerProps) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<PendingImage[]>([]);
@@ -155,12 +170,24 @@ export function Composer({
 
   const send = (): void => {
     if (text.trim() === "" && images.length === 0) return;
-    // pi's interactive built-ins that open dialogs/selectors cannot run from
-    // here — the session only dispatches extension commands. Say so instead
-    // of silently feeding "/model" to the model. Commands the session lists
-    // (extension commands, including the web-bridge built-ins) dispatch fine.
+    // The web dialog port: commands pi's TUI answers with a selector are
+    // answered HERE with a web dialog instead. Bare /model opens the picker
+    // (like the TUI); /model <ref> applies it directly. The rest — session,
+    // changelog, copy, export, resume — are web-side actions.
     const firstToken = text.startsWith("/") ? text.slice(1).split(" ")[0] : null;
     if (firstToken !== null && firstToken !== "") {
+      const rest = text.slice(1 + firstToken.length).trim();
+      const webPorted = [builtinCommands ?? [], sessionCommands ?? []]
+        .flat()
+        .find((command) => command.name === firstToken && command.webPorted === true);
+      if (webPorted !== undefined) {
+        if (onWebCommand !== undefined) onWebCommand(firstToken, rest);
+        setText("");
+        setImages([]);
+        setPaletteDismissed(false);
+        setNotice(null);
+        return;
+      }
       const dispatchable = commands.some(
         (command) => command.name === firstToken && command.tuiOnly !== true,
       );
@@ -169,7 +196,7 @@ export function Composer({
       );
       if (tuiOnly !== undefined && !dispatchable) {
         setNotice(
-          `/${firstToken} is a TUI command — it opens a dialog in the terminal. Run it there, or pick a command the session dispatches.`,
+          `/${firstToken} is a TUI command — it needs the terminal. Run it there, or pick a command the web can run.`,
         );
         return;
       }
@@ -222,6 +249,31 @@ export function Composer({
 
   return (
     <div className="app-composer" data-busy={busy ? "true" : undefined}>
+      {(model !== undefined || thinkingLevel !== undefined) ? (
+        <div className="app-composer-meta">
+          {model !== undefined && onOpenModelPicker !== undefined ? (
+            <button
+              type="button"
+              className="app-model-chip"
+              onClick={onOpenModelPicker}
+              title="Change the session model (syncs with the terminal)"
+            >
+              <span className="app-model-chip-provider">{model.provider}</span>
+              <span className="app-model-chip-id">{model.id}</span>
+            </button>
+          ) : null}
+          {thinkingLevel !== undefined && thinkingLevel !== "off" && onOpenThinkingPicker !== undefined ? (
+            <button
+              type="button"
+              className="app-thinking-chip"
+              onClick={onOpenThinkingPicker}
+              title="Change the thinking level (syncs with the terminal)"
+            >
+              ✦ {thinkingLevel}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {paletteOpen ? (
         <div className="app-command-palette" role="listbox" aria-label="Commands">
           {matches.map((command, index) => (
@@ -239,6 +291,7 @@ export function Composer({
                 <span className="app-command-description">{command.description}</span>
               ) : null}
               {command.tuiOnly === true ? <span className="app-command-tui">TUI</span> : null}
+              {command.webPorted === true ? <span className="app-command-web">web</span> : null}
             </button>
           ))}
         </div>

@@ -282,6 +282,9 @@ export function PluginViewRenderer({ view }: { view: WebView | null | undefined 
           {view.omitted ? <div className="plugin-view-omitted">… {view.omitted} nodes/edges omitted</div> : null}
         </div>
       );
+    case "dialog":
+      // Dialogs never render inline; the DialogLayer renders them modally.
+      return null;
     default:
       return (
         <div className="plugin-unknown-view">
