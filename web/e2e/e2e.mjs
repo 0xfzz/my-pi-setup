@@ -654,6 +654,65 @@ async function run() {
       "the browser prompt must reach the TUI as a bridge command",
     );
 
+    step("8f: reload mid-stream — the partial replays after the reload");
+    // 8f. The classic desync: the turn is in flight, the user reloads. The
+    //     reattached browser stream never saw message_start, so before the
+    //     snapshot replay every delta was dropped and the reply popped in
+    //     only at message_end. Now: connected → the partial replays.
+    await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          { type: "agent_start" },
+          { type: "message_start", message: { role: "assistant", content: [] } },
+          { type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 0 } },
+          {
+            type: "message_update",
+            assistantMessageEvent: {
+              type: "text_delta",
+              contentIndex: 0,
+              delta: "mid-stream partial before",
+              partial: { role: "assistant", content: [{ type: "text", text: "mid-stream partial before" }] },
+            },
+          },
+        ],
+      }),
+    });
+    // The partial renders live first.
+    await page.locator(".msg-assistant.msg-streaming", { hasText: "mid-stream partial before" })
+      .waitFor({ state: "visible", timeout: 10_000 });
+    // The reload drops the stream; the turn keeps streaming in the TUI.
+    await page.reload();
+    await page.locator(".app-composer-input").waitFor({ state: "visible", timeout: 10_000 });
+    // The reattached stream replays the partial so the streaming reply is
+    // visible again — not a frozen transcript waiting for message_end.
+    await page.locator(".msg-assistant.msg-streaming", { hasText: "mid-stream partial before" })
+      .waitFor({ state: "visible", timeout: 10_000 });
+    // More deltas arrive after the reload and continue the same message.
+    await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          {
+            type: "message_update",
+            assistantMessageEvent: {
+              type: "text_delta",
+              contentIndex: 0,
+              delta: " and after",
+              partial: { role: "assistant", content: [{ type: "text", text: "mid-stream partial before and after" }] },
+            },
+          },
+          { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "mid-stream partial before and after" }] } },
+          { type: "agent_settled" },
+        ],
+      }),
+    });
+    const reloadedReply = page.locator(".msg-assistant", { hasText: "mid-stream partial before and after" });
+    await reloadedReply.first().waitFor({ state: "visible", timeout: 10_000 });
+    assert.equal(await page.locator(".msg-assistant", { hasText: "mid-stream partial before and after" }).count(), 1, "the completed reply renders exactly once (no live/history duplicate)");
+
     step("8: command received, streaming reply");
     // The TUI streams its reply; the browser renders it.
     await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {

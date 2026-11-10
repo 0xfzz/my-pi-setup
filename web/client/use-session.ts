@@ -387,25 +387,51 @@ export function usePiSession() {
       });
     };
 
+    /** Structural entry equality — the dedupe key for the overlap window. */
+    const sameEntry = (a: HistoryEntryLike, b: HistoryEntryLike): boolean =>
+      a.role === b.role
+      && a.aborted === b.aborted
+      && JSON.stringify(a.blocks) === JSON.stringify(b.blocks);
+
     const applyHistory = (
       entries: HistoryEntryLike[],
       diskToolResults: Record<string, ToolResultLike>,
     ): void => {
       if (closed) return;
       historyApplied = true;
-      setHistory([...entries, ...pendingAppends]);
+      // The overlap window: an entry completing between this stream's
+      // subscribe and the history file's read is BOTH a buffered live
+      // append AND the history tail. The covered entries are the leading
+      // run of pendingAppends matching the trailing run of the loaded
+      // entries, in order — drop that run so the entry renders once.
+      let drop = 0;
+      const maxK = Math.min(pendingAppends.length, entries.length);
+      for (let k = maxK; k > 0; k--) {
+        const tail = entries.slice(entries.length - k);
+        if (pendingAppends.slice(0, k).every((pending, i) => sameEntry(pending, tail[i] ?? pending))) {
+          drop = k;
+          break;
+        }
+      }
+      setHistory([...entries, ...pendingAppends.slice(drop)]);
       // Results captured live win over the disk snapshot.
       setToolResults((prev) => ({ ...diskToolResults, ...prev }));
     };
 
-    void fetch(`/api/agent/${encodeURIComponent(selectedId)}/history`)
-      .then((res) => res.json() as Promise<{ entries?: HistoryEntryLike[]; toolResults?: Record<string, ToolResultLike> }>)
-      .then((body) => {
-        applyHistory(body.entries ?? [], body.toolResults ?? {});
-      })
-      .catch(() => {
-        applyHistory([], {});
-      });
+    // Subscribe-before-snapshot: the history fetch fires once the stream
+    // is `connected` (below), so the file read covers everything before
+    // the subscribe and the buffered appends cover everything after — no
+    // gap between them where a completed reply would be invisible to both.
+    const fetchHistoryOnce = (): void => {
+      void fetch(`/api/agent/${encodeURIComponent(selectedId)}/history`)
+        .then((res) => res.json() as Promise<{ entries?: HistoryEntryLike[]; toolResults?: Record<string, ToolResultLike> }>)
+        .then((body) => {
+          applyHistory(body.entries ?? [], body.toolResults ?? {});
+        })
+        .catch(() => {
+          applyHistory([], {});
+        });
+    };
     // The initial state read (model, thinking, context): the model chip
     // renders from it before any session_state push arrives.
     void fetchState(selectedId);
@@ -422,16 +448,26 @@ export function usePiSession() {
         case "connected":
           setConnection("connected");
           applyStream(data.isStreaming ? { type: "start" } : { type: "end" });
-          // A (re)connect may have missed events — a server drop, or the
-          // session switching owners (a TUI bridge over this in-process
-          // copy). Reload the history so the transcript matches the live
-          // session instead of the snapshot this stream started from.
-          if (everConnected) setHistoryEpoch((epoch) => epoch + 1);
-          everConnected = true;
+          // First connect: the stream is live, so NOW the history can be
+          // read without a loss window. A reconnect (everConnected) may
+          // have missed events — a server drop, or the session switching
+          // owners (a TUI bridge over this in-process copy) — so the epoch
+          // re-runs this whole effect: fresh stream, fresh history.
+          if (!everConnected) {
+            everConnected = true;
+            fetchHistoryOnce();
+          } else {
+            setHistoryEpoch((epoch) => epoch + 1);
+          }
           break;
         case "startup_error":
           setConnection("error");
           source.close();
+          // No live stream — the file still renders (best effort).
+          if (!everConnected) {
+            everConnected = true;
+            fetchHistoryOnce();
+          }
           break;
         case "agent_start":
           // A run started (perhaps from the TUI): the working line and the

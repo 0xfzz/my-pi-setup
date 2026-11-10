@@ -275,6 +275,39 @@ test("plugin actions relay through the bridge to the TUI", async () => {
   });
 });
 
+test("a browser stream attaching mid-turn replays the partial the TUI posted", async () => {
+  await withServer(async (baseUrl) => {
+    const tui = await attachFakeTui(baseUrl, "bridge-f", "/tmp/bridge-f");
+    // The TUI's turn is already in flight — its partial crossed the bridge
+    // BEFORE the browser stream opened (a reload-mid-stream).
+    await postEvents(baseUrl, "bridge-f", [
+      { type: "message_start", message: { role: "assistant", content: [] } },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "ignored",
+          partial: { role: "assistant", content: [{ type: "text", text: "the in-flight reply" }] },
+        },
+      },
+    ]);
+
+    const stream = await fetch(`${baseUrl}/api/agent/bridge-f/events`);
+    assert.ok(stream.body !== null);
+    const streamRead = createFrameReader(stream.body.getReader());
+    const replayed = await streamRead((text) => text.includes("the in-flight reply"));
+    // The replay is a synthetic message_start carrying the cumulative
+    // partial, ordered after connected and before any live delta.
+    assert.match(replayed, /"type":"message_start"/);
+    const connectedAt = replayed.indexOf('"type":"connected"');
+    const replayAt = replayed.indexOf("the in-flight reply");
+    assert.ok(connectedAt !== -1 && replayAt > connectedAt, "the replay follows connected");
+
+    tui.detach();
+  });
+});
+
 test("detach ends the browser streams with session_shutdown", async () => {
   await withServer(async (baseUrl) => {
     await attachFakeTui(baseUrl, "bridge-e", "/tmp/bridge-e");

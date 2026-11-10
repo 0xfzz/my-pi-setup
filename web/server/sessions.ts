@@ -6,6 +6,7 @@
 // model-selection, lease, trust, push and custom-UI chrome is out of scope.
 
 import { createAgentSession, getAgentDir, SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
+import { createStreamTracker, type StreamSnapshot } from "./stream-tracker.ts";
 import { createReadStream, existsSync } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -40,6 +41,12 @@ export interface SessionCore {
   setThinkingLevel?(level: string): Promise<boolean>;
   /** Dispatch a web core command (name + args) to the session owner. */
   webCommand?(name: string, args: string): Promise<void>;
+  /**
+   * The in-flight streaming message, tapped from the session's raw events.
+   * Browser streams replay it right after `connected` so a mid-turn
+   * (re)connect renders the partial reply instead of dropping deltas.
+   */
+  getStreamSnapshot?(): StreamSnapshot;
 }
 
 export interface SessionHandle {
@@ -104,9 +111,15 @@ function toCore(inner: AgentSession): SessionCore {
     return source.map((model) => ({ provider: model.provider, id: model.id }));
   };
   const findModel = (provider: string, id: string) => modelRefs().find((ref) => ref.provider === provider && ref.id === id);
+  // A permanent tap on the session's raw events keeps the in-flight
+  // streaming snapshot current from the session's birth — not from the
+  // first browser stream — so any (re)connect can replay it.
+  const streamTracker = createStreamTracker();
+  inner.subscribe(streamTracker.feed);
   return {
     sessionId: inner.sessionId,
     subscribe: (listener: (event: unknown) => void) => inner.subscribe(listener),
+    getStreamSnapshot: (): StreamSnapshot => streamTracker.snapshot(),
     // Prompts pass through AgentSession.prompt with its default
     // expandPromptTemplates: "/command …" dispatches extension commands;
     // steer queues the message when a run is already streaming, like the TUI.

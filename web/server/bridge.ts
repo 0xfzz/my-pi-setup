@@ -9,6 +9,7 @@
 // session, two frontends, no rival in-process copy.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { createStreamTracker, type StreamSnapshot } from "./stream-tracker.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../../lib/web-plugins/actions.ts";
 import type { WebUiType } from "../../lib/web-plugins/ui-event-models.ts";
 import {
@@ -66,6 +67,8 @@ export interface BridgeConnection {
   getCommands(): Array<{ name: string; description?: string }>;
   /** The model list for the web picker (web_models events). */
   getModels(): BridgeModels | null;
+  /** The in-flight streaming message, for mid-turn stream replay. */
+  getStreamSnapshot(): StreamSnapshot;
   subscribe(listener: (event: unknown) => void): () => void;
   close(): void;
 }
@@ -100,6 +103,10 @@ export function attachBridge(options: {
     thinkingLevel: metadata.thinkingLevel,
     contextUsage: null,
   };
+  // The in-flight streaming state, tapped from the raw events so a browser
+  // stream attaching mid-turn can replay the partial message (the tracker
+  // sits before wire normalization, where `partial` is still present).
+  const streamTracker = createStreamTracker();
   // The commands the extension posts at attach (web_commands events);
   // bridgeSessionCore serves them to /api/agent/:id/commands.
   let commands: Array<{ name: string; description?: string }> = [];
@@ -204,6 +211,7 @@ export function attachBridge(options: {
           setModels({ current, models: list.slice(0, 500) });
         }
       }
+      streamTracker.feed(event);
       handleBridgeEvent(metadata.sessionId, event);
       if (commandsChanged) {
         commandsChanged = false;
@@ -240,6 +248,9 @@ export function attachBridge(options: {
       return () => {
         listeners.delete(listener);
       };
+    },
+    getStreamSnapshot(): StreamSnapshot {
+      return streamTracker.snapshot();
     },
     close(): void {
       if (closed) return;
@@ -341,6 +352,7 @@ export function bridgeSessionCore(connection: BridgeConnection): SessionCore {
   return {
     sessionId: metadata.sessionId,
     subscribe: (listener: (event: unknown) => void) => connection.subscribe(listener),
+    getStreamSnapshot: () => connection.getStreamSnapshot(),
     prompt: async (text: string, images?: Array<{ data: string; mimeType: string }>) => {
       connection.sendCommand({
         type: "prompt",

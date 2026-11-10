@@ -21,7 +21,7 @@ const TOOL_UPDATE_COALESCE_MS = 150;
 const STREAM_HIGH_WATER_MARK_BYTES = 512 * 1024;
 const STREAM_BACKLOG_LIMIT_BYTES = 16 * 1024 * 1024;
 
-export interface EventStreamSession extends Pick<SessionCore, "subscribe" | "isStreaming"> {}
+export interface EventStreamSession extends Pick<SessionCore, "subscribe" | "isStreaming" | "getStreamSnapshot"> {}
 
 /**
  * Attach an SSE stream to `res` for `sessionId`. `sessionPromise` resolves
@@ -166,6 +166,20 @@ export function attachAgentEventStream(
 
       send({ type: "connected", sessionId, isStreaming: session.isStreaming() });
       announced = true;
+      // Mid-turn (re)connect: this stream never saw `message_start`, so
+      // the client's delta accumulator would drop every delta until
+      // `message_end` popped the reply in fully-formed. Replay the tapped
+      // in-flight message as a synthetic `message_start` — the client
+      // snapshots it and subsequent deltas continue from the partial.
+      // BEFORE the buffered flush, so live deltas never precede the state
+      // they extend.
+      const snapshot = session.getStreamSnapshot?.();
+      if (snapshot?.started === true) {
+        send({
+          type: "message_start",
+          message: snapshot.message ?? { role: "assistant", content: [] },
+        });
+      }
       for (const event of buffered) forwardEvent(event);
 
       // Plugin surfaces ride the same stream: one snapshot after connect,

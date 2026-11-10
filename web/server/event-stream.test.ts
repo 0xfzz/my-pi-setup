@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { startWebServer } from "./main.ts";
 import { clearSessionsForTests, registerSession, type SessionCore, type SessionStateLite } from "./sessions.ts";
+import { createStreamTracker } from "./stream-tracker.ts";
 import {
   attachSessionPlugins,
   clearWebPluginStateForTests,
@@ -27,6 +28,7 @@ test.afterEach(() => {
 
 function sseLiveCore(): { core: SessionCore; emit: (event: unknown) => void } {
   let listener: ((event: unknown) => void) | null = null;
+  const tracker = createStreamTracker();
   const core: SessionCore = {
     sessionId: "sse-live",
     subscribe: (next: (event: unknown) => void) => {
@@ -37,10 +39,19 @@ function sseLiveCore(): { core: SessionCore; emit: (event: unknown) => void } {
     },
     prompt: async () => {},
     abort: async () => {},
-    isStreaming: () => false,
+    isStreaming: () => tracker.snapshot().started,
     getState: () => state,
+    getStreamSnapshot: () => tracker.snapshot(),
   };
-  return { core, emit: (event: unknown) => { listener?.(event); } };
+  return {
+    core,
+    emit: (event: unknown) => {
+      // The host taps raw events into the tracker, then fans them out —
+      // the same order the bridge and in-process cores use.
+      tracker.feed(event);
+      listener?.(event);
+    },
+  };
 }
 
 interface ReaderLike {
@@ -117,6 +128,52 @@ test("events stream sends connected, forwards projected events, closes on shutdo
     emit({ type: "session_shutdown" });
     const finished = await reader.read();
     assert.equal(finished.done, true, "stream must end after session_shutdown");
+  } finally {
+    await handle.close();
+  }
+});
+
+test("a stream attaching mid-turn replays the in-flight partial after connected", async () => {
+  const { core, emit } = sseLiveCore();
+  registerSession(core, "/tmp/project");
+  const handle = await startWebServer({ port: 0, host: "127.0.0.1" });
+  try {
+    // The turn starts BEFORE any browser stream exists — exactly the
+    // reload-mid-stream case: message_start already happened.
+    emit({ type: "message_start", message: { role: "assistant", content: [] } });
+    emit({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "never",
+        partial: { role: "assistant", content: [{ type: "text", text: "half a reply" }] },
+      },
+    });
+
+    const res = await fetch(`http://127.0.0.1:${handle.port}/api/agent/sse-live/events`);
+    const reader = res.body!.getReader();
+    const readUntil = createFrameReader(reader);
+
+    const connected = await readUntil((text) => text.includes("\"type\":\"connected\""));
+    assert.match(connected, /"isStreaming":true/);
+
+    // The replay: a synthetic message_start carrying the cumulative
+    // partial, BEFORE any live delta — the client snapshots it and the
+    // deltas that follow append instead of dropping.
+    const replayed = await readUntil((text) => text.includes("half a reply"));
+    assert.match(replayed, /"type":"message_start"/);
+    assert.match(replayed, /"role":"assistant"/);
+    const replayIndex = replayed.indexOf("half a reply");
+    assert.ok(replayIndex !== -1);
+
+    // A live delta after the attach continues the same message.
+    emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "!", contentIndex: 0 },
+    });
+    const delta = await readUntil((text) => text.includes('"delta":"!"'));
+    assert.ok(delta.indexOf('"delta":"!"') > replayIndex, "the replay precedes live deltas");
   } finally {
     await handle.close();
   }
