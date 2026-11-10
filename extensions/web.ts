@@ -47,6 +47,9 @@ import { buildWebTree, type PiTreeNodeLike } from "../lib/web-tree.ts";
 import { WEB_UI_EVENT } from "../lib/web-plugins/ui-event-models.ts";
 import { defaultServerDir, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiDeps } from "../lib/web-ui.ts";
 import { repoRootFromServerDir, sourceWatchRoots, watchSources, type SourceWatcher } from "../lib/web-ui-reload.ts";
+import { WebAuthConfigCache, loadWebAuthConfig, removeWebPassword, webAuthConfigPath, writeWebPassword } from "../lib/web-auth/config.ts";
+import { MIN_PASSWORD_LENGTH, passwordProblem } from "../lib/web-auth/password.ts";
+import { providerKeyInput } from "../lib/provider/provider-key-input.ts";
 
 export interface WebExtensionOptions {
   deps?: Partial<WebUiDeps>;
@@ -54,6 +57,10 @@ export interface WebExtensionOptions {
   autoReload?: boolean;
   /** Quiet period before a change triggers a reload. */
   autoReloadDebounceMs?: number;
+  /** Where the web password record lives; defaults to ~/.pi/agent/web-auth.json (PI_WEB_AUTH_FILE overrides). */
+  authConfigPath?: string;
+  /** Masked password prompt; defaults to the TUI's hidden-input component. Tests inject their own. */
+  askSecret?: (ctx: ExtensionContext, title: string) => Promise<string | undefined>;
 }
 
 export const AUTO_RELOAD_DEBOUNCE_MS = 2_000;
@@ -63,6 +70,21 @@ export const WEB_PROGRESS_STATUS_KEY = "web-reload";
 /** Where the minimal web server listens; PI_WEB_URL overrides (tests). */
 function bridgeServerUrl(): string {
   return process.env.PI_WEB_URL ?? "http://127.0.0.1:30142";
+}
+
+let bridgeAuthCache: WebAuthConfigCache | undefined;
+
+/**
+ * Credentials for the bridge routes. With a web password set the server accepts only the
+ * bridge token from web-auth.json (a browser session is not enough to drive a session);
+ * without one the routes are open and no header is added. Re-read on file change, so a
+ * `/web set-password` from any pi session takes effect for all of them.
+ */
+export function bridgeHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const path = webAuthConfigPath();
+  if (bridgeAuthCache?.path !== path) bridgeAuthCache = new WebAuthConfigCache(path);
+  const loaded = bridgeAuthCache.get();
+  return loaded.state === "enabled" ? { ...extra, Authorization: `Bearer ${loaded.config.bridgeToken}` } : extra;
 }
 
 const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
@@ -154,7 +176,7 @@ const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as 
 async function postBridgeState(sessionId: string, state: Record<string, unknown>): Promise<void> {
   await fetch(`${bridgeServerUrl()}/api/bridge/${encodeURIComponent(sessionId)}/events`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: bridgeHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ state }),
     signal: AbortSignal.timeout(5_000),
   }).catch(() => undefined);
@@ -181,7 +203,7 @@ function createBridgePoster(sessionId: string): BridgePoster {
     queue = [];
     void fetch(`${bridgeServerUrl()}/api/bridge/${encodeURIComponent(sessionId)}/events`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: bridgeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ events }),
       signal: AbortSignal.timeout(5_000),
     }).catch(() => undefined);
@@ -256,6 +278,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       // instead of waiting for the connection to notice.
       void fetch(`${bridgeServerUrl()}/api/bridge/${encodeURIComponent(sessionId)}/detach`, {
         method: "POST",
+        headers: bridgeHeaders(),
         signal: AbortSignal.timeout(3_000),
       }).catch(() => undefined);
     }
@@ -407,7 +430,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       try {
         const res = await fetch(
           `${bridgeServerUrl()}/api/bridge/${encodeURIComponent(sessionId)}/attach?${query.toString()}`,
-          { signal, headers: { accept: "text/event-stream" } },
+          { signal, headers: bridgeHeaders({ accept: "text/event-stream" }) },
         );
         if (!res.ok || res.body === null) throw new Error(`attach failed: HTTP ${res.status}`);
         retryDelayMs = 1_000;
@@ -1176,10 +1199,78 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   });
 
 
+  const authPath = (): string => options.authConfigPath ?? webAuthConfigPath();
+
+  /** Prompt for a secret without echo; undefined when cancelled or when no masked input exists. */
+  const askSecret = async (ctx: ExtensionContext, title: string): Promise<string | undefined> => {
+    if (options.askSecret !== undefined) return options.askSecret(ctx, title);
+    try {
+      return await providerKeyInput(ctx as never, title);
+    } catch {
+      ctx.ui?.notify("/web set-password needs the interactive terminal (hidden input is not available here).", "warning");
+      return undefined;
+    }
+  };
+
+  const setPassword = async (ctx: ExtensionContext, extraArgs: string[]): Promise<void> => {
+    if (extraArgs.length > 0) {
+      // Typed arguments land in the editor history and, when run from the web, the session
+      // transcript. The password is only ever entered into the hidden prompt.
+      ctx.ui?.notify("Do not put the password on the command line: it would be kept in your history. Run /web set-password on its own and type it when asked.", "warning");
+      return;
+    }
+    const first = await askSecret(ctx, `New web password (at least ${MIN_PASSWORD_LENGTH} characters)`);
+    if (first === undefined) return;
+    const problem = passwordProblem(first);
+    if (problem !== null) {
+      ctx.ui?.notify(`That password is not acceptable: ${problem}. Nothing was changed.`, "warning");
+      return;
+    }
+    const again = await askSecret(ctx, "Repeat the web password");
+    if (again === undefined) return;
+    if (again !== first) {
+      ctx.ui?.notify("The two passwords differ. Nothing was changed.", "warning");
+      return;
+    }
+    const existed = loadWebAuthConfig(authPath()).state !== "disabled";
+    try {
+      await writeWebPassword(first, authPath());
+    } catch (error) {
+      ctx.ui?.notify(`Could not save the web password: ${error instanceof Error ? error.message : String(error)}`, "error");
+      return;
+    }
+    ctx.ui?.notify(
+      [
+        existed ? "Web password changed; every web session was signed out." : "Web password set. pi-web now asks everyone to sign in.",
+        "A running pi-web applies it immediately, no restart needed.",
+        "To reach it from other machines run pi with PI_WEB_HOST=0.0.0.0, or put a TLS proxy or tunnel in front (see docs/pi-web.md).",
+      ].join("\n"),
+      "info",
+    );
+  };
+
+  const clearPassword = async (ctx: ExtensionContext): Promise<void> => {
+    if (loadWebAuthConfig(authPath()).state === "disabled") {
+      ctx.ui?.notify("No web password is set.", "info");
+      return;
+    }
+    const confirmed = (await ctx.ui?.confirm("Remove the web password?", "pi-web will be open to anyone who can reach it.")) ?? false;
+    if (!confirmed) return;
+    removeWebPassword(authPath());
+    ctx.ui?.notify("Web password removed. pi-web is open again.", "info");
+  };
+
+  const protectionLine = (): string => {
+    const state = loadWebAuthConfig(authPath()).state;
+    if (state === "enabled") return "Password protection: on (/web set-password to change, /web clear-password to remove)";
+    if (state === "invalid") return "Password protection: BROKEN — the password file is unreadable and the server refuses requests. Run /web set-password again.";
+    return "Password protection: off (/web set-password to turn on)";
+  };
+
   pi.registerCommand("web", {
-    description: "Manage pi-web UI server (built client): /web start | reload [--rebuild] | stop | status",
+    description: "Manage pi-web UI server (built client): /web start | reload [--rebuild] | stop | status | set-password | clear-password",
     getArgumentCompletions(prefix) {
-      const subcommands = ["start", "reload", "stop", "status"];
+      const subcommands = ["start", "reload", "stop", "status", "set-password", "clear-password"];
       const matching = subcommands.filter((sub) => sub.startsWith(prefix.trim().toLowerCase()));
       return matching.map((sub) => ({ value: sub, label: sub }));
     },
@@ -1218,12 +1309,22 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
 
       if (sub === "status") {
         const result = await statusWebUi(deps);
-        ctx.ui?.notify(result.message, "info");
+        ctx.ui?.notify(`${result.message}\n${protectionLine()}`, "info");
+        return;
+      }
+
+      if (sub === "set-password") {
+        await setPassword(ctx, parts.slice(1));
+        return;
+      }
+
+      if (sub === "clear-password") {
+        await clearPassword(ctx);
         return;
       }
 
       ctx.ui?.notify(
-        `Unknown subcommand "${sub}". Usage: /web start | reload | stop | status`,
+        `Unknown subcommand "${sub}". Usage: /web start | reload | stop | status | set-password | clear-password`,
         "warning",
       );
     },
