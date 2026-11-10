@@ -32,7 +32,7 @@ npm run dev        # build + serve on http://127.0.0.1:30142
 | `npm test` | unit tests (server routes, wire, reducer, regions) |
 | `npm run test:e2e` | Playwright e2e with the fixture session (needs a browser) |
 
-From the pi TUI, `/web start | reload | stop | status` manages a detached
+From the pi TUI, `/web start | reload | stop | status | set-password | clear-password` manages a detached
 instance on port 30142 (`lib/web-ui.ts`): single-instance with takeover,
 esbuild when sources changed, direct `node --experimental-strip-types`
 spawn (no npm wrapper holding the server's stdio), and auto-reload watching
@@ -148,11 +148,93 @@ history. Without a TUI attached, the web still spawns/resumes sessions
 in-process — but running both frontends on one session is exactly what the
 bridge is for.
 
+## Password protection (publishing the web)
+
+By default the server listens on `127.0.0.1` with no login, which is fine on your
+own machine. To reach it from elsewhere, set a password first — the web can
+run shell commands through the agent, so an open port is a remote shell.
+
+```
+/web set-password      # type it twice into a hidden prompt (TUI only)
+/web clear-password    # turn protection off again
+/web status            # reports "Password protection: on/off"
+```
+
+- The password is never accepted as an argument (it would land in your history);
+  at least 10 characters.
+- It is stored as a scrypt hash in `~/.pi/agent/web-auth.json` (mode 0600;
+  `PI_WEB_AUTH_FILE` overrides). A running server picks the change up
+  immediately — no `/web reload`.
+- Changing the password rotates the signing secret, so **every existing browser
+  session is signed out** at once, and the open event streams are cut.
+- A corrupt auth file **fails closed**: the server answers 503 instead of
+  serving unprotected.
+
+**Reaching it from other machines.** Start pi with `PI_WEB_HOST=0.0.0.0` (the
+detached server inherits it), or leave the server on loopback and put a TLS
+reverse proxy or tunnel (Caddy, nginx, cloudflared, Tailscale) in front. Use
+HTTPS on the public side: the password and cookies cross the network. Behind
+nginx set `proxy_set_header Host $host;` so the same-origin check sees the public
+host (or list it in `PI_WEB_ALLOWED_ORIGINS`). The server logs a warning when it
+listens beyond loopback with no password.
+
+### Tokens
+
+| Token | Lifetime | Where it lives |
+|---|---|---|
+| Access (HS256 JWT) | 15 min | `pi_web_at` cookie — HttpOnly, SameSite=Strict, `Secure` over https |
+| Refresh (HS256 JWT, different key) | 30 days sliding, 1 year absolute | `pi_web_rt` cookie — same flags, path `/api/auth` only |
+
+JavaScript never sees either token (no XSS exfiltration), and `EventSource`,
+which cannot set headers, authenticates through the cookie. Environment knobs:
+`PI_WEB_ACCESS_TTL_SECONDS`, `PI_WEB_REFRESH_TTL_DAYS`.
+
+**Refresh rotation.** Every refresh returns a new refresh token and retires the
+old one; the server tracks one *family* per login (persisted in
+`web-auth-sessions.json`, so `/web reload` and restarts sign nobody out). A retired token
+replayed after a 10 s grace window means a copy leaked, so the whole family is
+revoked. Inside the window — two tabs, parallel requests — the duplicate just gets a
+fresh access token, so ordinary use never trips it. Logout and revocation take
+effect on the very next request, because access tokens are also checked against the
+live session.
+
+**Why no endpoint fails on an expired token.** The client (`web/client/auth.ts`):
+
+1. refreshes proactively, a minute before expiry and whenever a backgrounded tab wakes;
+2. wraps `fetch` so any `/api` 401 triggers one refresh, shared by every request
+   failing at that moment, then a single retry — callers never see the expiry;
+3. reopens an event stream that died on a 401 (`EventSource` never retries those);
+4. coordinates tabs with a Web Lock and a `localStorage` hint so they do not rotate
+   the token against each other;
+5. treats only a 401 from the refresh endpoint as "signed out" — being offline or a
+   5xx keeps the session and retries.
+
+### Other protections
+
+- `/api/health`, `/api/auth/*` and the static client are public (the client must load
+  to show the login screen; it carries no data). Everything else under `/api` needs
+  a valid access token.
+- The bridge routes (`/api/bridge/*`) accept only the **bridge token** from
+  `web-auth.json`, which the pi TUI presents automatically; a browser session cannot
+  impersonate a session's owner.
+- Login throttling: 5 wrong passwords lock a client for 15 min; a global cap
+  (100 / 15 min) backstops distributed guessing. Clients are told apart by IP — behind a
+  local proxy the last `X-Forwarded-For` hop is used (`PI_WEB_TRUST_PROXY=1` trusts a
+  non-loopback proxy, `0` never). If you lock yourself out, restart the server.
+- CSRF: SameSite=Strict plus a `Sec-Fetch-Site` / `Origin` check on writes.
+- Scripts can sign in with `POST /api/auth/login {"password": "...", "returnTokens": true}`
+  and use `Authorization: Bearer <accessToken>`; refresh with
+  `POST /api/auth/refresh {"refreshToken": "..."}` (one refresh at a time).
+
 ## HTTP API
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/api/health` | GET | liveness |
+| `/api/health` | GET | liveness (always public) |
+| `/api/auth/status` | GET | `{ required, authenticated }` — public |
+| `/api/auth/login` | POST | password → cookies (public, throttled) |
+| `/api/auth/refresh` | POST | rotate the refresh token, new access token |
+| `/api/auth/logout` | POST | revoke the session, clear cookies |
 | `/api/plugins` | GET | visible descriptors (kernel: enabled, unquarantined) |
 | `/api/plugins/action` | POST | the plugin action route (below) |
 | `/api/sessions` | GET | live + disk sessions, newest first |
@@ -163,7 +245,7 @@ bridge is for.
 | `/api/agent/:id/commands` | GET | pi's runtime built-ins + the session's live commands |
 | `/api/agent/:id/pi_api` | POST | call a pi built-in api (below) |
 
-Every non-GET API request to a wrong method gets 405; unknown sessions 404.
+Every non-GET API request to a wrong method gets 405; unknown sessions 404. With a web password set, every route except `/api/health` and `/api/auth/*` answers 401 without a valid access token (see [Password protection](#password-protection-publishing-the-web)).
 
 ## The pi_api facade — pi's built-ins, called not copied
 
