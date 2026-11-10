@@ -1,55 +1,31 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BUILTIN_COMMANDS, filterCommands } from "./commands.ts";
+import { annotateBuiltinCommands, filterCommands, type WebCommand } from "./commands.ts";
 
-test("builtin commands mirror pi's set; ported and TUI-only are marked", () => {
-  const names = BUILTIN_COMMANDS.map((command) => command.name);
-  for (const expected of [
-    "settings",
-    "model",
-    "tree",
-    "thinking",
-    "compact",
-    "resume",
-    "new",
-    "quit",
-  ]) {
-    assert.ok(names.includes(expected), `/ ${expected} must be listed`);
-  }
-  // Every command carries exactly one disposition: web-ported (the web
-  // dialog port), TUI-only, or dispatchable via the session.
-  for (const command of BUILTIN_COMMANDS) {
-    assert.ok(
-      command.webPorted === true || command.tuiOnly === true || (command.webPorted === undefined && command.tuiOnly === undefined),
-      `/ ${command.name} must be webPorted, tuiOnly, or dispatchable`,
-    );
-  }
-  // The ported set: their TUI dialogs have web equivalents.
-  for (const expected of ["model", "thinking", "session", "changelog", "copy", "export", "resume"]) {
-    const command = BUILTIN_COMMANDS.find((entry) => entry.name === expected);
-    assert.ok(command !== undefined && command.webPorted === true, `/ ${expected} is web-ported`);
-  }
-  assert.ok(BUILTIN_COMMANDS.every((command) => command.description !== undefined));
+test("annotateBuiltinCommands merges pi's runtime list with the web's presentation flags", () => {
+  // pi's BUILTIN_SLASH_COMMANDS shape (a subset).
+  const piList = [
+    { name: "compact", description: "Manually compact the session context" },
+    { name: "model", description: "Select model", argumentHint: "provider/id" },
+    { name: "quit", description: "Quit pi" },
+    { name: "future-command", description: "Shipped by a newer pi" },
+  ];
+  const annotated = annotateBuiltinCommands(piList);
+  assert.deepEqual(annotated[0], { name: "compact", description: "Manually compact the session context", web: true });
+  assert.deepEqual(annotated[1], { name: "model", description: "Select model", webPorted: true });
+  assert.deepEqual(annotated[2], { name: "quit", description: "Quit pi", tuiOnly: true });
+  // Unknown future commands pass through unflagged — forward compatibility.
+  assert.deepEqual(annotated[3], { name: "future-command", description: "Shipped by a newer pi" });
 });
 
-test("filterCommands matches by prefix, earliest match first", () => {
-  const commands = [
-    { name: "web", description: "web ui" },
-    { name: "web-plugins", description: "plugins" },
-    { name: "todo", description: "todos" },
+test("filterCommands ranks by prefix position", () => {
+  const commands: WebCommand[] = [
+    { name: "export" },
+    { name: "scoped-models" },
+    { name: "model" },
   ];
-  assert.deepEqual(filterCommands(commands, "/w"), []);
-  assert.deepEqual(
-    filterCommands(commands, "w").map((command) => command.name),
-    ["web", "web-plugins"],
-  );
-  assert.deepEqual(
-    filterCommands(commands, "we").map((command) => command.name),
-    ["web", "web-plugins"],
-  );
-  assert.deepEqual(
-    filterCommands(commands, "web-").map((command) => command.name),
-    ["web-plugins"],
-  );
-  assert.deepEqual(filterCommands(commands, ""), commands);
+  assert.deepEqual(filterCommands(commands, "m").map((command) => command.name), ["model"]);
+  const mixed: WebCommand[] = [{ name: "new-name" }, { name: "name" }];
+  assert.deepEqual(filterCommands(mixed, "n").map((command) => command.name), ["new-name", "name"]);
+  assert.deepEqual(filterCommands(mixed, "zzz"), []);
 });

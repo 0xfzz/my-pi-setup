@@ -98,6 +98,19 @@ both frontends. `extensions/web.ts` does the bridging:
   message deltas included), plus the TUI-side plugin views and
   working-indicator bus events, so the web renders the TUI's turns, plugin
   surfaces and working line in realtime.
+- **Two command channels, two registries.** `pi.registerCommand` is pi's —
+  for genuine TUI commands (pi's built-ins like `/compact` already own
+  those names there; shadowing them is exactly the "conflicts with
+  built-in" warning). The **web core registry** (`extensions/web.ts`)
+  registers the same names for the web and dispatches through its own
+  bridge channel `{type:"web_command"}` — the handlers call pi's ctx
+  methods (`ctx.compact`, rename, new-session, reload). In-process hosts
+  re-route through the prompt path, where the mode-gated pi commands
+  dispatch them.
+- When the extension (re)posts its command list (`web_commands` events),
+  the bridge fans a `commands_changed` event to the browser streams; the
+  client refetches `/api/agent/:id/commands`, so a `/reload` in the TUI
+  refreshes the web palette too.
 
 While a bridge is attached, the web's `/api/agent/:id` routes proxy into it
 and the session is listed as live; when it detaches, the server falls back
@@ -119,8 +132,72 @@ bridge is for.
 | `/api/agent/:id` | GET / POST | state read / prompt, abort, get_state |
 | `/api/agent/:id/events` | GET | the SSE stream |
 | `/api/agent/:id/history` | GET | transcript entries |
+| `/api/agent/:id/commands` | GET | pi's runtime built-ins + the session's live commands |
+| `/api/agent/:id/pi_api` | POST | call a pi built-in api (below) |
 
 Every non-GET API request to a wrong method gets 405; unknown sessions 404.
+
+## The pi_api facade — pi's built-ins, called not copied
+
+The web never reimplements pi features. Every web capability maps to a
+**pi built-in api** it calls at runtime through one generic route:
+
+```
+POST /api/agent/:id/pi_api   { "api": "<name>", "params": { … } }
+                             → { "ok": true, "result": … } | { "ok": false, "error": … }
+```
+
+The contract lives in `web/shared/pi-api.ts` (names, params, results);
+`lib/web-pi-apis/` implements it as pluggable modules over pi's own code:
+
+| api | pi implementation | web surface |
+|---|---|---|
+| `autocomplete.suggestions` | `CombinedAutocompleteProvider` from `@earendil-works/pi-tui` — the TUI editor's own completion: @ file mentions, paths, quoted paths, fd walk (gitignore-aware, located via pi's `ensureTool`), pi's fuzzy ranking | the composer's `@` picker |
+| `commands.builtin` | `BUILTIN_SLASH_COMMANDS` from pi's core | the command palette's built-in list |
+
+Two consequences worth stating:
+
+- **@ mentions are pi's.** The composer gates when a picker appears
+  (`activeMentionToken` — web UX); the suggestions and the insertion
+  semantics (directories keep completing, no trailing space; the char at
+  the caret is excluded from the prefix) are pi's. A sent `@path` rides the
+  prompt **as text**: pi's read tool resolves it model-side (it strips the
+  `@` prefix natively), so no file content is ever inlined into the prompt.
+- **The built-in command list is pi's.** `/api/agent/:id/commands` merges
+  pi's `BUILTIN_SLASH_COMMANDS` at runtime with the session's live commands
+  (`pi.getCommands()` + the web core registry, posted over the bridge).
+  The web adds only *presentation* flags (`web/shared/commands.ts`:
+  `COMMAND_META` — `webPorted` / `web` / `tuiOnly`); commands pi ships that
+  the web has never heard of pass through unflagged and dispatch as prompt
+  text, exactly like typing them in the TUI.
+
+### Extending the facade
+
+Add a module and register it — the route, validation and lifecycle are
+generic:
+
+1. Add the name + params + result to `web/shared/pi-api.ts`
+   (`PiApiName` / `PiApiParams` / `PiApiResult`).
+2. Implement a `PiApiModule` (`lib/web-pi-apis/types.ts`) — one file per
+   api family; its `handle` calls pi's code, `init`/`dispose` own
+   lifecycle (the registry lazily initializes on first use and tears down
+   on host detach).
+3. Register it in `PI_API_MODULES` (`lib/web-pi-apis/index.ts`).
+
+Deep pi imports that the package `exports` map does not open load by file
+path — e.g. `../../node_modules/@earendil-works/pi-coding-agent/dist/core/slash-commands.js`.
+Both `@earendil-works/pi-tui` and `@earendil-works/pi-coding-agent` are
+declared dependencies of this repo, so the imports are versioned, not
+ambient.
+
+### Lifecycle
+
+- **Per-cwd providers**: modules cache per session cwd (a clone into
+  another directory rebuilds); `dispose()` drops the cache.
+- **Abort**: every dispatch carries the host's `AbortSignal`; pi's fd walk
+  respects it.
+- **Failures are responses, not crashes**: an api error becomes
+  `{ok: false, error}` — the bridge and the web stay up.
 
 ## The plugin system
 

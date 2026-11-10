@@ -29,6 +29,9 @@ import {
   sendCommand,
   startSession,
 } from "./sessions.ts";
+import { handlePiApiRequest } from "./pi-api.ts";
+import { piBuiltinCommands } from "../../lib/web-pi-apis/index.ts";
+import { annotateBuiltinCommands } from "../shared/commands.ts";
 import { attachAgentEventStream } from "./event-stream.ts";
 
 const MIME_TYPES: Record<string, string> = {
@@ -282,6 +285,21 @@ async function handleApi(
     sendJson(res, 200, { ok: true });
     return true;
   }
+  const piApiMatch = /^\/api\/agent\/([^/]+)\/pi_api$/.exec(pathname);
+  if (piApiMatch !== null) {
+    if (req.method !== "POST") return methodNotAllowed();
+    const id = sessionIdFromPath(piApiMatch);
+    const handle = getSession(id);
+    if (handle === undefined) {
+      sendJson(res, 404, { error: "Session not found" });
+      return true;
+    }
+    const body = await readJsonBody(req);
+    const outcome = await handlePiApiRequest(handle.cwd, body);
+    sendJson(res, outcome.status, outcome.body);
+    return true;
+  }
+
   if (pathname === "/api/directories") {
     if (req.method !== "GET") return methodNotAllowed();
     // The new-session picker: subdirectories of a path (hidden dirs skipped,
@@ -396,7 +414,11 @@ async function handleApi(
       sendJson(res, 404, { error: "Session not found" });
       return true;
     }
-    sendJson(res, 200, { sessionId: id, commands: core.getCommands?.() ?? [] });
+    // pi's built-in list at runtime (BUILTIN_SLASH_COMMANDS via the
+    // pi_api facade) annotated with the web's presentation flags, then the
+    // session's live commands (extension/prompt/skill + web core registry).
+    const builtins = annotateBuiltinCommands(await piBuiltinCommands());
+    sendJson(res, 200, { sessionId: id, commands: [...builtins, ...(core.getCommands?.() ?? [])] });
     return true;
   }
 

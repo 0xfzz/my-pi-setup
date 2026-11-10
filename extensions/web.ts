@@ -283,12 +283,6 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     });
   };
 
-  // Ask the web client to open one of its native dialogs (the web port of
-  // the TUI selector: bare `/model`, `/thinking` from the web composer).
-  const postWebDialogRequest = (dialog: "models" | "thinking"): void => {
-    bridgePoster?.post({ type: "web_dialog_request", dialog });
-  };
-
   // Apply a model reference to this session and push the fresh state to
   // the web; returns a user-facing message either way.
   const applyModelRef = async (ctx: ExtensionContext, ref: ModelRef): Promise<string> => {
@@ -334,10 +328,22 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       try {
         bridgePoster.post({
           type: "web_commands",
-          commands: pi.getCommands().map((command) => ({
-            name: command.name,
-            ...(command.description !== undefined ? { description: command.description } : {}),
-          })),
+          commands: [
+            // pi core commands (extension, prompt templates, skills) — the
+            // web dispatches these as prompt text through the session's
+            // expandPromptTemplates path.
+            ...pi.getCommands().map((command) => ({
+              name: command.name,
+              ...(command.description !== undefined ? { description: command.description } : {}),
+            })),
+            // web core commands — dispatched through the web's own bridge
+            // channel ({type: "web_command"}), never through pi's runner.
+            ...WEB_CORE_COMMANDS.map((command) => ({
+              name: command.name,
+              description: command.description,
+              web: true,
+            })),
+          ],
         });
       } catch {
         // A failed listing must never fail the attach.
@@ -448,6 +454,8 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
         provider?: unknown;
         id?: unknown;
         level?: unknown;
+        name?: unknown;
+        args?: unknown;
       };
     };
     try {
@@ -516,6 +524,29 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       } catch (error) {
         ctxNotify(`set thinking failed: ${String(error)}`);
       }
+      return;
+    }
+    if (
+      command.type === "web_command"
+      && typeof command.name === "string"
+    ) {
+      // The web core's own command channel: the registry runs in this pi
+      // process with a live session context — distinct from pi commands,
+      // which the web dispatches as prompt text.
+      const entry = webCoreCommand(command.name);
+      const ctx = lastCtxForCommands as WebCommandContext | null;
+      if (entry === undefined) {
+        ctxNotify(`unknown web command: ${command.name}`);
+        return;
+      }
+      if (ctx === null) {
+        ctxNotify(`web command ${command.name}: no session context yet`);
+        return;
+      }
+      const args = typeof command.args === "string" ? command.args : "";
+      void Promise.resolve(entry.handler(args, ctx)).catch((error: unknown) => {
+        ctxNotify(`web command ${command.name} failed: ${String(error)}`);
+      });
       return;
     }
     if (
@@ -638,140 +669,91 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     bridgePoster?.post({ type: "web_ui_event", payload });
   });
 
-  // pi's interactive built-ins, implemented for the web. The names collide
-  // with the TUI's own commands on purpose: the TUI skips them in its
-  // autocomplete (its versions keep working locally), while the session's
-  // dispatch — the path a browser prompt takes — reaches these handlers,
-  // so /compact, /name, /thinking and /new finally work from the web.
-  pi.registerCommand("compact", {
-    description: "Compact the session context (works from the web)",
-    handler: async (args, ctx) => {
-      const instructions = args.trim();
-      ctx.compact(instructions !== "" ? { customInstructions: instructions } : undefined);
+  // ── The web core command registry ────────────────────────────────────────
+  // These are pi's interactive built-ins implemented FOR THE WEB. They are
+  // deliberately NOT pi.registerCommand'd in the TUI: pi's own /compact,
+  // /name, /new, /clone and /reload already own those names there (the
+  // "conflicts with built-in" warnings were exactly this). The web core
+  // dispatches them through its own bridge channel ({type: "web_command"}),
+  // and in-process sessions register them into pi's runner (mode-gated)
+  // because that host dispatches through expandPromptTemplates.
+  type WebCommandContext = ExtensionContext & {
+    newSession(): Promise<{ cancelled: boolean }>;
+    fork(entryId: string, options: { position: string }): Promise<{ cancelled: boolean }>;
+    reload(): Promise<void>;
+  };
+  const WEB_CORE_COMMANDS: Array<{
+    name: string;
+    description: string;
+    handler: (args: string, ctx: WebCommandContext) => void | Promise<void>;
+  }> = [
+    {
+      name: "compact",
+      description: "Compact the session context (web core)",
+      handler: (args, ctx) => {
+        const instructions = args.trim();
+        ctx.compact(instructions !== "" ? { customInstructions: instructions } : undefined);
+      },
     },
-  });
-
-  pi.registerCommand("name", {
-    description: "Set the session display name (works from the web)",
-    handler: async (args) => {
-      const name = args.trim();
-      if (name === "") {
-        ctxNotify("usage: /name <new-name>");
-        return;
-      }
-      pi.setSessionName(name);
-      ctxNotify(`session name: ${name}`);
-    },
-  });
-
-  pi.registerCommand("model", {
-    description: "Set the session model — bare /model opens the web picker, /model <provider/id> sets directly",
-    getArgumentCompletions(prefix) {
-      const ctx = lastCtxForCommands;
-      if (ctx === null) return [];
-      const needle = prefix.trim().toLowerCase();
-      return modelRefs(ctx)
-        .filter((ref) => `${ref.provider}/${ref.id}`.toLowerCase().includes(needle))
-        .slice(0, 30)
-        .map((ref) => ({ value: `${ref.provider}/${ref.id}`, label: `${ref.provider}/${ref.id}` }));
-    },
-    handler: async (args, ctx) => {
-      const term = args.trim();
-      if (term === "") {
-        // Bare /model from the web composer: the web's own selector opens
-        // (the web port of the TUI model picker). In the TUI the built-in
-        // /model handles this before extension commands ever run.
-        postWebDialogRequest("models");
-        return;
-      }
-      const ref = findModelRef(ctx, term);
-      if (ref === undefined) {
-        ctxNotify(`no unique model match: ${term}`);
-        return;
-      }
-      try {
-        const model = ctx.modelRegistry.find(ref.provider, ref.id);
-        if (model === undefined) {
-          ctxNotify(`model not found: ${ref.provider}/${ref.id}`);
+    {
+      name: "name",
+      description: "Set the session display name (web core)",
+      handler: (args) => {
+        const name = args.trim();
+        if (name === "") {
+          ctxNotify("usage: /name <new-name>");
           return;
         }
-        const applied = await pi.setModel(model);
-        if (applied) {
-          ctxNotify(`model: ${ref.provider}/${ref.id}`);
-          postSessionState(ctx);
-          postModelsEvent(ctx);
-        } else {
-          ctxNotify(`no auth configured for ${ref.provider}`);
+        pi.setSessionName(name);
+        ctxNotify(`session name: ${name}`);
+      },
+    },
+    {
+      name: "new",
+      description: "Start a new session (web core)",
+      handler: async (_args, ctx) => {
+        const result = await ctx.newSession();
+        if (result.cancelled) ctxNotify("new session cancelled");
+      },
+    },
+    {
+      name: "clone",
+      description: "Duplicate the current session at the current position (web core)",
+      handler: async (_args, ctx) => {
+        const leafId = ctx.sessionManager?.getLeafId?.();
+        if (leafId === undefined || leafId === null) {
+          ctxNotify("nothing to clone yet");
+          return;
         }
-      } catch (error) {
-        ctxNotify(`set model failed: ${String(error)}`);
-      }
+        try {
+          const result = await ctx.fork(leafId, { position: "at" });
+          if (result.cancelled) ctxNotify("clone cancelled");
+          else ctxNotify("cloned to new session");
+        } catch (error) {
+          ctxNotify(`clone failed: ${String(error)}`);
+        }
+      },
     },
-  });
+    {
+      name: "reload",
+      description: "Reload keybindings, extensions, skills, prompts and themes (web core)",
+      handler: async (_args, ctx) => {
+        try {
+          await ctx.reload();
+          ctxNotify("reloaded");
+        } catch (error) {
+          ctxNotify(`reload failed: ${String(error)}`);
+        }
+      },
+    },
+  ];
+  const webCoreCommand = (name: string): (typeof WEB_CORE_COMMANDS)[number] | undefined =>
+    WEB_CORE_COMMANDS.find((command) => command.name === name);
 
-  pi.registerCommand("thinking", {
-    description: "Set the thinking level (works from the web)",
-    getArgumentCompletions(prefix) {
-      return THINKING_LEVELS
-        .filter((level) => level.startsWith(prefix.trim().toLowerCase()))
-        .map((level) => ({ value: level, label: level }));
-    },
-    handler: async (args, ctx) => {
-      const level = args.trim().toLowerCase();
-      if (level === "") {
-        // Bare /thinking from the web composer: the web's level picker opens
-        // (in the TUI the built-in /thinking cycles levels instead).
-        void ctx;
-        postWebDialogRequest("thinking");
-        return;
-      }
-      if (!THINKING_LEVELS.includes(level as (typeof THINKING_LEVELS)[number])) {
-        ctxNotify(`usage: /thinking <${THINKING_LEVELS.join("|")}>`);
-        return;
-      }
-      pi.setThinkingLevel(level as (typeof THINKING_LEVELS)[number]);
-      ctxNotify(`thinking level: ${level}`);
-      postSessionState(ctx);
-    },
-  });
-
-  pi.registerCommand("clone", {
-    description: "Duplicate the current session at the current position (works from the web)",
-    handler: async (_args, ctx) => {
-      const leafId = ctx.sessionManager?.getLeafId?.();
-      if (leafId === undefined || leafId === null) {
-        ctxNotify("nothing to clone yet");
-        return;
-      }
-      try {
-        const result = await ctx.fork(leafId, { position: "at" });
-        if (result.cancelled) ctxNotify("clone cancelled");
-        else ctxNotify("cloned to new session");
-      } catch (error) {
-        ctxNotify(`clone failed: ${String(error)}`);
-      }
-    },
-  });
-
-  pi.registerCommand("reload", {
-    description: "Reload keybindings, extensions, skills, prompts and themes (works from the web)",
-    handler: async (_args, ctx) => {
-      try {
-        await ctx.reload();
-        ctxNotify("reloaded");
-      } catch (error) {
-        ctxNotify(`reload failed: ${String(error)}`);
-      }
-    },
-  });
-
-  pi.registerCommand("new", {
-    description: "Start a new session (works from the web)",
-    handler: async (_args, ctx) => {
-      const result = await ctx.newSession();
-      if (result.cancelled) ctxNotify("new session cancelled");
-    },
-  });
+  // /model and /thinking are fully web-ported: the composer intercepts them
+  // client-side (bare opens the picker, args POST to the model/thinking
+  // routes), and the bridge's set_model/set_thinking commands apply them —
+  // so no pi command registration and no dialog-request round trip.
 
   pi.registerCommand("web", {
     description: "Manage pi-web UI server (built client): /web start | reload [--rebuild] | stop | status",
@@ -828,6 +810,20 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
 
   pi.on("session_start", (_event, ctx) => {
     lastCtxForCommands = ctx;
+    // In non-TUI hosts (the web server's in-process sessions) the web core
+    // commands ride pi's runner so the expandPromptTemplates path — the one
+    // that host dispatches — reaches them. The TUI host never registers
+    // them: its built-ins own the names and the web uses the bridge channel.
+    if (ctx.mode !== "tui") {
+      for (const command of WEB_CORE_COMMANDS) {
+        pi.registerCommand(command.name, {
+          description: command.description,
+          handler: async (args: string, commandCtx: ExtensionContext) => {
+            await command.handler(args, commandCtx as WebCommandContext);
+          },
+        });
+      }
+    }
     if (autoReloadEnabled && !watcher) {
       const serverDir = options.deps?.serverDir ?? defaultServerDir();
       watcher = watchSources({

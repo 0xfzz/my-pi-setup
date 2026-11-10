@@ -9,6 +9,8 @@
 
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { filterCommands, type WebCommand } from "../shared/commands.ts";
+import { activeMentionToken } from "../shared/mentions.ts";
+import type { PiAutocompleteItem, PiAutocompleteSuggestions } from "../shared/pi-api.ts";
 
 export interface PendingImage {
   id: number;
@@ -22,11 +24,12 @@ export interface ComposerProps {
   busy: boolean;
   error?: string | null;
   onSend: (text: string, images: PendingImage[]) => void;
+  /** The selected session — the @-mention completion lists ITS files. */
+  sessionId?: string | null;
   onAbort: () => void;
   /** Commands the selected session dispatches (extension/prompt/skill). */
   sessionCommands?: WebCommand[];
   /** pi's built-in slash commands (TUI-side; listed for discovery). */
-  builtinCommands?: readonly WebCommand[];
   /** The current model, shown as a chip that opens the web picker. */
   model?: { provider: string; id: string };
   /** The current thinking level, shown as a chip that opens its picker. */
@@ -37,6 +40,8 @@ export interface ComposerProps {
   onOpenThinkingPicker?: () => void;
   /** A web-ported command was invoked: the shell runs the web side of it. */
   onWebCommand?: (name: string, args: string) => void;
+  /** Dispatch a web core command (marked web:true by the session). */
+  onWebCommandDispatch?: (name: string, args: string) => void;
 }
 
 const PALETTE_LIMIT = 8;
@@ -97,17 +102,26 @@ export function Composer({
   onSend,
   onAbort,
   sessionCommands,
-  builtinCommands,
   model,
   thinkingLevel,
   onOpenModelPicker,
   onOpenThinkingPicker,
   onWebCommand,
+  onWebCommandDispatch,
+  sessionId,
 }: ComposerProps) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<PendingImage[]>([]);
   const [paletteIndex, setPaletteIndex] = useState(0);
   const [paletteDismissed, setPaletteDismissed] = useState(false);
+  /** The @-mention picker: the token being typed after @ (the gate). */
+  const [mentionToken, setMentionToken] = useState<string | null>(null);
+  /** Caret column in the composer line — pi's provider wants (line, col). */
+  const [caretCol, setCaretCol] = useState(0);
+  /** pi's own suggestions for the current @token, plus its raw prefix. */
+  const [mentionResult, setMentionResult] = useState<PiAutocompleteSuggestions | null>(null);
+  const [fileIndex, setFileIndex] = useState(0);
+  const [fileDismissed, setFileDismissed] = useState(false);
   /** Local composer feedback (a blocked TUI-only command); cleared on typing. */
   const [notice, setNotice] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -117,13 +131,13 @@ export function Composer({
   const commands = useMemo(() => {
     const seen = new Set<string>();
     const merged: WebCommand[] = [];
-    for (const command of [...(sessionCommands ?? []), ...(builtinCommands ?? [])]) {
+    for (const command of sessionCommands ?? []) {
       if (seen.has(command.name)) continue;
       seen.add(command.name);
       merged.push(command);
     }
     return merged;
-  }, [sessionCommands, builtinCommands]);
+  }, [sessionCommands]);
 
   const slashPrefix = text.startsWith("/") && !text.includes(" ") ? text.slice(1) : null;
   const matches = useMemo(
@@ -137,6 +151,70 @@ export function Composer({
   useEffect(() => {
     if (paletteIndex >= matches.length) setPaletteIndex(0);
   }, [matches.length, paletteIndex]);
+
+  // The @-mention completion: the token gate is ours (when to show a
+  // picker), the suggestions are pi's — autocomplete.suggestions runs pi's
+  // own editor provider (fd walk + fuzzy ranking) on the session cwd.
+  useEffect(() => {
+    if (sessionId === null || sessionId === undefined || fileDismissed || mentionToken === null) {
+      setMentionResult(null);
+      return;
+    }
+    const line = text;
+    const col = caretCol;
+    const timer = setTimeout(() => {
+      void fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api: "autocomplete.suggestions", params: { line, cursorCol: col } }),
+      })
+        .then((res) => (res.ok ? (res.json() as Promise<{ ok?: boolean; result?: PiAutocompleteSuggestions | null }>) : { ok: false }))
+        .then((body) => {
+          setMentionResult(body.ok === true ? body.result ?? null : null);
+          setFileIndex(0);
+        })
+        .catch(() => setMentionResult(null));
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [mentionToken, text, caretCol, sessionId, fileDismissed]);
+
+  const fileResults = mentionResult?.items ?? [];
+
+  useEffect(() => {
+    if (fileIndex >= fileResults.length) setFileIndex(0);
+  }, [fileResults.length, fileIndex]);
+
+  const filePaletteOpen = mentionToken !== null && fileResults.length > 0 && !fileDismissed;
+
+  /** Insert a pi suggestion exactly like pi's editor does for @ mentions. */
+  const insertCompletion = (item: PiAutocompleteItem): void => {
+    const input = inputRef.current;
+    const caret = input?.selectionStart ?? text.length;
+    const prefix = mentionResult?.prefix ?? `@${mentionToken ?? ""}`;
+    const start = caret - prefix.length;
+    const before = text.slice(0, caret);
+    if (start < 0 || !before.endsWith(prefix)) {
+      // The text moved under us; close the picker.
+      setMentionToken(null);
+      setMentionResult(null);
+      return;
+    }
+    // pi's applyCompletion: directories take no trailing space (the user
+    // keeps completing into the directory).
+    const isDirectory = item.label.endsWith("/");
+    const suffix = isDirectory ? "" : " ";
+    const next = `${text.slice(0, start)}${item.value}${suffix}${text.slice(caret)}`;
+    setText(next);
+    setMentionToken(null);
+    setMentionResult(null);
+    setFileDismissed(false);
+    // Caret lands after the inserted mention.
+    requestAnimationFrame(() => {
+      const position = start + item.value.length + suffix.length;
+      input?.focus();
+      input?.setSelectionRange(position, position);
+    });
+  };
 
   const complete = (command: WebCommand): void => {
     setText(`/${command.name} `);
@@ -177,11 +255,25 @@ export function Composer({
     const firstToken = text.startsWith("/") ? text.slice(1).split(" ")[0] : null;
     if (firstToken !== null && firstToken !== "") {
       const rest = text.slice(1 + firstToken.length).trim();
-      const webPorted = [builtinCommands ?? [], sessionCommands ?? []]
-        .flat()
-        .find((command) => command.name === firstToken && command.webPorted === true);
+      const webPorted = sessionCommands?.find(
+        (command) => command.name === firstToken && command.webPorted === true,
+      );
       if (webPorted !== undefined) {
         if (onWebCommand !== undefined) onWebCommand(firstToken, rest);
+        setText("");
+        setImages([]);
+        setPaletteDismissed(false);
+        setNotice(null);
+        return;
+      }
+      // Web core commands (web:true from the session's command list) ride
+      // the web_command channel — the registry that runs in the pi process —
+      // instead of prompt text.
+      const webChannel = sessionCommands?.find(
+        (command) => command.name === firstToken && command.web === true,
+      );
+      if (webChannel !== undefined) {
+        if (onWebCommandDispatch !== undefined) onWebCommandDispatch(firstToken, rest);
         setText("");
         setImages([]);
         setPaletteDismissed(false);
@@ -205,6 +297,9 @@ export function Composer({
     setText("");
     setImages([]);
     setPaletteDismissed(false);
+    setMentionToken(null);
+    setMentionResult(null);
+    setFileDismissed(false);
     setNotice(null);
   };
 
@@ -236,6 +331,30 @@ export function Composer({
         // once the text is the full command.
         event.preventDefault();
         complete(highlighted);
+        return;
+      }
+    }
+    if (filePaletteOpen) {
+      // The @ mention picker mirrors the command palette keys.
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setFileIndex((index) => (index + 1) % fileResults.length);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setFileIndex((index) => (index - 1 + fileResults.length) % fileResults.length);
+        return;
+      }
+      if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
+        event.preventDefault();
+        const entry = fileResults[fileIndex];
+        if (entry !== undefined) insertCompletion(entry);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setFileDismissed(true);
         return;
       }
     }
@@ -291,7 +410,27 @@ export function Composer({
                 <span className="app-command-description">{command.description}</span>
               ) : null}
               {command.tuiOnly === true ? <span className="app-command-tui">TUI</span> : null}
-              {command.webPorted === true ? <span className="app-command-web">web</span> : null}
+              {command.webPorted === true || command.web === true ? <span className="app-command-web">web</span> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {filePaletteOpen ? (
+        <div className="app-command-palette" role="listbox" aria-label="Files">
+          {fileResults.map((entry, index) => (
+            <button
+              key={entry.value}
+              type="button"
+              role="option"
+              aria-selected={index === fileIndex}
+              className={`app-command-item${index === fileIndex ? " is-highlighted" : ""}`}
+              onMouseEnter={() => setFileIndex(index)}
+              onClick={() => insertCompletion(entry)}
+            >
+              <code className="app-command-name">{entry.label}</code>
+              {entry.description !== undefined ? (
+                <span className="app-command-tui">{entry.description}</span>
+              ) : null}
             </button>
           ))}
         </div>
@@ -324,6 +463,12 @@ export function Composer({
           setText(event.target.value);
           setPaletteDismissed(false);
           setNotice(null);
+          // Track the @token being typed (picker gate) and the caret column
+          // (pi's provider completes at (line, caret)).
+          const caret = event.target.selectionStart ?? event.target.value.length;
+          setCaretCol(caret);
+          setMentionToken(activeMentionToken(event.target.value.slice(0, caret)));
+          setFileDismissed(false);
         }}
         onPaste={handlePaste}
         onKeyDown={handleKeyDown}

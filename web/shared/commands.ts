@@ -1,46 +1,73 @@
-// Slash commands for the web composer. Extension, prompt-template and skill
-// commands come from the live session (the bridge posts
-// pi.getCommands(); in-process sessions read the extension runner). The
-// built-ins below mirror pi's BUILTIN_SLASH_COMMANDS. `webPorted` commands
-// run as native web dialogs/actions in the composer (the TUI dialog port:
-// /model opens the web picker); `tuiOnly` ones genuinely need the terminal
-// and the composer says so instead of feeding them to the model.
+// Slash commands for the web composer.
+//
+// pi owns the list: the command NAMES and DESCRIPTIONS come from pi's
+// BUILTIN_SLASH_COMMANDS at runtime (never copied here) — the server merges
+// them with the live session commands (the extension posts
+// pi.getCommands() + the web core registry). This module owns only the
+// web's PRESENTATION policy for those commands:
+//
+//   webPorted — the web answers it natively (a web dialog or action),
+//               the TUI equivalent being a terminal dialog.
+//   web       — dispatches through the web_command channel (the web core
+//               registry inside pi), never as prompt text.
+//   tuiOnly   — genuinely needs the terminal; the composer says so
+//               instead of feeding it to the model.
+//
+// Anything unflagged dispatches as prompt text, like any pi session input.
 
 export interface WebCommand {
   name: string;
   description?: string;
   /** Handled by the web client: opens a dialog or runs a web-side action. */
   webPorted?: boolean;
+  /** Dispatches through the web core channel (web_command), not prompt text. */
+  web?: boolean;
   /** TUI-only: rendered in the interactive transcript, not dispatchable from the web. */
   tuiOnly?: boolean;
 }
 
-export const BUILTIN_COMMANDS: readonly WebCommand[] = [
-  { name: "settings", description: "Open settings menu", tuiOnly: true },
-  { name: "model", description: "Select model — opens the web picker", webPorted: true },
-  { name: "tree", description: "Navigate session tree (switch branches)", tuiOnly: true },
-  { name: "thinking", description: "Set thinking level — opens the web picker", webPorted: true },
-  { name: "scoped-models", description: "Enable/disable models for Ctrl+P cycling", tuiOnly: true },
-  { name: "export", description: "Export the transcript (markdown download)", webPorted: true },
-  { name: "import", description: "Import a JSONL session, preserving its ID and cwd", tuiOnly: true },
-  { name: "share", description: "Share session via a Radius artifact or a GitHub gist", tuiOnly: true },
-  { name: "bug", description: "Report a bug to the Pi developers", tuiOnly: true },
-  { name: "copy", description: "Copy last agent message to clipboard", webPorted: true },
-  { name: "name", description: "Set session display name" },
-  { name: "session", description: "Show session info and stats — web dialog", webPorted: true },
-  { name: "changelog", description: "Show changelog entries — web dialog", webPorted: true },
-  { name: "hotkeys", description: "Show all keyboard shortcuts", tuiOnly: true },
-  { name: "fork", description: "Create a new fork from a previous user message", tuiOnly: true },
-  { name: "clone", description: "Duplicate the current session at the current position" },
-  { name: "trust", description: "Save project trust decision for future sessions", tuiOnly: true },
-  { name: "login", description: "Configure provider authentication", tuiOnly: true },
-  { name: "logout", description: "Remove provider authentication", tuiOnly: true },
-  { name: "new", description: "Start a new session" },
-  { name: "compact", description: "Manually compact the session context" },
-  { name: "resume", description: "Resume another session — opens the session list", webPorted: true },
-  { name: "reload", description: "Reload keybindings, extensions, skills, prompts, themes, and context files" },
-  { name: "quit", description: "Quit pi", tuiOnly: true },
-];
+/** The web's presentation flags per built-in name — policy, not data. */
+export const COMMAND_META: Readonly<Record<string, Omit<WebCommand, "name" | "description">>> = {
+  settings: { tuiOnly: true },
+  model: { webPorted: true },
+  tree: { tuiOnly: true },
+  thinking: { webPorted: true },
+  "scoped-models": { tuiOnly: true },
+  export: { webPorted: true },
+  import: { tuiOnly: true },
+  share: { tuiOnly: true },
+  bug: { tuiOnly: true },
+  copy: { webPorted: true },
+  name: { web: true },
+  session: { webPorted: true },
+  changelog: { webPorted: true },
+  hotkeys: { tuiOnly: true },
+  fork: { tuiOnly: true },
+  clone: { web: true },
+  trust: { tuiOnly: true },
+  login: { tuiOnly: true },
+  logout: { tuiOnly: true },
+  new: { web: true },
+  compact: { web: true },
+  resume: { webPorted: true },
+  reload: { web: true },
+  quit: { tuiOnly: true },
+};
+
+/**
+ * Annotate pi's runtime built-in list (BUILTIN_SLASH_COMMANDS) with the
+ * web's presentation flags. Unknown future commands pass through unflagged
+ * — the web stays compatible with whatever pi ships.
+ */
+export function annotateBuiltinCommands(
+  builtins: ReadonlyArray<{ name: string; description?: string; argumentHint?: string }>,
+): WebCommand[] {
+  return builtins.map((command) => ({
+    name: command.name,
+    ...(command.description !== undefined ? { description: command.description } : {}),
+    ...COMMAND_META[command.name],
+  }));
+}
 
 /** Commands whose name starts with the given prefix, best matches first. */
 export function filterCommands(commands: readonly WebCommand[], prefix: string): WebCommand[] {

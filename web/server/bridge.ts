@@ -46,7 +46,8 @@ export type BridgeCommand =
   | { type: "abort" }
   | { type: "action"; requestId: string; pluginId: string; actionId: string }
   | { type: "set_model"; provider: string; id: string }
-  | { type: "set_thinking"; level: string };
+  | { type: "set_thinking"; level: string }
+  | { type: "web_command"; name: string; args?: string };
 
 /** Model list for the web picker, posted by the extension (web_models). */
 export interface BridgeModels {
@@ -102,6 +103,7 @@ export function attachBridge(options: {
   // The commands the extension posts at attach (web_commands events);
   // bridgeSessionCore serves them to /api/agent/:id/commands.
   let commands: Array<{ name: string; description?: string }> = [];
+  let commandsChanged = false;
   const setCommands = (next: Array<{ name: string; description?: string }>): void => {
     commands = next;
   };
@@ -177,7 +179,12 @@ export function attachBridge(options: {
               && typeof (command as { name?: unknown }).name === "string"
               && (command as { name?: unknown }).name !== "",
           );
-          if (valid.length > 0) setCommands(valid);
+          if (valid.length > 0) {
+            setCommands(valid);
+            // The client refetches /commands so the palette and the web
+            // dispatch channel see the new list immediately.
+            commandsChanged = true;
+          }
         }
         if (e.type === "web_models") {
           const payload = event as { current?: unknown; models?: unknown };
@@ -198,6 +205,16 @@ export function attachBridge(options: {
         }
       }
       handleBridgeEvent(metadata.sessionId, event);
+      if (commandsChanged) {
+        commandsChanged = false;
+        for (const listener of Array.from(listeners)) {
+          try {
+            listener({ type: "commands_changed" });
+          } catch {
+            // A failing listener cannot break the bridge.
+          }
+        }
+      }
       // Snapshot: a listener may unsubscribe itself (browser stream cleanup)
       // while the fan-out runs, which would skip entries mid-iteration.
       for (const listener of Array.from(listeners)) {
@@ -363,6 +380,10 @@ export function bridgeSessionCore(connection: BridgeConnection): SessionCore {
     setThinkingLevel: async (level: string) => {
       connection.sendCommand({ type: "set_thinking", level });
       return true;
+    },
+    webCommand: async (name: string, args: string) => {
+      // The extension's web-core registry handles it in the pi process.
+      connection.sendCommand({ type: "web_command", name, ...(args !== "" ? { args } : {}) });
     },
   };
 }

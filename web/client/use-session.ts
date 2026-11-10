@@ -13,7 +13,7 @@ import {
   type StreamingState,
   type StreamAction,
 } from "./streaming.ts";
-import { BUILTIN_COMMANDS, type WebCommand } from "../shared/commands.ts";
+import type { WebCommand } from "../shared/commands.ts";
 import type { WebPluginDescriptor, WebView, WorkingModelLike } from "./plugins/contract.ts";
 
 export interface WebNotificationLike {
@@ -650,6 +650,18 @@ export function usePiSession() {
           }
           break;
         }
+        case "commands_changed":
+          // The session posted a new command list (web_commands): refetch so
+          // the palette and the dispatch channel stay current.
+          if (selectedId !== null) {
+            void fetch(`/api/agent/${encodeURIComponent(selectedId)}/commands`)
+              .then((res) => (res.ok ? (res.json() as Promise<{ commands?: WebCommand[] }>) : { commands: [] }))
+              .then((body) => {
+                if (!closed) setSessionCommands(body.commands ?? []);
+              })
+              .catch(() => undefined);
+          }
+          break;
         case "plugin_state": {
           // Plugin views, the working indicator model and the running flag,
           // all scoped to this stream's session.
@@ -710,7 +722,10 @@ export function usePiSession() {
     }
   }, [refreshSessions]);
 
-  const sendPrompt = useCallback(async (text: string, images: Array<{ data: string; mimeType: string }> = []) => {
+  const sendPrompt = useCallback(async (
+    text: string,
+    images: Array<{ data: string; mimeType: string }> = [],
+  ) => {
     const id = selectedId;
     if (id === null || (text.trim() === "" && images.length === 0)) return;
     setUserMessages((prev) => [
@@ -738,6 +753,32 @@ export function usePiSession() {
       }
     } catch {
       setSendError("prompt could not be delivered — is the server reachable?");
+    }
+  }, [selectedId]);
+
+  // Dispatch a web core command: the session's extension registry runs it in
+  // the pi process (bridged sessions) or the in-process runner handles the
+  // re-routed prompt. The composer uses this for commands marked web:true.
+  const sendWebCommand = useCallback(async (name: string, args: string) => {
+    const id = selectedId;
+    if (id === null) return;
+    setSendError(null);
+    try {
+      const res = await fetch(`/api/agent/${encodeURIComponent(id)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "web_command",
+          name,
+          ...(args !== "" ? { args } : {}),
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setSendError(body.error ?? `/${name} failed (HTTP ${res.status})`);
+      }
+    } catch {
+      setSendError(`/${name} could not be delivered — is the server reachable?`);
     }
   }, [selectedId]);
 
@@ -847,9 +888,9 @@ export function usePiSession() {
     toolResults,
     sendError,
     sessionCommands,
-    builtinCommands: BUILTIN_COMMANDS,
     newSession,
     sendPrompt,
+    sendWebCommand,
     abort,
     refreshSessions,
   };

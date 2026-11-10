@@ -4,6 +4,8 @@ import { startWebServer } from "./main.ts";
 import { getPluginDescriptor } from "./plugin-host.ts";
 import { clearWebPluginStateForTests } from "./plugin-host.ts";
 import { clearSessionsForTests } from "./sessions.ts";
+import { piBuiltinCommands } from "../../lib/web-pi-apis/index.ts";
+import { annotateBuiltinCommands } from "../shared/commands.ts";
 
 test.afterEach(() => {
   clearSessionsForTests();
@@ -106,19 +108,24 @@ test("web_commands events surface through /api/agent/:id/commands", async () => 
     const body = (await res.json()) as {
       commands?: Array<{ name: string; description?: string }>;
     };
-    assert.deepEqual(body.commands, [
+    // pi's runtime builtins lead the list (annotated with the web's
+    // presentation flags), then the posted live commands.
+    const expected = [
+      ...annotateBuiltinCommands(await piBuiltinCommands()),
       { name: "web", description: "Manage pi-web UI server" },
       { name: "todo" },
-    ]);
+    ];
+    assert.deepEqual(body.commands, expected);
 
-    // A later posting replaces the list (extension reload).
+    // A later posting replaces the live list (extension reload); the
+    // builtins stay — they come from pi, not the posting.
     await postEvents(baseUrl, "bridge-commands", [
       { type: "web_commands", commands: [{ name: "modes" }] },
     ]);
     const updated = (await (await fetch(`${baseUrl}/api/agent/bridge-commands/commands`)).json()) as {
       commands?: Array<{ name: string }>;
     };
-    assert.deepEqual(updated.commands, [{ name: "modes" }]);
+    assert.deepEqual(updated.commands, [...annotateBuiltinCommands(await piBuiltinCommands()), { name: "modes" }]);
   });
 });
 

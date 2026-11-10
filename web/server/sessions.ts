@@ -38,6 +38,8 @@ export interface SessionCore {
   setModel?(provider: string, id: string): Promise<boolean>;
   /** Apply a thinking level; false when rejected. */
   setThinkingLevel?(level: string): Promise<boolean>;
+  /** Dispatch a web core command (name + args) to the session owner. */
+  webCommand?(name: string, args: string): Promise<void>;
 }
 
 export interface SessionHandle {
@@ -547,7 +549,8 @@ export interface PromptImage {
 export type SessionCommand =
   | { type: "prompt"; message: string; images?: PromptImage[] }
   | { type: "abort" }
-  | { type: "get_state" };
+  | { type: "get_state" }
+  | { type: "web_command"; name: string; args?: string };
 
 export type CommandResult =
   | { status: "ok"; data: unknown }
@@ -598,6 +601,20 @@ export function parseSessionCommand(body: unknown): SessionCommand | { error: st
   }
   if (command.type === "abort") return { type: "abort" };
   if (command.type === "get_state") return { type: "get_state" };
+  if (command.type === "web_command") {
+    if (typeof command.name !== "string" || command.name.trim() === "") {
+      return { error: "web_command requires a name" };
+    }
+    const name = command.name.trim();
+    if (!/^[a-z0-9][a-z0-9_-]*$/i.test(name)) {
+      return { error: "web_command name must be a simple identifier" };
+    }
+    return {
+      type: "web_command",
+      name,
+      ...(typeof command.args === "string" ? { args: command.args.slice(0, 4_000) } : {}),
+    };
+  }
   return { error: `unknown command type: ${String(command.type)}` };
 }
 
@@ -616,10 +633,13 @@ export function sendCommand(id: string, command: SessionCommand): Promise<Comman
           error: "Cannot send a prompt while a shell command is running",
         });
       }
+      // The prompt rides as typed — `@file` mentions included. The model
+      // reads them with pi's read tool, which natively strips the `@`
+      // prefix (resolveReadPath); the server never inlines file content.
       return core
         .prompt(command.message, command.images)
-        .then(() => ({ status: "ok", data: { accepted: true } }) as const)
-        .catch((error: unknown) => ({
+        .then((): CommandResult => ({ status: "ok", data: { accepted: true } }))
+        .catch((error: unknown): CommandResult => ({
           status: "error",
           error: error instanceof Error ? error.message : String(error),
         }));
@@ -635,6 +655,27 @@ export function sendCommand(id: string, command: SessionCommand): Promise<Comman
     }
     case "get_state": {
       return Promise.resolve({ status: "ok", data: core.getState() });
+    }
+    case "web_command": {
+      // The web core's command channel. Bridged sessions forward to the
+      // extension registry; in-process sessions re-route through the prompt
+      // path, where the mode-gated pi commands dispatch them.
+      if (core.webCommand !== undefined) {
+        return core
+          .webCommand(command.name, command.args ?? "")
+          .then(() => ({ status: "ok", data: { accepted: true } }) as const)
+          .catch((error: unknown) => ({
+            status: "error",
+            error: error instanceof Error ? error.message : String(error),
+          }));
+      }
+      return core
+        .prompt(`/${command.name}${command.args !== undefined && command.args !== "" ? ` ${command.args}` : ""}`)
+        .then(() => ({ status: "ok", data: { accepted: true } }) as const)
+        .catch((error: unknown) => ({
+          status: "error",
+          error: error instanceof Error ? error.message : String(error),
+        }));
     }
   }
 }

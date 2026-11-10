@@ -566,6 +566,76 @@ async function run() {
     });
     await extDialog.waitFor({ state: "hidden", timeout: 10_000 });
 
+    step("8d: @ mention — pi's provider drives the picker, the mention rides the prompt as text");
+    // 8d. The @file built-in, pi-native: the picker's suggestions come from
+    //     pi's own editor autocomplete (pi_api autocomplete.suggestions —
+    //     fd walk + fuzzy ranking on the session cwd), the picked path
+    //     inserts as @path, and the sent prompt passes through as typed —
+    //     pi's read tool resolves the mention model-side. No inlining.
+    const { writeFile: e2eWriteFile, mkdir: e2eMkdir } = await import("node:fs/promises");
+    await e2eMkdir("/tmp/bridge-proj", { recursive: true });
+    await e2eWriteFile("/tmp/bridge-proj/secret.txt", "e2e-mention-payload", "utf8");
+    await composerInput.fill("summarize @sec");
+    await page.locator(".app-command-palette[aria-label='Files']").waitFor({
+      state: "visible",
+      timeout: 10_000,
+    });
+    const mentionRow = page.locator(".app-command-item", { hasText: "secret.txt" }).first();
+    await mentionRow.waitFor({ state: "visible", timeout: 5_000 });
+    await mentionRow.click();
+    // Insertion replaces the partial token and leaves the mention in text.
+    await page.waitForFunction(
+      () => document.querySelector(".app-composer-input")?.value.includes("@secret.txt"),
+      undefined,
+      { timeout: 5_000 },
+    );
+    await composerInput.press("Enter");
+    const mentionPrompt = await waitForBridgeCommand(
+      bridgeCommands,
+      (command) => command.type === "prompt" && command.message.includes("secret.txt"),
+    );
+    assert.equal(
+      mentionPrompt.message,
+      "summarize @secret.txt ",
+      "the mention rides the prompt as text — the model reads it with pi's read tool",
+    );
+
+    step("8e: web core commands dispatch through the web channel");
+    // 8e. The web core registry: the bridge posts the commands with web:true,
+    //     the composer dispatches /compact through the web_command channel
+    //     (not prompt text), and the pi process runs the registry handler.
+    await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          {
+            type: "web_commands",
+            commands: [{ name: "compact", description: "Compact the session context (web core)", web: true }],
+          },
+        ],
+      }),
+    });
+    // The command list refreshes via /commands on the next fetch; the
+    // composer reads it when the palette opens.
+    await composerInput.fill("/compact");
+    await page.locator(".app-command-item", { hasText: "compact" }).first().waitFor({
+      state: "visible",
+      timeout: 5_000,
+    });
+    await composerInput.press("Enter");
+    const webCommand = await waitForBridgeCommand(
+      bridgeCommands,
+      (command) => command.type === "web_command",
+    );
+    assert.deepEqual(
+      webCommand,
+      { type: "web_command", name: "compact" },
+      "the web core command rides its own channel to the pi process",
+    );
+    // The composer cleared: the command did not go out as prompt text.
+    assert.equal(await composerInput.inputValue(), "");
+
     step("8: prompting from browser");
     // Prompt in the browser → the fake TUI receives it as a bridge command.
     await composerInput.fill("hello from the web");
@@ -576,7 +646,7 @@ async function run() {
     // THIS prompt among them.
     const promptCommand = await waitForBridgeCommand(
       bridgeCommands,
-      (command) => command.type === "prompt",
+      (command) => command.type === "prompt" && command.message.startsWith("hello from the web"),
     );
     assert.deepEqual(
       promptCommand,

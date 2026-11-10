@@ -84,6 +84,58 @@ test("parseSessionCommand accepts image-only prompts", () => {
   });
 });
 
+test("parseSessionCommand accepts and bounds web_command and mentions", () => {
+  assert.deepEqual(parseSessionCommand({ type: "web_command", name: "compact" }), {
+    type: "web_command",
+    name: "compact",
+  });
+  assert.deepEqual(parseSessionCommand({ type: "web_command", name: "name", args: "new name" }), {
+    type: "web_command",
+    name: "name",
+    args: "new name",
+  });
+  assert.ok("error" in parseSessionCommand({ type: "web_command" }));
+  assert.ok("error" in parseSessionCommand({ type: "web_command", name: "with space" }));
+  assert.ok("error" in parseSessionCommand({ type: "web_command", name: "../escape" }));
+
+});
+
+test("sendCommand routes web_command through the web channel, falling back to prompt text", async () => {
+  // A bridged core: the channel forwards as-is.
+  const webCommands: Array<{ name: string; args: string }> = [];
+  registerSession(
+    fakeCore({ webCommand: async (name, args) => { webCommands.push({ name, args }); } }),
+    "/tmp/project",
+  );
+  const result = await sendCommand("fake-session", { type: "web_command", name: "name", args: "renamed" });
+  assert.equal(result.status, "ok");
+  assert.deepEqual(webCommands, [{ name: "name", args: "renamed" }]);
+
+  // An in-process core (no webCommand): re-route as prompt text for the
+  // expandPromptTemplates path.
+  const prompts: string[] = [];
+  registerSession(
+    fakeCore({ sessionId: "inproc", prompt: async (text) => { prompts.push(text); } }),
+    "/tmp/project",
+  );
+  await sendCommand("inproc", { type: "web_command", name: "compact", args: "focus on code" });
+  assert.deepEqual(prompts, ["/compact focus on code"]);
+});
+
+test("sendCommand passes @mentions through as typed — the model reads them with pi's read tool", async () => {
+  const prompts: string[] = [];
+  registerSession(
+    fakeCore({ prompt: async (text) => { prompts.push(text); } }),
+    "/tmp/project",
+  );
+  const result = await sendCommand("fake-session", {
+    type: "prompt",
+    message: "what is in @answer.txt",
+  });
+  assert.deepEqual(result, { status: "ok", data: { accepted: true } });
+  assert.deepEqual(prompts, ["what is in @answer.txt"]);
+});
+
 test("sendCommand routes prompt to the core and reports acceptance", async () => {
   const prompts: string[] = [];
   registerSession(

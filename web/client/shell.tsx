@@ -386,15 +386,18 @@ export function AppShell() {
               busy={session.streaming.isStreaming || session.uiRunning}
               error={session.sendError}
               sessionCommands={session.sessionCommands}
-              builtinCommands={session.builtinCommands}
               model={session.sessionState?.model}
               thinkingLevel={session.sessionState?.thinkingLevel}
               onOpenModelPicker={() => setModelPickerOpen(true)}
               onOpenThinkingPicker={() => setThinkingPickerOpen(true)}
               onWebCommand={handleWebCommand}
+              onWebCommandDispatch={(name, args) => {
+                void session.sendWebCommand(name, args);
+              }}
               onSend={(text, images) => {
                 void session.sendPrompt(text, images);
               }}
+              sessionId={session.selectedId}
               onAbort={() => {
                 void session.abort();
               }}
