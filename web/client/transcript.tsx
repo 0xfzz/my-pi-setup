@@ -163,7 +163,11 @@ function BashBlockView({ block }: { block: BashBlock }) {
         {running ? (
           <span className="msg-toolcall-running">running…</span>
         ) : (
-          <span className={`msg-bash-exit${exit !== undefined && exit !== 0 ? " is-error" : ""}`}>
+          <span
+            className={`msg-bash-exit${
+              exit === undefined ? "" : exit !== 0 ? " is-error" : " is-ok"
+            }`}
+          >
             {block.cancelled === true ? "cancelled" : `exit ${exit ?? "?"}`}
           </span>
         )}
@@ -191,6 +195,9 @@ function ToolCallRow({
   // collapsible for long output.
   const [open, setOpen] = useState(true);
   const state = status?.state ?? (result ? (result.isError ? "error" : "done") : "done");
+  // The tool ran to completion with a clean result: green — the mirror of
+  // the red error state, so success and failure read at a glance.
+  const succeeded = state === "done" && result !== undefined && !result.isError;
   // The input shown: the block's raw input, or the parsed args captured at
   // execution start (pi's live message_end carries arguments, and history
   // carries rawInput — either can be missing on the other path).
@@ -216,7 +223,9 @@ function ToolCallRow({
 
   return (
     <div
-      className={`msg-toolcall msg-toolcall-${state}${open ? " is-open" : ""}`}
+      className={`msg-toolcall msg-toolcall-${state}${open ? " is-open" : ""}${
+        succeeded ? " msg-toolcall-success" : ""
+      }`}
       data-toolcall-id={block.toolCallId}
     >
       {hasBody ? (
@@ -251,7 +260,11 @@ function ToolCallRow({
           {result?.diff !== undefined ? <DiffView diff={result.diff} /> : null}
           {result ? (
             <>
-              <pre className={`msg-toolcall-result${result.isError ? " is-error" : ""}`}>
+              <pre
+                className={`msg-toolcall-result${
+                  result.isError ? " is-error" : succeeded ? " is-success" : ""
+                }`}
+              >
                 {result.text.slice(0, RESULT_PREVIEW_LIMIT)}
               </pre>
               {result.images?.map((image, index) => (

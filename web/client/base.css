@@ -14,6 +14,7 @@
   --border: #24292e;
   --warning: #d9a03d;
   --scrim: rgba(0, 0, 0, 0.55);
+  --bg-code: #0c0e10;
 }
 
 /* The persistent light theme: same slots, paper palette. Chosen via the
@@ -33,6 +34,7 @@
   --border: #e0e4e8;
   --warning: #a06a18;
   --scrim: rgba(24, 28, 33, 0.35);
+  --bg-code: #eef1f4;
 }
 
 * {
@@ -467,6 +469,12 @@ body {
   background: var(--error);
 }
 
+/* A shell command that ran to completion: green — the mirror of the red
+   error dot, so the two outcomes read at a glance. */
+.msg-toolcall-success .msg-toolcall-state {
+  background: var(--ok);
+}
+
 .msg-toolcall-running {
   color: var(--fg);
 }
@@ -520,7 +528,7 @@ body {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-size: 11px;
   color: var(--fg);
-  background: #0c0e10;
+  background: var(--bg-code);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 10px;
@@ -541,7 +549,7 @@ body {
   overflow-x: auto;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-size: 11px;
-  background: #0c0e10;
+  background: var(--bg-code);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 10px;
@@ -585,7 +593,7 @@ body {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-size: 11px;
   color: var(--fg-faint);
-  background: #0c0e10;
+  background: var(--bg-code);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 10px;
@@ -599,6 +607,10 @@ body {
 
 .msg-toolcall-result.is-error {
   color: var(--error);
+}
+
+.msg-toolcall-result.is-success {
+  color: var(--ok);
 }
 
 .msg-toolcall-result.is-partial {
@@ -658,6 +670,10 @@ body {
   color: var(--error);
 }
 
+.msg-bash-exit.is-ok {
+  color: var(--ok);
+}
+
 .msg-bash-output {
   margin: 0 10px 8px;
   white-space: pre-wrap;
@@ -665,7 +681,7 @@ body {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-size: 11px;
   color: var(--fg-faint);
-  background: #0c0e10;
+  background: var(--bg-code);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 10px;
@@ -1356,7 +1372,7 @@ body {
 .markdown-body pre {
   margin: 8px 0;
   padding: 10px 12px;
-  background: #0c0e10;
+  background: var(--bg-code);
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow-x: auto;
