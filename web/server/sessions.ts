@@ -47,6 +47,17 @@ export interface SessionCore {
    * (re)connect renders the partial reply instead of dropping deltas.
    */
   getStreamSnapshot?(): StreamSnapshot;
+  /**
+   * Release this core when another owner takes the session over (a TUI
+   * bridge attaching over an in-process resume): unsubscribe and drop the
+   * AgentSession so two live copies never share one file.
+   */
+  dispose?(): void;
+  /**
+   * The owning bridge connection, when this core is a bridge core — the
+   * drift heal's identity check (see bridge.ts). Internal; not a route.
+   */
+  bridgeOf?: unknown;
 }
 
 export interface SessionHandle {
@@ -95,6 +106,40 @@ export interface SessionHistory {
 
 const liveSessions = new Map<string, SessionHandle>();
 
+// ── The split-brain guard ──────────────────────────────────────────────────
+// A TUI bridge OWNS its session. While the bridge is attached — or within
+// the self-heal grace window after it drops — the web must NEVER resume
+// that session in-process: two AgentSessions on one file split the
+// frontends (the web's prompts run on the server's copy; the TUI's turns
+// never reach the web). `ensureSession` waits out the window instead; if
+// the TUI is truly gone, the grace expires and the resume becomes legal.
+
+/** How long a detached bridge's ownership holds while it self-heals back. */
+const BRIDGE_GRACE_MS = 10_000;
+/** id -> ownership expires at (Infinity while attached). */
+const bridgeOwnership = new Map<string, number>();
+
+export function markBridgeAttached(id: string): void {
+  bridgeOwnership.set(id, Number.POSITIVE_INFINITY);
+}
+
+export function markBridgeDetached(id: string): void {
+  // Only mark a grace when the bridge actually owned the session; a
+  // re-attach over a fresh id starts clean.
+  bridgeOwnership.set(id, Date.now() + BRIDGE_GRACE_MS);
+}
+
+export function isBridgeOwned(id: string): boolean {
+  const until = bridgeOwnership.get(id);
+  if (until === undefined) return false;
+  if (until === Number.POSITIVE_INFINITY) return true;
+  if (until <= Date.now()) {
+    bridgeOwnership.delete(id);
+    return false;
+  }
+  return true;
+}
+
 function toCore(inner: AgentSession): SessionCore {
   const getCommands = (): Array<{ name: string; description?: string }> =>
     inner.extensionRunner
@@ -120,6 +165,11 @@ function toCore(inner: AgentSession): SessionCore {
     sessionId: inner.sessionId,
     subscribe: (listener: (event: unknown) => void) => inner.subscribe(listener),
     getStreamSnapshot: (): StreamSnapshot => streamTracker.snapshot(),
+    dispose: (): void => {
+      // Releasing the tap plus the AgentSession itself: a displaced
+      // in-process copy must not stay live on the session file.
+      inner.dispose();
+    },
     // Prompts pass through AgentSession.prompt with its default
     // expandPromptTemplates: "/command …" dispatches extension commands;
     // steer queues the message when a run is already streaming, like the TUI.
@@ -184,6 +234,9 @@ function register(core: SessionCore, cwd: string, sessionFile: string, inner?: u
     lastActivityAt: Date.now(),
   });
   if (replaced !== undefined && replaced.core !== core) {
+    // The displaced owner (an in-process resume a bridge just took over)
+    // is released: no second AgentSession stays live on the file.
+    replaced.core.dispose?.();
     // Someone else now owns this session (a bridge over an in-process
     // resume). Wake every stream watching the old owner so they reconnect
     // to the live one. Array.from snapshots: a listener's cleanup can
@@ -259,6 +312,7 @@ export function onSessionReplaced(sessionId: string, listener: () => void): () =
 
 export function clearSessionsForTests(): void {
   liveSessions.clear();
+  bridgeOwnership.clear();
 }
 
 export function getSession(id: string): SessionHandle | undefined {
@@ -700,6 +754,19 @@ export async function ensureSession(
 ): Promise<SessionCore | null> {
   const existing = liveSessions.get(id);
   if (existing !== undefined) return existing.core;
+  if (isBridgeOwned(id)) {
+    // The session's TUI owner is re-attaching (server restart, bridge
+    // drop). Wait it out — every request in the window resolves to the
+    // bridge core the moment it lands, and no in-process copy ever splits
+    // the session. If the grace expires, the TUI is truly gone and the
+    // in-process resume below becomes the correct fallback.
+    const deadline = Date.now() + BRIDGE_GRACE_MS;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const landed = liveSessions.get(id);
+      if (landed !== undefined) return landed.core;
+    }
+  }
   const file = await resolveSessionFile(id, options?.agentDir);
   if (file === null) return null;
   return resumeSession({ sessionFile: file, ...options });

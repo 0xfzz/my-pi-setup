@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { startWebServer } from "./main.ts";
+import { getBridge, healBridgeRegistration } from "./bridge.ts";
 import { getPluginDescriptor } from "./plugin-host.ts";
 import { clearWebPluginStateForTests } from "./plugin-host.ts";
-import { clearSessionsForTests } from "./sessions.ts";
+import { clearSessionsForTests, getSession, registerSession } from "./sessions.ts";
 import { piBuiltinCommands } from "../../lib/web-pi-apis/index.ts";
 import { annotateBuiltinCommands } from "../shared/commands.ts";
 
@@ -304,6 +305,77 @@ test("a browser stream attaching mid-turn replays the partial the TUI posted", a
     const replayAt = replayed.indexOf("the in-flight reply");
     assert.ok(connectedAt !== -1 && replayAt > connectedAt, "the replay follows connected");
 
+    tui.detach();
+  });
+});
+
+test("a detached bridge's grace window blocks the in-process resume (no split-brain)", async () => {
+  await withServer(async (baseUrl) => {
+    const tui = await attachFakeTui(baseUrl, "bridge-grace", "/tmp/bridge-grace");
+    // The bridge detaches (a server drop / stream break); the extension's
+    // self-heal is about to re-attach.
+    tui.detach();
+
+    // A request racing the re-attach must NOT resume the session
+    // in-process — it waits out the grace window and resolves to the
+    // re-attached bridge instead.
+    const statePromise = fetch(`${baseUrl}/api/agent/bridge-grace`).then((res) => res.json());
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    // While the request waits, the bridge re-attaches.
+    const reattached = await attachFakeTui(baseUrl, "bridge-grace", "/tmp/bridge-grace");
+    const body = (await statePromise) as { state?: { isStreaming?: boolean } };
+    assert.ok(body.state !== undefined, "the request resolved to the re-attached bridge, not an error");
+
+    reattached.detach();
+  });
+});
+
+test("the drift heal takes the session back from a slipped-in in-process copy", async () => {
+  await withServer(async (baseUrl) => {
+    const tui = await attachFakeTui(baseUrl, "bridge-heal", "/tmp/bridge-heal");
+    // Simulate the corruption the heal exists for: the registry entry
+    // flipped to an in-process-style core while the bridge stayed attached.
+    let disposed = false;
+    registerSession(
+      {
+        sessionId: "bridge-heal",
+        subscribe: () => () => {},
+        prompt: async () => {},
+        abort: async () => {},
+        isStreaming: () => false,
+        getState: () => ({
+          sessionId: "bridge-heal",
+          sessionFile: "",
+          isStreaming: false,
+          isBashRunning: false,
+          isCompacting: false,
+          model: undefined,
+          contextUsage: null,
+          thinkingLevel: "off",
+        }),
+        dispose: () => {
+          disposed = true;
+        },
+      },
+      "/tmp/bridge-heal",
+    );
+
+    // The heal: the bridge re-registers and the displaced copy is disposed.
+    healBridgeRegistration(getBridge("bridge-heal")!);
+
+    const core = getSession("bridge-heal")?.core;
+    assert.ok(core !== undefined);
+    // The registry answers through the bridge again: commands posted by the
+    // TUI surface through getCommands.
+    await postEvents(baseUrl, "bridge-heal", [
+      { type: "web_commands", commands: [{ name: "healed", description: "via the bridge" }] },
+    ]);
+    assert.deepEqual(
+      (getSession("bridge-heal")?.core.getCommands?.() ?? []).find((c) => c.name === "healed"),
+      { name: "healed", description: "via the bridge" },
+      "the bridge core owns the session again",
+    );
+    assert.equal(disposed, true, "the displaced in-process copy was disposed");
     tui.detach();
   });
 });

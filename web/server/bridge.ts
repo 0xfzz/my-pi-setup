@@ -19,6 +19,9 @@ import {
   type MinimalEventBus,
 } from "./plugin-host.ts";
 import {
+  getSession,
+  markBridgeAttached,
+  markBridgeDetached,
   registerSession,
   unregisterSession,
   type SessionCore,
@@ -75,6 +78,28 @@ export interface BridgeConnection {
 
 const bridges = new Map<string, BridgeConnection>();
 const BRIDGE_HEARTBEAT_MS = 30_000;
+
+/**
+ * Registration drift heal: a live bridge whose registry entry points
+ * elsewhere (an in-process resume that slipped in during a race) takes its
+ * session back — the displaced copy is disposed and the two frontends
+ * re-converge within one heartbeat instead of staying split-brained.
+ * The heartbeat calls this; tests drive it directly.
+ */
+export function healBridgeRegistration(connection: BridgeConnection): void {
+  if (connection.closed) return;
+  const { metadata } = connection;
+  // Identity by connection, not by object: bridgeSessionCore() builds a
+  // fresh object each call, so comparing instances would re-register (and
+  // churn every stream) on every heartbeat. The registry core carries its
+  // owning connection.
+  const current = getSession(metadata.sessionId)?.core as
+    | { bridgeOf?: BridgeConnection }
+    | undefined;
+  if (current?.bridgeOf !== connection) {
+    registerSession(bridgeSessionCore(connection), metadata.cwd, metadata.sessionFile ?? "");
+  }
+}
 
 export function getBridge(sessionId: string): BridgeConnection | undefined {
   return bridges.get(sessionId);
@@ -255,6 +280,9 @@ export function attachBridge(options: {
     close(): void {
       if (closed) return;
       closed = true;
+      // The TUI owner is going away — hold the split-brain guard for the
+      // self-heal window; after it expires, an in-process resume is legal.
+      markBridgeDetached(metadata.sessionId);
       if (heartbeat !== null) clearInterval(heartbeat);
       if (bridges.get(metadata.sessionId) === connection) {
         bridges.delete(metadata.sessionId);
@@ -289,10 +317,16 @@ export function attachBridge(options: {
   // The bridge IS the live session: every existing route (events SSE, prompt
   // and abort POSTs, get_state, the sessions list) works against this core
   // unchanged, and it replaces any in-process copy resumed earlier.
-  registerSession(bridgeSessionCore(connection), metadata.cwd, metadata.sessionFile ?? "");
+  const connectionCore = bridgeSessionCore(connection);
+  registerSession(connectionCore, metadata.cwd, metadata.sessionFile ?? "");
+  // The bridge OWNS this session from now on: the split-brain guard in
+  // ensureSession holds the web off any in-process resume while this
+  // connection (or its self-heal successor) is the owner.
+  markBridgeAttached(metadata.sessionId);
 
   heartbeat = setInterval(() => {
     if (closed) return;
+    healBridgeRegistration(connection);
     try {
       res.write(":hb\n\n");
     } catch {
@@ -350,6 +384,9 @@ function handleBridgeEvent(sessionId: string, event: unknown): void {
 export function bridgeSessionCore(connection: BridgeConnection): SessionCore {
   const { metadata } = connection;
   return {
+    // The owning connection: the drift heal's identity check (see
+    // healBridgeRegistration).
+    bridgeOf: connection,
     sessionId: metadata.sessionId,
     subscribe: (listener: (event: unknown) => void) => connection.subscribe(listener),
     getStreamSnapshot: () => connection.getStreamSnapshot(),

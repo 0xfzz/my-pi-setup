@@ -757,10 +757,16 @@ async function run() {
     await page
       .locator(`.app-session-item[data-id="${bridgeId}"].is-selected`)
       .waitFor({ timeout: 5_000 });
-    await page
-      .locator(".app-header-status")
-      .filter({ hasText: /connected|claude-bridge|bridge-e2e/ })
-      .waitFor({ timeout: 10_000 });
+    // "connecting" contains "connected" — match the exact terminal states
+    // (the model name once state lands, or the bare "connected").
+    await page.waitForFunction(
+      () => {
+        const status = document.querySelector(".app-header-status")?.textContent ?? "";
+        return status !== "" && status !== "connecting";
+      },
+      undefined,
+      { timeout: 10_000 },
+    );
 
     step("8: command received, streaming reply");
     // The TUI streams its reply; the browser renders it.

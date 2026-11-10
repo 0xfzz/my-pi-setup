@@ -118,8 +118,15 @@ both frontends. `extensions/web.ts` does the bridging:
   refreshes the web palette too.
 
 While a bridge is attached, the web's `/api/agent/:id` routes proxy into it
-and the session is listed as live; when it detaches, the server falls back
-to resuming the session file and browser streams reconnect. A reconnect
+and the session is listed as live. **The bridge owns the session**: while
+it is attached — or within a 10 s self-heal window after it drops —
+`ensureSession` never resumes the session in-process (two AgentSessions on
+one file would split the frontends: the web's prompts would run on the
+server's copy while the TUI's turns never reach the web). A live bridge
+whose registry entry drifted re-registers itself on its heartbeat, and a
+displaced in-process copy is disposed on takeover. When the TUI is truly
+gone the window expires and the server falls back to resuming the session
+file, with browser streams reconnecting. A reconnect
 after a gap emits `bridge_resync`, which makes the client reload its
 history. Without a TUI attached, the web still spawns/resumes sessions
 in-process — but running both frontends on one session is exactly what the
