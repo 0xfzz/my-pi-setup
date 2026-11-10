@@ -34,6 +34,9 @@ import { handlePiApiRequest } from "./pi-api.ts";
 import { piBuiltinCommands } from "../../lib/web-pi-apis/index.ts";
 import { annotateBuiltinCommands } from "../shared/commands.ts";
 import { attachAgentEventStream } from "./event-stream.ts";
+import { createAuthHttp, type AuthHttp, type AuthHttpOptions } from "./auth.ts";
+import { webAuthConfigPath } from "../../lib/web-auth/config.ts";
+import { WebAuthService } from "../../lib/web-auth/service.ts";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -61,6 +64,39 @@ export interface StartWebServerOptions {
   host?: string;
   port?: number;
   clientDist?: string;
+  /** The password/token service. Defaults to the one configured by `/web set-password`. */
+  auth?: WebAuthService;
+  /** Cookie, proxy and origin policy for the auth routes. Defaults come from PI_WEB_* env vars. */
+  authHttp?: AuthHttpOptions;
+}
+
+function envNumber(name: string): number | undefined {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+/**
+ * The password service the server runs with. Unit tests run with protection off unless they
+ * inject their own, so a developer's real `/web set-password` cannot leak into the suite.
+ */
+function defaultAuthService(): WebAuthService {
+  if (process.env.NODE_TEST_CONTEXT !== undefined) return new WebAuthService({ configPath: null });
+  const refreshDays = envNumber("PI_WEB_REFRESH_TTL_DAYS");
+  const accessSeconds = envNumber("PI_WEB_ACCESS_TTL_SECONDS");
+  return new WebAuthService({
+    configPath: webAuthConfigPath(),
+    ...(accessSeconds !== undefined ? { accessTtlSeconds: accessSeconds } : {}),
+    ...(refreshDays !== undefined ? { refreshTtlSeconds: refreshDays * 86_400 } : {}),
+  });
+}
+
+function defaultAuthHttpOptions(): AuthHttpOptions {
+  const trust = process.env.PI_WEB_TRUST_PROXY;
+  return {
+    trustProxy: trust === "1" || trust === "all" ? "all" : trust === "0" || trust === "off" ? "off" : "loopback",
+    allowedOrigins: (process.env.PI_WEB_ALLOWED_ORIGINS ?? "").split(",").map((origin) => origin.trim()).filter(Boolean),
+    forceSecureCookies: process.env.PI_WEB_COOKIE_SECURE === "1",
+  };
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -605,10 +641,27 @@ async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
   root: string,
+  auth: AuthHttp,
 ): Promise<void> {
-  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  // Set before any writeHead, so every response (static, API, errors) carries them.
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Frame-Options", "DENY");
+  let url: URL;
+  try {
+    url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  } catch {
+    sendJson(res, 400, { error: "bad request" });
+    return;
+  }
   try {
     if (pathnameIsApi(url.pathname)) {
+      // Public: liveness (the TUI's health probe) and the auth routes themselves. The static
+      // client is public too — it has to load to show the login screen — but carries no data.
+      if (url.pathname !== "/api/health") {
+        if (await auth.handleRoute(req, res, url)) return;
+        if (!auth.authorize(req, res, url)) return;
+      }
       const handled = await handleApi(req, res, url);
       if (handled) return;
       sendJson(res, 404, { error: "not found" });
@@ -636,8 +689,9 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
   const host = options.host ?? DEFAULT_HOST;
   const requestedPort = options.port ?? DEFAULT_PORT;
 
+  const auth = createAuthHttp(options.auth ?? defaultAuthService(), options.authHttp ?? defaultAuthHttpOptions());
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    void handleRequest(req, res, root);
+    void handleRequest(req, res, root, auth);
   });
 
   return new Promise<WebServerHandle>((resolveStart, rejectStart) => {
@@ -666,8 +720,17 @@ async function main(): Promise<void> {
   // matches it with pkill -f "pi-web-minimal" and nothing else. main() only
   // runs when the server is started directly, so test processes keep theirs.
   process.title = "pi-web-minimal";
-  const handle = await startWebServer();
+  const auth = defaultAuthService();
+  const handle = await startWebServer({ auth });
   console.log(`[pi-web-minimal] listening on http://${handle.host}:${handle.port}`);
+  const mode = auth.mode();
+  if (mode === "enabled") {
+    console.log("[pi-web-minimal] password protection: on");
+  } else if (mode === "invalid") {
+    console.error(`[pi-web-minimal] password protection is configured but unreadable (${auth.invalidReason() ?? "unknown"}); refusing all API requests until /web set-password is run again`);
+  } else if (!["127.0.0.1", "::1", "localhost"].includes(handle.host)) {
+    console.warn(`[pi-web-minimal] WARNING: listening on ${handle.host} with no password. Anyone who can reach this port controls your agent. Run /web set-password in pi.`);
+  }
   if (process.env.PI_WEB_TEST_PLUGIN_VIEWS === "1") {
     registerFixtureSession();
     console.log("[pi-web-minimal] fixture session registered (PI_WEB_TEST_PLUGIN_VIEWS=1)");
