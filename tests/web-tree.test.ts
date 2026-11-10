@@ -86,6 +86,43 @@ test("buildWebTree carries a node's label and the entry timestamp", () => {
   assert.equal(node.timestamp, "2026-11-10T09:00:00Z");
 });
 
+test("buildWebTree survives a very deep chain — no recursion, no stack overflow", () => {
+  // A long working session is one deep linear chain (thousands of
+  // entries); a frame-per-entry walk overflows the stack. 50k entries is
+  // far past any real session.
+  const depth = 50_000;
+  const root: PiTreeNodeLike = messageNode("leaf", "user", "the newest");
+  let current = root;
+  for (let i = 0; i < depth; i++) {
+    const next = messageNode(`e${i}`, "assistant", `reply ${i}`);
+    current.children = [next];
+    current = next;
+  }
+  const nodes = buildWebTree([root], "leaf");
+  assert.equal(nodes.length, depth + 1);
+  // The chain renders in order: the current node first, the tail last.
+  assert.equal(nodes[0].entryId, "leaf");
+  assert.equal(nodes[0].isCurrent, true);
+  assert.equal(nodes[nodes.length - 1].entryId, "e49999");
+  // A linear chain stays at depth 0 — no runaway indentation.
+  assert.equal(nodes[nodes.length - 1].depth, 0);
+});
+
+test("buildWebTree breaks malformed parent cycles instead of looping forever", () => {
+  // A corrupted parent chain (two entries claiming each other as
+  // children) must terminate — the visited set cuts the cycle.
+  const a: PiTreeNodeLike = messageNode("a", "user", "first");
+  const b: PiTreeNodeLike = messageNode("b", "user", "second");
+  a.children = [b];
+  b.children = [a];
+  const nodes = buildWebTree([a], null);
+  assert.equal(nodes.length, 2);
+  assert.deepEqual(
+    nodes.map((node) => node.entryId),
+    ["a", "b"],
+  );
+});
+
 test("buildWebTree normalizes multi-line message content into the snippet", () => {
   const tree: PiTreeNodeLike[] = [
     messageNode("u1", "user", "line one\nline two\ttabbed"),

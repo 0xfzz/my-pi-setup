@@ -95,34 +95,49 @@ export function buildWebTree(
   leafId: string | null,
 ): WebTreeNode[] {
   const nodes: WebTreeNode[] = [];
-  const walk = (children: readonly PiTreeNodeLike[], depth: number, justBranched: boolean): void => {
-    for (const child of children) {
-      const entry = child.entry;
-      if (entry === undefined || typeof entry.id !== "string") continue;
-      const grandChildren = Array.isArray(child.children)
-        ? (child.children as readonly PiTreeNodeLike[])
-        : [];
-      if (!isSettingsEntry(entry)) {
-        const { label, role } = nodeLabel(child);
-        nodes.push({
-          entryId: entry.id,
-          label: child.label !== undefined && child.label !== "" ? `${child.label} — ${label}` : label,
-          role,
-          depth,
-          isCurrent: entry.id === leafId,
-          isBranch: grandChildren.length > 1,
-          ...(typeof entry.timestamp === "string" ? { timestamp: entry.timestamp } : {}),
-        });
-      }
-      // Depth follows the TUI's indent rule: a branch point (or the first
-      // generation after one) shifts its children one level in; a linear
-      // chain stays at its level.
-      const childDepth = grandChildren.length > 1 || (justBranched && depth > 0)
-        ? depth + 1
-        : depth;
-      walk(grandChildren, childDepth, grandChildren.length > 1);
+  // Iterative traversal: a long session is one deep chain (thousands of
+  // entries), and a frame per entry overflows the stack — the walk holds
+  // its own frames. The visited set guards malformed parent cycles.
+  const visited = new Set<string>();
+  const stack: Array<{ node: PiTreeNodeLike; depth: number; justBranched: boolean }> = [];
+  for (let i = tree.length - 1; i >= 0; i--) {
+    stack.push({ node: tree[i], depth: 0, justBranched: false });
+  }
+  while (stack.length > 0) {
+    const { node: child, depth, justBranched } = stack.pop() as {
+      node: PiTreeNodeLike;
+      depth: number;
+      justBranched: boolean;
+    };
+    const entry = child.entry;
+    if (entry === undefined || typeof entry.id !== "string") continue;
+    if (visited.has(entry.id)) continue;
+    visited.add(entry.id);
+    const grandChildren = Array.isArray(child.children)
+      ? (child.children as readonly PiTreeNodeLike[])
+      : [];
+    if (!isSettingsEntry(entry)) {
+      const { label, role } = nodeLabel(child);
+      nodes.push({
+        entryId: entry.id,
+        label: child.label !== undefined && child.label !== "" ? `${child.label} — ${label}` : label,
+        role,
+        depth,
+        isCurrent: entry.id === leafId,
+        isBranch: grandChildren.length > 1,
+        ...(typeof entry.timestamp === "string" ? { timestamp: entry.timestamp } : {}),
+      });
     }
-  };
-  walk(tree, 0, false);
+    // Depth follows the TUI's indent rule: a branch point (or the first
+    // generation after one) shifts its children one level in; a linear
+    // chain stays at its level.
+    const childDepth = grandChildren.length > 1 || (justBranched && depth > 0)
+      ? depth + 1
+      : depth;
+    // Push in reverse so the pop order matches the tree's order.
+    for (let i = grandChildren.length - 1; i >= 0; i--) {
+      stack.push({ node: grandChildren[i], depth: childDepth, justBranched: grandChildren.length > 1 });
+    }
+  }
   return nodes;
 }
