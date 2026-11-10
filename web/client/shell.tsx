@@ -11,7 +11,7 @@ import { Composer } from "./composer.tsx";
 import { SessionSidebar } from "./sidebar.tsx";
 import { NewSessionDialog } from "./new-session-dialog.tsx";
 import { CustomPopups, EditorWidgets, StatusChips, ToastStack, UiPromptBanner } from "./popups.tsx";
-import { DialogLayer, InfoDialog, ModelPickerDialog, ScopedModelsDialog, SettingsDialog, ThinkingPickerDialog, TreeSelectorDialog } from "./dialogs.tsx";
+import { DialogLayer, InfoDialog, ModelPickerDialog, ScopedModelsDialog, SettingsDialog, ThinkingPickerDialog, TreeSelectorDialog, TrustDialog } from "./dialogs.tsx";
 import type { WebTreeNode } from "../shared/tree.ts";
 import { SlotHost } from "./plugins/slots.tsx";
 import { PluginActionShortcuts } from "./plugins/PluginActionShortcuts.tsx";
@@ -58,6 +58,7 @@ export function AppShell() {
   const [thinkingPickerOpen, setThinkingPickerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [scopedModelsOpen, setScopedModelsOpen] = useState(false);
+  const [trustOpen, setTrustOpen] = useState(false);
   const [infoDialog, setInfoDialog] = useState<{ title: string; markdown?: string; lines?: string[] } | null>(null);
   const [modelBusy, setModelBusy] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
@@ -175,6 +176,10 @@ export function AppShell() {
     }
     if (name === "scoped-models") {
       setScopedModelsOpen(true);
+      return;
+    }
+    if (name === "trust") {
+      setTrustOpen(true);
       return;
     }
   };
@@ -515,6 +520,12 @@ export function AppShell() {
           models={session.models.models}
           current={session.models.current ?? session.sessionState?.model}
           onClose={() => setScopedModelsOpen(false)}
+        />
+      ) : null}
+      {trustOpen ? (
+        <TrustDialog
+          sessionId={session.selectedId}
+          onClose={() => setTrustOpen(false)}
         />
       ) : null}
       {treeNodes !== null ? (

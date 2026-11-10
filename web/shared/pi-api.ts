@@ -17,7 +17,9 @@ export type PiApiName =
   | "settings.read"
   | "settings.write"
   | "settings.models.read"
-  | "settings.models.write";
+  | "settings.models.write"
+  | "trust.read"
+  | "trust.write";
 
 /** pi-tui's AutocompleteItem, wire form. */
 export interface PiAutocompleteItem {
@@ -50,6 +52,11 @@ export interface PiApiParams {
     /** The enabledModels patterns; null clears scoping (all models). */
     patterns: string[] | null;
   };
+  "trust.read": Record<string, never>;
+  "trust.write": {
+    /** A label offered by trust.read; the server re-derives pi's option list. */
+    label: string;
+  };
 }
 
 /** results per api — one entry per PiApiName. */
@@ -60,6 +67,8 @@ export interface PiApiResult {
   "settings.write": { key: string; value: string | number | boolean | null };
   "settings.models.read": { enabled: string[] | null };
   "settings.models.write": { enabled: string[] | null };
+  "trust.read": PiTrustState;
+  "trust.write": { savedDecision: PiTrustEntry | null };
 }
 
 /** One entry of pi's settings surface, as the web dialog renders it. */
@@ -71,6 +80,24 @@ export interface PiSettingEntry {
   value: string | number | boolean | null;
   /** select entries: the offered choices; the current value is among them. */
   options?: Array<{ label: string; value: string | number | boolean }>;
+}
+
+/** pi's project-trust state, as its own trust selector shows it. */
+export interface PiTrustEntry {
+  path: string;
+  decision: boolean;
+}
+
+export interface PiTrustOption {
+  label: string;
+  trusted: boolean;
+  savedPath?: string;
+}
+
+export interface PiTrustState {
+  cwd: string;
+  savedDecision: PiTrustEntry | null;
+  options: PiTrustOption[];
 }
 
 export type PiApiRequest = {
@@ -94,6 +121,8 @@ export function parsePiApiBody(body: unknown): { api: PiApiName; params: unknown
     "settings.write",
     "settings.models.read",
     "settings.models.write",
+    "trust.read",
+    "trust.write",
   ];
   if (typeof api !== "string" || !known.includes(api)) {
     return { error: `unknown pi api: ${String(api)}` };
@@ -130,6 +159,12 @@ export function parsePiApiBody(body: unknown): { api: PiApiName; params: unknown
       && !(p.patterns as unknown[]).every((pattern) => typeof pattern === "string" && pattern.trim() !== "")
     ) {
       return { error: "patterns must be non-empty strings" };
+    }
+  }
+  if (api === "trust.write") {
+    const p = params as { label?: unknown } | undefined;
+    if (typeof p?.label !== "string" || p.label.trim() === "") {
+      return { error: "trust.write params: {label: string}" };
     }
   }
   return { api: apiName, params };

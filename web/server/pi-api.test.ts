@@ -127,6 +127,50 @@ test("pi_api settings.read/write round-trip through pi's SettingsManager", async
   }
 });
 
+test("pi_api trust.read/write round-trips pi's project-trust store", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "piapi-trust-"));
+  const cwd = await mkdtemp(join(tmpdir(), "piapi-trust-cwd-"));
+  const envKey = "PI_CODING_AGENT_DIR";
+  const previous = process.env[envKey];
+  process.env[envKey] = agentDir;
+  try {
+    const read = await handlePiApiRequest(cwd, { api: "trust.read", params: {} });
+    assert.equal(read.status, 200);
+    assert.ok(read.body.ok);
+    if (read.body.ok) {
+      const state = read.body.result as {
+        cwd: string;
+        savedDecision: { path: string; decision: boolean } | null;
+        options: Array<{ label: string; trusted: boolean; savedPath?: string }>;
+      };
+      assert.equal(state.cwd, cwd);
+      assert.equal(state.savedDecision, null);
+      // pi's trust options: trust this dir, (parent if any), do not trust.
+      const labels = state.options.map((option) => option.label);
+      assert.ok(labels.includes("Trust"), "offers Trust");
+      assert.ok(labels.some((label) => label.startsWith("Do not trust")), "offers Do not trust");
+    }
+
+    // Write the "Trust" option; pi's store records a trusted entry for cwd.
+    const write = await handlePiApiRequest(cwd, { api: "trust.write", params: { label: "Trust" } });
+    assert.equal(write.status, 200);
+    assert.ok(write.body.ok);
+    if (write.body.ok) {
+      const { savedDecision } = write.body.result as { savedDecision: { path: string; decision: boolean } | null };
+      assert.equal(savedDecision?.decision, true);
+      assert.equal(savedDecision?.path, cwd);
+    }
+
+    // A label pi never offered is rejected (no path/decision invention).
+    const bogus = await handlePiApiRequest(cwd, { api: "trust.write", params: { label: "Not an option" } });
+    assert.equal(bogus.status, 500);
+    assert.ok(!bogus.body.ok);
+  } finally {
+    if (previous === undefined) delete process.env[envKey];
+    else process.env[envKey] = previous;
+  }
+});
+
 test("pi_api settings.models round-trips the enabledModels patterns", async () => {
   const agentDir = await mkdtemp(join(tmpdir(), "piapi-models-"));
   const cwd = await mkdtemp(join(tmpdir(), "piapi-models-cwd-"));

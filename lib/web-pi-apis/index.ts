@@ -6,6 +6,7 @@
 import { autocompleteApi } from "./autocomplete.ts";
 import { builtinCommandsApi } from "./builtin-commands.ts";
 import { settingsApi, settingsModelsApi, settingsModelsWriteApi, settingsWriteApi } from "./settings.ts";
+import { trustApi, trustWriteApi } from "./trust.ts";
 import type { PiApiModule } from "./types.ts";
 
 export { createPiApiRegistry } from "./registry.ts";
@@ -22,4 +23,6 @@ export const PI_API_MODULES: readonly PiApiModule[] = [
   settingsWriteApi,
   settingsModelsApi,
   settingsModelsWriteApi,
+  trustApi,
+  trustWriteApi,
 ];

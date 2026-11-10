@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { MarkdownBody } from "./plugins/markdown.tsx";
 import { postPluginAction } from "./plugins/actionClient.ts";
 import type { DialogWebView } from "./plugins/contract.ts";
-import type { PiSettingEntry } from "../shared/pi-api.ts";
+import type { PiSettingEntry, PiTrustState } from "../shared/pi-api.ts";
 
 export interface ModelRefLike {
   provider: string;
@@ -713,6 +713,107 @@ export function ScopedModelsDialog({
           {saving ? "Saving…" : "Save"}
         </button>
       </div>
+    </DialogFrame>
+  );
+}
+
+/** The web /trust port: pi's project-trust selector. Reads pi's own trust
+ * options (getProjectTrustOptions) and writes the chosen one through pi's
+ * ProjectTrustStore — the same decision surface the TUI offers. */
+export function TrustDialog({
+  sessionId,
+  onClose,
+}: {
+  sessionId: string | null;
+  onClose: () => void;
+}) {
+  const [state, setState] = useState<PiTrustState | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (sessionId === null) {
+      setError("no session selected");
+      return;
+    }
+    fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api: "trust.read", params: {} }),
+    })
+      .then(async (res) => {
+        const body = (await res.json().catch(() => ({}))) as { ok?: boolean; result?: PiTrustState };
+        if (!res.ok || body.ok !== true || body.result === undefined) throw new Error("trust unavailable");
+        setState(body.result);
+      })
+      .catch(() => setError("trust state could not be read"));
+  }, [sessionId]);
+
+  const choose = (label: string): void => {
+    if (sessionId === null) return;
+    setSaving(true);
+    setError(null);
+    setSaved(null);
+    fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api: "trust.write", params: { label } }),
+    })
+      .then(async (res) => {
+        const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; result?: { savedDecision?: PiTrustState["savedDecision"] } };
+        if (!res.ok || body.ok !== true) throw new Error(body.error ?? "trust write rejected");
+        setState((prev) => (prev === null ? prev : { ...prev, savedDecision: body.result?.savedDecision ?? prev.savedDecision }));
+        setSaved(label);
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setSaving(false));
+  };
+
+  return (
+    <DialogFrame
+      title="Project trust"
+      onClose={onClose}
+      footer={<span className="app-dialog-hint">saved decisions apply on the next session start · esc close</span>}
+    >
+      {error !== null ? <div className="app-dialog-error" role="alert">{error}</div> : null}
+      {state === null ? (
+        <div className="app-dialog-empty">reading trust state…</div>
+      ) : (
+        <>
+          <div className="app-trust-meta">
+            <span className="app-setting-label">{state.cwd}</span>
+            <span className="app-setting-desc">
+              Saved decision: {state.savedDecision === null
+                ? "none"
+                : `${state.savedDecision.decision ? "trusted" : "untrusted"} (${state.savedDecision.path})`}
+            </span>
+            {saved !== null ? <span className="app-setting-desc">Saved: {saved}</span> : null}
+          </div>
+          <div className="app-dialog-list" role="listbox" aria-label="Trust options">
+            {state.options.map((option) => {
+              const isCurrent = option.savedPath !== undefined
+                && state.savedDecision !== null
+                && state.savedDecision.path === option.savedPath
+                && state.savedDecision.decision === option.trusted;
+              return (
+                <button
+                  key={option.label}
+                  type="button"
+                  role="option"
+                  aria-selected={isCurrent}
+                  disabled={saving}
+                  className={`app-dialog-item${isCurrent ? " is-current" : ""}`}
+                  onClick={() => choose(option.label)}
+                >
+                  <span className="app-dialog-item-id">{option.label}</span>
+                  {isCurrent ? <span className="app-dialog-item-current">current</span> : null}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
     </DialogFrame>
   );
 }

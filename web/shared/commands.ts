@@ -44,7 +44,7 @@ export const COMMAND_META: Readonly<Record<string, Omit<WebCommand, "name" | "de
   hotkeys: { webPorted: true },
   fork: { web: true },
   clone: { web: true },
-  trust: { tuiOnly: true },
+  trust: { webPorted: true },
   login: { tuiOnly: true },
   logout: { tuiOnly: true },
   new: { web: true },

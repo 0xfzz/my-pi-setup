@@ -2033,3 +2033,10 @@ body {
   color: var(--accent);
   font-weight: 700;
 }
+
+.app-trust-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
