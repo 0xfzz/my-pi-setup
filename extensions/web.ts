@@ -213,12 +213,21 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   let bridgeController: AbortController | null = null;
   let bridgeSessionId: string | null = null;
   let bridgePoster: BridgePoster | null = null;
+  /** True while the attach stream is connected; false between retries. */
+  let bridgeStreaming = false;
+  /** Self-heal timer: a healthy server with a dead bridge re-attaches. */
+  let bridgeWatchdog: ReturnType<typeof setInterval> | null = null;
 
   const stopBridge = (): void => {
     bridgeController?.abort();
     bridgeController = null;
     bridgePoster?.stop();
     bridgePoster = null;
+    bridgeStreaming = false;
+    if (bridgeWatchdog !== null) {
+      clearInterval(bridgeWatchdog);
+      bridgeWatchdog = null;
+    }
     const sessionId = bridgeSessionId;
     bridgeSessionId = null;
     if (sessionId !== null) {
@@ -230,6 +239,31 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       }).catch(() => undefined);
     }
   };
+  /**
+   * The self-heal: a healthy server with a down bridge re-attaches within
+   * one tick. This covers every silent death mode — the retry loop exiting,
+   * a missed session_start, a server that started after pi did — because it
+   * only trusts the live attach-stream flag, not controller bookkeeping.
+   */
+  const ensureBridgeWatchdog = (): void => {
+    if (!bridgeEnabled || bridgeWatchdog !== null) return;
+    bridgeWatchdog = setInterval(() => {
+      if (bridgeStreaming) return;
+      const ctx = lastCtxForCommands;
+      if (ctx === null) return;
+      void (async () => {
+        try {
+          const health = await fetch(`${bridgeServerUrl()}/api/health`, {
+            signal: AbortSignal.timeout(1_500),
+          });
+          if (health.ok) await attachBridge(ctx);
+        } catch {
+          // Server down: try again next tick.
+        }
+      })();
+    }, 5_000);
+  };
+
 
   // Push the current model/thinking to the web client (SSE `session_state`).
   const postSessionState = (ctx: ExtensionContext): void => {
@@ -272,17 +306,23 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   };
 
   const attachBridge = async (ctx: ExtensionContext): Promise<void> => {
-    if (!bridgeEnabled || bridgeController !== null) return;
+    // A connected attach stream is the only reason not to re-attach. A dead
+    // loop (server restart mid-stream, a silent drop) must be replaceable —
+    // otherwise the bridge never comes back and the web stream stays frozen.
+    if (!bridgeEnabled || bridgeStreaming) return;
     try {
       const health = await fetch(`${bridgeServerUrl()}/api/health`, {
         signal: AbortSignal.timeout(1_500),
       });
       if (!health.ok) return;
     } catch {
-      // Server not running: /web start attaches when it brings it up.
+      // Server not running: the watchdog re-attaches when it comes up.
+      ensureBridgeWatchdog();
       return;
     }
     try {
+      // Any dead loop's controller must go before starting a fresh one.
+      bridgeController?.abort();
       const sessionId = sessionIdOf(ctx);
       bridgeSessionId = sessionId;
       bridgeController = new AbortController();
@@ -338,6 +378,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
         );
         if (!res.ok || res.body === null) throw new Error(`attach failed: HTTP ${res.status}`);
         retryDelayMs = 1_000;
+        bridgeStreaming = true;
         if (!firstAttach) {
           // The stream survived a drop: the web may have missed events while
           // we were away, so its streams reload their history.
@@ -348,6 +389,10 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       } catch {
         // Network drop or server restart: reconnect below unless detaching.
       }
+      // The attach stream ended or dropped — however it happened (including
+      // a silent exit), the bridge is down until a retry reconnects.
+      bridgeStreaming = false;
+      ensureBridgeWatchdog();
       if (signal.aborted) return;
       await sleep(retryDelayMs, signal);
       retryDelayMs = Math.min(retryDelayMs * 2, 10_000);

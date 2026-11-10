@@ -160,6 +160,7 @@ function toCore(inner: AgentSession): SessionCore {
 }
 
 function register(core: SessionCore, cwd: string, sessionFile: string, inner?: unknown): SessionCore {
+  const replaced = liveSessions.get(core.sessionId);
   liveSessions.set(core.sessionId, {
     core,
     cwd,
@@ -167,6 +168,14 @@ function register(core: SessionCore, cwd: string, sessionFile: string, inner?: u
     startedAt: Date.now(),
     lastActivityAt: Date.now(),
   });
+  if (replaced !== undefined && replaced.core !== core) {
+    // Someone else now owns this session (a bridge over an in-process
+    // resume). Wake every stream watching the old owner so they reconnect
+    // to the live one. Array.from snapshots: a listener's cleanup can
+    // unsubscribe from the set while the loop runs.
+    const listeners = replacementListeners.get(core.sessionId);
+    if (listeners !== undefined) for (const listener of Array.from(listeners)) listener();
+  }
   // Attach the web-plugin host to the live session's extension event bus so
   // plugin views and UI events flow into the store. The host reads the
   // { sessionId, inner, onEvent } wrapper shape itself; fake cores pass no inner.
@@ -211,6 +220,26 @@ export async function resumeSession(options: {
 /** Register a fake core (tests and fixtures). */
 export function registerSession(core: SessionCore, cwd: string, sessionFile = ""): void {
   register(core, cwd, sessionFile);
+}
+
+/**
+ * Streams watching a session that gets REPLACED (a TUI bridge attaching over
+ * an in-process resume, or a re-attach) must end so the browser reconnects
+ * and resolves the new owner — otherwise they keep watching a frozen copy.
+ */
+const replacementListeners = new Map<string, Set<() => void>>();
+
+export function onSessionReplaced(sessionId: string, listener: () => void): () => void {
+  let listeners = replacementListeners.get(sessionId);
+  if (listeners === undefined) {
+    listeners = new Set();
+    replacementListeners.set(sessionId, listeners);
+  }
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) replacementListeners.delete(sessionId);
+  };
 }
 
 export function clearSessionsForTests(): void {

@@ -13,6 +13,7 @@ import {
   type AgentEventLike,
 } from "./wire.ts";
 import type { SessionCore } from "./sessions.ts";
+import { onSessionReplaced } from "./sessions.ts";
 import { getRegisteredPlugins, recordExtensionUi, webUiStore } from "./plugin-host.ts";
 import { resolveRegionOverrides } from "../shared/regions.ts";
 
@@ -46,6 +47,7 @@ export function attachAgentEventStream(
   let heartbeat: ReturnType<typeof setInterval> | null = null;
   let unsubscribe: (() => void) | null = null;
   let unsubscribeUi: (() => void) | null = null;
+  let unsubscribeReplaced: (() => void) | null = null;
   let toolUpdateTimer: ReturnType<typeof setTimeout> | null = null;
   const pendingToolUpdates = new Map<unknown, AgentEventLike>();
 
@@ -59,6 +61,8 @@ export function attachAgentEventStream(
     unsubscribe = null;
     unsubscribeUi?.();
     unsubscribeUi = null;
+    unsubscribeReplaced?.();
+    unsubscribeReplaced = null;
     if (finish) res.end();
   };
 
@@ -152,6 +156,13 @@ export function attachAgentEventStream(
         unsubscribe();
         return;
       }
+      // If this session gets a new owner (a TUI bridge attaching over the
+      // in-process resume this stream may be watching), end the stream: the
+      // browser reconnects and resolves the live session instead of staying
+      // frozen on the replaced copy.
+      unsubscribeReplaced = onSessionReplaced(sessionId, () => {
+        cleanup(true);
+      });
 
       send({ type: "connected", sessionId, isStreaming: session.isStreaming() });
       announced = true;

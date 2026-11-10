@@ -340,6 +340,9 @@ export function usePiSession() {
     // A `!` command opened by user_bash and not yet finalized by
     // bash_execution_end; late-attaching streams only see the end event.
     let bashOpen = false;
+    // The first `connected` frames the initial snapshot; later ones are
+    // reconnects that may have missed events and reload the history.
+    let everConnected = false;
 
     const appendEntry = (entry: HistoryEntryLike): void => {
       if (closed) return;
@@ -419,6 +422,12 @@ export function usePiSession() {
         case "connected":
           setConnection("connected");
           applyStream(data.isStreaming ? { type: "start" } : { type: "end" });
+          // A (re)connect may have missed events — a server drop, or the
+          // session switching owners (a TUI bridge over this in-process
+          // copy). Reload the history so the transcript matches the live
+          // session instead of the snapshot this stream started from.
+          if (everConnected) setHistoryEpoch((epoch) => epoch + 1);
+          everConnected = true;
           break;
         case "startup_error":
           setConnection("error");
