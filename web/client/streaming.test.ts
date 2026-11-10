@@ -6,16 +6,44 @@ import {
   toAssistantBlocks,
 } from "./streaming.ts";
 
-test("start begins streaming with no message", () => {
-  assert.deepEqual(streamReducer(INITIAL_STREAMING_STATE, { type: "start" }), {
+test("run_start begins a run with no message", () => {
+  assert.deepEqual(streamReducer(INITIAL_STREAMING_STATE, { type: "run_start" }), {
     isStreaming: true,
     streamingMessage: null,
   });
 });
 
-test("end resets to the initial state", () => {
-  const streaming = streamReducer(INITIAL_STREAMING_STATE, { type: "start" });
-  assert.deepEqual(streamReducer(streaming, { type: "end" }), INITIAL_STREAMING_STATE);
+test("run_end resets to the initial state", () => {
+  const streaming = streamReducer(INITIAL_STREAMING_STATE, { type: "run_start" });
+  assert.deepEqual(streamReducer(streaming, { type: "run_end" }), INITIAL_STREAMING_STATE);
+});
+
+test("message_end keeps the run active — tool calls and message gaps do not blip the indicators", () => {
+  // A run starts, a message streams, the message commits — but the run
+  // continues (a tool call executes, another message is next). The
+  // working line and the sidebar's running mark key off isStreaming and
+  // must stay steady; only the streamed message clears.
+  let state = streamReducer(INITIAL_STREAMING_STATE, { type: "run_start" });
+  state = streamReducer(state, {
+    type: "message_start",
+    message: { role: "assistant", content: [{ type: "text", text: "calling a tool" }] },
+  });
+  assert.equal(state.isStreaming, true);
+  state = streamReducer(state, { type: "message_end" });
+  assert.deepEqual(
+    state,
+    { isStreaming: true, streamingMessage: null },
+    "the message cleared but the run is still active",
+  );
+  // The next message in the same run streams fine.
+  state = streamReducer(state, {
+    type: "message_start",
+    message: { role: "assistant", content: [{ type: "text", text: "" }] },
+  });
+  assert.equal(state.streamingMessage?.content[0]?.kind, "text");
+  // Only the run's settle ends it.
+  state = streamReducer(state, { type: "run_end" });
+  assert.deepEqual(state, INITIAL_STREAMING_STATE);
 });
 
 test("snapshot keeps only assistant messages and normalizes blocks", () => {

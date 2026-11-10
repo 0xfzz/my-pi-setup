@@ -713,6 +713,55 @@ async function run() {
     await reloadedReply.first().waitFor({ state: "visible", timeout: 10_000 });
     assert.equal(await page.locator(".msg-assistant", { hasText: "mid-stream partial before and after" }).count(), 1, "the completed reply renders exactly once (no live/history duplicate)");
 
+    step("8g: an unfocused running session is marked run in the sidebar");
+    // 8g. The sidebar's running mark must reflect OTHER sessions' runs, not
+    //     just the selected one: the bridge posts run-level state
+    //     (agent_start/settled), /api/sessions carries it, and the sidebar
+    //     renders it while the user is focused elsewhere.
+    await page.click('.app-session-item[data-id="__test_session__"]');
+    await page.locator('.app-session-item[data-id="__test_session__"].is-selected').waitFor({ timeout: 5000 });
+    await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        state: { isStreaming: true },
+        events: [{ type: "agent_start" }],
+      }),
+    });
+    await page
+      .locator(`.app-session-item[data-id="${bridgeId}"][data-state="running"]`)
+      .waitFor({ timeout: 10_000 });
+    const runMark = await page
+      .locator(`.app-session-item[data-id="${bridgeId}"] .app-session-running`)
+      .textContent();
+    assert.equal(runMark, "run", "the unfocused session shows its running mark");
+    // The run settles: the mark clears back to live.
+    await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        state: { isStreaming: false },
+        events: [{ type: "agent_settled" }],
+      }),
+    });
+    await page
+      .locator(`.app-session-item[data-id="${bridgeId}"][data-state="live"]`)
+      .waitFor({ timeout: 10_000 });
+    // Return to the bridge session for the remaining steps. The sidebar
+    // reorders on activity — wait for the selection AND the stream's
+    // connection before events flow, exactly like a user watching the
+    // session reconnect (a real TUI's turns are also in the session file;
+    // the fake bridge writes none, so events posted pre-subscribe would
+    // legitimately be lost to it).
+    await page.click(`.app-session-item[data-id="${bridgeId}"]`);
+    await page
+      .locator(`.app-session-item[data-id="${bridgeId}"].is-selected`)
+      .waitFor({ timeout: 5_000 });
+    await page
+      .locator(".app-header-status")
+      .filter({ hasText: /connected|claude-bridge|bridge-e2e/ })
+      .waitFor({ timeout: 10_000 });
+
     step("8: command received, streaming reply");
     // The TUI streams its reply; the browser renders it.
     await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {

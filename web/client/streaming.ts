@@ -54,11 +54,23 @@ export interface StreamingState {
   streamingMessage: AssistantMessageLite | null;
 }
 
+/**
+ * Two lifecycles, deliberately split:
+ *  - the RUN (agent_start → agent_settled): the whole turn, including tool
+ *    calls and gaps between messages. `isStreaming` means "the run is
+ *    active" — it must NOT flicker between messages, or every tool call
+ *    blips the working indicator and the sidebar's running mark.
+ *  - the MESSAGE (message_start → message_end): one assistant message
+ *    streaming inside the run. Ending it clears the message; the run goes
+ *    on ("pi is working…" through tool execution).
+ */
 export type StreamAction =
-  | { type: "start" }
+  | { type: "run_start" }
+  | { type: "message_start"; message: { role?: unknown; content?: unknown } }
   | { type: "snapshot"; message: { role?: unknown; content?: unknown } }
   | { type: "delta"; event: ClientAssistantEventLike }
-  | { type: "end" };
+  | { type: "message_end" }
+  | { type: "run_end" };
 
 export const INITIAL_STREAMING_STATE: StreamingState = {
   isStreaming: false,
@@ -205,8 +217,9 @@ function applyDelta(state: StreamingState, event: ClientAssistantEventLike): Str
 
 export function streamReducer(state: StreamingState, action: StreamAction): StreamingState {
   switch (action.type) {
-    case "start":
+    case "run_start":
       return { isStreaming: true, streamingMessage: null };
+    case "message_start":
     case "snapshot": {
       if (action.message.role !== "assistant") return state;
       return {
@@ -216,7 +229,12 @@ export function streamReducer(state: StreamingState, action: StreamAction): Stre
     }
     case "delta":
       return applyDelta(state, action.event);
-    case "end":
+    case "message_end":
+      // The message committed; the run may continue (a tool call, the next
+      // message). Keep `isStreaming` — the working line and the sidebar's
+      // running mark stay steady until the run settles.
+      return { isStreaming: true, streamingMessage: null };
+    case "run_end":
       return INITIAL_STREAMING_STATE;
     default:
       return state;

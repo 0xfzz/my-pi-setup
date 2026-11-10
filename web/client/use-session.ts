@@ -246,11 +246,14 @@ export function usePiSession() {
     }
   }, []);
 
+  // The sidebar's running marks are unfocused sessions' live state: the
+  // list must refresh faster than a turn's start is visible. 2s for a
+  // local endpoint that reads the live registry plus a directory.
   useEffect(() => {
     void refreshSessions();
     const timer = setInterval(() => {
       void refreshSessions();
-    }, 5000);
+    }, 2000);
     return () => clearInterval(timer);
   }, [refreshSessions]);
 
@@ -447,7 +450,7 @@ export function usePiSession() {
       switch (data.type) {
         case "connected":
           setConnection("connected");
-          applyStream(data.isStreaming ? { type: "start" } : { type: "end" });
+          applyStream(data.isStreaming ? { type: "run_start" } : { type: "run_end" });
           // First connect: the stream is live, so NOW the history can be
           // read without a loss window. A reconnect (everConnected) may
           // have missed events — a server drop, or the session switching
@@ -474,16 +477,16 @@ export function usePiSession() {
           // streaming reply both key off this, so "pi is thinking" is
           // visible before the first assistant token.
           lastAppendedAborted = false;
-          applyStream({ type: "start" });
+          applyStream({ type: "run_start" });
           break;
         case "agent_end":
-          applyStream({ type: "end" });
+          applyStream({ type: "run_end" });
           break;
         case "agent_settled":
           // The run settled; `aborted` marks a cancellation (Escape in the
           // TUI, Stop in the web). If no assistant message ended — the
           // model was still thinking — append a bare marker entry.
-          applyStream({ type: "end" });
+          applyStream({ type: "run_end" });
           if (data.aborted === true && !lastAppendedAborted) {
             appendEntry({ role: "assistant", blocks: [], aborted: true });
           }
@@ -493,8 +496,7 @@ export function usePiSession() {
         case "message_start": {
           const message = data.message as { role?: unknown; content?: unknown } | undefined;
           if (message?.role === "assistant") {
-            applyStream({ type: "start" });
-            applyStream({ type: "snapshot", message });
+            applyStream({ type: "message_start", message });
           }
           break;
         }
@@ -520,7 +522,10 @@ export function usePiSession() {
               ...(message.stopReason === "aborted" ? { aborted: true } : {}),
             };
             appendEntry(entry);
-            applyStream({ type: "end" });
+            // Message-level end: the message committed, the run may still
+            // be going (a tool call is executing, another message is next)
+            // — the working line stays on until agent_settled.
+            applyStream({ type: "message_end" });
             void fetchState(selectedId);
           } else if (message?.role === "user") {
             // A prompt typed in the TUI (or the confirmed echo of one sent
