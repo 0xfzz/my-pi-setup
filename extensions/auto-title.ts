@@ -14,6 +14,7 @@
  * `PI_AUTO_TITLE=0` starts the session with it off; `/auto-title on|off` flips it.
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { type AssistantMessage, type AssistantMessageEvent } from "@earendil-works/pi-ai/compat";
 import { generateAutoTitle } from "../lib/auto-title.ts";
 import {
   AUTO_TITLE_PLUGIN_ID,
@@ -65,7 +66,16 @@ export default function autoTitleExtension(pi: ExtensionAPI): void {
   /** One completion on the session's own model. Resolves true when a name was applied. */
   async function generate(context: ExtensionContext, mode: "auto" | "forced"): Promise<boolean> {
     const model = context.model;
-    if (!model || run) return false;
+    if (run) return false;
+    if (!model) {
+      if (mode === "forced") {
+        phase = "failed";
+        lastError = "no model is available for this session";
+        publish();
+        try { context.ui?.notify?.(`Auto title skipped: ${lastError}`, "warning"); } catch { /* notify is a courtesy */ }
+      }
+      return false;
+    }
     const sessionId = context.sessionManager.getSessionId();
     const controller = new AbortController();
     run = controller;
@@ -78,13 +88,20 @@ export default function autoTitleExtension(pi: ExtensionAPI): void {
         project: context.cwd.split("/").filter(Boolean).pop(),
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(AUTO_TITLE_TIMEOUT_MS)]),
         async complete({ systemPrompt, prompt, maxTokens, signal }) {
-          const reply = await context.modelRegistry.complete(
+          // streamSimple with reasoning omitted means off: a title needs no
+          // thinking pass, so the 200-token budget reaches the title itself.
+          const stream = context.modelRegistry.streamSimple(
             model,
             { systemPrompt, messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
-            { maxTokens, signal } as never,
+            { maxTokens, signal, maxRetries: 0 },
           );
-          if (reply.stopReason === "error" || reply.stopReason === "aborted") {
-            throw new Error(reply.errorMessage ?? `model reply ${reply.stopReason}`);
+          let reply: AssistantMessage | undefined;
+          for await (const event of stream as AsyncIterable<AssistantMessageEvent>) {
+            if (event.type === "done") reply = event.message;
+            else if (event.type === "error") reply = event.error;
+          }
+          if (!reply || reply.stopReason === "error" || reply.stopReason === "aborted") {
+            throw new Error(reply?.errorMessage ?? "the model ended without a result");
           }
           return reply.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
         },

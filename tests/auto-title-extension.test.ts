@@ -51,9 +51,16 @@ function harness(opts: { name?: string; branch?: any[]; reply?: () => Promise<an
       getSessionFile: () => undefined,
     },
     modelRegistry: {
-      complete: async (model: unknown, context: any, options: any) => {
+      streamSimple: (model: unknown, context: any, options: any) => {
         requests.push({ model, context, options });
-        return opts.reply ? opts.reply() : { stopReason: "stop", content: [{ type: "text", text: '"Fix Login Bug."' }] };
+        const pending = opts.reply
+          ? opts.reply()
+          : Promise.resolve({ stopReason: "stop", content: [{ type: "text", text: '"Fix Login Bug."' }] });
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "done", message: await pending };
+          },
+        };
       },
     },
   };
