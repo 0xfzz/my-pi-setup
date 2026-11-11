@@ -385,10 +385,22 @@ body {
   max-width: 40%;
 }
 
+/* The transcript's positioned frame: the scroller, the jump button and the
+ * floating plugin dock all overlay this box, so none of them scrolls with the
+ * chat or takes a row from it. */
+.app-transcript-frame {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* Base region: transcript */
 .app-transcript {
   position: relative;
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 16px;
 }

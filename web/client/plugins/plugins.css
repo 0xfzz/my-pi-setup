@@ -129,10 +129,11 @@
 }
 
 .plugin-kv-label {
-  padding: 10px 16px 10px 0;
+  padding: 10px 24px 10px 0;
   font-weight: 500;
   color: var(--text-muted);
-  width: 35%;
+  width: 1%;
+  white-space: nowrap;
   vertical-align: top;
 }
 
@@ -519,21 +520,29 @@
   overflow-y: auto;
 }
 
-/* Floating slot: dock chip at bottom-right of chat, delegates to Right Sidebar */
+/* Floating slot: an overlay on the top-right of the transcript frame. It takes
+ * no row of its own, so a dock chip never costs chat height, and the frame's
+ * bottom-right stays free for the jump-to-latest button. Only the chips take
+ * pointer events; the rest of the overlay lets the transcript scroll under it. */
 .plugin-slot-floating {
+  position: absolute;
+  top: 10px;
+  right: 16px;
+  z-index: 8;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 8px;
-  flex-shrink: 0;
-  padding: 0 16px 8px;
-  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.plugin-slot-floating > * {
   pointer-events: auto;
 }
 
 .plugin-slot-floating-widget {
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: column;
 }
 
 .plugin-slot-floating-chip {
@@ -944,5 +953,9 @@
 /* Keyboard-shortcut feedback toast */
 .plugin-action-toast { position: fixed; bottom: 76px; left: 50%; transform: translateX(-50%); z-index: 90; padding: 8px 14px; border-radius: 8px; background: var(--bg-panel); border: 1px solid var(--border); color: var(--text); font-size: 13px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); max-width: min(420px, 90vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plugin-action-toast.has-error { border-color: rgba(239, 68, 68, 0.4); color: #ef4444; }
+
+/* A plugin composer takes the built-in bar's column without its shaded bar, so
+ * it reads as one piece with the chat column above it instead of a seam. */
+.app-composer-override { background: transparent; border-top: 0; }
 
 

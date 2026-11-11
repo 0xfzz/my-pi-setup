@@ -462,22 +462,34 @@ export function AppShell() {
             </div>
           ) : null}
           <SlotHost slot="top" plugins={session.plugins} views={session.pluginViews} />
-          {regions.transcript !== undefined ? (
-            <main className="app-transcript" aria-live="polite">
-              <RegionOverrideView override={regions.transcript} region="transcript" />
-            </main>
-          ) : (
-            <Transcript
-              key={session.selectedId ?? "none"}
-              history={session.history}
-              userMessages={session.userMessages}
-              streaming={session.streaming}
-              toolStatus={session.toolStatus}
-              toolResults={session.toolResults}
-              working={session.working}
-              showWorking={showWorking}
+          {/* The frame is the positioned box the jump button and the floating
+              dock overlay, so they never take a row or scroll with the content. */}
+          <div className="app-transcript-frame">
+            {regions.transcript !== undefined ? (
+              <main className="app-transcript" aria-live="polite">
+                <RegionOverrideView override={regions.transcript} region="transcript" />
+              </main>
+            ) : (
+              <Transcript
+                key={session.selectedId ?? "none"}
+                history={session.history}
+                userMessages={session.userMessages}
+                streaming={session.streaming}
+                toolStatus={session.toolStatus}
+                toolResults={session.toolResults}
+                working={session.working}
+                showWorking={showWorking}
+              />
+            )}
+            <SlotHost
+              slot="floating"
+              plugins={session.plugins}
+              views={session.pluginViews}
+              onOpenSidePanel={handleOpenSidePanel}
+              activeSidePluginId={activeSidePlugin}
+              sidePanelOpen={sidePanelOpen}
             />
-          )}
+          </div>
           <SlotHost
             slot="center"
             plugins={session.plugins}
@@ -531,14 +543,6 @@ export function AppShell() {
           sessionId={session.selectedId}
         />
       </div>
-      <SlotHost
-        slot="floating"
-        plugins={session.plugins}
-        views={session.pluginViews}
-        onOpenSidePanel={handleOpenSidePanel}
-        activeSidePluginId={activeSidePlugin}
-        sidePanelOpen={sidePanelOpen}
-      />
       <CustomPopups custom={session.custom} />
       <ToastStack notifications={session.notifications} />
       {/* The web-ported TUI dialogs. */}

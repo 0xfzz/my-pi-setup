@@ -464,44 +464,46 @@ export function Transcript({
   };
 
   return (
-    <main className="app-transcript" aria-live="polite" ref={scrollRef} onScroll={handleScroll}>
-      <div className="app-transcript-inner" ref={innerRef}>
-        {entries.length === 0 && !streaming.isStreaming && !showWorking ? (
-          <div className="app-empty">No messages yet.</div>
-        ) : null}
-        {entries.map((entry) => (
-          <div key={entry.key} className={`msg msg-${entry.role}`}>
-            {entry.role === "user"
-              ? <UserBlocks blocks={entry.blocks} />
-              : (
-                <>
-                  <AssistantBlocks
-                    blocks={entry.blocks}
-                    toolStatus={toolStatus}
-                    toolResults={toolResults}
-                  />
-                  {entry.aborted === true ? <div className="msg-aborted"><Stop size={12} weight="fill" /> interrupted</div> : null}
-                  {entry.error !== undefined && entry.error !== "" ? <div className="msg-error"><Warning size={12} weight="fill" /> {entry.error}</div> : null}
-                </>
-              )}
-          </div>
-        ))}
-        {streaming.isStreaming && streaming.streamingMessage !== null ? (
-          <div className="msg msg-assistant msg-streaming">
-            <AssistantBlocks
-              blocks={streaming.streamingMessage.content}
-              toolStatus={toolStatus}
-              toolResults={toolResults}
-              live
-            />
-          </div>
-        ) : null}
-        {showWorking ? (
-          <div className="msg-working">
-            <WorkingIndicator working={working} fallback="pi is working…" />
-          </div>
-        ) : null}
-      </div>
+    <>
+      <main className="app-transcript" aria-live="polite" ref={scrollRef} onScroll={handleScroll}>
+        <div className="app-transcript-inner" ref={innerRef}>
+          {entries.length === 0 && !streaming.isStreaming && !showWorking ? (
+            <div className="app-empty">No messages yet.</div>
+          ) : null}
+          {entries.map((entry) => (
+            <div key={entry.key} className={`msg msg-${entry.role}`}>
+              {entry.role === "user"
+                ? <UserBlocks blocks={entry.blocks} />
+                : (
+                  <>
+                    <AssistantBlocks
+                      blocks={entry.blocks}
+                      toolStatus={toolStatus}
+                      toolResults={toolResults}
+                    />
+                    {entry.aborted === true ? <div className="msg-aborted"><Stop size={12} weight="fill" /> interrupted</div> : null}
+                    {entry.error !== undefined && entry.error !== "" ? <div className="msg-error"><Warning size={12} weight="fill" /> {entry.error}</div> : null}
+                  </>
+                )}
+            </div>
+          ))}
+          {streaming.isStreaming && streaming.streamingMessage !== null ? (
+            <div className="msg msg-assistant msg-streaming">
+              <AssistantBlocks
+                blocks={streaming.streamingMessage.content}
+                toolStatus={toolStatus}
+                toolResults={toolResults}
+                live
+              />
+            </div>
+          ) : null}
+          {showWorking ? (
+            <div className="msg-working">
+              <WorkingIndicator working={working} fallback="pi is working…" />
+            </div>
+          ) : null}
+        </div>
+      </main>
       {showJump ? (
         <button
           type="button"
@@ -513,6 +515,6 @@ export function Transcript({
           <ArrowDown size={14} weight="bold" /> {hasUnread ? "new messages" : "latest"}
         </button>
       ) : null}
-    </main>
+    </>
   );
 }
