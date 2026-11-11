@@ -5,6 +5,7 @@
 // view is published, and the built-in region returns when it is not.
 
 import { useEffect, useState } from "react";
+import { List } from "@phosphor-icons/react";
 import { usePiSession } from "./use-session.ts";
 import { Transcript } from "./transcript.tsx";
 import { Composer } from "./composer.tsx";
@@ -414,7 +415,7 @@ export function AppShell() {
                 title="Sessions"
                 onClick={() => setSidebarOpen((open) => !open)}
               >
-                ☰
+                <List size={18} weight="bold" />
               </button>
               {headerCwd !== "" ? <span className="app-subtitle">{headerCwd}</span> : null}
               <StatusChips statuses={session.statuses} />

@@ -6,6 +6,7 @@
 // UI itself extensible.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, X } from "@phosphor-icons/react";
 import { MarkdownBody } from "./plugins/markdown.tsx";
 import { postPluginAction } from "./plugins/actionClient.ts";
 import type { DialogWebView } from "./plugins/contract.ts";
@@ -697,7 +698,7 @@ export function ScopedModelsDialog({
                 aria-pressed={selected}
                 onClick={() => toggle(model)}
               >
-                <span className="app-scoped-check" aria-hidden="true">{selected ? "✓" : ""}</span>
+                <span className="app-scoped-check" aria-hidden="true">{selected ? <Check size={13} weight="bold" /> : null}</span>
                 <span className="app-dialog-item-provider">{model.provider}</span>
                 <span className="app-dialog-item-id">{model.id}</span>
                 {current !== undefined && model.provider === current.provider && model.id === current.id
@@ -1201,7 +1202,7 @@ export function DialogLayer({
                     aria-label="Dismiss dialog"
                     onClick={() => onDismiss(dialogId, view)}
                   >
-                    ✕
+                    <X size={14} />
                   </button>
                 ) : null}
               </div>

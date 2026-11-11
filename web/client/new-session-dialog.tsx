@@ -3,6 +3,7 @@
 // subdirectories, up to the parent), and a free-form path input.
 
 import { useCallback, useEffect, useState } from "react";
+import { ArrowUp, Folder, X } from "@phosphor-icons/react";
 import type { SessionSummary } from "./use-session.ts";
 
 interface DirectoryListing {
@@ -86,7 +87,7 @@ export function NewSessionDialog({ open, sessions, onClose, onStart }: NewSessio
         <div className="app-dialog-head">
           <span className="app-dialog-title">New session</span>
           <button type="button" className="app-dialog-close" onClick={onClose} aria-label="Close">
-            ✕
+            <X size={14} />
           </button>
         </div>
 
@@ -145,7 +146,7 @@ export function NewSessionDialog({ open, sessions, onClose, onStart }: NewSessio
                 onClick={() => listing.parent !== null && void load(listing.parent)}
                 title="Parent directory"
               >
-                ↑ up
+                <ArrowUp size={13} weight="bold" /> up
               </button>
               <span className="app-dialog-browser-path" title={listing.path}>
                 {listing.path}
@@ -163,7 +164,7 @@ export function NewSessionDialog({ open, sessions, onClose, onStart }: NewSessio
                   onClick={() => void load(entry.path)}
                   title={entry.path}
                 >
-                  <span aria-hidden="true">📁</span> {entry.name}
+                  <Folder size={14} /> {entry.name}
                 </button>
               ))}
             </div>

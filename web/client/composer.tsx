@@ -8,6 +8,9 @@
 // screenshot never needs a multi-megabyte request.
 
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
+import { Paperclip, PaperPlaneRight, Sparkle, Stop, X } from "@phosphor-icons/react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { filterCommands, type WebCommand } from "../shared/commands.ts";
 import { activeMentionToken } from "../shared/mentions.ts";
 import type { PiAutocompleteItem, PiAutocompleteSuggestions } from "../shared/pi-api.ts";
@@ -394,7 +397,7 @@ export function Composer({
               onClick={onOpenThinkingPicker}
               title="Change the thinking level (syncs with the terminal)"
             >
-              ✦ {thinkingLevel}
+              <Sparkle size={12} weight="fill" /> {thinkingLevel}
             </button>
           ) : null}
         </div>
@@ -452,19 +455,20 @@ export function Composer({
                 aria-label="Remove attachment"
                 onClick={() => setImages((prev) => prev.filter((item) => item.id !== image.id))}
               >
-                ✕
+                <X size={10} weight="bold" />
               </button>
             </span>
           ))}
         </div>
       ) : null}
       <div className="app-composer-row">
-      <textarea
-        className="app-composer-input"
+      <Textarea
+        className="app-composer-input flex-1 resize-none bg-card px-4 py-3 min-h-12 max-h-52 rounded-3xl"
         placeholder={disabled ? "Select or start a session…" : "Message pi… (/ for commands, paste to attach)"}
         disabled={disabled}
         value={text}
         ref={inputRef}
+        rows={1}
         onChange={(event) => {
           setText(event.target.value);
           setPaletteDismissed(false);
@@ -492,26 +496,43 @@ export function Composer({
           if (files.length > 0) void addImages(files);
         }}
       />
-      <button
+      <Button
         type="button"
-        className="app-attach-button"
+        variant="ghost"
+        size="icon"
+        className="app-attach-button shrink-0"
         onClick={() => fileInputRef.current?.click()}
         disabled={disabled}
         title="Attach images"
         aria-label="Attach images"
       >
-        📎
-      </button>
+        <Paperclip size={18} />
+      </Button>
       {busy ? (
-        <button
+        <Button
           type="button"
-          className="app-composer-abort"
+          variant="ghost"
+          size="icon"
+          className="shrink-0"
           onClick={onAbort}
           title="Interrupt the running turn (like Escape in the TUI)"
+          aria-label="Stop generating"
         >
-          Stop
-        </button>
-      ) : null}
+          <Stop size={18} weight="fill" />
+        </Button>
+      ) : (
+        <Button
+          type="button"
+          size="icon"
+          className="shrink-0 rounded-full"
+          onClick={send}
+          disabled={disabled || (text.trim() === "" && images.length === 0)}
+          title="Send message"
+          aria-label="Send message"
+        >
+          <PaperPlaneRight size={18} weight="fill" />
+        </Button>
+      )}
       </div>
       {notice ? <div className="app-composer-error" role="alert">{notice}</div> : null}
       {error ? <div className="app-composer-error" role="alert">{error}</div> : null}

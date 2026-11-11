@@ -22,6 +22,10 @@ export function systemTheme(): Theme {
 
 export function applyTheme(theme: Theme): void {
   document.documentElement.dataset.theme = theme;
+  // Keep the shadcn/Tailwind dark variant in lock-step with the app theme:
+  // the Tailwind tokens switch on `.dark`, the legacy stylesheet on
+  // `[data-theme]`, and the toggle must move both together.
+  document.documentElement.classList.toggle("dark", theme === "dark");
 }
 
 export function toggleTheme(): Theme {

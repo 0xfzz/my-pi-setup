@@ -1706,28 +1706,6 @@ body {
   align-items: flex-end;
 }
 
-.app-composer-input {
-  width: 100%;
-  min-height: 44px;
-  max-height: 200px;
-  resize: none;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--bg-input);
-  color: var(--fg);
-  font: inherit;
-  outline: none;
-}
-
-.app-composer-input:focus {
-  border-color: var(--accent);
-}
-
-.app-composer-input:disabled {
-  opacity: 0.5;
-}
-
 /* Slash-command palette above the input. */
 .app-composer {
   position: relative;
@@ -1804,22 +1782,6 @@ body {
   display: none;
 }
 
-.app-attach-button {
-  flex: none;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  color: var(--fg-dim);
-  font: inherit;
-  padding: 8px 10px;
-  cursor: pointer;
-}
-
-.app-attach-button:hover {
-  border-color: var(--accent);
-  color: var(--fg);
-}
-
 .app-attachments {
   display: flex;
   gap: 8px;
@@ -1869,21 +1831,6 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.app-composer-abort {
-  flex: none;
-  background: transparent;
-  color: var(--error);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 14px;
-  font: inherit;
-  cursor: pointer;
-}
-
-.app-composer-abort:hover {
-  border-color: var(--error);
 }
 
 /* The web /settings and /scoped-models dialogs (the TUI settings ports). */

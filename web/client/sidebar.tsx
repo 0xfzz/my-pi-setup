@@ -3,6 +3,7 @@
 // the state dot (pulsing while a turn runs), and how long ago it was active.
 
 import { useState } from "react";
+import { Moon, Plus, Sun } from "@phosphor-icons/react";
 import type { SessionSummary } from "./use-session.ts";
 import { useAuth } from "./auth-gate.tsx";
 import { toggleTheme, type Theme } from "./theme.ts";
@@ -65,7 +66,7 @@ export function SessionSidebar({
             setTheme(toggleTheme());
           }}
         >
-          {theme === "dark" ? "☾" : "☀"}
+          {theme === "dark" ? <Moon size={13} weight="fill" /> : <Sun size={13} weight="fill" />}
         </button>
         {auth.required ? (
           <button
@@ -80,11 +81,11 @@ export function SessionSidebar({
       </div>
       <button
         type="button"
-        className="app-sidebar-new"
+        className="app-sidebar-new inline-flex items-center justify-center gap-1.5"
         onClick={onNewSession}
         title="Start a new session (pick a project directory)"
       >
-        + new session
+        <Plus size={15} weight="bold" /> New session
       </button>
       <div className="app-sidebar-list" role="listbox" aria-label="Sessions">
         {ordered.length === 0 ? (

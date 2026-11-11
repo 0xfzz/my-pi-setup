@@ -5,6 +5,7 @@
 // jump-to-latest button appears whenever they scroll up.
 
 import { memo, useEffect, useRef, useState } from "react";
+import { ArrowDown, CaretDown, CaretRight, Stop, Warning } from "@phosphor-icons/react";
 import type { AssistantBlock, BashBlock, ImageBlock, ToolCallBlock } from "./streaming.ts";
 import type { HistoryEntryLike, ToolCallStatus, ToolResultLike } from "./use-session.ts";
 import type { WorkingModelLike } from "./plugins/contract.ts";
@@ -172,7 +173,7 @@ function BashBlockView({ block }: { block: BashBlock }) {
           </span>
         )}
         {hasBody ? (
-          <span className="msg-toolcall-chevron" aria-hidden="true">{open ? "▾" : "▸"}</span>
+          <span className="msg-toolcall-chevron" aria-hidden="true">{open ? <CaretDown size={12} /> : <CaretRight size={12} />}</span>
         ) : null}
       </button>
       {open && hasBody ? (
@@ -215,7 +216,7 @@ function ToolCallRow({
       {state === "error" ? <span className="msg-toolcall-error-tag">failed</span> : null}
       {hasBody ? (
         <span className="msg-toolcall-chevron" aria-hidden="true">
-          {open ? "▾" : "▸"}
+          {open ? <CaretDown size={12} /> : <CaretRight size={12} />}
         </span>
       ) : null}
     </>
@@ -480,8 +481,8 @@ export function Transcript({
                     toolStatus={toolStatus}
                     toolResults={toolResults}
                   />
-                  {entry.aborted === true ? <div className="msg-aborted">⏹ interrupted</div> : null}
-                  {entry.error !== undefined && entry.error !== "" ? <div className="msg-error">⚠ {entry.error}</div> : null}
+                  {entry.aborted === true ? <div className="msg-aborted"><Stop size={12} weight="fill" /> interrupted</div> : null}
+                  {entry.error !== undefined && entry.error !== "" ? <div className="msg-error"><Warning size={12} weight="fill" /> {entry.error}</div> : null}
                 </>
               )}
           </div>
@@ -510,7 +511,7 @@ export function Transcript({
           aria-label="Jump to latest messages"
           title="Jump to latest"
         >
-          <span aria-hidden="true">↓</span> {hasUnread ? "new messages" : "latest"}
+          <ArrowDown size={14} weight="bold" /> {hasUnread ? "new messages" : "latest"}
         </button>
       ) : null}
     </main>
