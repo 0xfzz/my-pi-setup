@@ -332,6 +332,21 @@ A descriptor (`web-plugins/*.ts`) declares **surfaces**:
 | `{ kind: "override", region }` | **replaces a base region** — `header`, `status`, `transcript`, `composer` — while a view is published; the built-in region returns automatically |
 | `{ kind: "sidebar" }` | reserved for the sidebar contract |
 
+**Placement hints** (`ui[].placement` and `ui[].strategy`) are applied by the
+client's slot policy (`web/client/plugins/slot-policy.ts`):
+
+- `strategy: "compact"` renders the slot's one-line summary in any slot.
+- `maxHeight` bounds a centre card's body and a floating card; `maxWidth`
+  bounds a floating card. The host clamps both to its ceilings (body 360px,
+  card 400px), so a plugin asks for less space and never more.
+- `collision: "hide"` removes the slot on phones (≤720px).
+- Centre cards start folded on phones so the chat keeps the screen.
+
+The floating slot is an overlay on the transcript's top-right corner; it takes
+no chat height. Anchors (`chat.composer`, `chat.working`, `session.sidebar`)
+are validated but not yet rendered by the client, so a view declared only with
+an anchor appears on its plugin page and nowhere in the chat.
+
 Extensions publish views with `publishWebView(pi, pluginId, view)` from
 `lib/web-plugins/publisher.ts`. Views are **declarative and validated
 server-side** — `kv`, `list` (status icons + markdown detail), `status`,

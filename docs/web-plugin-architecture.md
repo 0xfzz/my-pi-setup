@@ -114,7 +114,9 @@ guard fails any extension that imports `web-plugins/` directly.
    frame. While a view is published, the declared placement renders it.
 4. **Rendering** — the client renders declarative views
    (`PluginViewRenderer`: status/list/kv/graph/dialog). It renders what
-   arrived; it computes nothing.
+   arrived, and it applies the declared placement under the host's own
+   ceilings (see *Placement and host ceilings* below). It computes no
+   plugin data.
 5. **Actions back** — the user triggers a declared action →
    `POST /api/plugins/action` → `WEB_PLUGIN_ACTION_REQUEST_EVENT` → the
    pi extension handles it (behavior). A declared `confirm` string is
