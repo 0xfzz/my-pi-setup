@@ -90,10 +90,15 @@ export default function autoTitleExtension(pi: ExtensionAPI): void {
         async complete({ systemPrompt, prompt, maxTokens, signal }) {
           // streamSimple with reasoning omitted means off: a title needs no
           // thinking pass, so the 200-token budget reaches the title itself.
+          // cacheRetention "none" marks this as a one-off request the same way
+          // pi's compaction/summary calls do — it disables prompt caching, and
+          // claude-bridge routes it to an isolated process that skips its
+          // prompt-capture lookup, which would otherwise reject this custom system
+          // prompt for not matching the turn's captured prompt.
           const stream = context.modelRegistry.streamSimple(
             model,
             { systemPrompt, messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
-            { maxTokens, signal, maxRetries: 0 },
+            { maxTokens, signal, maxRetries: 0, cacheRetention: "none" },
           );
           let reply: AssistantMessage | undefined;
           for await (const event of stream as AsyncIterable<AssistantMessageEvent>) {

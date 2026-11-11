@@ -86,6 +86,7 @@ test("an untitled session is named once, from the first exchange, on the current
   assert.equal(h.requests.length, 1);
   assert.equal(h.requests[0].model, h.ctx.model);
   assert.ok(h.requests[0].options.maxTokens <= 256);
+  assert.equal(h.requests[0].options.cacheRetention, "none", "a one-off title request must not be treated as an agent turn");
   assert.match(h.requests[0].context.messages[0].content, /fix the login bug/);
   assert.match(h.requests[0].context.messages[0].content, /Found it in auth\.ts/);
   await h.emit("agent_end");
