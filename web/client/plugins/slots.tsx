@@ -4,6 +4,7 @@
 // Views are already the selected session's (the event stream filters).
 
 import React, { useState } from "react";
+import { X } from "@phosphor-icons/react";
 import type { WebPluginDescriptor, WebView } from "./contract.ts";
 import { PluginViewRenderer } from "./PluginViewRenderer.tsx";
 
@@ -104,7 +105,7 @@ function FloatingWidgetItem({ plugin, view }: PluginWithView) {
           title={`Collapse ${plugin.title}`}
           aria-label={`Collapse ${plugin.title}`}
         >
-          ✕
+          <X size={14} />
         </button>
       </div>
       <div className="plugin-slot-floating-body">

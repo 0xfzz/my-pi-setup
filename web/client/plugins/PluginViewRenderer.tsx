@@ -4,6 +4,7 @@
 // is the view contract's closed set; a plugin never ships an icon of its own.
 
 import React, { useState } from "react";
+import { ArrowRight, CaretDown, CaretRight } from "@phosphor-icons/react";
 import type { GraphEdge, GraphNode, ListStatus, WebView } from "./contract.ts";
 import { MarkdownBody } from "./markdown.tsx";
 
@@ -98,7 +99,7 @@ function DetailBody({ detail }: { detail: string }) {
 function ExpandChevron({ open }: { open: boolean }) {
   return (
     <span className="plugin-list-item-chevron" aria-hidden="true">
-      {open ? "▾" : "▸"}
+      {open ? <CaretDown size={12} /> : <CaretRight size={12} />}
     </span>
   );
 }
@@ -198,7 +199,7 @@ function GraphNodeRow({ row }: { row: GraphTreeRow }) {
     <span className={`plugin-graph-kind plugin-graph-kind-${node.kind}`}>{node.kind}</span>
   ) : null;
   const relation = row.edgeLabel ? (
-    <span className="plugin-graph-relation-label">↳ {row.edgeLabel}</span>
+    <span className="plugin-graph-relation-label"><ArrowRight size={11} /> {row.edgeLabel}</span>
   ) : null;
   const body = (
     <>

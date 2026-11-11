@@ -3,6 +3,7 @@
 // other page plugin.
 
 import type { WebPluginDescriptor, WebView } from "./contract.ts";
+import { ArrowLeft } from "@phosphor-icons/react";
 import { PluginViewRenderer } from "./PluginViewRenderer.tsx";
 import { PluginActions } from "./PluginActions.tsx";
 
@@ -25,7 +26,7 @@ export function PluginPage({ plugin, view, sessionId, plugins }: PluginPageProps
     <div className="app-shell">
       <header className="app-header">
         <a href="/" className="plugin-nav-home-link" title="Back to pi web">
-          ← pi web
+          <ArrowLeft size={13} /> pi web
         </a>
         <span className="app-title">{plugin.title}</span>
         {plugin.description ? <span className="app-subtitle">{plugin.description}</span> : null}

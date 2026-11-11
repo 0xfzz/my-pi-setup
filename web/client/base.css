@@ -15,6 +15,16 @@
   --warning: #d9a03d;
   --scrim: rgba(0, 0, 0, 0.55);
   --bg-code: #0c0e10;
+  /* Plugin-surface tokens: the plugin CSS (plugins.css) names these rather
+   * than the legacy slot names, so both surfaces share the same palette. */
+  --text: #d7dde3;
+  --text-muted: #8b949e;
+  --bg-panel: #16191c;
+  --bg-hover: #1c2024;
+  --bg-active: #24292e;
+  --focus-ring: #4f9cf9;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --chat-content-max-width: 820px;
 }
 
 /* The persistent light theme: same slots, paper palette. Chosen via the
@@ -35,6 +45,12 @@
   --warning: #a06a18;
   --scrim: rgba(24, 28, 33, 0.35);
   --bg-code: #eef1f4;
+  --text: #1f2428;
+  --text-muted: #57616b;
+  --bg-panel: #ffffff;
+  --bg-hover: #f0f2f5;
+  --bg-active: #e0e4e8;
+  --focus-ring: #2b7fd4;
 }
 
 * {

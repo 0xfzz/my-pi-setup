@@ -454,6 +454,22 @@
   overflow-y: auto;
 }
 
+/* Center-slot rows render full views (not the collapsible panel variant);
+   inset the view so its content lines up with the title and sits clear of
+   the edge instead of touching it. */
+.plugin-slot-center-item {
+  border-bottom: 1px solid var(--border);
+}
+
+.plugin-slot-center-item:last-child {
+  border-bottom: none;
+}
+
+.plugin-slot-center-item > .plugin-view,
+.plugin-slot-center-item > .plugin-empty-state {
+  padding: 0 16px 12px;
+}
+
 /* Floating slot: collapsible utility chip docked above the composer. It sits in
    the chat column's flow instead of over the input, so it can never cover the
    send controls at any viewport height. */
