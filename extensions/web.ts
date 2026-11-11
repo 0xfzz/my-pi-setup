@@ -44,6 +44,7 @@ import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../l
 import { WEB_PLUGIN_VIEW_EVENT, type DialogWebView, type WebView } from "../lib/web-plugins/view.ts";
 import { publishWebView } from "../lib/web-plugins/publisher.ts";
 import { buildWebTree, type PiTreeNodeLike } from "../lib/web-tree.ts";
+import { sseFrameData, takeSseFrames } from "../lib/web-sse.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT } from "../lib/web-plugins/ui-event-models.ts";
 import { defaultServerDir, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiDeps } from "../lib/web-ui.ts";
 import { repoRootFromServerDir, sourceWatchRoots, watchSources, type SourceWatcher } from "../lib/web-ui-reload.ts";
@@ -473,13 +474,9 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
         const { done, value } = await reader.read();
         if (done) return;
         buffer += decoder.decode(value, { stream: true });
-        let separator = buffer.indexOf("\n\n");
-        while (separator >= 0) {
-          const frame = buffer.slice(0, separator);
-          buffer = buffer.slice(separator + 2);
-          handleBridgeFrame(sessionId, frame);
-          separator = buffer.indexOf("\n\n");
-        }
+        const { frames, remainder } = takeSseFrames(buffer);
+        buffer = remainder;
+        for (const frame of frames) handleBridgeFrame(sessionId, frame);
       }
     } finally {
       try {
@@ -491,11 +488,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   };
 
   const handleBridgeFrame = (sessionId: string, frame: string): void => {
-    const data = frame
-      .split("\n")
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart())
-      .join("\n");
+    const data = sseFrameData(frame);
     if (data === "") return; // heartbeat comment
     let parsed: {
       type?: unknown;
