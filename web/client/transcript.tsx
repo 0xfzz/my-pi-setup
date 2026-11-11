@@ -10,15 +10,11 @@ import type { AssistantBlock, BashBlock, ImageBlock, ToolCallBlock } from "./str
 import type { HistoryEntryLike, ToolCallStatus, ToolResultLike } from "./use-session.ts";
 import type { WorkingModelLike } from "./plugins/contract.ts";
 import { MarkdownBody } from "./plugins/markdown.tsx";
+import { INITIAL_FOLLOW, reduceFollow, type FollowEvent, type FollowState, type ScrollMetrics } from "./transcript-follow.ts";
 
 const RESULT_PREVIEW_LIMIT = 8_000;
 const BASH_OUTPUT_PREVIEW_LIMIT = 8_000;
 const DEFAULT_WORKING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-/** Below this distance from the bottom the user counts as "at the bottom". */
-const PIN_DISTANCE_PX = 48;
-/** Smart follow: after this much scroll idleness a running session pulls the
- * view back to the newest content (the jump button stays for the in-between). */
-const IDLE_FOLLOW_MS = 8_000;
 
 /** The transcript's working line: animated frames plus the streamed message. */
 export function WorkingIndicator({
@@ -383,10 +379,10 @@ export function Transcript({
   showWorking,
 }: TranscriptProps) {
   const scrollRef = useRef<HTMLElement | null>(null);
-  const pinnedRef = useRef(true);
-  // The last USER scroll: programmatic follows do not reset the idle clock.
-  const lastUserScrollRef = useRef(Date.now());
-  const programmaticScrollRef = useRef(false);
+  const innerRef = useRef<HTMLDivElement | null>(null);
+  const followRef = useRef<FollowState>(INITIAL_FOLLOW);
+  const contentHeightRef = useRef(0);
+  const sentCountRef = useRef(userMessages.length);
   const [showJump, setShowJump] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
 
@@ -412,61 +408,64 @@ export function Transcript({
     })),
   ];
 
-  // Auto-scroll (the "smart follow"): while the user is at the bottom every
-  // content change keeps the newest content in view — that visible motion is
-  // what makes the stream feel realtime. When they scroll up to read, the
-  // view stays put (the jump button shows, marked unread); once they have
-  // been idle past IDLE_FOLLOW_MS, the next content change — a running turn,
-  // a turn that landed while they read, the working line appearing — pulls
-  // the view back to the end on its own.
-  const streamedLength =
-    streaming.streamingMessage?.content.reduce(
-      (total, block) => total + (block.kind === "text" ? block.text.length : block.kind === "thinking" ? block.thinking.length : 0),
-      0,
-    ) ?? 0;
-  const contentSignature = `${entries.length}:${streaming.isStreaming ? 1 : 0}:${streamedLength}:${showWorking ? 1 : 0}`;
+  // Follow the end (the policy lives in transcript-follow.ts). Layout drives
+  // it, not a timer: the column growing is new content, and the scroller's own
+  // resize (a plugin card opening above the composer) can unseat the end.
+  const applyFollow = (event: FollowEvent): void => {
+    const next = reduceFollow(followRef.current, event);
+    followRef.current = next;
+    setShowJump(!next.pinned);
+    setHasUnread(next.unread);
+  };
+
+  const scrollToEnd = (): void => {
+    const el = scrollRef.current;
+    if (el !== null) el.scrollTop = el.scrollHeight;
+  };
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el === null) return;
-    const idleMs = Date.now() - lastUserScrollRef.current;
-    if (pinnedRef.current || idleMs >= IDLE_FOLLOW_MS) {
-      programmaticScrollRef.current = true;
-      el.scrollTop = el.scrollHeight;
-      setHasUnread(false);
-    } else {
-      setHasUnread(true);
-    }
-  }, [contentSignature, showWorking]);
+    const inner = innerRef.current;
+    if (el === null || inner === null) return undefined;
+    const observer = new ResizeObserver(() => {
+      const height = inner.offsetHeight;
+      if (height > contentHeightRef.current) applyFollow({ kind: "grew" });
+      contentHeightRef.current = height;
+      if (followRef.current.pinned) scrollToEnd();
+    });
+    observer.observe(el);
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, []);
+
+  // A prompt the reader sent lands at the end, wherever they were reading.
+  useEffect(() => {
+    const previous = sentCountRef.current;
+    sentCountRef.current = userMessages.length;
+    if (userMessages.length <= previous) return;
+    applyFollow({ kind: "jumped" });
+    scrollToEnd();
+  }, [userMessages.length]);
 
   const handleScroll = (): void => {
     const el = scrollRef.current;
     if (el === null) return;
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const pinned = distance < PIN_DISTANCE_PX;
-    pinnedRef.current = pinned;
-    setShowJump(!pinned);
-    if (!programmaticScrollRef.current) {
-      lastUserScrollRef.current = Date.now();
-      if (pinned) setHasUnread(false);
-    }
-    programmaticScrollRef.current = false;
+    const metrics: ScrollMetrics = {
+      scrollTop: el.scrollTop,
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+    };
+    applyFollow({ kind: "scrolled", metrics });
   };
 
   const jumpToLatest = (): void => {
-    const el = scrollRef.current;
-    if (el === null) return;
-    programmaticScrollRef.current = true;
-    el.scrollTop = el.scrollHeight;
-    pinnedRef.current = true;
-    lastUserScrollRef.current = Date.now();
-    setShowJump(false);
-    setHasUnread(false);
+    applyFollow({ kind: "jumped" });
+    scrollToEnd();
   };
 
   return (
     <main className="app-transcript" aria-live="polite" ref={scrollRef} onScroll={handleScroll}>
-      <div className="app-transcript-inner">
+      <div className="app-transcript-inner" ref={innerRef}>
         {entries.length === 0 && !streaming.isStreaming && !showWorking ? (
           <div className="app-empty">No messages yet.</div>
         ) : null}

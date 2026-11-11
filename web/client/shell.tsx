@@ -468,6 +468,7 @@ export function AppShell() {
             </main>
           ) : (
             <Transcript
+              key={session.selectedId ?? "none"}
               history={session.history}
               userMessages={session.userMessages}
               streaming={session.streaming}
