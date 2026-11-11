@@ -10,7 +10,7 @@ import { buildWebTree, type WebTreeNode } from "../../lib/web-tree.ts";
 import { createStreamTracker, type StreamSnapshot } from "./stream-tracker.ts";
 import { createReadStream, existsSync } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { attachSessionPlugins } from "./plugin-host.ts";
 import { createHeadlessWebUiContext } from "./web-ui-context.ts";
 
@@ -509,6 +509,31 @@ async function readSessionHeader(file: string): Promise<SessionHeaderLike | null
   });
 }
 
+/** Every session .jsonl file under the sessions root, in directory order. */
+async function listSessionFiles(root: string): Promise<string[]> {
+  let projectDirs: string[];
+  try {
+    projectDirs = (await readdir(root, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+  const files: string[] = [];
+  for (const projectDir of projectDirs) {
+    let entries: string[];
+    try {
+      entries = await readdir(join(root, projectDir));
+    } catch {
+      continue;
+    }
+    for (const fileName of entries) {
+      if (fileName.endsWith(".jsonl")) files.push(join(root, projectDir, fileName));
+    }
+  }
+  return files;
+}
+
 /** Sessions on disk under the agent dir, newest first, capped. */
 export async function listDiskSessions(options?: {
   agentDir?: string;
@@ -518,33 +543,16 @@ export async function listDiskSessions(options?: {
   if (!existsSync(root)) return [];
   const limit = options?.limit ?? 30;
   const found: DiskSession[] = [];
-  let projectDirs: string[];
-  try {
-    projectDirs = (await readdir(root, { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name);
-  } catch {
-    return [];
-  }
-  for (const projectDir of projectDirs) {
-    let files: string[];
+  for (const file of await listSessionFiles(root)) {
+    const header = await readSessionHeader(file);
+    if (header?.id === undefined || header.cwd === undefined) continue;
+    let modifiedAt = 0;
     try {
-      files = (await readdir(join(root, projectDir))).filter((f) => f.endsWith(".jsonl"));
+      modifiedAt = (await stat(file)).mtimeMs;
     } catch {
       continue;
     }
-    for (const fileName of files) {
-      const file = join(root, projectDir, fileName);
-      const header = await readSessionHeader(file);
-      if (header?.id === undefined || header.cwd === undefined) continue;
-      let modifiedAt = 0;
-      try {
-        modifiedAt = (await stat(file)).mtimeMs;
-      } catch {
-        continue;
-      }
-      found.push({ id: header.id, cwd: header.cwd, file, modifiedAt });
-    }
+    found.push({ id: header.id, cwd: header.cwd, file, modifiedAt });
   }
   found.sort((a, b) => b.modifiedAt - a.modifiedAt);
   return found.slice(0, limit);
@@ -555,26 +563,8 @@ export async function resolveSessionFile(id: string, agentDir?: string): Promise
   if (!/^[0-9a-zA-Z-]+$/.test(id)) return null;
   const root = sessionsRoot(agentDir);
   if (!existsSync(root)) return null;
-  let projectDirs: string[];
-  try {
-    projectDirs = (await readdir(root, { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name);
-  } catch {
-    return null;
-  }
-  for (const projectDir of projectDirs) {
-    let files: string[];
-    try {
-      files = (await readdir(join(root, projectDir))).filter((f) => f.endsWith(".jsonl"));
-    } catch {
-      continue;
-    }
-    for (const fileName of files) {
-      if (sessionIdFromFileName(fileName) === id) {
-        return join(root, projectDir, fileName);
-      }
-    }
+  for (const file of await listSessionFiles(root)) {
+    if (sessionIdFromFileName(basename(file)) === id) return file;
   }
   return null;
 }
