@@ -14,6 +14,13 @@ import {
 } from "./wire.ts";
 import type { SessionCore } from "./sessions.ts";
 import { onSessionReplaced } from "./sessions.ts";
+import {
+  listDiskSessions,
+  listLiveSessions,
+  subscribeSessionDirectory,
+  type SessionDirectoryEvent,
+  type SessionInfo,
+} from "./sessions.ts";
 import { getRegisteredPlugins, recordExtensionUi, webUiStore } from "./plugin-host.ts";
 import { resolveRegionOverrides } from "../shared/regions.ts";
 
@@ -229,6 +236,105 @@ export function attachAgentEventStream(
   };
 
   void publishSession();
+
+  req.on("close", () => cleanup(false));
+  res.on("close", () => cleanup(false));
+
+  heartbeat = setInterval(() => {
+    send({ type: "heartbeat" }, { droppable: true });
+  }, AGENT_EVENT_HEARTBEAT_MS);
+}
+
+async function buildSessionsSnapshot(): Promise<SessionInfo[]> {
+  const live = listLiveSessions();
+  const liveIds = new Set(live.map((session) => session.id));
+  const disk = await listDiskSessions();
+  return [
+    ...live,
+    ...disk
+      .filter((session) => !liveIds.has(session.id))
+      .map((session) => ({
+        id: session.id,
+        cwd: session.cwd,
+        sessionFile: session.file,
+        live: false,
+        running: false,
+        modifiedAt: session.modifiedAt,
+      })),
+  ];
+}
+
+/**
+ * The session directory stream: replaces the client's 2s /api/sessions poll.
+ * One snapshot on connect, then only `session_running` / `session_added` /
+ * `session_removed` transitions (see subscribeSessionDirectory in sessions.ts).
+ * Shares the agent stream's heartbeat cadence and backlog guards.
+ */
+export function attachSessionsEventStream(req: IncomingMessage, res: ServerResponse): void {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.write(":\n\n");
+
+  let closed = false;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let unsubscribe: (() => void) | null = null;
+
+  const cleanup = (finish: boolean): void => {
+    if (closed) return;
+    closed = true;
+    if (heartbeat !== null) clearInterval(heartbeat);
+    unsubscribe?.();
+    unsubscribe = null;
+    if (finish) res.end();
+  };
+
+  const send = (data: unknown, options?: { droppable?: boolean }): void => {
+    if (closed) return;
+    const queuedBytes = res.writableLength;
+    if (options?.droppable && queuedBytes > STREAM_HIGH_WATER_MARK_BYTES) return;
+    if (queuedBytes > STREAM_BACKLOG_LIMIT_BYTES) {
+      cleanup(true);
+      return;
+    }
+    try {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    } catch {
+      cleanup(false);
+    }
+  };
+
+  // Subscribe-before-snapshot: transitions that land while the (async) disk
+  // scan runs are buffered and flushed after the snapshot, so no flip is lost.
+  let announced = false;
+  const buffered: SessionDirectoryEvent[] = [];
+  const forward = (event: SessionDirectoryEvent): void => {
+    if (!announced) {
+      buffered.push(event);
+      return;
+    }
+    send(event);
+  };
+  unsubscribe = subscribeSessionDirectory(forward);
+
+  void buildSessionsSnapshot()
+    .then((sessions) => {
+      if (closed) return;
+      send({ type: "sessions_snapshot", sessions });
+      announced = true;
+      for (const event of buffered) send(event);
+      buffered.length = 0;
+    })
+    .catch(() => {
+      if (closed) return;
+      send({ type: "sessions_snapshot", sessions: [] });
+      announced = true;
+      for (const event of buffered) send(event);
+      buffered.length = 0;
+    });
 
   req.on("close", () => cleanup(false));
   res.on("close", () => cleanup(false));

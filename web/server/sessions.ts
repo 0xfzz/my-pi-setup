@@ -113,6 +113,40 @@ export interface SessionHistory {
 
 const liveSessions = new Map<string, SessionHandle>();
 
+// ── Session directory (realtime list transitions) ─────────────────────────
+// The sidebar shows the running/idle state of EVERY session, not just the
+// selected one. This is a global subscription independent of browser
+// streams: it emits running flips and add/remove transitions so one SSE
+// stream can replace the /api/sessions poll.
+
+export type SessionDirectoryEvent =
+  | { type: "session_running"; id: string; running: boolean }
+  | { type: "session_added"; session: SessionInfo }
+  | { type: "session_removed"; id: string };
+
+const directoryListeners = new Set<(event: SessionDirectoryEvent) => void>();
+
+export function subscribeSessionDirectory(listener: (event: SessionDirectoryEvent) => void): () => void {
+  directoryListeners.add(listener);
+  return () => {
+    directoryListeners.delete(listener);
+  };
+}
+
+function emitDirectory(event: SessionDirectoryEvent): void {
+  for (const listener of Array.from(directoryListeners)) {
+    try {
+      listener(event);
+    } catch {
+      // A failing listener (a dead SSE stream) cannot break the directory.
+    }
+  }
+}
+
+// One permanent tap per live session: it detects running/idle flips from the
+// session's own lifecycle events so listeners see transitions, not a re-read.
+const directoryTaps = new Map<string, () => void>();
+
 // ── The split-brain guard ──────────────────────────────────────────────────
 // A TUI bridge OWNS its session. While the bridge is attached — or within
 // the self-heal grace window after it drops — the web must NEVER resume
@@ -240,6 +274,27 @@ function toCore(inner: AgentSession): SessionCore {
   };
 }
 
+/** One permanent tap per live session: detect running/idle flips from lifecycle events. */
+function trackSessionDirectory(core: SessionCore): void {
+  const id = core.sessionId;
+  directoryTaps.get(id)?.();
+  directoryTaps.delete(id);
+  let running = core.getState().isStreaming;
+  const unsubscribe = core.subscribe((event: unknown) => {
+    const type = (event as { type?: unknown } | null)?.type;
+    if (type === "agent_start") {
+      if (running) return;
+      running = true;
+      emitDirectory({ type: "session_running", id, running: true });
+    } else if (type === "agent_settled" || type === "session_shutdown") {
+      if (!running) return;
+      running = false;
+      emitDirectory({ type: "session_running", id, running: false });
+    }
+  });
+  directoryTaps.set(id, unsubscribe);
+}
+
 function register(core: SessionCore, cwd: string, sessionFile: string, inner?: unknown): SessionCore {
   const replaced = liveSessions.get(core.sessionId);
   liveSessions.set(core.sessionId, {
@@ -270,6 +325,14 @@ function register(core: SessionCore, cwd: string, sessionFile: string, inner?: u
       onEvent: (listener: (event: { type?: string }) => void) =>
         core.subscribe((event: unknown) => listener(event as { type?: string })),
     });
+  }
+  // Session directory: track this live session's running/idle transitions
+  // and announce its membership (the replace path re-announces, so a bridge
+  // takeover or an in-process resume both refresh the listing).
+  trackSessionDirectory(core);
+  const registered = liveSessions.get(core.sessionId);
+  if (registered !== undefined) {
+    emitDirectory({ type: "session_added", session: sessionInfoOf(registered) });
   }
   return core;
 }
@@ -329,6 +392,9 @@ export function onSessionReplaced(sessionId: string, listener: () => void): () =
 export function clearSessionsForTests(): void {
   liveSessions.clear();
   bridgeOwnership.clear();
+  for (const unsubscribe of directoryTaps.values()) unsubscribe();
+  directoryTaps.clear();
+  directoryListeners.clear();
 }
 
 export function getSession(id: string): SessionHandle | undefined {
@@ -338,17 +404,24 @@ export function getSession(id: string): SessionHandle | undefined {
 /** Drop a live session registration (bridge detach or replacement). */
 export function unregisterSession(id: string): void {
   liveSessions.delete(id);
+  directoryTaps.get(id)?.();
+  directoryTaps.delete(id);
+  emitDirectory({ type: "session_removed", id });
 }
 
-export function listLiveSessions(): SessionInfo[] {
-  return [...liveSessions.values()].map((handle) => ({
+function sessionInfoOf(handle: SessionHandle): SessionInfo {
+  return {
     id: handle.core.sessionId,
     cwd: handle.cwd,
     sessionFile: handle.sessionFile,
     live: true,
     running: handle.core.getState().isStreaming,
     modifiedAt: handle.lastActivityAt,
-  }));
+  };
+}
+
+export function listLiveSessions(): SessionInfo[] {
+  return [...liveSessions.values()].map(sessionInfoOf);
 }
 
 export interface SessionInfo {

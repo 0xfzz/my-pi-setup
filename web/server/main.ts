@@ -33,7 +33,7 @@ import {
 import { handlePiApiRequest } from "./pi-api.ts";
 import { piBuiltinCommands } from "../../lib/web-pi-apis/index.ts";
 import { annotateBuiltinCommands } from "../shared/commands.ts";
-import { attachAgentEventStream } from "./event-stream.ts";
+import { attachAgentEventStream, attachSessionsEventStream } from "./event-stream.ts";
 import { createAuthHttp, type AuthHttp, type AuthHttpOptions } from "./auth.ts";
 import { webAuthConfigPath } from "../../lib/web-auth/config.ts";
 import { WebAuthService } from "../../lib/web-auth/service.ts";
@@ -390,6 +390,11 @@ async function handleApi(
       parent: parent === dir ? null : parent,
       entries,
     });
+    return true;
+  }
+  if (pathname === "/api/sessions/events") {
+    if (req.method !== "GET") return methodNotAllowed();
+    attachSessionsEventStream(req, res);
     return true;
   }
   if (pathname === "/api/sessions") {

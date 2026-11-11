@@ -243,20 +243,68 @@ export function usePiSession() {
       const body = (await res.json()) as { sessions?: SessionSummary[] };
       setSessions(body.sessions ?? []);
     } catch {
-      // Offline: keep the last list; the poll retries.
+      // Offline: keep the last list.
     }
   }, []);
 
-  // The sidebar's running marks are unfocused sessions' live state: the
-  // list must refresh faster than a turn's start is visible. 2s for a
-  // local endpoint that reads the live registry plus a directory.
+  // The session list is push-driven: one directory EventSource carries the
+  // full snapshot on connect, then only running/idle and add/remove
+  // transitions — no polling. A failed stream (server restart) reconnects
+  // and re-snapshots on its own.
   useEffect(() => {
-    void refreshSessions();
-    const timer = setInterval(() => {
-      void refreshSessions();
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [refreshSessions]);
+    const source = new EventSource("/api/sessions/events");
+    source.onmessage = (event: MessageEvent<string>) => {
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(event.data) as Record<string, unknown>;
+      } catch {
+        return;
+      }
+      switch (data.type) {
+        case "sessions_snapshot": {
+          const body = data as { sessions?: SessionSummary[] };
+          setSessions(body.sessions ?? []);
+          break;
+        }
+        case "session_running": {
+          const frame = data as { id?: unknown; running?: unknown };
+          const id = frame.id;
+          const running = frame.running;
+          if (typeof id !== "string" || typeof running !== "boolean") return;
+          setSessions((prev) =>
+            prev.map((session) =>
+              session.id === id ? { ...session, running } : session,
+            ),
+          );
+          break;
+        }
+        case "session_added": {
+          const added = (data as { session?: SessionSummary }).session;
+          if (added === undefined || typeof added.id !== "string") return;
+          setSessions((prev) => {
+            const index = prev.findIndex((session) => session.id === added.id);
+            if (index === -1) return [...prev, added];
+            const next = [...prev];
+            next[index] = added;
+            return next;
+          });
+          break;
+        }
+        case "session_removed": {
+          const removedId = (data as { id?: unknown }).id;
+          if (typeof removedId !== "string") return;
+          setSessions((prev) =>
+            prev.filter((session) => session.id !== removedId),
+          );
+          break;
+        }
+        default:
+          // heartbeat and future frame types pass silently.
+          break;
+      }
+    };
+    return () => source.close();
+  }, []);
 
   const fetchState = useCallback(async (id: string) => {
     try {
