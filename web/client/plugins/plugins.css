@@ -513,11 +513,19 @@
   color: var(--text-muted);
 }
 
+/* The height ceiling is the slot policy's (--plugin-body-max-height), so a long view scrolls here. */
 .plugin-slot-center-body {
   padding: 12px;
   background: var(--bg);
-  max-height: 260px;
+  max-height: var(--plugin-body-max-height, 240px);
   overflow-y: auto;
+}
+
+/* collision: "hide" — on a phone the slot gives its place back to the transcript. */
+@media (max-width: 720px) {
+  .plugin-slot-region [data-collision="hide"] {
+    display: none;
+  }
 }
 
 /* Floating slot: an overlay on the top-right of the transcript frame. It takes
@@ -574,8 +582,9 @@
 }
 
 .plugin-slot-floating-card {
-  width: 320px;
-  max-height: 380px;
+  width: var(--plugin-card-width, 320px);
+  max-width: calc(100vw - 32px);
+  max-height: var(--plugin-body-max-height, 380px);
   display: flex;
   flex-direction: column;
   background: var(--card);

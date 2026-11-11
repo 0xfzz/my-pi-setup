@@ -1,40 +1,22 @@
-// Slot host and adapters — ported from the vendored app's slots: plugins
-// declare a slot surface (top/center/bottom/floating); the host resolves
-// each plugin's view for the selected session and renders the region.
-// Views are already the selected session's (the event stream filters).
+// Slot host and adapters — plugins declare a slot surface (top/center/bottom/
+// floating) and a placement in their ui contribution (strategy, bounds,
+// collision). The host resolves each plugin's view for the selected session
+// and renders it under that slot's policy (slot-policy.ts): a compact strategy
+// is one summary line, bounds clamp the card, and collision decides what gives
+// way on a phone. Views are already the selected session's (the event stream
+// filters).
 
-import React, { useState } from "react";
+import React, { useState, type CSSProperties } from "react";
 import { CaretDown, CaretRight, SidebarSimple, X } from "@phosphor-icons/react";
 import type { WebPluginDescriptor, WebView } from "./contract.ts";
 import { PluginViewRenderer } from "./PluginViewRenderer.tsx";
+import { compactSummary, slotPolicy, type SlotCollision, type SlotPolicy, type SlotPosition } from "./slot-policy.ts";
 
-export type SlotPosition = "top" | "center" | "bottom" | "floating";
+export type { SlotPosition } from "./slot-policy.ts";
 
 interface PluginWithView {
   plugin: WebPluginDescriptor;
   view: WebView;
-}
-
-function formatCompactView(view: WebView): string {
-  if (view.type === "kv") {
-    if (view.rows.length === 0) return "";
-    const first = view.rows[0];
-    return `${first.label}: ${first.value}`;
-  }
-  if (view.type === "list") {
-    const count = view.items.length;
-    const countText = `${count} ${count === 1 ? "item" : "items"}`;
-    if (count > 0 && view.items[0]) {
-      const first = view.items[0];
-      const text = typeof first === "string" ? first : first.text;
-      return `${countText} (${text})`;
-    }
-    return countText;
-  }
-  if (view.type === "status") {
-    return view.text;
-  }
-  return "";
 }
 
 function pagePathFor(plugin: WebPluginDescriptor): string | null {
@@ -42,34 +24,31 @@ function pagePathFor(plugin: WebPluginDescriptor): string | null {
   return surface && "path" in surface ? (surface.path as string) : null;
 }
 
-/** Compact one-line row for the top and bottom strips. */
-function CompactRow({ plugin, view }: PluginWithView) {
+/** One-line row for the top and bottom strips, and for compact-strategy slots. */
+function CompactRow({ plugin, view, collision }: PluginWithView & { collision: SlotCollision }) {
   const pagePath = pagePathFor(plugin);
+  const pageLink = pagePath ? (
+    <a href={pagePath} className="plugin-slot-page-link" title={`Open ${plugin.title} page`}>
+      Open
+    </a>
+  ) : null;
   if (view.type === "status") {
     return (
-      <div className="plugin-slot-row plugin-slot-top-row" data-plugin-id={plugin.id}>
+      <div className="plugin-slot-row plugin-slot-top-row" data-plugin-id={plugin.id} data-collision={collision}>
         <span className="plugin-slot-title">{plugin.title}</span>
         <span className="plugin-slot-sep">: </span>
         <span className={`plugin-slot-chip plugin-status-chip tone-${view.tone}`}>{view.text}</span>
-        {pagePath ? (
-          <a href={pagePath} className="plugin-slot-page-link" title={`Open ${plugin.title} page`}>
-            Open
-          </a>
-        ) : null}
+        {pageLink}
       </div>
     );
   }
-  const summary = formatCompactView(view);
+  const summary = compactSummary(view);
   return (
-    <div className="plugin-slot-row plugin-slot-top-row" data-plugin-id={plugin.id}>
+    <div className="plugin-slot-row plugin-slot-top-row" data-plugin-id={plugin.id} data-collision={collision}>
       <span className="plugin-slot-title">{plugin.title}</span>
       {summary ? <span className="plugin-slot-sep">: </span> : null}
       {summary ? <span className="plugin-slot-content">{summary}</span> : null}
-      {pagePath ? (
-        <a href={pagePath} className="plugin-slot-page-link" title={`Open ${plugin.title} page`}>
-          Open
-        </a>
-      ) : null}
+      {pageLink}
     </div>
   );
 }
@@ -78,14 +57,17 @@ function CompactRow({ plugin, view }: PluginWithView) {
  * Center-slot item: when status-only (e.g. "No child agents"), it renders
  * as a clean compact strip so the chat is not interrupted by a large empty box.
  * When rich (kv/list/graph), it renders as a neat card with collapsible body
- * and a button to open in the Right Sidebar panel.
+ * and a button to open in the Right Sidebar panel. The body is bounded by the
+ * slot policy, so a long view scrolls inside its card.
  */
 function CenterSlotItem({
   plugin,
   view,
+  policy,
   onOpenSidePanel,
   isOpenInSidePanel,
 }: PluginWithView & {
+  policy: SlotPolicy;
   onOpenSidePanel?: (pluginId: string) => void;
   isOpenInSidePanel?: boolean;
 }) {
@@ -95,7 +77,7 @@ function CenterSlotItem({
   // Status view: keep it a single clean line — never a tall empty box.
   if (view.type === "status") {
     return (
-      <div className="plugin-slot-center-item is-compact" data-plugin-id={plugin.id}>
+      <div className="plugin-slot-center-item is-compact" data-plugin-id={plugin.id} data-collision={policy.collision}>
         <div className="plugin-slot-center-header">
           <span className="plugin-slot-title">{plugin.title}</span>
           <span className="plugin-slot-sep">: </span>
@@ -116,7 +98,11 @@ function CenterSlotItem({
   }
 
   return (
-    <div className={`plugin-slot-center-item${isDocked ? " is-docked" : ""}`} data-plugin-id={plugin.id}>
+    <div
+      className={`plugin-slot-center-item${isDocked ? " is-docked" : ""}`}
+      data-plugin-id={plugin.id}
+      data-collision={policy.collision}
+    >
       <div className="plugin-slot-center-header">
         <button
           type="button"
@@ -147,7 +133,10 @@ function CenterSlotItem({
         </div>
       </div>
       {!collapsed && !isDocked ? (
-        <div className="plugin-slot-center-body">
+        <div
+          className="plugin-slot-center-body"
+          style={{ "--plugin-body-max-height": `${policy.bodyMaxHeight}px` } as CSSProperties}
+        >
           <PluginViewRenderer view={view} hideTitle={true} />
         </div>
       ) : null}
@@ -156,15 +145,18 @@ function CenterSlotItem({
 }
 
 /**
- * Floating widget: renders the dock chip at bottom-right. Clicking delegates
- * to opening the Right Sidebar panel when available, or toggles local card.
+ * Floating widget: renders the dock chip at the top-right of the transcript.
+ * Clicking delegates to opening the Right Sidebar panel when available, or
+ * toggles a local card bounded by the slot policy.
  */
 function FloatingWidgetItem({
   plugin,
   view,
+  policy,
   onOpenSidePanel,
   isActive,
 }: PluginWithView & {
+  policy: SlotPolicy;
   onOpenSidePanel?: (pluginId: string) => void;
   isActive?: boolean;
 }) {
@@ -182,7 +174,7 @@ function FloatingWidgetItem({
   if (isActive) return null;
 
   return (
-    <div className="plugin-slot-floating-widget">
+    <div className="plugin-slot-floating-widget" data-collision={policy.collision}>
       <button
         type="button"
         className={`plugin-slot-floating-chip${isActive ? " is-active" : ""}`}
@@ -194,7 +186,14 @@ function FloatingWidgetItem({
         <span className="plugin-slot-floating-title">{plugin.title}</span>
       </button>
       {!onOpenSidePanel && expanded ? (
-        <div className="plugin-slot-floating-card" data-plugin-id={plugin.id}>
+        <div
+          className="plugin-slot-floating-card"
+          data-plugin-id={plugin.id}
+          style={{
+            "--plugin-card-width": `${policy.cardMaxWidth}px`,
+            "--plugin-body-max-height": `${policy.bodyMaxHeight}px`,
+          } as CSSProperties}
+        >
           <div className="plugin-slot-floating-header">
             <span className="plugin-slot-floating-card-title">{plugin.title}</span>
             <button
@@ -251,7 +250,12 @@ export function SlotHost({
     return (
       <div className={`plugin-slot-region plugin-slot-${slot}`} role="region" aria-label={`${slot} plugins`}>
         {withViews.map((item) => (
-          <CompactRow key={item.plugin.id} plugin={item.plugin} view={item.view} />
+          <CompactRow
+            key={item.plugin.id}
+            plugin={item.plugin}
+            view={item.view}
+            collision={slotPolicy(item.plugin, slot).collision}
+          />
         ))}
       </div>
     );
@@ -260,15 +264,22 @@ export function SlotHost({
   if (slot === "center") {
     return (
       <div className="plugin-slot-region plugin-slot-center" role="region" aria-label="Center plugins">
-        {withViews.map(({ plugin, view }) => (
-          <CenterSlotItem
-            key={plugin.id}
-            plugin={plugin}
-            view={view}
-            onOpenSidePanel={onOpenSidePanel}
-            isOpenInSidePanel={sidePanelOpen && activeSidePluginId === plugin.id}
-          />
-        ))}
+        {withViews.map(({ plugin, view }) => {
+          const policy = slotPolicy(plugin, slot);
+          if (policy.compact) {
+            return <CompactRow key={plugin.id} plugin={plugin} view={view} collision={policy.collision} />;
+          }
+          return (
+            <CenterSlotItem
+              key={plugin.id}
+              plugin={plugin}
+              view={view}
+              policy={policy}
+              onOpenSidePanel={onOpenSidePanel}
+              isOpenInSidePanel={sidePanelOpen && activeSidePluginId === plugin.id}
+            />
+          );
+        })}
       </div>
     );
   }
@@ -280,6 +291,7 @@ export function SlotHost({
           key={item.plugin.id}
           plugin={item.plugin}
           view={item.view}
+          policy={slotPolicy(item.plugin, slot)}
           onOpenSidePanel={onOpenSidePanel}
           isActive={sidePanelOpen && activeSidePluginId === item.plugin.id}
         />

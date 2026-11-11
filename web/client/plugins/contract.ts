@@ -15,6 +15,7 @@ export type {
 } from "../../../lib/web-plugins/view.ts";
 export type { ActionDescriptor } from "../../../lib/web-plugins/actions.ts";
 export type { WebPluginDescriptor } from "../../../lib/web-plugins/descriptor.ts";
+export type { WebPluginUiContribution } from "../../../lib/web-plugins/ui-contracts.ts";
 
 /** The working-indicator model streamed per session (ui.working.changed). */
 export interface WorkingModelLike {
