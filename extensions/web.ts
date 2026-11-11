@@ -129,7 +129,12 @@ function contextUsageOf(ctx: ExtensionContext): { contextUsage: { percent: numbe
  * server happens to be listening on the default port. The repo's
  * established pattern (plugin state paths) gates on NODE_TEST_CONTEXT.
  */
-const bridgeEnabled = process.env.NODE_TEST_CONTEXT === undefined;
+// The web extension can also be loaded inside the web server process itself
+// (an in-process resume loads the full extension set). In that process it must
+// not bridge, or it would attach the session back to the server it is running
+// in and displace the live in-process copy.
+const inWebServerProcess = process.env.PI_WEB_SERVER_PROCESS === "1";
+const bridgeEnabled = process.env.NODE_TEST_CONTEXT === undefined && !inWebServerProcess;
 
 /** The state snapshot posted when the bridge attaches. */
 function bridgeStateOf(ctx: ExtensionContext): Record<string, unknown> {
@@ -1340,6 +1345,9 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
 
   pi.on("session_start", (_event, ctx) => {
     lastCtxForCommands = ctx;
+    // Inside the web server process the extension is loaded as part of an
+    // in-process session resume; it must not self-bridge or watch sources.
+    if (inWebServerProcess) return;
     if (autoReloadEnabled && !watcher) {
       const serverDir = options.deps?.serverDir ?? defaultServerDir();
       watcher = watchSources({

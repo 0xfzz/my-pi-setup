@@ -12,6 +12,7 @@ import { createReadStream, existsSync } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { attachSessionPlugins } from "./plugin-host.ts";
+import { createHeadlessWebUiContext } from "./web-ui-context.ts";
 
 export interface SessionStateLite {
   sessionId: string;
@@ -344,8 +345,15 @@ export async function startSession(options: {
 }): Promise<SessionCore> {
   const { session } = await createAgentSession({
     cwd: options.cwd,
+    sessionStartEvent: { type: "session_start", reason: "new" },
     ...(options.agentDir !== undefined ? { agentDir: options.agentDir } : {}),
   });
+  // The interactive/rpc/print runners all bind extensions (which emits
+  // `session_start`) before serving the session; the in-process web runner
+  // must too, or plugins never publish their resting views until a prompt
+  // fires an agent event. Bind headlessly: views publish onto the session
+  // bus, and the TUI-only `ctx.ui` methods stay safe no-ops.
+  await session.bindExtensions({ uiContext: createHeadlessWebUiContext() });
   return register(toCore(session), options.cwd, session.sessionFile ?? "", session);
 }
 
@@ -359,8 +367,12 @@ export async function resumeSession(options: {
   const { session } = await createAgentSession({
     cwd,
     sessionManager: manager,
+    sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile: options.sessionFile },
     ...(options.agentDir !== undefined ? { agentDir: options.agentDir } : {}),
   });
+  // Same rationale as startSession: a resumed session must republish its
+  // resting plugin views the moment it is opened, not on the first turn.
+  await session.bindExtensions({ uiContext: createHeadlessWebUiContext() });
   return register(toCore(session), cwd, options.sessionFile, session);
 }
 

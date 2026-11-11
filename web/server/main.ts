@@ -38,6 +38,12 @@ import { createAuthHttp, type AuthHttp, type AuthHttpOptions } from "./auth.ts";
 import { webAuthConfigPath } from "../../lib/web-auth/config.ts";
 import { WebAuthService } from "../../lib/web-auth/service.ts";
 
+// Mark this process as the web server. It resumes sessions in-process, which
+// loads the project extensions (including `web`) into THIS process; the `web`
+// extension checks this flag so it does not bridge a web-resumed session back
+// to the server that owns it.
+process.env.PI_WEB_SERVER_PROCESS = "1";
+
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
