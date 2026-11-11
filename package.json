@@ -75,6 +75,7 @@
     "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-coding-agent": "1.4.0",
     "@earendil-works/pi-tui": "1.4.0",
+    "@shadcn/lint": "^0.2.5",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^22.0.0",
     "esbuild": "^0.28.2",

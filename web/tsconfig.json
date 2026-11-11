@@ -6,6 +6,10 @@
     "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./client/*"]
+    },
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "types": ["node"],
