@@ -4,7 +4,7 @@
 // Views are already the selected session's (the event stream filters).
 
 import React, { useState } from "react";
-import { X } from "@phosphor-icons/react";
+import { CaretDown, CaretRight, SidebarSimple, X } from "@phosphor-icons/react";
 import type { WebPluginDescriptor, WebView } from "./contract.ts";
 import { PluginViewRenderer } from "./PluginViewRenderer.tsx";
 
@@ -74,43 +74,145 @@ function CompactRow({ plugin, view }: PluginWithView) {
   );
 }
 
-/** Floating widget: a chip when collapsed, a full view card when expanded. */
-function FloatingWidgetItem({ plugin, view }: PluginWithView) {
-  const [expanded, setExpanded] = useState(false);
+/**
+ * Center-slot item: when status-only (e.g. "No child agents"), it renders
+ * as a clean compact strip so the chat is not interrupted by a large empty box.
+ * When rich (kv/list/graph), it renders as a neat card with collapsible body
+ * and a button to open in the Right Sidebar panel.
+ */
+function CenterSlotItem({
+  plugin,
+  view,
+  onOpenSidePanel,
+  isOpenInSidePanel,
+}: PluginWithView & {
+  onOpenSidePanel?: (pluginId: string) => void;
+  isOpenInSidePanel?: boolean;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const isDocked = isOpenInSidePanel === true;
 
-  if (!expanded) {
+  // Status view: keep it a single clean line — never a tall empty box.
+  if (view.type === "status") {
     return (
-      <button
-        type="button"
-        className="plugin-slot-floating-chip"
-        data-plugin-id={plugin.id}
-        onClick={() => setExpanded(true)}
-        aria-expanded={false}
-        title={`Expand ${plugin.title}`}
-      >
-        <span className="plugin-slot-floating-title">{plugin.title}</span>
-      </button>
+      <div className="plugin-slot-center-item is-compact" data-plugin-id={plugin.id}>
+        <div className="plugin-slot-center-header">
+          <span className="plugin-slot-title">{plugin.title}</span>
+          <span className="plugin-slot-sep">: </span>
+          <span className={`plugin-slot-chip plugin-status-chip tone-${view.tone}`}>{view.text}</span>
+          {onOpenSidePanel ? (
+            <button
+              type="button"
+              className="plugin-slot-page-link"
+              onClick={() => onOpenSidePanel(plugin.id)}
+              title={`Open ${plugin.title} in side panel`}
+            >
+              {isDocked ? "Viewing in panel" : "Open"}
+            </button>
+          ) : null}
+        </div>
+      </div>
     );
   }
 
   return (
-    <div className="plugin-slot-floating-card" data-plugin-id={plugin.id}>
-      <div className="plugin-slot-floating-header">
-        <span className="plugin-slot-floating-card-title">{plugin.title}</span>
+    <div className={`plugin-slot-center-item${isDocked ? " is-docked" : ""}`} data-plugin-id={plugin.id}>
+      <div className="plugin-slot-center-header">
         <button
           type="button"
-          className="plugin-slot-floating-close"
-          onClick={() => setExpanded(false)}
-          aria-expanded={true}
-          title={`Collapse ${plugin.title}`}
-          aria-label={`Collapse ${plugin.title}`}
+          className="plugin-slot-center-title-btn"
+          onClick={() => setCollapsed((prev) => !prev)}
+          aria-expanded={!collapsed && !isDocked}
+          title={collapsed ? `Expand ${plugin.title}` : `Collapse ${plugin.title}`}
         >
-          <X size={14} />
+          <span className="plugin-slot-title">{plugin.title}</span>
+          {!isDocked ? (
+            <span className="plugin-slot-collapse-indicator" aria-hidden="true">
+              {collapsed ? <CaretRight size={12} /> : <CaretDown size={12} />}
+            </span>
+          ) : null}
         </button>
+        <div className="plugin-slot-center-actions">
+          {onOpenSidePanel ? (
+            <button
+              type="button"
+              className={`plugin-slot-center-action${isDocked ? " is-active" : ""}`}
+              onClick={() => onOpenSidePanel(plugin.id)}
+              title={isDocked ? `Viewing ${plugin.title} in side panel` : `Open ${plugin.title} in side panel`}
+              aria-label={`Open ${plugin.title} in side panel`}
+            >
+              <SidebarSimple size={14} />
+            </button>
+          ) : null}
+        </div>
       </div>
-      <div className="plugin-slot-floating-body">
-        <PluginViewRenderer view={view} />
-      </div>
+      {!collapsed && !isDocked ? (
+        <div className="plugin-slot-center-body">
+          <PluginViewRenderer view={view} hideTitle={true} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Floating widget: renders the dock chip at bottom-right. Clicking delegates
+ * to opening the Right Sidebar panel when available, or toggles local card.
+ */
+function FloatingWidgetItem({
+  plugin,
+  view,
+  onOpenSidePanel,
+  isActive,
+}: PluginWithView & {
+  onOpenSidePanel?: (pluginId: string) => void;
+  isActive?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  const handleClick = () => {
+    if (onOpenSidePanel) {
+      onOpenSidePanel(plugin.id);
+      return;
+    }
+    setExpanded((prev) => !prev);
+  };
+
+  // When the side panel is already open showing this plugin, hide the floating chip to avoid redundancy.
+  if (isActive) return null;
+
+  return (
+    <div className="plugin-slot-floating-widget">
+      <button
+        type="button"
+        className={`plugin-slot-floating-chip${isActive ? " is-active" : ""}`}
+        data-plugin-id={plugin.id}
+        onClick={handleClick}
+        aria-expanded={isActive || expanded}
+        title={`${isActive ? "Close" : "Open"} ${plugin.title}`}
+      >
+        <span className="plugin-slot-floating-title">{plugin.title}</span>
+      </button>
+      {!onOpenSidePanel && expanded ? (
+        <div className="plugin-slot-floating-card" data-plugin-id={plugin.id}>
+          <div className="plugin-slot-floating-header">
+            <span className="plugin-slot-floating-card-title">{plugin.title}</span>
+            <button
+              type="button"
+              className="plugin-slot-floating-close"
+              onClick={() => setExpanded(false)}
+              aria-expanded={true}
+              title={`Collapse ${plugin.title}`}
+              aria-label={`Collapse ${plugin.title}`}
+            >
+              <X size={14} />
+            </button>
+          </div>
+          <div className="plugin-slot-floating-body">
+            <PluginViewRenderer view={view} />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -119,9 +221,19 @@ export interface SlotHostProps {
   slot: SlotPosition;
   plugins: readonly WebPluginDescriptor[];
   views: Record<string, WebView> | null;
+  onOpenSidePanel?: (pluginId: string) => void;
+  activeSidePluginId?: string | null;
+  sidePanelOpen?: boolean;
 }
 
-export function SlotHost({ slot, plugins, views }: SlotHostProps) {
+export function SlotHost({
+  slot,
+  plugins,
+  views,
+  onOpenSidePanel,
+  activeSidePluginId,
+  sidePanelOpen,
+}: SlotHostProps) {
   const withViews: PluginWithView[] = [];
   for (const plugin of plugins) {
     const hasSlot = plugin.surfaces.some(
@@ -149,12 +261,13 @@ export function SlotHost({ slot, plugins, views }: SlotHostProps) {
     return (
       <div className="plugin-slot-region plugin-slot-center" role="region" aria-label="Center plugins">
         {withViews.map(({ plugin, view }) => (
-          <div key={plugin.id} className="plugin-slot-center-item" data-plugin-id={plugin.id}>
-            <div className="plugin-slot-center-header">
-              <span className="plugin-slot-title">{plugin.title}</span>
-            </div>
-            <PluginViewRenderer view={view} />
-          </div>
+          <CenterSlotItem
+            key={plugin.id}
+            plugin={plugin}
+            view={view}
+            onOpenSidePanel={onOpenSidePanel}
+            isOpenInSidePanel={sidePanelOpen && activeSidePluginId === plugin.id}
+          />
         ))}
       </div>
     );
@@ -163,7 +276,13 @@ export function SlotHost({ slot, plugins, views }: SlotHostProps) {
   return (
     <aside className="plugin-slot-region plugin-slot-floating" aria-label="Floating plugins">
       {withViews.map((item) => (
-        <FloatingWidgetItem key={item.plugin.id} plugin={item.plugin} view={item.view} />
+        <FloatingWidgetItem
+          key={item.plugin.id}
+          plugin={item.plugin}
+          view={item.view}
+          onOpenSidePanel={onOpenSidePanel}
+          isActive={sidePanelOpen && activeSidePluginId === item.plugin.id}
+        />
       ))}
     </aside>
   );

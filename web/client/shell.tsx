@@ -5,7 +5,7 @@
 // view is published, and the built-in region returns when it is not.
 
 import { useEffect, useState } from "react";
-import { List } from "@phosphor-icons/react";
+import { List, SidebarSimple } from "@phosphor-icons/react";
 import { usePiSession } from "./use-session.ts";
 import { Transcript } from "./transcript.tsx";
 import { Composer } from "./composer.tsx";
@@ -15,6 +15,7 @@ import { CustomPopups, EditorWidgets, StatusChips, ToastStack, UiPromptBanner } 
 import { DialogLayer, InfoDialog, LoginDialog, LogoutDialog, ModelPickerDialog, ScopedModelsDialog, SettingsDialog, ThinkingPickerDialog, TreeSelectorDialog, TrustDialog } from "./dialogs.tsx";
 import type { WebTreeNode } from "../shared/tree.ts";
 import { SlotHost } from "./plugins/slots.tsx";
+import { PluginSidePanel } from "./plugins/PluginSidePanel.tsx";
 import { PluginActionShortcuts } from "./plugins/PluginActionShortcuts.tsx";
 import { PluginPage, parsePluginRoute } from "./plugins/PluginLayout.tsx";
 import { PluginViewRenderer } from "./plugins/PluginViewRenderer.tsx";
@@ -51,6 +52,14 @@ export function AppShell() {
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   // Narrow screens: the sidebar starts collapsed and opens as an overlay.
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 720);
+  // Right-hand plugin panel (Artifacts, Delegated work / monitor, etc.)
+  const [sidePanelOpen, setSidePanelOpen] = useState(false);
+  const [activeSidePlugin, setActiveSidePlugin] = useState<string | null>(null);
+
+  const handleOpenSidePanel = (pluginId: string) => {
+    setActiveSidePlugin(pluginId);
+    setSidePanelOpen(true);
+  };
 
   // The web-ported TUI dialogs. One open dialog at a time — like the TUI.
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
@@ -93,7 +102,10 @@ export function AppShell() {
     let wasWide = window.innerWidth > 720;
     const onResize = (): void => {
       const wide = window.innerWidth > 720;
-      if (wasWide && !wide) setSidebarOpen(false);
+      if (wasWide && !wide) {
+        setSidebarOpen(false);
+        setSidePanelOpen(false);
+      }
       wasWide = wide;
     };
     window.addEventListener("resize", onResize);
@@ -426,6 +438,17 @@ export function AppShell() {
                   headerStatus
                 )}
               </span>
+              {session.plugins.some((p) => session.pluginViews[p.id] !== undefined && session.pluginViews[p.id] !== null) ? (
+                <button
+                  type="button"
+                  className={`app-side-panel-toggle${sidePanelOpen ? " is-active" : ""}`}
+                  aria-label="Toggle plugin panel"
+                  title={sidePanelOpen ? "Close plugin panel" : "Open plugin panel"}
+                  onClick={() => setSidePanelOpen((open) => !open)}
+                >
+                  <SidebarSimple size={16} weight={sidePanelOpen ? "fill" : "regular"} />
+                </button>
+              ) : null}
             </header>
           )}
           <UiPromptBanner prompt={session.uiPrompt} />
@@ -454,7 +477,14 @@ export function AppShell() {
               showWorking={showWorking}
             />
           )}
-          <SlotHost slot="center" plugins={session.plugins} views={session.pluginViews} />
+          <SlotHost
+            slot="center"
+            plugins={session.plugins}
+            views={session.pluginViews}
+            onOpenSidePanel={handleOpenSidePanel}
+            activeSidePluginId={activeSidePlugin}
+            sidePanelOpen={sidePanelOpen}
+          />
           <EditorWidgets widgets={session.widgets} placement="aboveEditor" />
           {regions.composer !== undefined ? (
             <div className="app-composer app-composer-override">
@@ -488,10 +518,26 @@ export function AppShell() {
             />
           )}
           <EditorWidgets widgets={session.widgets} placement="belowEditor" />
-          <SlotHost slot="bottom" plugins={session.plugins} views={session.pluginViews} />
+          <SlotHost slot="bottom" plugins={session.plugins} views={session.pluginViews} onOpenSidePanel={handleOpenSidePanel} />
         </div>
+        <PluginSidePanel
+          open={sidePanelOpen}
+          activePluginId={activeSidePlugin}
+          onClose={() => setSidePanelOpen(false)}
+          onSelectPlugin={(id) => setActiveSidePlugin(id)}
+          plugins={session.plugins}
+          views={session.pluginViews}
+          sessionId={session.selectedId}
+        />
       </div>
-      <SlotHost slot="floating" plugins={session.plugins} views={session.pluginViews} />
+      <SlotHost
+        slot="floating"
+        plugins={session.plugins}
+        views={session.pluginViews}
+        onOpenSidePanel={handleOpenSidePanel}
+        activeSidePluginId={activeSidePlugin}
+        sidePanelOpen={sidePanelOpen}
+      />
       <CustomPopups custom={session.custom} />
       <ToastStack notifications={session.notifications} />
       {/* The web-ported TUI dialogs. */}

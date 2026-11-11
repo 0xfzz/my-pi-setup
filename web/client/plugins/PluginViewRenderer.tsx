@@ -230,7 +230,13 @@ function GraphNodeRow({ row }: { row: GraphTreeRow }) {
   );
 }
 
-export function PluginViewRenderer({ view }: { view: WebView | null | undefined }) {
+export function PluginViewRenderer({
+  view,
+  hideTitle = false,
+}: {
+  view: WebView | null | undefined;
+  hideTitle?: boolean;
+}) {
   if (!view) {
     return (
       <div className="plugin-empty-state" data-testid="plugin-empty-state">
@@ -242,7 +248,7 @@ export function PluginViewRenderer({ view }: { view: WebView | null | undefined 
     case "kv":
       return (
         <div className="plugin-view plugin-view-kv" data-testid="plugin-view-kv">
-          {view.title ? <h3 className="plugin-view-title">{view.title}</h3> : null}
+          {view.title && !hideTitle ? <h3 className="plugin-view-title">{view.title}</h3> : null}
           <table className="plugin-kv-table">
             <tbody>
               {view.rows.map((row, index) => (
@@ -259,7 +265,7 @@ export function PluginViewRenderer({ view }: { view: WebView | null | undefined 
     case "list":
       return (
         <div className="plugin-view plugin-view-list" data-testid="plugin-view-list">
-          {view.title ? <h3 className="plugin-view-title">{view.title}</h3> : null}
+          {view.title && !hideTitle ? <h3 className="plugin-view-title">{view.title}</h3> : null}
           <ul className="plugin-list">
             {view.items.map((item, index) => (
               <ListItemRow key={index} item={item} />
@@ -278,7 +284,7 @@ export function PluginViewRenderer({ view }: { view: WebView | null | undefined 
     case "graph":
       return (
         <div className="plugin-view plugin-view-graph" data-testid="plugin-view-graph">
-          {view.title ? <h3 className="plugin-view-title">{view.title}</h3> : null}
+          {view.title && !hideTitle ? <h3 className="plugin-view-title">{view.title}</h3> : null}
           <GraphRows rows={buildGraphRows(view)} />
           {view.omitted ? <div className="plugin-view-omitted">… {view.omitted} nodes/edges omitted</div> : null}
         </div>
