@@ -26,7 +26,7 @@ npm run dev        # build + serve on http://127.0.0.1:30142
 
 | Command | What it does |
 |---|---|
-| `npm run build` | esbuild bundle into `client/dist` |
+| `npm run build` | esbuild bundle + Tailwind/shadcn CSS compile into `client/dist` |
 | `npm start` | serve the built client (`tsx server/main.ts`) |
 | `npm run check` | tsc over server, client and shared |
 | `npm test` | unit tests (server routes, wire, reducer, regions) |
@@ -54,6 +54,9 @@ web/
     shell.tsx        base regions + slots + overrides + routing
     use-session.ts   the session hook (one EventSource per session)
     transcript.tsx, composer.tsx, streaming.ts
+    components/ui/   shadcn/ui primitives (button, textarea, input, badge, separator)
+    lib/utils.ts     cn() class-merge helper
+    globals.css      shadcn/Tailwind theme tokens (compiled into dist)
     plugins/         view renderer, slots, plugin pages, actions, shortcuts
   shared/    regions.ts — override resolution (server + client)
   e2e/       e2e.mjs — the Playwright suite
@@ -427,19 +430,34 @@ extension uses to extend the web UI.
 
 ## Themes
 
-Dark and light palettes are both defined in `web/client/base.css` as the
-same slot variables; `data-theme` on `<html>` selects one and is set before
-the first React render (no flash). The choice is `pi-web-theme` in
-localStorage; with no stored choice the web follows the OS and re-follows
-it live. The toggle is the ☾/☀ button in the sidebar head. Shadows and
-modal scrims are theme-aware (`--scrim`), so plugin views and popups read
-fine in both.
+Both themes are the same slot variables. The legacy stylesheet
+(`web/client/base.css`) switches on `data-theme` on `<html>`; the
+shadcn/Tailwind tokens (`web/client/globals.css`) switch on the `.dark`
+class. `theme.ts` moves both together, set before the first React render
+(no flash). The choice is `pi-web-theme` in localStorage; with no stored
+choice the web follows the OS and re-follows it live. The toggle is the
+Moon/Sun button in the sidebar head (a Phosphor icon). Shadows and modal
+scrims are theme-aware (`--scrim`), so plugin views and popups read fine
+in both.
+
+## Design system
+
+The client is styled with [shadcn/ui](https://ui.shadcn.com) primitives
+(vendored into `web/client/components/ui/`, new-york style, neutral color
+base) on top of Tailwind CSS v4, with [Phosphor icons](https://phosphoricons.com)
+(`@phosphor-icons/react`) for every icon so there is one consistent set.
+`@shadcn/lint` is wired through oxlint (`.oxlintrc.json`): app code under
+`web/client/` is checked against `no-inline-styles`, `no-raw-colors` and
+`no-arbitrary-values`, while the vendored `components/ui/` directory is
+excluded because it carries the canonical class strings those rules police
+elsewhere.
 
 ## Responsive layout and render performance
 
-Below 720px the session sidebar collapses off-canvas behind a ☰ toggle in
-the header and reopens as an overlay with a scrim; selecting a session
-closes it, and crossing from wide to narrow closes it automatically.
+Below 720px the session sidebar collapses off-canvas behind the hamburger
+(List) toggle in the header and reopens as an overlay with a scrim;
+selecting a session closes it, and crossing from wide to narrow closes it
+automatically.
 Nothing renders wider than the viewport — the transcript, composer and
 plugin views wrap.
 
