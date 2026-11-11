@@ -432,6 +432,40 @@ test("readHistory reads pi's on-disk shapes: toolCall id/name/arguments, images,
   assert.deepEqual(history.toolResults["call-9"], { text: "hi", isError: false });
 });
 
+test("readHistory keeps empty-bodied aborted and provider-error replies — the status is the content", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-history-"));
+  const file = join(dir, "2026-11-09T00-00-00-000Z_failed123.jsonl");
+  await writeFile(
+    file,
+    [
+      JSON.stringify({ type: "session", id: "failed123", cwd: "/tmp/x", timestamp: "2026-11-09T00:00:00Z" }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", stopReason: "error", errorMessage: "429 rate limit exceeded", content: [] },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", stopReason: "error", content: [] },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", stopReason: "aborted", content: [] },
+      }),
+      // A normal empty assistant reply has nothing to say and stays dropped.
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", stopReason: "stop", content: [] },
+      }),
+    ].join("\n"),
+  );
+
+  const history = await readHistory(file);
+  assert.equal(history.entries.length, 3);
+  assert.deepEqual(history.entries[0], { role: "assistant", blocks: [], error: "429 rate limit exceeded" });
+  assert.deepEqual(history.entries[1], { role: "assistant", blocks: [], error: "provider error" });
+  assert.deepEqual(history.entries[2], { role: "assistant", blocks: [], aborted: true });
+});
+
 test("listDiskSessions and resolveSessionFile scan the sessions dir", async () => {
   const agentDir = await mkdtemp(join(tmpdir(), "pi-web-agent-"));
   const projectDir = join(agentDir, "sessions", "slug");

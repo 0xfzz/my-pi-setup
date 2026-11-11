@@ -329,6 +329,7 @@ export interface TranscriptEntry {
   role: "user" | "assistant";
   blocks: AssistantBlock[];
   aborted?: boolean;
+  error?: string;
 }
 
 export interface TranscriptUserMessage {
@@ -394,6 +395,7 @@ export function Transcript({
       role: entry.role,
       blocks: entry.blocks,
       ...(entry.aborted === true ? { aborted: true } : {}),
+      ...(entry.error !== undefined ? { error: entry.error } : {}),
     })),
     ...userMessages.map((message) => ({
       key: `user-${message.key}`,
@@ -479,6 +481,7 @@ export function Transcript({
                     toolResults={toolResults}
                   />
                   {entry.aborted === true ? <div className="msg-aborted">⏹ interrupted</div> : null}
+                  {entry.error !== undefined && entry.error !== "" ? <div className="msg-error">⚠ {entry.error}</div> : null}
                 </>
               )}
           </div>

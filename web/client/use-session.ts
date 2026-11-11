@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getAuth } from "./auth.ts";
 import {
   INITIAL_STREAMING_STATE,
+  assistantEntryFromMessage,
   streamReducer,
   toAssistantBlocks,
   type AssistantBlock,
@@ -68,6 +69,8 @@ export interface HistoryEntryLike {
   blocks: AssistantBlock[];
   /** The assistant reply ended because the run was aborted. */
   aborted?: boolean;
+  /** The assistant reply ended in a provider error; its message. */
+  error?: string;
 }
 
 export interface ToolCallStatus {
@@ -443,6 +446,7 @@ export function usePiSession() {
     const sameEntry = (a: HistoryEntryLike, b: HistoryEntryLike): boolean =>
       a.role === b.role
       && a.aborted === b.aborted
+      && a.error === b.error
       && JSON.stringify(a.blocks) === JSON.stringify(b.blocks);
 
     const applyHistory = (
@@ -562,13 +566,13 @@ export function usePiSession() {
             toolCallId?: unknown;
             isError?: unknown;
             stopReason?: unknown;
+            errorMessage?: unknown;
             details?: { diff?: unknown };
           } | undefined;
           if (message?.role === "assistant") {
             const entry: HistoryEntryLike = {
               role: "assistant",
-              blocks: toAssistantBlocks(message.content),
-              ...(message.stopReason === "aborted" ? { aborted: true } : {}),
+              ...assistantEntryFromMessage(message),
             };
             appendEntry(entry);
             // Message-level end: the message committed, the run may still

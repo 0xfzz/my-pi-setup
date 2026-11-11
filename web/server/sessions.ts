@@ -95,6 +95,8 @@ export interface HistoryEntry {
   blocks: HistoryBlock[];
   /** Set when the assistant reply ended because the run was aborted. */
   aborted?: boolean;
+  /** Set when the assistant reply ended in a provider error; its message. */
+  error?: string;
 }
 
 /** A tool call's result, joined to its call by toolCallId. */
@@ -736,8 +738,21 @@ export async function readHistory(sessionFile: string, limit = 200): Promise<Ses
     if (role !== "user" && role !== "assistant") continue;
     const blocks = contentToBlocks(messageRecord.content);
     const entry: HistoryEntry = { role, blocks };
-    if (role === "assistant" && messageRecord.stopReason === "aborted") entry.aborted = true;
-    if (blocks.length > 0) pushEntry(entry);
+    if (role === "assistant") {
+      if (messageRecord.stopReason === "aborted") {
+        entry.aborted = true;
+      } else if (messageRecord.stopReason === "error") {
+        entry.error = typeof messageRecord.errorMessage === "string" && messageRecord.errorMessage !== ""
+          ? messageRecord.errorMessage
+          : "provider error";
+      }
+    }
+    // An aborted or failed reply carries its status as visible content even
+    // when no text block survived (pi persists an errored message with an
+    // empty body) — dropping it would lose the error on reload.
+    if (blocks.length > 0 || entry.aborted === true || entry.error !== undefined) {
+      pushEntry(entry);
+    }
   }
   return { entries: window, toolResults };
 }

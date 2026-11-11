@@ -123,6 +123,41 @@ export function toAssistantBlocks(content: unknown): AssistantBlock[] {
   return blocks;
 }
 
+/** The failure markers an assistant message's stop reason implies. */
+export interface AssistantFailure {
+  /** The reply ended because the run was aborted (Escape in the TUI, Stop here). */
+  aborted?: boolean;
+  /** The reply ended in a provider error; its message. */
+  error?: string;
+}
+
+/** Fallback when the provider reports a failure with an empty message. */
+const PROVIDER_ERROR_DEFAULT = "provider error";
+
+/**
+ * A finished assistant message → its transcript entry: the normalized blocks
+ * plus the failure marker its stop reason carries. `stopReason: "error"` is a
+ * model/API failure (its `errorMessage` is the provider's own report);
+ * `stopReason: "aborted"` is an interrupt; a normal stop has neither.
+ */
+export function assistantEntryFromMessage(message: {
+  content?: unknown;
+  stopReason?: unknown;
+  errorMessage?: unknown;
+}): { blocks: AssistantBlock[] } & AssistantFailure {
+  const blocks = toAssistantBlocks(message.content);
+  if (message.stopReason === "aborted") return { blocks, aborted: true };
+  if (message.stopReason === "error") {
+    return {
+      blocks,
+      error: typeof message.errorMessage === "string" && message.errorMessage !== ""
+        ? message.errorMessage
+        : PROVIDER_ERROR_DEFAULT,
+    };
+  }
+  return { blocks };
+}
+
 function updateContentBlock(
   state: StreamingState,
   contentIndex: number | undefined,

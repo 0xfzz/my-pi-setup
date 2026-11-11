@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   INITIAL_STREAMING_STATE,
+  assistantEntryFromMessage,
   streamReducer,
   toAssistantBlocks,
 } from "./streaming.ts";
@@ -214,4 +215,34 @@ test("toAssistantBlocks handles strings, arrays and junk", () => {
   );
   assert.deepEqual(toAssistantBlocks(undefined), []);
   assert.deepEqual(toAssistantBlocks({ not: "array" }), []);
+});
+
+test("assistantEntryFromMessage marks aborted and provider-error stop reasons", () => {
+  assert.deepEqual(
+    assistantEntryFromMessage({ content: [], stopReason: "aborted" }),
+    { blocks: [], aborted: true },
+  );
+  assert.deepEqual(
+    assistantEntryFromMessage({
+      content: [{ type: "text", text: "reply so far" }],
+      stopReason: "error",
+      errorMessage: "429 rate limit exceeded",
+    }),
+    { blocks: [{ kind: "text", text: "reply so far" }], error: "429 rate limit exceeded" },
+  );
+  assert.deepEqual(
+    assistantEntryFromMessage({ content: "hi", stopReason: "stop" }),
+    { blocks: [{ kind: "text", text: "hi" }] },
+  );
+});
+
+test("assistantEntryFromMessage falls back to a default provider error when the provider reports none", () => {
+  assert.deepEqual(
+    assistantEntryFromMessage({ content: [], stopReason: "error" }),
+    { blocks: [], error: "provider error" },
+  );
+  assert.deepEqual(
+    assistantEntryFromMessage({ content: [], stopReason: "error", errorMessage: "" }),
+    { blocks: [], error: "provider error" },
+  );
 });

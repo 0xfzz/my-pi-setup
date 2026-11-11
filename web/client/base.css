@@ -868,8 +868,10 @@ body {
   max-height: 240px;
 }
 
-/* The abort marker: the run was interrupted (Escape in the TUI, Stop here). */
-.msg-aborted {
+/* The abort and provider-error markers: the run was interrupted (Escape in
+   the TUI, Stop here), or the reply ended in a model/API failure. */
+.msg-aborted,
+.msg-error {
   color: var(--error);
   font-size: 12px;
   padding: 2px 0;
