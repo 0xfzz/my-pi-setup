@@ -85,6 +85,8 @@ body {
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* Mobile browsers: the dynamic viewport excludes the address bar. */
+  height: 100dvh;
 }
 
 /* The body row: session sidebar + the main column. */
@@ -361,6 +363,16 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* The chat keeps most of a phone screen: the bars shed their desktop gutters. */
+  .app-transcript {
+    padding: 12px 10px;
+  }
+
+  .app-composer {
+    padding: 8px 10px;
+    gap: 6px;
   }
 }
 

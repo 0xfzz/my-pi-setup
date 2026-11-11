@@ -10,7 +10,7 @@ import React, { useState, type CSSProperties } from "react";
 import { CaretDown, CaretRight, SidebarSimple, X } from "@phosphor-icons/react";
 import type { WebPluginDescriptor, WebView } from "./contract.ts";
 import { PluginViewRenderer } from "./PluginViewRenderer.tsx";
-import { compactSummary, slotPolicy, type SlotCollision, type SlotPolicy, type SlotPosition } from "./slot-policy.ts";
+import { compactSummary, slotPolicy, startsCollapsed, type SlotCollision, type SlotPolicy, type SlotPosition } from "./slot-policy.ts";
 
 export type { SlotPosition } from "./slot-policy.ts";
 
@@ -71,7 +71,7 @@ function CenterSlotItem({
   onOpenSidePanel?: (pluginId: string) => void;
   isOpenInSidePanel?: boolean;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => startsCollapsed(window.innerWidth));
   const isDocked = isOpenInSidePanel === true;
 
   // Status view: keep it a single clean line — never a tall empty box.

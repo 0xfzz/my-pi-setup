@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { WebPluginDescriptor, WebPluginUiContribution, WebView } from "./plugins/contract.ts";
-import { compactSummary, slotPolicy } from "./plugins/slot-policy.ts";
+import { NARROW_VIEWPORT_PX, compactSummary, slotPolicy, startsCollapsed } from "./plugins/slot-policy.ts";
 
 function pluginWith(ui: WebPluginUiContribution[] | undefined): WebPluginDescriptor {
   return {
@@ -108,4 +108,10 @@ test("compact summary: a single-item list uses the singular", () => {
 test("compact summary: a graph reports its node count instead of going blank", () => {
   const view: WebView = { type: "graph", nodes: [{ id: "a", label: "A", kind: "parent" }], edges: [] };
   assert.equal(compactSummary(view), "1 node");
+});
+
+test("phones start centre cards folded and wider screens start them open", () => {
+  assert.equal(startsCollapsed(390), true, "a phone folds its cards to keep the chat");
+  assert.equal(startsCollapsed(NARROW_VIEWPORT_PX), true, "the breakpoint itself is a phone");
+  assert.equal(startsCollapsed(NARROW_VIEWPORT_PX + 1), false, "just above the breakpoint stays open");
 });

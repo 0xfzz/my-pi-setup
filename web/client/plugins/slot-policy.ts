@@ -41,6 +41,13 @@ function clampBound(hint: number | undefined, fallback: number, ceiling: number)
   return hint === undefined ? fallback : Math.min(hint, ceiling);
 }
 
+/** Phones are the viewport the chat needs to keep; a narrow screen starts its cards folded. */
+export const NARROW_VIEWPORT_PX = 720;
+
+export function startsCollapsed(viewportWidth: number): boolean {
+  return viewportWidth <= NARROW_VIEWPORT_PX;
+}
+
 function defaultBodyHeight(slot: SlotPosition): number {
   return slot === "floating" ? FLOATING_BODY_HEIGHT : CENTER_BODY_HEIGHT;
 }

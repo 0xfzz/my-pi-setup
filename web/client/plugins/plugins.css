@@ -521,8 +521,29 @@
   overflow-y: auto;
 }
 
-/* collision: "hide" — on a phone the slot gives its place back to the transcript. */
+/* On a phone the plugin surfaces take a fraction of the screen: a card body
+ * scrolls within 30% of the height, the dock chip sits closer to the corner,
+ * and collision: "hide" gives its place back to the transcript. */
 @media (max-width: 720px) {
+  .plugin-slot-center {
+    padding: 0 10px;
+  }
+
+  .plugin-slot-center-body {
+    max-height: min(var(--plugin-body-max-height, 240px), 30vh);
+    max-height: min(var(--plugin-body-max-height, 240px), 30dvh);
+  }
+
+  .plugin-slot-floating {
+    top: 8px;
+    right: 8px;
+  }
+
+  .plugin-slot-floating-chip {
+    padding: 4px 10px;
+    font-size: 11px;
+  }
+
   .plugin-slot-region [data-collision="hide"] {
     display: none;
   }
