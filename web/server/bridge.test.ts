@@ -218,7 +218,7 @@ test("a browser prompt becomes a bridge command; state posts surface in the stat
     const body = (await prompt.json()) as { success?: boolean; data?: { accepted?: boolean } };
     assert.equal(body.data?.accepted, true);
 
-    const commandFrame = await tui.readUntil((text) => text.includes("bridge_command"));
+    const commandFrame = await tui.readUntil((text) => text.includes("\"type\":\"prompt\""));
     assert.match(commandFrame, /"type":"prompt"/);
     assert.match(commandFrame, /"message":"hello from the web"/);
 

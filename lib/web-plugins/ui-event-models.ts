@@ -2,6 +2,14 @@ import { validatePlacement, type WebPluginPlacement } from "./ui-contracts.ts";
 import { validateView, type WebView } from "./view.ts";
 
 export const WEB_UI_EVENT = "web-ui:event";
+/**
+ * Request the owning session to re-emit its current web UI values (views and
+ * ui.* events). Producers answer by re-publishing through `publishWebView` /
+ * `publishWebUi`, so a consumer that attached late (a reloaded browser, a
+ * restarted server, a session re-attached over the bridge) converges to the
+ * same values the session already held. The request itself carries no data.
+ */
+export const WEB_PLUGIN_UI_SYNC_EVENT = "web-plugin:ui-sync";
 export interface WorkingModel { message: string | null; visible: boolean; frames: string[] | null; intervalMs: number }
 export interface WebNotification { id: string; message: string; level: "info" | "warning" | "error"; timestamp: number }
 export interface WebUiPayloads {

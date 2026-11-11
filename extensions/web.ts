@@ -44,7 +44,7 @@ import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../l
 import { WEB_PLUGIN_VIEW_EVENT, type DialogWebView, type WebView } from "../lib/web-plugins/view.ts";
 import { publishWebView } from "../lib/web-plugins/publisher.ts";
 import { buildWebTree, type PiTreeNodeLike } from "../lib/web-tree.ts";
-import { WEB_UI_EVENT } from "../lib/web-plugins/ui-event-models.ts";
+import { WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT } from "../lib/web-plugins/ui-event-models.ts";
 import { defaultServerDir, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiDeps } from "../lib/web-ui.ts";
 import { repoRootFromServerDir, sourceWatchRoots, watchSources, type SourceWatcher } from "../lib/web-ui-reload.ts";
 import { WebAuthConfigCache, loadWebAuthConfig, removeWebPassword, webAuthConfigPath, writeWebPassword } from "../lib/web-auth/config.ts";
@@ -621,6 +621,14 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
         pluginId: command.pluginId,
         actionId: command.actionId,
       });
+      return;
+    }
+    if (command.type === "ui_sync") {
+      // The web attached after this session already published its views:
+      // re-emit the current UI values (publisher remembers the last value per
+      // plugin and re-publishes them on this event).
+      pi.events?.emit(WEB_PLUGIN_UI_SYNC_EVENT, {});
+      return;
     }
   };
 

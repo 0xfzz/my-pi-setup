@@ -89,7 +89,13 @@ test("action route requires the exact confirm string (403, nothing emitted)", as
     assert.equal(wrong.status, 403);
     assert.match((await wrong.json()).error, /Invalid confirmation string/);
 
-    assert.equal(emissions.length, 0, "a 403 must not emit to the bus");
+    // The attach-sync request is an internal host signal, never a user action;
+    // a 403 must not emit anything on the action channel.
+    assert.equal(
+      emissions.filter((e) => e.ch === WEB_PLUGIN_ACTION_REQUEST_EVENT).length,
+      0,
+      "a 403 must not emit to the bus",
+    );
     assert.equal(getActionAuditLog().length, 0, "a 403 must not audit");
   });
 });

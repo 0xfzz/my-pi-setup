@@ -15,6 +15,8 @@ import {
 } from "./plugin-host.ts";
 import { WEB_PLUGIN_VIEW_EVENT } from "../../lib/web-plugins/view.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../../lib/web-plugins/actions.ts";
+import { WEB_PLUGIN_UI_SYNC_EVENT } from "../../lib/web-plugins/ui-event-models.ts";
+import { publishWebView } from "../../lib/web-plugins/publisher.ts";
 
 test.afterEach(() => {
   clearWebPluginStateForTests();
@@ -79,6 +81,40 @@ test("attachSessionPlugins routes bus view events into the store", () => {
   const view = webPluginsStore.getView("host-session", "cache-stats");
   assert.ok(view);
   assert.equal(view.type, "status");
+});
+
+test("attachSessionPlugins requests a ui-sync so late consumers converge", () => {
+  const { emissions } = attach("sync-session");
+  assert.ok(
+    emissions.some(e => e.ch === WEB_PLUGIN_UI_SYNC_EVENT),
+    "the host must ask producers to replay their current values on attach",
+  );
+});
+
+test("a view published before attach is replayed into the store on attach", () => {
+  const handlers = new Map<string, Array<(data: unknown) => void>>();
+  const events = {
+    emit: (channel: string, data: unknown) => {
+      for (const handler of handlers.get(channel) ?? []) handler(data);
+    },
+    on: (channel: string, handler: (data: unknown) => void) => {
+      const list = handlers.get(channel) ?? [];
+      list.push(handler);
+      handlers.set(channel, list);
+      return () => {};
+    },
+  };
+
+  // The producer published before this host ever attached (the exact
+  // late-consumer ordering that used to leave the web empty).
+  assert.equal(publishWebView({ events }, "todo", { type: "status", tone: "accent", text: "published early" }).ok, true);
+
+  attachSessionPlugins({ sessionId: "replay-session", inner: { resourceLoader: { eventBus: events } } });
+
+  assert.ok(
+    webPluginsStore.getView("replay-session", "todo"),
+    "the pre-attach view must be replayed when the host subscribes",
+  );
 });
 
 test("attachSessionPlugins cleanup detaches the session bus", () => {

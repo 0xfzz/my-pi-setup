@@ -12,7 +12,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createStreamTracker, type StreamSnapshot } from "./stream-tracker.ts";
 import type { WebTreeNode } from "../../lib/web-tree.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../../lib/web-plugins/actions.ts";
-import type { WebUiType } from "../../lib/web-plugins/ui-event-models.ts";
+import { WEB_PLUGIN_UI_SYNC_EVENT, type WebUiType } from "../../lib/web-plugins/ui-event-models.ts";
 import {
   recordExtensionUi,
   webPluginsStore,
@@ -52,7 +52,8 @@ export type BridgeCommand =
   | { type: "action"; requestId: string; pluginId: string; actionId: string }
   | { type: "set_model"; provider: string; id: string }
   | { type: "set_thinking"; level: string }
-  | { type: "web_command"; name: string; args?: string };
+  | { type: "web_command"; name: string; args?: string }
+  | { type: "ui_sync" };
 
 /** Model list for the web picker, posted by the extension (web_models). */
 export interface BridgeModels {
@@ -176,7 +177,13 @@ export function attachBridge(options: {
   const actionBus: MinimalEventBus = {
     on: () => () => {},
     emit: (channel: string, data: unknown) => {
-      if (closed || channel !== WEB_PLUGIN_ACTION_REQUEST_EVENT) return;
+      if (closed || (channel !== WEB_PLUGIN_ACTION_REQUEST_EVENT && channel !== WEB_PLUGIN_UI_SYNC_EVENT)) return;
+      if (channel === WEB_PLUGIN_UI_SYNC_EVENT) {
+        // A consumer attached late asks this session to re-emit its current
+        // web UI values; the owning pi process answers by re-publishing.
+        connection.sendCommand({ type: "ui_sync" });
+        return;
+      }
       const request = data as { requestId?: unknown; pluginId?: unknown; actionId?: unknown };
       if (typeof request?.pluginId === "string" && typeof request?.actionId === "string") {
         connection.sendCommand({
@@ -338,6 +345,11 @@ export function attachBridge(options: {
   bridges.set(metadata.sessionId, connection);
   webPluginsStore.knownSessions.add(metadata.sessionId);
   webPluginsStore.sessionBuses.set(metadata.sessionId, actionBus);
+
+  // Ask the owning pi process to re-emit its current web UI values now that
+  // this session's consumers can receive them: a bridge that attaches after
+  // the TUI already published converges instead of leaving the web empty.
+  actionBus.emit?.(WEB_PLUGIN_UI_SYNC_EVENT, {});
 
   // The bridge IS the live session: every existing route (events SSE, prompt
   // and abort POSTs, get_state, the sessions list) works against this core

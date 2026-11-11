@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { WebUiStore } from "../lib/web-plugins/ui-state-store.ts";
-import { publishWebUi } from "../lib/web-plugins/publisher.ts";
-import { WEB_UI_EVENT, extensionUiUpdate, validateWebUiEvent, webUiText } from "../lib/web-plugins/ui-event-models.ts";
+import { publishWebUi, publishWebView } from "../lib/web-plugins/publisher.ts";
+import { WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT, extensionUiUpdate, validateWebUiEvent, webUiText } from "../lib/web-plugins/ui-event-models.ts";
+import { WEB_PLUGIN_VIEW_EVENT } from "../lib/web-plugins/view.ts";
 const event = (sequence: number, payload: unknown, type = "ui.working.changed") => ({ version: 1, eventId: `event-${sequence}`, sessionId: "session-a", source: "extension", sourceKey: "fixture", type, timestamp: Date.now(), sequence, payload });
 
 test("publisher validates declarative data and leaves session/source sequencing to host", () => {
@@ -113,4 +114,53 @@ test("legacy normalization retains standard status/widget/title/editor/custom se
   assert.equal(state.statuses.ext, "Ready"); assert.equal(state.title, "Title"); assert.equal(state.editor, "Draft");
   assert.deepEqual(state.widgets.ext.lines, ["A"]);
   assert.deepEqual(state.custom["custom-id"].lines, ["Custom panel"]);
+});
+
+test("publisher remembers the last value and re-emits it on a ui-sync request", () => {
+  const handlers = new Map<string, Array<(data: unknown) => void>>();
+  const emitted: Array<{ channel: string; payload: unknown }> = [];
+  const events = {
+    emit: (channel: string, payload: unknown) => {
+      emitted.push({ channel, payload });
+      for (const handler of handlers.get(channel) ?? []) handler(payload);
+    },
+    on: (channel: string, handler: (data: unknown) => void) => {
+      const list = handlers.get(channel) ?? [];
+      list.push(handler);
+      handlers.set(channel, list);
+      return () => {};
+    },
+  };
+  const pi = { events };
+  const view = { type: "status", tone: "accent", text: "ready" } as const;
+  assert.equal(publishWebView(pi, "todo", view).ok, true);
+  assert.equal(publishWebUi(pi, "fixture", "ui.status.changed", { key: "s", text: "Ready" }).ok, true);
+
+  events.emit(WEB_PLUGIN_UI_SYNC_EVENT, {});
+
+  const viewReplays = emitted.filter(e => e.channel === WEB_PLUGIN_VIEW_EVENT);
+  assert.equal(viewReplays.length, 2, "the original publish plus the replay");
+  assert.deepEqual(viewReplays[1].payload, { pluginId: "todo", view });
+
+  const uiReplays = emitted.filter(e => e.channel === WEB_UI_EVENT);
+  assert.equal(uiReplays.length, 2, "the original ui publish plus the replay");
+  assert.deepEqual(uiReplays[1].payload, { sourceKey: "fixture", type: "ui.status.changed", payload: { key: "s", text: "Ready" } });
+});
+
+test("UI store: persistence projection keeps non-dialog views and restores them", () => {
+  const store = new WebUiStore();
+  assert.equal(store.publish("s1", "ui.view.changed", { pluginId: "modes", view: { type: "status", tone: "accent", text: "plan" } }), true);
+  assert.equal(store.publish("s1", "ui.view.changed", { pluginId: "web-core", view: { type: "dialog", lines: ["hi"] } }), true);
+  assert.equal(store.publish("s2", "ui.view.changed", { pluginId: "todo", view: { type: "list", title: "Tasks", items: ["a"] } }), true);
+
+  const persisted = store.persistableViews();
+  assert.deepEqual(persisted.s1.modes, { type: "status", tone: "accent", text: "plan" });
+  assert.equal(persisted.s1["web-core"], undefined, "dialog views are transient, never persisted");
+  assert.deepEqual(persisted.s2.todo, { type: "list", title: "Tasks", items: ["a"] });
+
+  const restored = new WebUiStore();
+  restored.restoreViews(persisted);
+  assert.deepEqual(restored.snapshot().sessions.s1.views.modes, { type: "status", tone: "accent", text: "plan" });
+  assert.equal(restored.snapshot().sessions.s1.views["web-core"], undefined);
+  assert.deepEqual(restored.snapshot().sessions.s2.views.todo, { type: "list", title: "Tasks", items: ["a"] });
 });

@@ -123,6 +123,36 @@ export class WebUiStore {
     return true;
   }
   snapshot(): WebUiSnapshot { return deepFreeze(structuredClone(this.state)); }
+  /**
+   * The durable per-session plugin view values, excluding transient dialog
+   * views. This is the "session stores the value" projection: the UI only
+   * displays what is here. Backed up to disk by the host and restored on boot.
+   */
+  persistableViews(): Record<string, Record<string, WebView>> {
+    const out: Record<string, Record<string, WebView>> = {};
+    for (const [sessionId, s] of Object.entries(this.state.sessions)) {
+      const views: Record<string, WebView> = {};
+      for (const [pluginId, view] of Object.entries(s.views)) {
+        if (view.type !== "dialog") views[pluginId] = view;
+      }
+      if (Object.keys(views).length > 0) out[sessionId] = views;
+    }
+    return out;
+  }
+  /** Recover the durable view values a previous process wrote down. */
+  restoreViews(viewsBySession: Record<string, Record<string, WebView>>): void {
+    if (!viewsBySession || typeof viewsBySession !== "object") return;
+    for (const [sessionId, views] of Object.entries(viewsBySession)) {
+      if (!views || typeof views !== "object") continue;
+      const s = this.state.sessions[sessionId] ?? freshSession();
+      for (const [pluginId, view] of Object.entries(views)) {
+        if (view && typeof view === "object" && view.type !== "dialog") s.views[pluginId] = view;
+      }
+      this.state.sessions[sessionId] = s;
+    }
+    this.state.revision++;
+    this.notify();
+  }
   /** Coalesced/expired cursors recover by full snapshot, never an incomplete replay. */
   replay(cursor: number, epoch = this.state.epoch): { snapshot?: WebUiSnapshot; events: StoredEvent[]; revision: number } {
     const events = this.journal.filter(item => item.revision > cursor);

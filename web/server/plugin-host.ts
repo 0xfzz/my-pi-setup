@@ -5,8 +5,9 @@
 // kernel) live in the root repo and are shared, not copied.
 
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createJiti } from "jiti";
 import { WEB_PLUGINS } from "../../web-plugins/index.ts";
 import {
@@ -21,13 +22,76 @@ import {
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionDescriptor } from "../../lib/web-plugins/actions.ts";
 import type { WebPluginDescriptor } from "../../lib/web-plugins/descriptor.ts";
 import { WebUiStore, type WebUiSnapshot, type WebUiSessionState } from "../../lib/web-plugins/ui-state-store.ts";
-import { WEB_UI_EVENT, extensionUiUpdate, type WebUiType } from "../../lib/web-plugins/ui-event-models.ts";
+import { WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT, extensionUiUpdate, type WebUiType } from "../../lib/web-plugins/ui-event-models.ts";
 import { normalizeContributions } from "../../lib/web-plugins/ui-contracts.ts";
 import { createPluginHost, type PluginHost } from "../../lib/web-plugins/kernel/host.ts";
 
 const uiGlobal = globalThis as Record<PropertyKey, unknown>;
 const uiStoreKey = Symbol.for("pi-web:unified-ui:v1");
 export const webUiStore = (uiGlobal[uiStoreKey] ??= new WebUiStore()) as WebUiStore;
+
+// ---------------------------------------------------------------------------
+// Durable per-session view values: the plugin views a session holds survive a
+// server restart. On boot the previous values are restored, then every accepted
+// change is persisted (debounced). The owning pi process still re-emits fresher
+// values on every attach, so the file is a floor the UI stands on until that
+// live value lands — a disk-only session keeps rendering its last known UI.
+
+interface PersistedWebUiState {
+  version: 1;
+  views: Record<string, Record<string, WebView>>;
+}
+
+function webUiStatePath(): string {
+  // Test processes get their own file so a suite never writes into a real home dir.
+  return process.env.NODE_TEST_CONTEXT
+    ? join(tmpdir(), "pi-web-ui-state", `${process.pid}.json`)
+    : join(homedir(), ".pi", "agent", "web-ui-state.json");
+}
+
+function readPersistedWebUiState(): PersistedWebUiState {
+  let text: string;
+  try {
+    text = readFileSync(webUiStatePath(), "utf8");
+  } catch {
+    return { version: 1, views: {} };
+  }
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (parsed === null || typeof parsed !== "object") return { version: 1, views: {} };
+    const record = parsed as Record<string, unknown>;
+    if (record.version !== 1 || record.views === null || typeof record.views !== "object" || Array.isArray(record.views)) {
+      return { version: 1, views: {} };
+    }
+    return { version: 1, views: record.views as PersistedWebUiState["views"] };
+  } catch {
+    return { version: 1, views: {} };
+  }
+}
+
+function writePersistedWebUiState(state: PersistedWebUiState): void {
+  mkdirSync(dirname(webUiStatePath()), { recursive: true });
+  const path = webUiStatePath();
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(state)}\n`);
+  renameSync(tmp, path);
+}
+
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+function schedulePersistWebUiState(): void {
+  if (persistTimer !== null) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    try {
+      writePersistedWebUiState({ version: 1, views: webUiStore.persistableViews() });
+    } catch {
+      // The durable backup is best-effort; UI delivery never depends on the disk.
+    }
+  }, 200);
+}
+
+webUiStore.restoreViews(readPersistedWebUiState().views);
+webUiStore.subscribe(() => schedulePersistWebUiState());
 
 /** Lifecycle and extension-UI events from the agent stream, projected into the unified UI state. */
 export function recordExtensionUi(
@@ -315,6 +379,17 @@ export function attachSessionPlugins(wrapper: unknown): () => void {
       webPluginsStore.recordView(sessionId, pluginId, view);
     }
   });
+
+  // Subscribe-before-replay: asks the producers to re-emit their current
+  // values now that this session's consumers are listening, so a consumer that
+  // attached after the initial publication converges instead of staying empty.
+  if (typeof eventBus.emit === "function") {
+    try {
+      eventBus.emit(WEB_PLUGIN_UI_SYNC_EVENT, {});
+    } catch {
+      // A bus that cannot replay just stays on the live stream.
+    }
+  }
 
   let cleanedUp = false;
   let unsubOnEvent: (() => void) | undefined;
