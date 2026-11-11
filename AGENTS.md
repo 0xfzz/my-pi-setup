@@ -28,6 +28,14 @@ covered by that safety net.
   local and unpublished.
 - **Do not commit** secrets, credentials, generated noise, or unrelated files.
 
+## Code quality
+
+When you add, change, fix or refactor code, load the `maintain-clean-code` skill
+(`.agents/skills/maintain-clean-code/SKILL.md`). It sets the rules for small, pure,
+testable functions, Clean Code principles, and the
+[refactoring.guru](https://refactoring.guru) smell-to-refactoring catalog. Refactoring
+commits stay separate from behaviour changes.
+
 ## Verification gate
 
 ```sh
