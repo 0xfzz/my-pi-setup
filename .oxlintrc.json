@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "jsPlugins": ["@shadcn/lint"],
+  "overrides": [
+    {
+      "files": ["web/client/**"],
+      "excludeFiles": ["web/client/components/ui/**"],
+      "rules": {
+        "shadcn/no-inline-styles": "error",
+        "shadcn/no-raw-colors": "error",
+        "shadcn/no-arbitrary-values": "error"
+      }
+    }
+  ]
+}
