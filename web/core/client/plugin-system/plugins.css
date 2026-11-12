@@ -1459,6 +1459,31 @@
   max-height: 100%;
 }
 
+.files-pdf {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.files-pdf-pages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.files-pdf-page {
+  max-width: 100%;
+  height: auto;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--border);
+}
+
 .files-media audio {
   width: 100%;
 }

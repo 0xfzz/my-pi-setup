@@ -5,8 +5,8 @@
 
 import { useEffect, useState } from "react";
 import {
-  ArrowCounterClockwise, File, FileAudio, FileCode, FileImage, FilePdf, FileText,
-  FileVideo, Folder, MagnifyingGlass, X,
+  ArrowCounterClockwise, File, FileAudio, FileCode, FileCsv, FileDoc, FileImage, FilePdf,
+  FilePpt, FileText, FileVideo, FileXls, Folder, MagnifyingGlass, X,
 } from "@phosphor-icons/react";
 import type { FileKind } from "../../core/shared/file-kind.ts";
 import { classifyFile } from "../../core/shared/file-kind.ts";
@@ -22,6 +22,10 @@ function fileIcon(fileKind: FileKind | undefined) {
     case "pdf": return <FilePdf size={15} aria-hidden="true" />;
     case "audio": return <FileAudio size={15} aria-hidden="true" />;
     case "video": return <FileVideo size={15} aria-hidden="true" />;
+    case "document": return <FileDoc size={15} aria-hidden="true" />;
+    case "spreadsheet": return <FileXls size={15} aria-hidden="true" />;
+    case "presentation": return <FilePpt size={15} aria-hidden="true" />;
+    case "csv": return <FileCsv size={15} aria-hidden="true" />;
     case "markdown":
     case "text": return <FileText size={15} aria-hidden="true" />;
     default: return <FileCode size={15} aria-hidden="true" />;

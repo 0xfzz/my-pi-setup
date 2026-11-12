@@ -2,7 +2,10 @@
 // Pure extension/basename decisions — no filesystem or platform access — so
 // both sides agree on what a path is before the server ever reads it.
 
-export type FileKind = "text" | "markdown" | "image" | "pdf" | "audio" | "video" | "binary";
+export type FileKind =
+  | "text" | "markdown" | "image" | "pdf" | "audio" | "video"
+  | "document" | "spreadsheet" | "presentation" | "csv"
+  | "binary";
 
 /** Text previews read at most this many bytes (filesystem cost guard). */
 export const TEXT_PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
@@ -19,6 +22,14 @@ const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bm
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".ogg", ".oga", ".flac", ".m4a", ".aac"]);
 const VIDEO_EXTENSIONS = new Set([".mp4", ".m4v", ".webm", ".mov", ".avi", ".mkv"]);
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown", ".mdown"]);
+
+// Office formats are ZIP/XML or richtext under the hood: worth a proper label,
+// icon and MIME type, but never previewed as text (the bytes are not readable).
+const DOCUMENT_EXTENSIONS = new Set([".doc", ".docx", ".odt", ".rtf"]);
+const SPREADSHEET_EXTENSIONS = new Set([".xls", ".xlsx", ".xlsm", ".ods"]);
+const PRESENTATION_EXTENSIONS = new Set([".ppt", ".pptx", ".odp"]);
+// Delimited text is readable, so it previews, but it gets its own label/icon.
+const CSV_EXTENSIONS = new Set([".csv", ".tsv"]);
 
 /** Source/config text formats shown read-only (and HTML/SVG only as source). */
 const TEXT_EXTENSIONS = new Set([
@@ -49,6 +60,10 @@ export function classifyFile(name: string): FileKind {
   if (ext === ".pdf") return "pdf";
   if (AUDIO_EXTENSIONS.has(ext)) return "audio";
   if (VIDEO_EXTENSIONS.has(ext)) return "video";
+  if (DOCUMENT_EXTENSIONS.has(ext)) return "document";
+  if (SPREADSHEET_EXTENSIONS.has(ext)) return "spreadsheet";
+  if (PRESENTATION_EXTENSIONS.has(ext)) return "presentation";
+  if (CSV_EXTENSIONS.has(ext)) return "csv";
   if (TEXT_EXTENSIONS.has(ext)) return "text";
   if (ext === "" && TEXT_BASENAMES.has(name.toLowerCase())) return "text";
   return "binary";
@@ -104,6 +119,31 @@ export function mimeTypeFor(name: string): string | null {
         ".webm": "video/webm",
         ".mov": "video/quicktime",
       }[ext] ?? null;
+    case "document":
+      return {
+        ".doc": "application/msword",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".odt": "application/vnd.oasis.opendocument.text",
+        ".rtf": "application/rtf",
+      }[ext] ?? "application/octet-stream";
+    case "spreadsheet":
+      return {
+        ".xls": "application/vnd.ms-excel",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+        ".ods": "application/vnd.oasis.opendocument.spreadsheet",
+      }[ext] ?? "application/octet-stream";
+    case "presentation":
+      return {
+        ".ppt": "application/vnd.ms-powerpoint",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".odp": "application/vnd.oasis.opendocument.presentation",
+      }[ext] ?? "application/octet-stream";
+    case "csv":
+      return {
+        ".csv": "text/csv; charset=utf-8",
+        ".tsv": "text/tab-separated-values; charset=utf-8",
+      }[ext] ?? "text/plain; charset=utf-8";
     default:
       return null;
   }

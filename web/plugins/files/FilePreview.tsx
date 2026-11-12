@@ -5,15 +5,16 @@
 
 import { Suspense, lazy, useEffect, useState } from "react";
 import {
-  ArrowLeft, ArrowSquareOut, Clock, Copy, FileAudio, FileImage, FilePdf,
-  FileVideo, FileText,
+  ArrowLeft, ArrowSquareOut, Clock, Copy, FileAudio, FileCsv, FileDoc, FileImage,
+  FilePdf, FilePpt, FileVideo, FileText, FileXls,
 } from "@phosphor-icons/react";
-import type { FileKind } from "../../core/shared/file-kind.ts";
+import { PDF_PREVIEW_MAX_BYTES, type FileKind } from "../../core/shared/file-kind.ts";
 import { MarkdownBody } from "../../core/client/plugin-system/markdown.tsx";
 import { LoadingSpinner } from "../../core/client/plugin-system/LoadingSpinner.tsx";
 import { downloadUrl, fetchText, type FileRef, type FilesTextData } from "./files-api.ts";
 
 const CodeMirrorView = lazy(() => import("../../core/client/plugin-system/CodeMirrorView.tsx"));
+const PdfViewer = lazy(() => import("./PdfViewer.tsx").then((module) => ({ default: module.PdfViewer })));
 
 function formatBytes(size: number | undefined): string {
   if (size === undefined) return "—";
@@ -35,6 +36,10 @@ function kindLabel(fileKind: FileKind): string {
     case "pdf": return "PDF";
     case "audio": return "Audio";
     case "video": return "Video";
+    case "document": return "Document";
+    case "spreadsheet": return "Spreadsheet";
+    case "presentation": return "Presentation";
+    case "csv": return "CSV";
     default: return "Binary";
   }
 }
@@ -49,7 +54,7 @@ export function FilePreview({ sessionId, file, onBack }: FilePreviewProps) {
   const [text, setText] = useState<FilesTextData | null>(null);
   const [textError, setTextError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const wantsText = file.fileKind === "text" || file.fileKind === "markdown";
+  const wantsText = file.fileKind === "text" || file.fileKind === "markdown" || file.fileKind === "csv";
 
   useEffect(() => {
     if (!wantsText) return;
@@ -121,7 +126,17 @@ export function FilePreview({ sessionId, file, onBack }: FilePreviewProps) {
     if (file.fileKind === "audio" || file.fileKind === "video") {
       return <MediaPreview sessionId={sessionId} file={file} kind={file.fileKind} />;
     }
-    if (file.fileKind === "text" && text !== null) {
+    if (file.fileKind === "pdf") {
+      if (file.size !== undefined && file.size > PDF_PREVIEW_MAX_BYTES) {
+        return <UnsupportedPreview file={file} sessionId={sessionId} note="This PDF is too large to preview; download it instead." />;
+      }
+      return (
+        <Suspense fallback={<div className="files-empty"><LoadingSpinner label="Loading PDF viewer…" /></div>}>
+          <PdfViewer sessionId={sessionId} file={file} />
+        </Suspense>
+      );
+    }
+    if ((file.fileKind === "text" || file.fileKind === "csv") && text !== null) {
       return (
         <>
           {text.truncated ? <div className="files-truncated">File too large; showing the first 2 MiB.</div> : null}
@@ -140,6 +155,9 @@ export function FilePreview({ sessionId, file, onBack }: FilePreviewProps) {
         ? <UnsupportedPreview file={file} sessionId={sessionId} note="Binary content." />
         : <MarkdownPreview text={text.text} />;
     }
+    if (file.fileKind === "document" || file.fileKind === "spreadsheet" || file.fileKind === "presentation") {
+      return <UnsupportedPreview file={file} sessionId={sessionId} note={`${kindLabel(file.fileKind)} files open in their desktop app; download to view it.`} />;
+    }
     return <UnsupportedPreview file={file} sessionId={sessionId} />;
   }
 }
@@ -150,6 +168,10 @@ function previewIcon(fileKind: FileKind) {
     case "pdf": return <FilePdf size={15} aria-hidden="true" />;
     case "audio": return <FileAudio size={15} aria-hidden="true" />;
     case "video": return <FileVideo size={15} aria-hidden="true" />;
+    case "document": return <FileDoc size={15} aria-hidden="true" />;
+    case "spreadsheet": return <FileXls size={15} aria-hidden="true" />;
+    case "presentation": return <FilePpt size={15} aria-hidden="true" />;
+    case "csv": return <FileCsv size={15} aria-hidden="true" />;
     default: return <FileText size={15} aria-hidden="true" />;
   }
 }

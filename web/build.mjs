@@ -57,3 +57,11 @@ execFileSync(
 await cp(resolve(client, "index.html"), resolve(dist, "index.html"));
 await cp(resolve(client, "base.css"), resolve(dist, "app.css"));
 await cp(resolve(client, "plugin-system", "plugins.css"), resolve(dist, "plugins.css"));
+
+// The PDF.js worker is an ES-module file served beside the client so the PDF
+// viewer can spawn it without a CDN. PDFs are fetched and rendered by pdf.js
+// (fetch is not blocked by X-Frame-Options, unlike an <iframe>).
+await cp(
+  resolve(root, "node_modules", "pdfjs-dist", "build", "pdf.worker.min.mjs"),
+  resolve(dist, "pdf.worker.min.mjs"),
+);
