@@ -751,6 +751,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   //  direct — runs on the plain extension context (compact, setSessionName,
   //  shutdown all exist there); the bridge channel executes it directly.
   type WebCommandContext = ExtensionContext & {
+    waitForIdle(): Promise<void>;
     newSession(): Promise<{ cancelled: boolean }>;
     fork(entryId: string, options: { position: string }): Promise<{ cancelled: boolean }>;
     navigateTree(targetId: string): Promise<{ cancelled: boolean }>;
@@ -821,6 +822,10 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       description: "Reload keybindings, extensions, skills, prompts and themes (web core)",
       handler: async (_args, ctx) => {
         try {
+          // The TUI's reload refuses to run mid-turn or mid-compaction (it
+          // just warns and returns). The web dispatches a one-shot command, so
+          // instead of silently no-op'ing, wait for the session to settle first.
+          await ctx.waitForIdle();
           await ctx.reload();
           ctxNotify("reloaded");
         } catch (error) {
