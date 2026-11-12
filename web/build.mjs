@@ -33,7 +33,10 @@ await build({
   entryPoints: [resolve(client, "app.tsx")],
   bundle: true,
   format: "esm",
-  outfile: resolve(dist, "app.js"),
+  outdir: dist,
+  // Code-splitting keeps lazily-imported libraries (mermaid) out of the main
+  // bundle as a separate chunk, fetched only when a diagram actually renders.
+  splitting: true,
   minify: true,
   sourcemap: true,
   jsx: "automatic",

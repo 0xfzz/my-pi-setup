@@ -86,6 +86,10 @@ async function run() {
       PI_WEB_PORT: String(PORT),
       PI_WEB_PLUGIN_STATE: PLUGIN_STATE,
       PI_WEB_TEST_PLUGIN_VIEWS: "1",
+      // Isolate web auth too: otherwise the developer's real
+      // ~/.pi/agent/web-auth.json enables the password gate and step 1 stalls
+      // on the login screen instead of the fixture shell.
+      PI_WEB_AUTH_FILE: join(pluginStateDir, "web-auth.json"),
     },
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
@@ -248,6 +252,24 @@ async function run() {
     assert.ok((await page.locator(".markdown-body pre code").count()) >= 1, "code fences render");
     assert.ok((await page.locator(".markdown-body tbody tr").count()) >= 2, "tables render");
     assert.ok((await page.locator(".markdown-body blockquote").count()) >= 1, "blockquotes render");
+
+    // Mermaid fences render to an SVG client-side; the render is async (the
+    // mermaid chunk lazy-loads first), so wait for the diagram to appear.
+    await page.locator(".markdown-mermaid svg").first().waitFor({ state: "visible", timeout: 15_000 });
+    assert.ok((await page.locator(".markdown-mermaid svg").count()) >= 1, "mermaid renders an SVG");
+
+    // Tailwind's preflight resets `list-style: none` and the markdown styles
+    // must restore the markers, or bullets/numbers silently disappear.
+    const ulMarker = await page
+      .locator(".markdown-body ul")
+      .first()
+      .evaluate((el) => getComputedStyle(el).listStyleType);
+    assert.equal(ulMarker, "disc", "bulleted lists show disc markers");
+    const olMarker = await page
+      .locator(".markdown-body ol")
+      .first()
+      .evaluate((el) => getComputedStyle(el).listStyleType);
+    assert.equal(olMarker, "decimal", "numbered lists show decimal markers");
 
     // Tool calls are expanded by default — the bash command and result are
     // the point of the row — and collapse on toggle.
