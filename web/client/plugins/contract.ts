@@ -18,9 +18,16 @@ export type { WebPluginDescriptor, WebPluginIcon } from "../../../lib/web-plugin
 export type { WebPluginUiContribution } from "../../../lib/web-plugins/ui-contracts.ts";
 
 /** The working-indicator model streamed per session (ui.working.changed). */
+export interface WorkingSegmentLike {
+  text: string;
+  color: string | null;
+  bold?: boolean;
+}
 export interface WorkingModelLike {
   message: string | null;
   visible: boolean;
   frames: string[] | null;
   intervalMs: number;
+  messageSegments?: WorkingSegmentLike[] | null;
+  frameColors?: (string | null)[] | null;
 }

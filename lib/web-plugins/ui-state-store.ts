@@ -23,7 +23,7 @@ export interface WebUiSnapshot {
 }
 interface StoredEvent { revision: number; event: WebUiEvent }
 function freshSession(): WebUiSessionState {
-  return { revision: 0, running: false, closed: false, working: { message: null, visible: true, frames: null, intervalMs: 80 }, statuses: {}, widgets: {}, custom: {}, title: "", editor: "", views: {}, layouts: {}, notifications: [] };
+  return { revision: 0, running: false, closed: false, working: { message: null, visible: true, frames: null, intervalMs: 80, messageSegments: null, frameColors: null }, statuses: {}, widgets: {}, custom: {}, title: "", editor: "", views: {}, layouts: {}, notifications: [] };
 }
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === "object") { Object.freeze(value); for (const v of Object.values(value)) deepFreeze(v); }

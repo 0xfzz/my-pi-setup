@@ -4,11 +4,14 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import bubblySpinnerExtension from "../extensions/bubbly-spinner.ts";
 import {
   ALL_SPINNER_VERBS,
+  BUBBLY_FRAME_CHARS,
+  BUBBLY_FRAME_COLORS,
   BUBBLY_FRAMES,
   BUBBLY_INDICATOR_OPTIONS,
   BubblyWordAnimator,
   applyBubbleCase,
   applyTrailingPurpleGradient,
+  bubblyMessageSegments,
   VerbRotator,
   bigEnglishSpinnerVerbs,
   javaneseSpinnerVerbs,
@@ -139,6 +142,26 @@ test("BUBBLY_FRAMES are all 1 column wide to prevent terminal jitter", () => {
     // Every frame must be exactly 1 cell wide (or 1 for space/char)
     assert.equal(width, 1, `Frame "${frame}" should have visible width 1 but got ${width}`);
   }
+
+  // The web carries the same sequence as glyphs + CSS colors.
+  assert.equal(BUBBLY_FRAME_CHARS.length, BUBBLY_FRAMES.length);
+  assert.equal(BUBBLY_FRAME_COLORS.length, BUBBLY_FRAMES.length);
+  assert.ok(BUBBLY_FRAME_COLORS.some((color) => color === null), "the micro-pause frame inherits the line color");
+  for (const color of BUBBLY_FRAME_COLORS) {
+    if (color !== null) assert.match(color, /^#[0-9a-fA-F]{6}$/);
+  }
+});
+
+test("bubblyMessageSegments yields the same bubble wave as colored hex segments", () => {
+  const word = "Crystalizing";
+  const segments = bubblyMessageSegments(word, 1);
+  assert.equal(segments.map((segment) => segment.text).join(""), stripAnsi(applyTrailingPurpleGradient(word, 1)));
+  assert.equal(segments[0]!.text, "c");
+  assert.equal(segments[0]!.color, "#bd93f9"); // one step behind the lead: pure purple
+  assert.equal(segments[0]!.bold, false);
+  assert.equal(segments[1]!.text, "R");
+  assert.equal(segments[1]!.color, "#f8f8f2"); // the leading bubble: white
+  assert.equal(segments[1]!.bold, true);
 });
 
 test("VerbRotator cycles through verbs without immediate duplicates", () => {
@@ -235,6 +258,8 @@ test("bubblySpinnerExtension registers hooks and manages working indicator/messa
   const bridgedMessage = workingChanges.find((event) => typeof event.payload.message === "string");
   assert.ok(typeof bridgedMessage?.payload.message === "string" && bridgedMessage.payload.message.endsWith("..."));
   assert.ok(workingChanges.some((event) => Array.isArray(event.payload.frames)));
+  assert.ok(workingChanges.some((event) => Array.isArray(event.payload.messageSegments)), "the working message must ship as colored segments");
+  assert.ok(workingChanges.some((event) => Array.isArray(event.payload.frameColors)), "the indicator frames must carry their colors");
 
   // Test agent_start
   await events.get("agent_start")!({}, fakeCtx);

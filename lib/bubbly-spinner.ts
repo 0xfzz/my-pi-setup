@@ -203,28 +203,48 @@ function color(char: string, ansiFg: string): string {
   return `${ansiFg}${char}${RESET_FG}`;
 }
 
+function rgbToAnsiFg(rgb: RgbColor): string {
+  return `\x1b[38;2;${rgb[0]};${rgb[1]};${rgb[2]}m`;
+}
+
+function rgbToCss(rgb: RgbColor): string {
+  return `#${rgb.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+interface BubblyFrameSpec {
+  char: string;
+  rgb: RgbColor | null;
+}
+
 /**
  * Single-column Unicode bubble animation sequence.
  * Simulates a bubble rising, expanding, shimmering, and bursting,
- * rendered purely with Dracula purple, slightly purple, and white accents (no rainbow).
- * Every frame is guaranteed to be 1 display column wide to prevent horizontal text jitter.
+ * rendered purely with Dracula purple, slightly purple, and white accents
+ * (no rainbow). Each frame is guaranteed to be 1 display column wide to
+ * prevent horizontal text jitter. The specs are the single source of truth:
+ * `BUBBLY_FRAMES` is the ANSI form for the TUI, while `BUBBLY_FRAME_CHARS`
+ * and `BUBBLY_FRAME_COLORS` carry the same sequence into the web.
  */
-export const BUBBLY_FRAMES: readonly string[] = [
-  color("·", "\x1b[38;2;98;114;164m"),   // tiny droplet (Dracula comment #6272a4)
-  color("°", "\x1b[38;2;148;112;200m"),  // small bubble (Dracula slightly purple)
-  color("∘", "\x1b[38;2;148;112;200m"),  // hollow ring (Dracula slightly purple)
-  color("o", "\x1b[38;2;189;147;249m"),  // growing bubble (Dracula purple #bd93f9)
-  color("O", "\x1b[38;2;189;147;249m"),  // expanding bubble (Dracula purple)
-  color("○", "\x1b[38;2;189;147;249m"),  // hollow sphere (Dracula purple)
-  color("◌", "\x1b[38;2;148;112;200m"),  // shimmering surface (Dracula slightly purple)
-  color("◎", "\x1b[38;2;248;248;242m"),  // reflection (Dracula white #f8f8f2)
-  color("●", "\x1b[38;2;248;248;242m"),  // gleaming core (Dracula white)
-  color("◍", "\x1b[38;2;189;147;249m"),  // softening (Dracula purple)
-  color("✧", "\x1b[38;2;248;248;242m"),  // *pop* sparkle! (Dracula white)
-  color("✦", "\x1b[38;2;148;112;200m"),  // burst gleam (Dracula slightly purple)
-  color("·", "\x1b[38;2;98;114;164m"),   // splash droplet (Dracula comment)
-  " ",                                    // micro-pause
+const BUBBLY_FRAME_SPECS: readonly BubblyFrameSpec[] = [
+  { char: "·", rgb: [98, 114, 164] },   // tiny droplet (Dracula comment #6272a4)
+  { char: "°", rgb: [148, 112, 200] },  // small bubble (Dracula slightly purple)
+  { char: "∘", rgb: [148, 112, 200] },  // hollow ring (Dracula slightly purple)
+  { char: "o", rgb: [189, 147, 249] },  // growing bubble (Dracula purple #bd93f9)
+  { char: "O", rgb: [189, 147, 249] },  // expanding bubble (Dracula purple)
+  { char: "○", rgb: [189, 147, 249] },  // hollow sphere (Dracula purple)
+  { char: "◌", rgb: [148, 112, 200] },  // shimmering surface (Dracula slightly purple)
+  { char: "◎", rgb: [248, 248, 242] },  // reflection (Dracula white #f8f8f2)
+  { char: "●", rgb: [248, 248, 242] },  // gleaming core (Dracula white)
+  { char: "◍", rgb: [189, 147, 249] },  // softening (Dracula purple)
+  { char: "✧", rgb: [248, 248, 242] },  // *pop* sparkle! (Dracula white)
+  { char: "✦", rgb: [148, 112, 200] },  // burst gleam (Dracula slightly purple)
+  { char: "·", rgb: [98, 114, 164] },   // splash droplet (Dracula comment)
+  { char: " ", rgb: null },             // micro-pause
 ];
+
+export const BUBBLY_FRAME_CHARS: readonly string[] = BUBBLY_FRAME_SPECS.map((spec) => spec.char);
+export const BUBBLY_FRAME_COLORS: readonly (string | null)[] = BUBBLY_FRAME_SPECS.map((spec) => (spec.rgb ? rgbToCss(spec.rgb) : null));
+export const BUBBLY_FRAMES: readonly string[] = BUBBLY_FRAME_SPECS.map((spec) => (spec.rgb ? color(spec.char, rgbToAnsiFg(spec.rgb)) : spec.char));
 
 export const BUBBLY_INTERVAL_MS = 95;
 
@@ -360,11 +380,58 @@ export const DRACULA_PURPLE: RgbColor = [189, 147, 249];        // #bd93f9 (Pure
 export const DRACULA_SLIGHT_PURPLE: RgbColor = [148, 112, 200]; // Soft / Slightly Purple
 export const DRACULA_BASE_MUTED: RgbColor = [98, 114, 164];     // #6272a4 (Dracula Comment / Muted Base)
 export const DRACULA_WHITE: RgbColor = [248, 248, 242];          // #f8f8f2 (Dracula Foreground / White)
+/** Halfway between slightly-purple and the muted base; the soft trailing fade. */
+export const DRACULA_GENTLE_FADE: RgbColor = [
+  Math.round((DRACULA_SLIGHT_PURPLE[0] + DRACULA_BASE_MUTED[0]) / 2),
+  Math.round((DRACULA_SLIGHT_PURPLE[1] + DRACULA_BASE_MUTED[1]) / 2),
+  Math.round((DRACULA_SLIGHT_PURPLE[2] + DRACULA_BASE_MUTED[2]) / 2),
+];
 
 function colorSegment(r: number, g: number, b: number, ch: string, bold: boolean = false): string {
   const bSeq = bold ? "\x1b[1m" : "";
   const rSeq = bold ? "\x1b[22m" : "";
   return `${bSeq}\x1b[38;2;${r};${g};${b}m${ch}\x1b[39m${rSeq}`;
+}
+
+export interface BubblyCharSegment {
+  char: string;
+  rgb: RgbColor;
+  bold: boolean;
+}
+
+/** Per-character bubble-case wave with a trailing Dracula color walk. */
+function bubblyCharSegments(word: string, tick: number): BubblyCharSegment[] {
+  const chars = `${word}...`.split("");
+  const letterIndices: number[] = [];
+  for (let i = 0; i < chars.length; i++) {
+    if (/[a-zA-Z]/.test(chars[i]!)) letterIndices.push(i);
+  }
+
+  const numLetters = letterIndices.length;
+  const cycleLen = Math.max(1, numLetters + 4);
+  const t = ((tick % cycleLen) + cycleLen) % cycleLen;
+
+  for (const idx of letterIndices) chars[idx] = chars[idx]!.toLowerCase();
+
+  const isBubble: boolean[] = Array.from({ length: numLetters }, () => false);
+  for (let pos = 0; pos < numLetters; pos++) {
+    const diff = t - pos;
+    if (diff >= 0 && diff % 2 === 0 && diff <= 4) {
+      isBubble[pos] = true;
+      chars[letterIndices[pos]!] = chars[letterIndices[pos]!]!.toUpperCase();
+    }
+  }
+
+  return chars.map((char, i) => {
+    const letterPos = letterIndices.indexOf(i);
+    if (letterPos === -1) return { char, rgb: DRACULA_BASE_MUTED, bold: false };
+    const distBehindLead = t - letterPos;
+    if (distBehindLead === 0) return { char, rgb: DRACULA_WHITE, bold: true };
+    if (distBehindLead === 1) return { char, rgb: DRACULA_PURPLE, bold: isBubble[letterPos]! };
+    if (distBehindLead === 2) return { char, rgb: DRACULA_SLIGHT_PURPLE, bold: isBubble[letterPos]! };
+    if (distBehindLead === 3) return { char, rgb: DRACULA_GENTLE_FADE, bold: isBubble[letterPos]! };
+    return { char, rgb: DRACULA_BASE_MUTED, bold: isBubble[letterPos]! };
+  });
 }
 
 /**
@@ -376,70 +443,21 @@ function colorSegment(r: number, g: number, b: number, ch: string, bold: boolean
  * Pure purple and slightly purple tones without rainbow.
  */
 export function applyTrailingPurpleGradient(word: string, tick: number): string {
-  const chars = `${word}...`.split("");
-  const letterIndices: number[] = [];
-  for (let i = 0; i < chars.length; i++) {
-    if (/[a-zA-Z]/.test(chars[i]!)) {
-      letterIndices.push(i);
-    }
-  }
+  if (!/[a-zA-Z]/.test(word)) return `${word}...`;
+  return bubblyCharSegments(word, tick)
+    .map((segment) => colorSegment(segment.rgb[0], segment.rgb[1], segment.rgb[2], segment.char, segment.bold))
+    .join("");
+}
 
-  const numLetters = letterIndices.length;
-  if (numLetters === 0) return `${word}...`;
+/** The same gradient as colored segments for the web working line. */
+export interface BubblyMessageSegment { text: string; color: string; bold: boolean }
 
-  const cycleLen = numLetters + 4;
-  const t = ((tick % cycleLen) + cycleLen) % cycleLen;
-
-  // Lowercase all letters
-  for (const idx of letterIndices) {
-    chars[idx] = chars[idx]!.toLowerCase();
-  }
-
-  // Bubble case: Bubbling -> bUbbling -> BuBbling -> bUbBling ...
-  const isBubble: boolean[] = Array.from({ length: numLetters }, () => false);
-  for (let pos = 0; pos < numLetters; pos++) {
-    const diff = t - pos;
-    if (diff >= 0 && diff % 2 === 0 && diff <= 4) {
-      isBubble[pos] = true;
-      chars[letterIndices[pos]!] = chars[letterIndices[pos]!]!.toUpperCase();
-    }
-  }
-
-  let result = "";
-  for (let i = 0; i < chars.length; i++) {
-    const ch = chars[i]!;
-    const letterPos = letterIndices.indexOf(i);
-
-    if (letterPos === -1) {
-      // Punctuation (e.g. "...")
-      result += colorSegment(DRACULA_BASE_MUTED[0], DRACULA_BASE_MUTED[1], DRACULA_BASE_MUTED[2], ch);
-      continue;
-    }
-
-    const distBehindLead = t - letterPos;
-
-    if (distBehindLead === 0) {
-      // Foremost leading bubble: Bright white specular shine
-      result += colorSegment(DRACULA_WHITE[0], DRACULA_WHITE[1], DRACULA_WHITE[2], ch, true);
-    } else if (distBehindLead === 1) {
-      // 1 step behind leading bubble: PURE DRACULA PURPLE (#bd93f9)
-      result += colorSegment(DRACULA_PURPLE[0], DRACULA_PURPLE[1], DRACULA_PURPLE[2], ch, isBubble[letterPos]);
-    } else if (distBehindLead === 2) {
-      // 2 steps behind leading bubble: SLIGHTLY PURPLE (#9470c8)
-      result += colorSegment(DRACULA_SLIGHT_PURPLE[0], DRACULA_SLIGHT_PURPLE[1], DRACULA_SLIGHT_PURPLE[2], ch, isBubble[letterPos]);
-    } else if (distBehindLead === 3) {
-      // 3 steps behind: Gentle fade between slightly purple and muted base
-      const r = Math.round((DRACULA_SLIGHT_PURPLE[0] + DRACULA_BASE_MUTED[0]) / 2);
-      const g = Math.round((DRACULA_SLIGHT_PURPLE[1] + DRACULA_BASE_MUTED[1]) / 2);
-      const b = Math.round((DRACULA_SLIGHT_PURPLE[2] + DRACULA_BASE_MUTED[2]) / 2);
-      result += colorSegment(r, g, b, ch, isBubble[letterPos]);
-    } else {
-      // Outside active wave: Dracula comment muted base
-      result += colorSegment(DRACULA_BASE_MUTED[0], DRACULA_BASE_MUTED[1], DRACULA_BASE_MUTED[2], ch, isBubble[letterPos]);
-    }
-  }
-
-  return result;
+export function bubblyMessageSegments(word: string, tick: number): BubblyMessageSegment[] {
+  return bubblyCharSegments(word, tick).map((segment) => ({
+    text: segment.char,
+    color: rgbToCss(segment.rgb),
+    bold: segment.bold,
+  }));
 }
 
 

@@ -10,7 +10,9 @@ export const WEB_UI_EVENT = "web-ui:event";
  * same values the session already held. The request itself carries no data.
  */
 export const WEB_PLUGIN_UI_SYNC_EVENT = "web-plugin:ui-sync";
-export interface WorkingModel { message: string | null; visible: boolean; frames: string[] | null; intervalMs: number }
+export interface WorkingModel { message: string | null; visible: boolean; frames: string[] | null; intervalMs: number; messageSegments?: WorkingSegment[] | null; frameColors?: (string | null)[] | null }
+/** A segment of colored working text; `color` is a CSS hex color, or null to inherit. */
+export interface WorkingSegment { text: string; color: string | null; bold?: boolean }
 export interface WebNotification { id: string; message: string; level: "info" | "warning" | "error"; timestamp: number }
 export interface WebUiPayloads {
   "ui.working.changed": Partial<WorkingModel>;
@@ -46,6 +48,7 @@ function record(value: unknown): value is Record<string, unknown> { return !!val
 function text(value: unknown, max = 8192): value is string { return typeof value === "string" && value.length <= max; }
 function key(value: unknown): value is string { return typeof value === "string" && /^[a-zA-Z0-9_./:@-]{1,160}$/.test(value) && !["__proto__", "constructor", "prototype"].includes(value); }
 function lines(value: unknown): value is string[] { return Array.isArray(value) && value.length <= 200 && value.every(v => text(v)); }
+function colorHex(value: unknown): value is string { return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value); }
 function safeCopy(value: unknown, depth = 0): unknown {
   if (depth > 8) throw new Error("event nesting exceeds 8");
   if (typeof value === "string") return webUiText(value);
@@ -68,7 +71,7 @@ export function validateWebUiEvent(input: unknown): UiValidation {
     if (!record(e) || e.version !== 1 || !key(e.eventId) || !key(e.sessionId) || !key(e.sourceKey) || !["extension", "host", "browser"].includes(String(e.source)) || !Number.isSafeInteger(e.sequence) || Number(e.sequence) < 1 || typeof e.timestamp !== "number" || e.timestamp < 0 || !record(e.payload)) throw new Error("invalid event envelope");
     const p = e.payload;
     const fields: Partial<Record<WebUiType, string[]>> = {
-      "ui.working.changed": ["message", "visible", "frames", "intervalMs"], "ui.status.changed": ["key", "text"],
+      "ui.working.changed": ["message", "visible", "frames", "intervalMs", "messageSegments", "frameColors"], "ui.status.changed": ["key", "text"],
       "ui.widget.changed": ["key", "lines", "placement"], "ui.custom.changed": ["id", "method", "lines"],
       "ui.title.changed": ["text"], "ui.editor.changed": ["text"], "ui.view.changed": ["pluginId", "view"],
       "ui.layout.changed": ["pluginId", "contributionId", "placement"], "ui.session.lifecycle": ["running", "closed", "project"],
@@ -79,8 +82,11 @@ export function validateWebUiEvent(input: unknown): UiValidation {
     if (!allowed || Object.keys(p).some(k => !allowed.includes(k))) throw new Error("unknown event type or payload fields");
     let valid = false;
     switch (e.type) {
-      case "ui.working.changed":
-        valid = Object.keys(p).length > 0 && (p.message === undefined || p.message === null || text(p.message)) && (p.visible === undefined || typeof p.visible === "boolean") && (p.frames === undefined || p.frames === null || (Array.isArray(p.frames) && p.frames.length <= 120 && p.frames.every(f => text(f, 128)))) && (p.intervalMs === undefined || (Number.isInteger(p.intervalMs) && Number(p.intervalMs) >= 40 && Number(p.intervalMs) <= 10000)); break;
+      case "ui.working.changed": {
+        const segmentsOk = p.messageSegments === undefined || p.messageSegments === null || (Array.isArray(p.messageSegments) && p.messageSegments.length <= 240 && p.messageSegments.every((segment) => record(segment) && text(segment.text, 200) && (segment.color === undefined || segment.color === null || colorHex(segment.color)) && (segment.bold === undefined || typeof segment.bold === "boolean")));
+        const frameColorsOk = p.frameColors === undefined || p.frameColors === null || (Array.isArray(p.frameColors) && p.frameColors.length <= 120 && p.frameColors.every((color) => color === null || colorHex(color)));
+        valid = Object.keys(p).length > 0 && (p.message === undefined || p.message === null || text(p.message)) && (p.visible === undefined || typeof p.visible === "boolean") && (p.frames === undefined || p.frames === null || (Array.isArray(p.frames) && p.frames.length <= 120 && p.frames.every(f => text(f, 128)))) && (p.intervalMs === undefined || (Number.isInteger(p.intervalMs) && Number(p.intervalMs) >= 40 && Number(p.intervalMs) <= 10000)) && segmentsOk && frameColorsOk; break;
+      }
       case "ui.status.changed": valid = key(p.key) && (p.text === null || text(p.text)); break;
       case "ui.widget.changed": valid = key(p.key) && (p.lines === null || lines(p.lines)) && ["aboveEditor", "belowEditor"].includes(String(p.placement)); break;
       case "ui.custom.changed": valid = key(p.id) && text(p.method, 80) && (p.lines === null || lines(p.lines)); break;

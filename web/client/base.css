@@ -1823,7 +1823,17 @@ a:focus-visible {
 
 .plugin-working-frame {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  color: var(--ok);
+  color: var(--working-frame-color, var(--ok));
+}
+
+/* Colored working message segments; the color arrives as a CSS custom property
+   set from the model, so dynamic per-segment color needs no inline style. */
+.plugin-working-segment {
+  color: var(--working-segment-color, inherit);
+}
+
+.plugin-working-segment--bold {
+  font-weight: 700;
 }
 
 /* Region overrides: a plugin's declarative view replaces a base region. */

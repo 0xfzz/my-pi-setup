@@ -1,7 +1,10 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
+  BUBBLY_FRAME_CHARS,
+  BUBBLY_FRAME_COLORS,
   BUBBLY_INDICATOR_OPTIONS,
   BUBBLY_TEXT_INTERVAL_MS,
+  bubblyMessageSegments,
   BubblyWordAnimator,
 } from "../lib/bubbly-spinner.ts";
 import { publishWebUi } from "../lib/web-plugins/publisher.ts";
@@ -19,25 +22,30 @@ export default function bubblySpinnerExtension(pi: ExtensionAPI) {
    */
   function postWorkingIndicator(): void {
     publishWebUi(pi, "ctx.ui.working", "ui.working.changed", {
-      frames: BUBBLY_INDICATOR_OPTIONS.frames ?? null,
+      frames: [...BUBBLY_FRAME_CHARS],
+      frameColors: [...BUBBLY_FRAME_COLORS],
       intervalMs: BUBBLY_INDICATOR_OPTIONS.intervalMs ?? 80,
     });
   }
 
-  function postWorkingMessage(message: string): void {
-    publishWebUi(pi, "ctx.ui.working", "ui.working.changed", { message });
+  function postWorkingMessage(): void {
+    const segments = bubblyMessageSegments(animator.word, animator.currentTick);
+    publishWebUi(pi, "ctx.ui.working", "ui.working.changed", {
+      message: segments.map((segment) => segment.text).join(""),
+      messageSegments: segments,
+    });
   }
 
   function renderCurrentFrame(ctx: ExtensionContext) {
     const text = animator.getCurrentText();
     ctx.ui.setWorkingMessage(text);
-    postWorkingMessage(text);
+    postWorkingMessage();
   }
 
   function advanceFrame(ctx: ExtensionContext) {
     const text = animator.nextFrame();
     ctx.ui.setWorkingMessage(text);
-    postWorkingMessage(text);
+    postWorkingMessage();
   }
 
   function startWaveAnimation(ctx: ExtensionContext) {

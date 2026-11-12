@@ -22,7 +22,7 @@ test("UI store: working message, visibility, frames, interval and resets survive
   assert.equal(store.publish("session-a", "ui.working.changed", { message: "Ratiocinating…" }), true);
   store.publish("session-a", "ui.working.changed", { visible: false });
   store.publish("session-a", "ui.working.changed", { frames: ["·", "●"], intervalMs: 120 });
-  assert.deepEqual(store.snapshot().sessions["session-a"].working, { message: "Ratiocinating…", visible: false, frames: ["·", "●"], intervalMs: 120 });
+  assert.deepEqual(store.snapshot().sessions["session-a"].working, { message: "Ratiocinating…", visible: false, frames: ["·", "●"], intervalMs: 120, messageSegments: null, frameColors: null });
   assert.deepEqual(revisions, [], "delivery cannot block producer");
   await Promise.resolve();
   assert.deepEqual(revisions, [3], "visual notifications coalesce");

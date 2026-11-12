@@ -4,7 +4,7 @@
 // The transcript stays pinned to the bottom while the user is there, and a
 // jump-to-latest button appears whenever they scroll up.
 
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState, type CSSProperties } from "react";
 import { ArrowDown, CaretDown, CaretRight, Stop, Warning } from "@phosphor-icons/react";
 import type { AssistantBlock, BashBlock, ImageBlock, ToolCallBlock } from "./streaming.ts";
 import type { HistoryEntryLike, ToolCallStatus, ToolResultLike } from "./use-session.ts";
@@ -38,13 +38,33 @@ export function WorkingIndicator({
     return () => clearInterval(timer);
   }, [signature, intervalMs, frames.length]);
 
+  const frameColor = working?.frameColors?.[frameIndex];
   const message = working?.message ?? fallback;
+  const segments = working?.messageSegments;
   return (
     <span className="plugin-working-line">
-      <span className="plugin-working-frame" aria-hidden="true">
+      <span
+        className="plugin-working-frame"
+        aria-hidden="true"
+        style={frameColor ? ({ "--working-frame-color": frameColor } as CSSProperties) : undefined}
+      >
         {frames[frameIndex] ?? ""}
       </span>
-      {message}
+      {segments?.length ? (
+        <span className="plugin-working-message">
+          {segments.map((segment, index) => (
+            <span
+              key={index}
+              className={segment.bold ? "plugin-working-segment plugin-working-segment--bold" : "plugin-working-segment"}
+              style={segment.color ? ({ "--working-segment-color": segment.color } as CSSProperties) : undefined}
+            >
+              {segment.text}
+            </span>
+          ))}
+        </span>
+      ) : (
+        message
+      )}
     </span>
   );
 }
