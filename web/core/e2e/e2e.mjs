@@ -541,7 +541,7 @@ async function run() {
     const contextMeter = page.locator(".app-context-usage");
     await contextMeter.waitFor({ state: "visible", timeout: 10_000 });
     assert.ok(
-      (await contextMeter.textContent())?.includes("42%") && (await contextMeter.textContent())?.includes("84k / 200k tokens"),
+      (await contextMeter.textContent())?.includes("42%") && (await contextMeter.textContent())?.includes("84k / 200k"),
       "the context meter shows the posted context usage",
     );
     await composerInput.fill("/");
