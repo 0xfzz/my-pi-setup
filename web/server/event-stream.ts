@@ -261,6 +261,7 @@ async function buildSessionsSnapshot(): Promise<SessionInfo[]> {
         live: false,
         running: false,
         modifiedAt: session.modifiedAt,
+        ...(session.name !== undefined ? { name: session.name } : {}),
       })),
   ];
 }

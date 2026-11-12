@@ -286,6 +286,7 @@ async function handleSessionsList(ctx: ApiRouteContext): Promise<void> {
         live: false,
         running: false,
         modifiedAt: session.modifiedAt,
+        ...(session.name !== undefined ? { name: session.name } : {}),
       })),
   ];
   sendJson(ctx.res, 200, { sessions });

@@ -143,6 +143,7 @@ function bridgeStateOf(ctx: ExtensionContext): Record<string, unknown> {
     isStreaming: !(ctx.isIdle?.() ?? true),
     model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
     thinkingLevel: ctx.thinkingLevel,
+    name: ctx.sessionManager?.getSessionName?.() ?? "",
     ...contextUsageOf(ctx),
   };
 }
@@ -659,6 +660,10 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       });
     }
     postSessionState(ctx);
+  });
+  // The session's name for the web sidebar: a /name, a rename, or a generated title.
+  pi.on("session_info_changed", (event) => {
+    bridgePoster?.post({ type: "session_name", name: event.name ?? "" });
   });
   pi.on("agent_end", forwardToBridge);
   // A tree navigation (/tree, a fork): the session's position moved — the

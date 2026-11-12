@@ -25,6 +25,7 @@ import {
   markBridgeDetached,
   registerSession,
   unregisterSession,
+  recordSessionName,
   type SessionCore,
   type SessionStateLite,
 } from "./sessions.ts";
@@ -44,6 +45,8 @@ export interface BridgeState {
   model?: { provider: string; id: string };
   thinkingLevel?: string;
   contextUsage?: { percent: number; contextWindow: number; tokens: number } | null;
+  /** The session's display name; empty when it has none. */
+  name?: string;
 }
 
 export type BridgeCommand =
@@ -290,6 +293,7 @@ export function attachBridge(options: {
     postState(partial: Partial<BridgeState>): void {
       if (closed) return;
       Object.assign(state, partial);
+      if (partial.name !== undefined) recordSessionName(metadata.sessionId, partial.name);
     },
     getCommands(): Array<{ name: string; description?: string }> {
       return commands;
@@ -410,6 +414,11 @@ function handleBridgeEvent(sessionId: string, event: unknown): void {
   }
   if (e.type === "web_models") {
     // Handled in postEvent: the models list is this connection's state.
+    return;
+  }
+  // The TUI reports its session name whenever it changes (a /name, or a generated title).
+  if (e.type === "session_name") {
+    recordSessionName(sessionId, typeof e.name === "string" ? e.name : "");
     return;
   }
   if (e.type === "agent_start" || e.type === "agent_end" || e.type === "agent_settled" || e.type === "session_shutdown") {

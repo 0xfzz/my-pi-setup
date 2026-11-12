@@ -15,7 +15,7 @@ import {
 import { buildWebTree, type WebTreeNode } from "../../lib/web-tree.ts";
 import { createStreamTracker, type StreamSnapshot } from "./stream-tracker.ts";
 import { createReadStream, existsSync } from "node:fs";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { open, readFile, readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { attachSessionPlugins } from "./plugin-host.ts";
 import { createHeadlessWebUiContext } from "./web-ui-context.ts";
@@ -39,6 +39,8 @@ export interface SessionCore {
   abort(): Promise<void>;
   isStreaming(): boolean;
   getState(): SessionStateLite;
+  /** The session's display name, when it has one. Undefined for an unnamed session. */
+  getSessionName?(): string | undefined;
   /** Slash commands the session can dispatch (extension/prompt/skill). */
   getCommands?(): Array<{ name: string; description?: string }>;
   /** Model list for the web picker + the current model. */
@@ -87,6 +89,7 @@ export interface DiskSession {
   cwd: string;
   file: string;
   modifiedAt: number;
+  name?: string;
 }
 
 export type HistoryBlock =
@@ -131,7 +134,8 @@ const liveSessions = new Map<string, SessionHandle>();
 export type SessionDirectoryEvent =
   | { type: "session_running"; id: string; running: boolean }
   | { type: "session_added"; session: SessionInfo }
-  | { type: "session_removed"; id: string };
+  | { type: "session_removed"; id: string }
+  | { type: "session_renamed"; id: string; name: string };
 
 const directoryListeners = new Set<(event: SessionDirectoryEvent) => void>();
 
@@ -213,6 +217,7 @@ function toCore(inner: AgentSession): SessionCore {
   inner.subscribe(streamTracker.feed);
   return {
     sessionId: inner.sessionId,
+    getSessionName: () => inner.sessionManager?.getSessionName?.(),
     subscribe: (listener: (event: unknown) => void) => inner.subscribe(listener),
     getStreamSnapshot: (): StreamSnapshot => streamTracker.snapshot(),
     getTreeNodes: (): WebTreeNode[] | null => {
@@ -299,9 +304,27 @@ function trackSessionDirectory(core: SessionCore): void {
       if (!running) return;
       running = false;
       emitDirectory({ type: "session_running", id, running: false });
+    } else if (type === "session_info_changed") {
+      recordSessionName(id, (event as { name?: string }).name);
     }
   });
   directoryTaps.set(id, unsubscribe);
+}
+
+/** Names of live sessions, kept current from rename events. */
+const sessionNames = new Map<string, string>();
+
+/**
+ * A session's name changed (a person's /name, a generated title, or a bridge
+ * report). Remembers it and tells the directory stream; an unchanged name is
+ * not re-announced.
+ */
+export function recordSessionName(id: string, name: string | undefined): void {
+  const next = name?.trim() ?? "";
+  if ((sessionNames.get(id) ?? "") === next) return;
+  if (next === "") sessionNames.delete(id);
+  else sessionNames.set(id, next);
+  emitDirectory({ type: "session_renamed", id, name: next });
 }
 
 function register(core: SessionCore, cwd: string, sessionFile: string, inner?: unknown): SessionCore {
@@ -338,6 +361,8 @@ function register(core: SessionCore, cwd: string, sessionFile: string, inner?: u
   // Session directory: track this live session's running/idle transitions
   // and announce its membership (the replace path re-announces, so a bridge
   // takeover or an in-process resume both refresh the listing).
+  const seeded = core.getSessionName?.()?.trim();
+  if (seeded) sessionNames.set(core.sessionId, seeded);
   trackSessionDirectory(core);
   const registered = liveSessions.get(core.sessionId);
   if (registered !== undefined) {
@@ -456,6 +481,7 @@ export function unregisterSession(id: string): void {
 }
 
 function sessionInfoOf(handle: SessionHandle): SessionInfo {
+  const name = sessionNames.get(handle.core.sessionId);
   return {
     id: handle.core.sessionId,
     cwd: handle.cwd,
@@ -463,6 +489,7 @@ function sessionInfoOf(handle: SessionHandle): SessionInfo {
     live: true,
     running: handle.core.getState().isStreaming,
     modifiedAt: handle.lastActivityAt,
+    ...(name !== undefined ? { name } : {}),
   };
 }
 
@@ -478,6 +505,8 @@ export interface SessionInfo {
   modifiedAt: number;
   /** The session is mid-turn right now (agent streaming), for live sessions. */
   running?: boolean;
+  /** The display name: a person's /name, or a generated title. Absent when unnamed. */
+  name?: string;
 }
 
 function sessionsRoot(agentDir?: string): string {
@@ -566,6 +595,68 @@ async function listSessionFiles(root: string): Promise<string[]> {
   return files;
 }
 
+/** How far back a session file is searched for its latest name, and the step size. */
+const NAME_SCAN_LIMIT_BYTES = 4 * 1024 * 1024;
+const NAME_SCAN_STEP_BYTES = 64 * 1024;
+/** Keyed by file; a name is rescanned only when the file's mtime moves. */
+const diskNameCache = new Map<string, { mtimeMs: number; name?: string }>();
+
+/**
+ * The name a session_info line carries: its string, `""` for a cleared name,
+ * or null when the line is not a session_info entry.
+ */
+function sessionInfoNameOf(line: string): string | null {
+  if (!line.includes('"session_info"')) return null;
+  try {
+    const entry = JSON.parse(line) as { type?: unknown; name?: unknown };
+    if (entry.type !== "session_info") return null;
+    return typeof entry.name === "string" ? entry.name : "";
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The session's latest name, found by reading the file backwards in steps. The
+ * name is written as a session_info entry, which can sit far from the end of a
+ * long session, so the search is bounded and the answer is cached by mtime.
+ */
+async function latestSessionName(file: string, mtimeMs: number): Promise<string | undefined> {
+  const cached = diskNameCache.get(file);
+  if (cached !== undefined && cached.mtimeMs === mtimeMs) return cached.name;
+  const name = await scanForLatestName(file);
+  diskNameCache.set(file, { mtimeMs, name });
+  return name;
+}
+
+async function scanForLatestName(file: string): Promise<string | undefined> {
+  const handle = await open(file, "r");
+  try {
+    const { size } = await handle.stat();
+    let end = size;
+    // The text after `end` whose line has not started yet, in the previous step.
+    let pending = "";
+    let scanned = 0;
+    while (end > 0 && scanned < NAME_SCAN_LIMIT_BYTES) {
+      const start = Math.max(0, end - NAME_SCAN_STEP_BYTES);
+      const buffer = Buffer.alloc(end - start);
+      await handle.read(buffer, 0, buffer.length, start);
+      const lines = (buffer.toString("utf-8") + pending).split("\n");
+      // The first piece is a partial line unless this step reached the file start.
+      pending = start > 0 ? (lines.shift() ?? "") : "";
+      for (let index = lines.length - 1; index >= 0; index -= 1) {
+        const name = sessionInfoNameOf(lines[index]);
+        if (name !== null) return name.trim() || undefined;
+      }
+      scanned += end - start;
+      end = start;
+    }
+    return undefined;
+  } finally {
+    await handle.close();
+  }
+}
+
 /** Sessions on disk under the agent dir, newest first, capped. */
 export async function listDiskSessions(options?: {
   agentDir?: string;
@@ -587,7 +678,11 @@ export async function listDiskSessions(options?: {
     found.push({ id: header.id, cwd: header.cwd, file, modifiedAt });
   }
   found.sort((a, b) => b.modifiedAt - a.modifiedAt);
-  return found.slice(0, limit);
+  // Names are read only for the sessions returned, never for the whole directory.
+  return Promise.all(found.slice(0, limit).map(async (session) => {
+    const name = await latestSessionName(session.file, session.modifiedAt);
+    return name === undefined ? session : { ...session, name };
+  }));
 }
 
 /** Find a session file by id, matching the header id or the filename suffix. */
