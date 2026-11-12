@@ -247,6 +247,29 @@ test("/auto-title now takes an optional hint as data; off disables; bad usage wa
   assert.match(h.notices.at(-1)!, /Usage/);
 });
 
+test("a length stop retries with a larger budget, and partial text is still cleaned", async () => {
+  let call = 0;
+  const h = harness({
+    reply: () => {
+      call += 1;
+      if (call === 1) return Promise.resolve({ stopReason: "length", content: [] });
+      return Promise.resolve({ stopReason: "length", content: [{ type: "text", text: "Login Redirect Loop Fix" }] });
+    },
+  });
+  await h.emit("agent_end");
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests[0].options.maxTokens, 64, "a model without reasoning starts small");
+  assert.equal(h.requests[1].options.maxTokens, 256, "the length stop retries at four times the budget");
+  assert.equal(h.name(), "Login Redirect Loop Fix", "usable text in a length stop is still a title");
+});
+
+test("a length stop with no text is a clean rejection, not a token-cap error", async () => {
+  const h = harness({ reply: async () => ({ stopReason: "length", content: [] }) });
+  await h.emit("agent_end");
+  assert.equal(h.name(), undefined);
+  assert.match(h.notices[0]!, /no usable title/);
+});
+
 test("a session seeded from a parent fork is never auto-titled, and publishes nothing", async () => {
   const marker = {
     type: "custom",

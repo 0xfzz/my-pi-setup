@@ -209,8 +209,9 @@ export default function autoTitleExtension(pi: ExtensionAPI, options: { stateFil
     if (reply.stopReason === "error" || reply.stopReason === "aborted") {
       throw new Error(reply.errorMessage ?? "the model ended without a result");
     }
-    // A reply that is still cut off is partial text; it is never a title.
-    if (reply.stopReason === "length") throw new Error("the title hit the token cap");
+    // A length stop after the larger retry means mandatory reasoning outpaced the
+    // budget: the leading text may still name the task. The cleaner decides — an
+    // empty or unusable partial is rejected there as its named reason, not here.
     return reply;
   }
 

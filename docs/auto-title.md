@@ -30,7 +30,7 @@ One completion on the session's **current model**, through `ctx.modelRegistry.st
 | Brief | `goal`, `first_user`, `first_assistant`, `latest_user` (refinement only), `compaction`, `footprint`, `current_title` (refinement only), `hint` (manual only). About 3,000 characters at most |
 | Never sent | system prompts, tool output, thinking, file contents, environment values. Images and files appear only as `[attachment: type]` |
 | Redacted | `sk-…`, `ghp_…`, `AKIA…`, `Bearer …`, and long hex or base64 runs |
-| Budget | 64 output tokens with thinking off; a model that cannot turn thinking off gets its lowest level and 1,024 tokens. A `length` stop is retried once at four times the budget; a reply still cut off is a failure |
+| Budget | 64 output tokens with thinking off; a model that cannot turn thinking off gets its lowest level and 8,192 tokens (reasoning is counted inside the same budget). A `length` stop retries once at four times the budget, then the partial text is handed to the cleaner — empty or unusable text fails as its named rejection |
 | Routing | `cacheRetention: "none"` (a one-off, so `claude-bridge` routes it around prompt capture), `maxRetries: 0`, 20 s timeout |
 
 ### When it runs

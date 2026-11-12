@@ -9,7 +9,14 @@ import type { ThinkingLevel } from "@earendil-works/pi-ai/compat";
  */
 
 export const TITLE_MAX_TOKENS = 64;
-export const TITLE_REASONING_MAX_TOKENS = 1_024;
+/**
+ * Budget when thinking cannot be turned off (the model's lowest level applies).
+ * Reasoning tokens are counted inside the same budget, so a thinking model must
+ * be given room to think and still write the 3–6 word title. 8K covers a low
+ * effort on the reasoning models we see in practice; a `length` stop retries at
+ * 4× before the partial text is handed to the cleaner.
+ */
+export const TITLE_REASONING_MAX_TOKENS = 8_192;
 /** Retry budget after a `length` stop: a truncated title is never accepted. */
 const LENGTH_RETRY_FACTOR = 4;
 const LEVELS_LOWEST_FIRST: readonly ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
