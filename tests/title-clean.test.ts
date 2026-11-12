@@ -81,6 +81,7 @@ const base: PolicyState = {
   automaticAttempts: 0,
   hasExchange: true,
   refineSignal: false,
+  refined: false,
 };
 
 test("an untitled session with an exchange gets a provisional title", () => {
@@ -96,6 +97,7 @@ test("a generated name is refined once, when a refinement signal holds", () => {
   assert.deepEqual(decide({ ...generated, refineSignal: true }, "settled"), { action: "generate", kind: "refine" });
   assert.deepEqual(decide({ ...generated, refineSignal: false }, "settled"), { action: "skip", reason: "not-refinable" });
   assert.deepEqual(decide({ ...generated, successes: 2, refineSignal: true }, "settled"), { action: "skip", reason: "not-refinable" });
+  assert.deepEqual(decide({ ...generated, refineSignal: true, refined: true }, "settled"), { action: "skip", reason: "not-refinable" }, "a kept refinement is not retried");
 });
 
 test("the automatic cap counts failures, and stops at three", () => {

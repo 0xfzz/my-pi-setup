@@ -58,7 +58,9 @@ export interface TitleAttempt {
   v: 1;
   ownerSessionId: string;
   source: "auto" | "manual";
-  outcome: "failed" | "superseded";
+  kind: "provisional" | "refine" | "manual";
+  /** `kept`: a refinement answered KEEP, so no name was written but the pass is spent. */
+  outcome: "failed" | "superseded" | "kept";
   reason: string;
 }
 
@@ -80,4 +82,12 @@ export function automaticAttempts(branch: readonly any[], ownerSessionId: string
     if (entry.customType === TITLE_ATTEMPT_ENTRY) return entry.data?.source === "auto";
     return false;
   }).length;
+}
+
+/** A refinement pass has run, whether it rewrote the name or kept it. */
+export function refinementTried(branch: readonly any[], ownerSessionId: string): boolean {
+  return branch.some((entry) => entry?.type === "custom"
+    && entry.customType === TITLE_ATTEMPT_ENTRY
+    && entry.data?.ownerSessionId === ownerSessionId
+    && entry.data?.kind === "refine");
 }

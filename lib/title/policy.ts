@@ -30,6 +30,8 @@ export interface PolicyState {
   hasExchange: boolean;
   /** The refinement trigger holds (see refineSignal). */
   refineSignal: boolean;
+  /** A refinement pass already ran, rewritten or kept. It runs at most once. */
+  refined: boolean;
   /** Milliseconds since the last manual regenerate, if there was one. */
   sinceManualMs?: number;
 }
@@ -80,7 +82,7 @@ function decideAutomatic(state: PolicyState): PolicyDecision {
   if (state.automaticAttempts >= AUTO_TITLE_CAP) return { action: "skip", reason: "cap" };
   if (!state.hasExchange) return { action: "skip", reason: "no-exchange" };
   if (!state.name) return { action: "generate", kind: "provisional" };
-  if (state.successes === 1 && state.refineSignal) return { action: "generate", kind: "refine" };
+  if (state.successes === 1 && state.refineSignal && !state.refined) return { action: "generate", kind: "refine" };
   return { action: "skip", reason: "not-refinable" };
 }
 
