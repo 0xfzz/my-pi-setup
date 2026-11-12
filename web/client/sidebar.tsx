@@ -49,7 +49,7 @@ export function SessionSidebar({
   const query = search.trim().toLowerCase();
   const now = Date.now();
   const ordered = sessions.filter((session) =>
-    `${session.cwd} ${session.id}`.toLowerCase().includes(query),
+    `${session.name ?? ""} ${session.cwd} ${session.id}`.toLowerCase().includes(query),
   ).sort((a, b) => {
     // Live sessions first, then most recently active.
     if (a.live !== b.live) return a.live ? -1 : 1;
@@ -99,12 +99,15 @@ export function SessionSidebar({
               className={`app-session-item${selected ? " is-selected" : ""}`}
               data-state={state}
               onClick={() => onSelect(session.id)}
-              title={`${session.cwd}\n${session.id}${state === "running" ? " — running" : state === "live" ? " — attached" : ""}`}
+              title={`${session.name ? `${session.name}\n` : ""}${session.cwd}\n${session.id}${state === "running" ? " — running" : state === "live" ? " — attached" : ""}`}
             >
               <span className={`app-session-dot app-session-dot-${state}`} aria-hidden="true" />
               <span className="app-session-body">
-                <span className="app-session-name">{shortCwd(session.cwd)}</span>
-                <span className="app-session-meta">{session.id.slice(0, 8)}</span>
+                {/* A session's name replaces the cwd label; the cwd moves to the meta line. */}
+                <span className="app-session-name">{session.name ?? shortCwd(session.cwd)}</span>
+                <span className="app-session-meta">
+                  {session.name !== undefined ? `${shortCwd(session.cwd)} · ` : ""}{session.id.slice(0, 8)}
+                </span>
               </span>
               <span className="app-session-time">{relativeTime(session.modifiedAt, now)}</span>
               {state === "running" ? <span className="app-session-running">run</span> : null}

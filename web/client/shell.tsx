@@ -138,6 +138,7 @@ export function AppShell() {
     : session.connection;
   const selected = session.sessions.find((summary) => summary.id === session.selectedId);
   const headerCwd = selected ? selected.cwd : "";
+  const headerLabel = selected?.name ?? (headerCwd.split("/").filter(Boolean).at(-1) || "Workspace");
 
   // The web side of the ported TUI commands: /model, /thinking, /session,
   // /changelog, /copy, /export, /resume. Each maps to a web dialog or
@@ -438,7 +439,7 @@ export function AppShell() {
                 <SidebarSimple size={18} />
               </button>
               <div className="app-header-project" title={headerCwd || "Your local pi workspace"}>
-                <span className="app-header-title">{headerCwd.split("/").filter(Boolean).at(-1) || "Workspace"}</span>
+                <span className="app-header-title">{headerLabel}</span>
                 <span className="app-header-caption">{selected ? "Session" : "pi"}</span>
               </div>
               <StatusChips statuses={session.statuses} />

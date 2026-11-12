@@ -62,6 +62,8 @@ export interface SessionSummary {
   modifiedAt: number;
   /** The session is mid-turn right now (agent streaming), for live sessions. */
   running?: boolean;
+  /** The display name: a person's /name, or a generated title. Absent when unnamed. */
+  name?: string;
 }
 
 export interface HistoryEntryLike {
@@ -304,6 +306,23 @@ export function usePiSession() {
             next[index] = added;
             return next;
           });
+          break;
+        }
+        case "session_renamed": {
+          // A generated or typed name replaces the cwd label; an empty name clears it.
+          const frame = data as { id?: unknown; name?: unknown };
+          if (typeof frame.id !== "string" || typeof frame.name !== "string") return;
+          const id = frame.id;
+          const name = frame.name;
+          setSessions((prev) =>
+            prev.map((session) => {
+              if (session.id !== id) return session;
+              const next: SessionSummary = { ...session };
+              if (name === "") delete next.name;
+              else next.name = name;
+              return next;
+            }),
+          );
           break;
         }
         case "session_removed": {
