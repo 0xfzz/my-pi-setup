@@ -5,7 +5,13 @@
 // This replaces the vendored app's 3.4k-line rpc-manager; per the PRD the
 // model-selection, lease, trust, push and custom-UI chrome is out of scope.
 
-import { createAgentSession, getAgentDir, SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
+import {
+  createAgentSession,
+  getAgentDir,
+  resolveModelScopeWithDiagnostics,
+  SessionManager,
+  type AgentSession,
+} from "@earendil-works/pi-coding-agent";
 import { buildWebTree, type WebTreeNode } from "../../lib/web-tree.ts";
 import { createStreamTracker, type StreamSnapshot } from "./stream-tracker.ts";
 import { createReadStream, existsSync } from "node:fs";
@@ -340,6 +346,30 @@ function register(core: SessionCore, cwd: string, sessionFile: string, inner?: u
   return core;
 }
 
+/**
+ * Apply the `enabledModels` scope to an in-process session, mirroring the
+ * CLI/TUI. The interactive, print and rpc runners resolve `enabledModels` into
+ * `scopedModels` before serving a session; without it the web picker falls
+ * back to the full available snapshot and diverges from sessions opened in the
+ * TUI. A resolution failure (e.g. an auth-refresh timeout) is deliberately
+ * swallowed: the picker then serves the available snapshot, exactly as the TUI
+ * does when no scope resolves.
+ */
+export async function applyEnabledModelScope(session: AgentSession): Promise<void> {
+  const patterns = session.settingsManager.getEnabledModels();
+  if (patterns === undefined || patterns.length === 0) return;
+  try {
+    const { scopedModels } = await resolveModelScopeWithDiagnostics(patterns, session.modelRuntime, {
+      signal: AbortSignal.timeout(15_000),
+    });
+    session.setScopedModels(
+      scopedModels.map((scoped) => ({ model: scoped.model, thinkingLevel: scoped.thinkingLevel })),
+    );
+  } catch {
+    // Scope resolution is best-effort; an empty scope keeps the full snapshot.
+  }
+}
+
 /** Spawn a brand-new pi session with the project's real extensions loaded. */
 export async function startSession(options: {
   cwd: string;
@@ -350,6 +380,7 @@ export async function startSession(options: {
     sessionStartEvent: { type: "session_start", reason: "new" },
     ...(options.agentDir !== undefined ? { agentDir: options.agentDir } : {}),
   });
+  await applyEnabledModelScope(session);
   // The interactive/rpc/print runners all bind extensions (which emits
   // `session_start`) before serving the session; the in-process web runner
   // must too, or plugins never publish their resting views until a prompt
@@ -372,6 +403,7 @@ export async function resumeSession(options: {
     sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile: options.sessionFile },
     ...(options.agentDir !== undefined ? { agentDir: options.agentDir } : {}),
   });
+  await applyEnabledModelScope(session);
   // Same rationale as startSession: a resumed session must republish its
   // resting plugin views the moment it is opened, not on the first turn.
   await session.bindExtensions({ uiContext: createHeadlessWebUiContext() });
