@@ -50,3 +50,34 @@ export function isGeneratedName(branch: readonly any[], ownerSessionId: string, 
   const record = latestTitleRecord(branch, ownerSessionId);
   return Boolean(record && name !== undefined && name === record.title);
 }
+
+/** A title try that did not land: it still spends the automatic cap. */
+export const TITLE_ATTEMPT_ENTRY = "workflow-title-attempt:v1";
+
+export interface TitleAttempt {
+  v: 1;
+  ownerSessionId: string;
+  source: "auto" | "manual";
+  outcome: "failed" | "superseded";
+  reason: string;
+}
+
+/** Every successful generation recorded for this session, automatic or manual. */
+export function successCount(branch: readonly any[], ownerSessionId: string): number {
+  return branch.filter((entry) => entry?.type === "custom"
+    && entry.customType === TITLE_RECORD_ENTRY
+    && entry.data?.ownerSessionId === ownerSessionId).length;
+}
+
+/**
+ * Automatic tries so far: automatic successes plus automatic tries that failed
+ * or were superseded. Manual regenerates are not counted against the cap.
+ */
+export function automaticAttempts(branch: readonly any[], ownerSessionId: string): number {
+  return branch.filter((entry) => {
+    if (entry?.type !== "custom" || entry.data?.ownerSessionId !== ownerSessionId) return false;
+    if (entry.customType === TITLE_RECORD_ENTRY) return entry.data?.source === "auto";
+    if (entry.customType === TITLE_ATTEMPT_ENTRY) return entry.data?.source === "auto";
+    return false;
+  }).length;
+}
