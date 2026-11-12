@@ -28,10 +28,23 @@ export type WebPluginSurface =
   | { kind: "slot"; slot: WebPluginSlot }
   | { kind: "override"; region: WebPluginRegion };
 
+const PLUGIN_ICONS = [
+  "files", "list-checks", "tree-structure", "users",
+  "chart-bar", "sliders", "spinner", "puzzle-piece",
+] as const;
+
+/** Host-rendered symbols only: plugins never supply SVG, HTML, or URLs. */
+export type WebPluginIcon = (typeof PLUGIN_ICONS)[number];
+
+function isPluginIcon(value: unknown): value is WebPluginIcon {
+  return PLUGIN_ICONS.some((icon) => icon === value);
+}
+
 export interface WebPluginDescriptor {
   id: string;
   extension: string;
   title: string;
+  icon?: WebPluginIcon;
   surfaces: WebPluginSurface[];
   ui?: WebPluginUiContribution[];
   description?: string;
@@ -70,6 +83,10 @@ export function validatePlugin(
         ok: false,
         error: `Plugin "${pluginName}": title is missing or empty`,
       };
+    }
+
+    if (raw.icon !== undefined && !isPluginIcon(raw.icon)) {
+      return { ok: false, error: `Plugin "${pluginName}": icon must be a supported host icon` };
     }
 
     if (typeof raw.extension !== "string" || raw.extension.trim().length === 0) {
@@ -181,6 +198,7 @@ export function validatePlugin(
       id: raw.id,
       extension: raw.extension,
       title: raw.title,
+      ...(isPluginIcon(raw.icon) ? { icon: raw.icon } : {}),
       surfaces: cleanSurfaces,
       ...(ui?.ok ? { ui: ui.value } : {}),
       ...(typeof raw.description === "string" ? { description: raw.description } : {}),

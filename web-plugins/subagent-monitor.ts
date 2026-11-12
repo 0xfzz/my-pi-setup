@@ -5,6 +5,7 @@ export const subagentMonitorPlugin: WebPluginDescriptor = {
   id: SUBAGENT_MONITOR_PLUGIN_ID,
   extension: "dashboard",
   title: "Subagent monitor",
+  icon: "tree-structure",
   description: "Per-session delegated work graph: parent, child workers, handoffs, reviews and escalations, each with expandable detail. Data parity with the standalone dashboard.",
   surfaces: [
     { kind: "sidebar" },

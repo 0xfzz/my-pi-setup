@@ -131,6 +131,26 @@ test("descriptor: every WEB_PLUGINS entry passes validatePlugin against real rea
   }
 });
 
+test("descriptor icons survive validation and remain optional for existing plugins", () => {
+  const withIcon = validatePlugin({ ...artifactsPlugin, icon: "files" }, ["artifacts.ts"]);
+  assert.equal(withIcon.ok, true);
+  if (withIcon.ok) assert.equal(withIcon.plugin.icon, "files");
+
+  const { icon, ...legacyPlugin } = artifactsPlugin;
+  assert.equal(icon, "files");
+  const legacy = validatePlugin(legacyPlugin, ["artifacts.ts"]);
+  assert.equal(legacy.ok, true);
+  if (legacy.ok) assert.equal(legacy.plugin.icon, undefined);
+});
+
+test("descriptor icons reject unsupported names and non-string values", () => {
+  for (const icon of ["unknown-icon", "<svg onload=alert(1)>", "", null, 42, {}]) {
+    const result = validatePlugin({ ...artifactsPlugin, icon }, ["artifacts.ts"]);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.match(result.error, /icon/);
+  }
+});
+
 test("registry: validateRegistry(WEB_PLUGINS) returns no errors", () => {
   assert.equal(
     REGISTRY_VIEW_EVENT,

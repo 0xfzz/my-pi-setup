@@ -768,36 +768,59 @@
   scrollbar-color: var(--border) transparent;
 }
 
-/* Header side panel toggle */
-.app-side-panel-toggle {
+/* One quiet navbar icon per available panel; never float controls over chat. */
+.app-plugin-panel-nav {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 1 auto;
+  min-width: 32px;
+  max-width: 55%;
+  padding: 3px;
+  margin-left: 8px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.app-plugin-panel-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
   border: none;
+  border-radius: 6px;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  margin-left: 8px;
-  padding: 0;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  transition: background 0.12s, color 0.12s;
 }
 
-.app-side-panel-toggle:hover {
-  background: var(--bg-hover);
+.app-plugin-panel-button:hover,
+.app-plugin-panel-button.is-active {
+  background: var(--bg-active);
   color: var(--text);
 }
 
-.app-side-panel-toggle.is-active {
-  background: var(--bg-hover);
-  border-color: var(--accent);
-  color: var(--accent);
+.app-plugin-panel-button:focus-visible {
+  outline-offset: 0;
 }
 
 /* On narrow screens (phones/tablets <= 720px) */
 @media (max-width: 720px) {
+  .app-header-status,
+  .app-header .app-status-chips {
+    display: none;
+  }
+
+  .app-plugin-panel-nav {
+    max-width: 62%;
+    margin-left: auto;
+  }
+
   .app-side-panel {
     position: fixed;
     top: 0;

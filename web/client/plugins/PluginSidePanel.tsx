@@ -12,7 +12,6 @@ export interface PluginSidePanelProps {
   open: boolean;
   activePluginId: string | null;
   onClose: () => void;
-  onSelectPlugin: (pluginId: string) => void;
   plugins: readonly WebPluginDescriptor[];
   views: Record<string, WebView> | null;
   sessionId: string | null;
@@ -31,15 +30,9 @@ export function PluginSidePanel({
   views,
   sessionId,
 }: PluginSidePanelProps) {
-  // Only the explicitly active plugin (or fallback to the first floating/center plugin)
-  const activePlugin =
-    plugins.find((p) => p.id === activePluginId && views?.[p.id] != null) ??
-    plugins.find(
-      (p) =>
-        views?.[p.id] != null &&
-        p.surfaces.some((s) => s.kind === "slot" && s.slot === "floating"),
-    ) ??
-    null;
+  const activePlugin = plugins.find((plugin) =>
+    plugin.id === activePluginId && views?.[plugin.id] != null,
+  );
 
   // Auto-close on Esc
   useEffect(() => {
@@ -51,7 +44,7 @@ export function PluginSidePanel({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open, onClose]);
 
-  if (!open || activePlugin === null) return null;
+  if (!open || activePlugin === undefined) return null;
 
   const currentView = views?.[activePlugin.id] ?? null;
   const pagePath = pagePathFor(activePlugin);
@@ -60,6 +53,7 @@ export function PluginSidePanel({
     <>
       <div className="app-side-panel-scrim" onClick={onClose} aria-hidden="true" />
       <aside
+        id="plugin-side-panel"
         className="app-side-panel"
         role="complementary"
         aria-label={`${activePlugin.title} panel`}

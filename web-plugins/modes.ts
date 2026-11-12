@@ -5,6 +5,7 @@ export const modesPlugin: WebPluginDescriptor = {
   id: MODES_PLUGIN_ID,
   extension: "modes",
   title: "Input mode",
+  icon: "sliders",
   description: "Current input mode (Normal or Plan) shown above the composer. Alt+M switches mode instantly; leaving Plan mode stays a confirmed action.",
   ui: [{
     id: "mode",

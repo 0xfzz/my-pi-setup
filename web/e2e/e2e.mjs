@@ -139,33 +139,39 @@ async function run() {
     await page.locator(".app-sidebar").waitFor({ state: "visible" });
     assert.equal(await sessionToggle.getAttribute("aria-expanded"), "true");
 
-    step("2: fixture session + slots");
-    // 2. Select the fixture session: slots render from the seeded views.
+    step("2: sidebar plugin icons — clean chat, open, switch and close");
     await selectFixtureSession(page);
+    const panelNav = page.getByRole("navigation", { name: "Plugin panels" });
+    await panelNav.waitFor();
+    assert.equal(await panelNav.locator("button").count(), 5, "one icon per published sidebar plugin");
+    assert.equal(await panelNav.locator("button svg").count(), 5, "each plugin has an icon");
+    assert.equal(await page.locator(".plugin-slot-region").count(), 0, "sidebar plugins never duplicate into the chat");
+    assert.equal(await page.locator(".app-side-panel").count(), 0, "panels start closed");
 
-    const topSlot = page.locator(".plugin-slot-top");
-    await topSlot.waitFor({ state: "visible", timeout: 15_000 });
-    assert.ok(
-      (await topSlot.textContent())?.includes("Implement frontend slots"),
-      "top slot shows the todo fixture summary",
-    );
+    const artifactsButton = panelNav.getByRole("button", { name: "Artifacts", exact: true });
+    const delegatedButton = panelNav.getByRole("button", { name: "Delegated work", exact: true });
+    await artifactsButton.click();
+    await page.getByRole("complementary", { name: "Artifacts panel" }).waitFor();
+    assert.equal(await artifactsButton.getAttribute("aria-pressed"), "true");
+    assert.ok((await page.locator(".app-side-panel").textContent()).includes("prd-phase-6.md"));
+    await delegatedButton.click();
+    await page.getByRole("complementary", { name: "Delegated work panel" }).waitFor();
+    assert.equal(await page.locator(".app-side-panel").count(), 1);
+    assert.equal(await artifactsButton.getAttribute("aria-pressed"), "false");
+    assert.equal(await delegatedButton.getAttribute("aria-pressed"), "true");
+    assert.ok((await page.locator(".app-side-panel").textContent()).includes("worker-slots"));
+    await delegatedButton.click();
+    assert.equal(await page.locator(".app-side-panel").count(), 0, "clicking the active icon closes its panel");
 
-    const bottomSlot = page.locator(".plugin-slot-bottom");
-    await bottomSlot.waitFor({ state: "visible", timeout: 15_000 });
-    assert.ok(
-      (await bottomSlot.textContent())?.includes("XSS Test"),
-      "bottom slot shows the cache fixture summary",
-    );
-
-    const centerSlot = page.locator(".plugin-slot-center");
-    await centerSlot.waitFor({ state: "visible", timeout: 15_000 });
-    assert.ok(
-      (await centerSlot.textContent())?.includes("Delegated work"),
-      "center slot renders the checkpoints view",
-    );
-
-    const floatingChip = page.locator(".plugin-slot-floating-chip");
-    await floatingChip.first().waitFor({ state: "visible", timeout: 15_000 });
+    await panelNav.getByRole("button", { name: "Todo", exact: true }).click();
+    await page.getByRole("complementary", { name: "Todo panel" }).waitFor();
+    assert.ok((await page.locator(".app-side-panel").textContent()).includes("Implement frontend slots"));
+    await page.getByRole("button", { name: "Close panel", exact: true }).click();
+    await panelNav.getByRole("button", { name: "Cache health", exact: true }).click();
+    await page.getByRole("complementary", { name: "Cache health panel" }).waitFor();
+    assert.ok((await page.locator(".app-side-panel").textContent()).includes("XSS Test"));
+    await page.keyboard.press("Escape");
+    assert.equal(await page.locator(".app-side-panel").count(), 0, "Escape closes the selected panel");
 
     step("3: composer override");
     // 3. Region override: the composer is replaced by the example plugin's
@@ -351,6 +357,12 @@ async function run() {
       false,
       "no horizontal scrollbar at 420px",
     );
+    // Navbar icons stay reachable on phones; closing an overlay restores the chat.
+    await page.getByRole("navigation", { name: "Plugin panels" }).getByRole("button", { name: "Artifacts", exact: true }).click();
+    await page.getByRole("complementary", { name: "Artifacts panel" }).waitFor();
+    await page.getByRole("button", { name: "Close panel", exact: true }).click();
+    assert.equal(await page.locator(".app-side-panel-scrim").count(), 0);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.locator(".app-sidebar-toggle").click();
 
@@ -441,6 +453,9 @@ async function run() {
     // A server teardown mid-run must not crash the runner with an unhandled
     // rejection before the real assertion error can surface.
     bridgeReadLoop.catch(() => undefined);
+    // A panel from the previous session must not leak into this one.
+    await page.getByRole("navigation", { name: "Plugin panels" }).getByRole("button", { name: "Artifacts", exact: true }).click();
+    await page.getByRole("complementary", { name: "Artifacts panel" }).waitFor();
     // The bridged session appears in the sidebar as live — select it.
     await page.waitForSelector(`.app-session-item[data-id="${bridgeId}"]`, { timeout: 15_000 });
     await page.click(`.app-session-item[data-id="${bridgeId}"]`);
@@ -453,6 +468,9 @@ async function run() {
       undefined,
       { timeout: 15_000 },
     );
+
+    await page.getByRole("navigation", { name: "Plugin panels" }).waitFor({ state: "hidden" });
+    assert.equal(await page.locator(".app-side-panel").count(), 0, "switching sessions clears stale panel content");
 
     step("8b: slash command palette, model picker, web dialogs");
     // 8b. The palette on the real composer: "/" lists pi's built-ins; the

@@ -4,6 +4,7 @@ export const cacheStatsPlugin: WebPluginDescriptor = {
   id: "cache-stats",
   extension: "cache-stats",
   title: "Cache health",
+  icon: "chart-bar",
   description: "Monitor prompt cache hit rates and token efficiency across models.",
   ui: [{
     id: "health",

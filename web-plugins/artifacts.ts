@@ -4,6 +4,7 @@ export const artifactsPlugin: WebPluginDescriptor = {
   id: "artifacts",
   extension: "artifacts",
   title: "Artifacts",
+  icon: "files",
   description: "Persisted workspace artifacts catalog and editor.",
   ui: [{
     id: "catalog",

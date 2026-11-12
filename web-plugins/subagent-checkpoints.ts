@@ -4,6 +4,7 @@ export const subagentCheckpointsPlugin: WebPluginDescriptor = {
   id: "subagent-checkpoints",
   extension: "subagent-checkpoints",
   title: "Delegated work",
+  icon: "users",
   description: "Child agent checkpointing, milestone sidecars, and state recovery.",
   ui: [{
     id: "checkpoints",

@@ -4,6 +4,7 @@ export const bubblySpinnerPlugin: WebPluginDescriptor = {
   id: "bubbly-spinner",
   extension: "bubbly-spinner",
   title: "Bubbly spinner",
+  icon: "spinner",
   description: "Animated working message indicator and session activity status.",
   surfaces: [
     { kind: "sidebar" },

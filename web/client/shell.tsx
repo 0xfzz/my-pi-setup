@@ -16,6 +16,8 @@ import { DialogLayer, InfoDialog, LoginDialog, LogoutDialog, ModelPickerDialog, 
 import type { WebTreeNode } from "../shared/tree.ts";
 import { SlotHost } from "./plugins/slots.tsx";
 import { PluginSidePanel } from "./plugins/PluginSidePanel.tsx";
+import { PluginPanelNav } from "./plugins/PluginPanelNav.tsx";
+import { availablePanelPlugins, isPanelPlugin } from "./plugins/panel-policy.ts";
 import { PluginActionShortcuts } from "./plugins/PluginActionShortcuts.tsx";
 import { PluginPage, parsePluginRoute } from "./plugins/PluginLayout.tsx";
 import { PluginViewRenderer } from "./plugins/PluginViewRenderer.tsx";
@@ -396,6 +398,11 @@ export function AppShell() {
   // Region overrides: header, status (inside the header), transcript and
   // composer. Resolved from the same per-session views the slots render.
   const { regions, conflicts } = resolveRegionOverrides(session.plugins, session.pluginViews);
+  const panelPlugins = availablePanelPlugins(session.plugins, session.pluginViews);
+  const inlinePlugins = session.plugins.filter((plugin) => !isPanelPlugin(plugin));
+  const openPanelPluginId = sidePanelOpen && panelPlugins.some((plugin) => plugin.id === activeSidePlugin)
+    ? activeSidePlugin
+    : null;
 
   return (
     <div className="app-shell">
@@ -442,17 +449,14 @@ export function AppShell() {
                   headerStatus
                 )}
               </span>
-              {session.plugins.some((p) => session.pluginViews[p.id] !== undefined && session.pluginViews[p.id] !== null) ? (
-                <button
-                  type="button"
-                  className={`app-side-panel-toggle${sidePanelOpen ? " is-active" : ""}`}
-                  aria-label="Toggle plugin panel"
-                  title={sidePanelOpen ? "Close plugin panel" : "Open plugin panel"}
-                  onClick={() => setSidePanelOpen((open) => !open)}
-                >
-                  <SidebarSimple size={16} weight={sidePanelOpen ? "fill" : "regular"} />
-                </button>
-              ) : null}
+              <PluginPanelNav
+                plugins={panelPlugins}
+                activePluginId={openPanelPluginId}
+                onToggle={(id) => {
+                  if (openPanelPluginId === id) setSidePanelOpen(false);
+                  else handleOpenSidePanel(id);
+                }}
+              />
             </header>
           )}
           <UiPromptBanner prompt={session.uiPrompt} />
@@ -465,9 +469,9 @@ export function AppShell() {
               ))}
             </div>
           ) : null}
-          <SlotHost slot="top" plugins={session.plugins} views={session.pluginViews} />
-          {/* The frame is the positioned box the jump button and the floating
-              dock overlay, so they never take a row or scroll with the content. */}
+          <SlotHost slot="top" plugins={inlinePlugins} views={session.pluginViews} />
+          {/* Keep transcript controls positioned over the scroller. Plugin
+              panels live beside the chat, not inside its reading area. */}
           <div className="app-transcript-frame">
             {regions.transcript !== undefined ? (
               <main className="app-transcript" aria-live="polite">
@@ -485,23 +489,7 @@ export function AppShell() {
                 showWorking={showWorking}
               />
             )}
-            <SlotHost
-              slot="floating"
-              plugins={session.plugins}
-              views={session.pluginViews}
-              onOpenSidePanel={handleOpenSidePanel}
-              activeSidePluginId={activeSidePlugin}
-              sidePanelOpen={sidePanelOpen}
-            />
           </div>
-          <SlotHost
-            slot="center"
-            plugins={session.plugins}
-            views={session.pluginViews}
-            onOpenSidePanel={handleOpenSidePanel}
-            activeSidePluginId={activeSidePlugin}
-            sidePanelOpen={sidePanelOpen}
-          />
           <EditorWidgets widgets={session.widgets} placement="aboveEditor" />
           {regions.composer !== undefined ? (
             <div className="app-composer app-composer-override">
@@ -535,14 +523,13 @@ export function AppShell() {
             />
           )}
           <EditorWidgets widgets={session.widgets} placement="belowEditor" />
-          <SlotHost slot="bottom" plugins={session.plugins} views={session.pluginViews} onOpenSidePanel={handleOpenSidePanel} />
+          <SlotHost slot="bottom" plugins={inlinePlugins} views={session.pluginViews} />
         </div>
         <PluginSidePanel
-          open={sidePanelOpen}
-          activePluginId={activeSidePlugin}
+          open={openPanelPluginId !== null}
+          activePluginId={openPanelPluginId}
           onClose={() => setSidePanelOpen(false)}
-          onSelectPlugin={(id) => setActiveSidePlugin(id)}
-          plugins={session.plugins}
+          plugins={panelPlugins}
           views={session.pluginViews}
           sessionId={session.selectedId}
         />

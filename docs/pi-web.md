@@ -327,10 +327,10 @@ A descriptor (`web-plugins/*.ts`) declares **surfaces**:
 
 | Surface | Effect |
 |---|---|
-| `{ kind: "slot", slot }` | additive region: `top` / `center` / `bottom` / `floating` |
+| `{ kind: "slot", slot }` | inline strip (`top` / `bottom`) or navbar-opened panel (`center` / `floating`); sidebar placement takes precedence |
 | `{ kind: "page", path }` | dedicated page at `/plugins/:id` |
 | `{ kind: "override", region }` | **replaces a base region** — `header`, `status`, `transcript`, `composer` — while a view is published; the built-in region returns automatically |
-| `{ kind: "sidebar" }` | reserved for the sidebar contract |
+| `{ kind: "sidebar" }` | navbar icon opens the view in the right-hand panel; takes precedence over inline slot placements |
 
 **Placement hints** (`ui[].placement` and `ui[].strategy`) are applied by the
 client's slot policy (`web/client/plugins/slot-policy.ts`):
@@ -339,13 +339,21 @@ client's slot policy (`web/client/plugins/slot-policy.ts`):
 - `maxHeight` bounds a centre card's body and a floating card; `maxWidth`
   bounds a floating card. The host clamps both to its ceilings (body 360px,
   card 400px), so a plugin asks for less space and never more.
-- `collision: "hide"` removes the slot on phones (≤720px).
-- Centre cards start folded on phones so the chat keeps the screen.
+- `collision: "hide"` removes an inline slot on phones (≤720px).
 
-The floating slot is an overlay on the transcript's top-right corner; it takes
-no chat height. Anchors (`chat.composer`, `chat.working`, `session.sidebar`)
-are validated but not yet rendered by the client, so a view declared only with
-an anchor appears on its plugin page and nowhere in the chat.
+Sidebar, centre, and floating views are hosted in the right panel, opened only
+from the plugin's navbar icon. They never occupy chat height or float over its
+content. Sidebar placement also suppresses any duplicate top/bottom slot for
+that plugin. Plugins declaring only a top/bottom slot keep their inline strip;
+region overrides and dialogs are unchanged. Anchors (`chat.composer`,
+`chat.working`, `session.sidebar`) remain validated; a sidebar surface makes
+that plugin's published view available in the panel.
+
+Descriptors may declare an optional host-rendered `icon`: `files`, `list-checks`,
+`tree-structure`, `users`, `chart-bar`, `sliders`, `spinner`, or `puzzle-piece`.
+Legacy plugins without an icon use the puzzle-piece fallback. Icons are a
+closed vocabulary, never plugin-supplied SVG, HTML, or URLs. The navbar is a
+single scrollable row on narrow screens; panels retain their mobile overlay.
 
 Extensions publish views with `publishWebView(pi, pluginId, view)` from
 `lib/web-plugins/publisher.ts`. Views are **declarative and validated
@@ -450,6 +458,10 @@ sidebar, a compact project header, a centered transcript, and a single bordered
 composer. Published plugin views open in the existing right-hand preview panel;
 no placeholder file browser or extra navigation is added.
 
+- **Plugin panels** are opened by their own icon in the top navbar. Clicking a
+  different icon switches the right panel; clicking the active icon, its close
+  button, or Escape closes it. Buttons show only for published non-dialog views.
+  Sidebar plugins never also render cards, strips, or floating buttons in chat.
 - **Search sessions** filters the sidebar by project path or session ID.
 - The header's **Sessions** toggle hides or restores the sidebar on desktop;
   on phones it opens the existing off-canvas overlay.
@@ -507,8 +519,9 @@ npm run tidy   # typecheck + oxlint + root tests + web tests (build included)
 ```
 
 The e2e suite (separate, needs a browser) drives the fixture session
-(`PI_WEB_TEST_PLUGIN_VIEWS=1`): base shell, session selection, all three
-slots, the composer region override, the working indicator, the Alt+M
+(`PI_WEB_TEST_PLUGIN_VIEWS=1`): base shell, session selection, per-plugin
+navbar icons and panel switching, chat without duplicate plugin slots, the
+composer region override, the working indicator, the Alt+M
 shortcut, the plugin page with its graph, and the confirmed-action round
 trip whose accepted requestId flows into the graph label over SSE without
 a reload.

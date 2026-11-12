@@ -4,6 +4,7 @@ export const todoPlugin: WebPluginDescriptor = {
   id: "todo",
   extension: "todo",
   title: "Todo",
+  icon: "list-checks",
   description: "Task intent graph, dependencies, and execution state.",
   ui: [{
     id: "tasks",
