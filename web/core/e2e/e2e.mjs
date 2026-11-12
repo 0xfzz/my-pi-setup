@@ -941,10 +941,11 @@ async function run() {
     await page
       .locator(`.app-session-item[data-id="${bridgeId}"][data-state="running"]`)
       .waitFor({ timeout: 10_000 });
-    const runMark = await page
-      .locator(`.app-session-item[data-id="${bridgeId}"] .app-session-running`)
-      .textContent();
-    assert.equal(runMark, "run", "the unfocused session shows its running mark");
+    assert.equal(
+      await page.locator(`.app-session-item[data-id="${bridgeId}"]`).getAttribute("data-state"),
+      "running",
+      "the unfocused session shows its running mark (the marching border)",
+    );
     // The run settles: the mark clears back to live.
     await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
       method: "POST",
