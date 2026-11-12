@@ -472,7 +472,9 @@ no placeholder file browser or extra navigation is added.
   controls sit below the message box; commands, file mentions, attachments,
   streaming, plugin actions, and region overrides keep their existing behavior.
 - Light and dark palettes are neutral, with color reserved for outcome/status
-  indicators. The web continues to follow the OS unless a theme is saved.
+  indicators. A thin context-window meter sits just above the composer and
+  tracks the session's token usage (amber above 80%, red above 95%). The web
+  continues to follow the OS unless a theme is saved.
 
 ## Themes
 

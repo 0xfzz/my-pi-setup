@@ -503,6 +503,7 @@ export function AppShell() {
               sessionCommands={session.sessionCommands}
               model={session.sessionState?.model}
               thinkingLevel={session.sessionState?.thinkingLevel}
+              contextUsage={session.sessionState?.contextUsage ?? null}
               onOpenModelPicker={() => setModelPickerOpen(true)}
               onOpenThinkingPicker={() => setThinkingPickerOpen(true)}
               onWebCommand={handleWebCommand}

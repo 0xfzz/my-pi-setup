@@ -7,13 +7,14 @@
 // downscaled client-side (max 1568px, JPEG re-encode when still large) so a
 // screenshot never needs a multi-megabyte request.
 
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type KeyboardEvent } from "react";
 import { ArrowUp, Paperclip, Sparkle, Stop, X } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { filterCommands, type WebCommand } from "../shared/commands.ts";
 import { activeMentionToken } from "../shared/mentions.ts";
 import type { PiAutocompleteItem, PiAutocompleteSuggestions } from "../shared/pi-api.ts";
+import { contextUsageView, type ContextUsage } from "./context-usage.ts";
 
 export interface PendingImage {
   id: number;
@@ -45,6 +46,8 @@ export interface ComposerProps {
   onWebCommand?: (name: string, args: string) => void;
   /** Dispatch a web core command (marked web:true by the session). */
   onWebCommandDispatch?: (name: string, args: string) => void;
+  /** Live context-window usage for the meter above the input. */
+  contextUsage?: ContextUsage | null;
 }
 
 const PALETTE_LIMIT = 8;
@@ -98,6 +101,28 @@ async function downscaleDataUrl(dataUrl: string, mimeType: string): Promise<Read
   return { data: encoded.slice(encoded.indexOf(",") + 1), mimeType: "image/png" };
 }
 
+/** Thin context-window meter shown just above the input: muted normally,
+ *  amber above 80%, red above 95%. */
+function ContextUsageBar({ usage }: { usage: ContextUsage }) {
+  const view = contextUsageView(usage);
+  return (
+    <div
+      className={`app-context-usage is-${view.level}`}
+      role="meter"
+      aria-label={`Context window ${Math.round(view.percent)}% used`}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(view.percent)}
+      style={{ "--context-pct": `${view.percent}%` } as CSSProperties}
+    >
+      <span className="app-context-usage-track" aria-hidden="true">
+        <span className="app-context-usage-fill" />
+      </span>
+      <span className="app-context-usage-label">{view.summary}</span>
+    </div>
+  );
+}
+
 export function Composer({
   disabled,
   busy,
@@ -111,6 +136,7 @@ export function Composer({
   onOpenThinkingPicker,
   onWebCommand,
   onWebCommandDispatch,
+  contextUsage,
   sessionId,
 }: ComposerProps) {
   const [text, setText] = useState("");
@@ -461,6 +487,7 @@ export function Composer({
           ))}
         </div>
       ) : null}
+      {contextUsage ? <ContextUsageBar usage={contextUsage} /> : null}
       <div className="app-composer-row">
       <Textarea
         className="app-composer-input flex-1 resize-none max-h-52"
