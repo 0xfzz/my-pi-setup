@@ -28,6 +28,7 @@ import {
   parseSessionCommand,
   readHistory,
   resolveSessionFile,
+  resolveSessionRoot,
   sendCommand,
   startSession,
 } from "./sessions.ts";
@@ -35,6 +36,7 @@ import { handlePiApiRequest } from "./pi-api.ts";
 import { piBuiltinCommands } from "../../lib/web-pi-apis/index.ts";
 import { annotateBuiltinCommands } from "../shared/commands.ts";
 import { attachAgentEventStream, attachSessionsEventStream } from "./event-stream.ts";
+import { listDirectory, readText, searchPaths, statusForCode, streamFile, type FileFailure } from "./files.ts";
 import { readJsonBody, sendJson } from "./http.ts";
 
 type HttpMethod = "GET" | "POST";
@@ -487,6 +489,57 @@ async function handleAgent(ctx: ApiRouteContext): Promise<void> {
   }
 }
 
+// ── Files routes: session-scoped, read-only file browsing and preview ──────
+// Each handler resolves the root from the session id and re-validates the path
+// server-side (see files.ts); the client never supplies an absolute root.
+
+async function rootForFiles(sessionId: string, res: ServerResponse): Promise<string | null> {
+  const root = await resolveSessionRoot(sessionId);
+  if (root === null) {
+    sendJson(res, 404, { error: "Session not found", code: "unknown_session" });
+    return null;
+  }
+  return root;
+}
+
+function sendFileFailure(res: ServerResponse, failure: FileFailure): void {
+  sendJson(res, statusForCode(failure.code), { error: failure.message, code: failure.code });
+}
+
+async function handleFilesList(ctx: ApiRouteContext): Promise<void> {
+  const { res, url, param: sessionId } = ctx;
+  const root = await rootForFiles(sessionId, res);
+  if (root === null) return;
+  const result = await listDirectory(root, url.searchParams.get("path") ?? "", url.searchParams.get("hidden") === "1");
+  if (!result.ok) sendFileFailure(res, result);
+  else sendJson(res, 200, result);
+}
+
+async function handleFilesRead(ctx: ApiRouteContext): Promise<void> {
+  const { res, url, param: sessionId } = ctx;
+  const root = await rootForFiles(sessionId, res);
+  if (root === null) return;
+  const result = await readText(root, url.searchParams.get("path") ?? "");
+  if (!result.ok) sendFileFailure(res, result);
+  else sendJson(res, 200, result);
+}
+
+async function handleFilesSearch(ctx: ApiRouteContext): Promise<void> {
+  const { res, url, param: sessionId } = ctx;
+  const root = await rootForFiles(sessionId, res);
+  if (root === null) return;
+  const result = await searchPaths(root, url.searchParams.get("q") ?? "");
+  if (!result.ok) sendFileFailure(res, result);
+  else sendJson(res, 200, result);
+}
+
+async function handleFilesDownload(ctx: ApiRouteContext): Promise<void> {
+  const { req, res, url, param: sessionId } = ctx;
+  const root = await rootForFiles(sessionId, res);
+  if (root === null) return;
+  await streamFile(req, res, root, url.searchParams.get("path") ?? "", url.searchParams.get("download") === "1");
+}
+
 // ── The route table ────────────────────────────────────────────────────────
 // Ordered: more specific paths precede the generic `/api/agent/:id`.
 
@@ -509,6 +562,10 @@ const API_ROUTES: readonly ApiRoute[] = [
   { match: new RegExp(`^/api/agent/(${id})/models$`), methods: ["GET"], handle: handleAgentModels },
   { match: new RegExp(`^/api/agent/(${id})/model$`), methods: ["POST"], handle: handleAgentSetModel },
   { match: new RegExp(`^/api/agent/(${id})/thinking$`), methods: ["POST"], handle: handleAgentSetThinking },
+  { match: new RegExp(`^/api/agent/(${id})/files$`), methods: ["GET"], handle: handleFilesList },
+  { match: new RegExp(`^/api/agent/(${id})/files/read$`), methods: ["GET"], handle: handleFilesRead },
+  { match: new RegExp(`^/api/agent/(${id})/files/search$`), methods: ["GET"], handle: handleFilesSearch },
+  { match: new RegExp(`^/api/agent/(${id})/files/download$`), methods: ["GET"], handle: handleFilesDownload },
   { match: "/api/changelog", methods: ["GET"], handle: handleChangelog },
   { match: new RegExp(`^/api/agent/(${id})$`), methods: ["GET", "POST"], handle: handleAgent },
 ];

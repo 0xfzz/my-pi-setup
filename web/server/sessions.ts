@@ -685,6 +685,20 @@ export async function listDiskSessions(options?: {
   }));
 }
 
+/**
+ * The session's project directory: the live handle's cwd when it is running,
+ * otherwise the session header's recorded cwd (read-only, no resume). Null when
+ * the session is unknown or its header is unreadable.
+ */
+export async function resolveSessionRoot(id: string, agentDir?: string): Promise<string | null> {
+  const live = liveSessions.get(id);
+  if (live !== undefined) return live.cwd;
+  const file = await resolveSessionFile(id, agentDir);
+  if (file === null) return null;
+  const header = await readSessionHeader(file);
+  return typeof header?.cwd === "string" && header.cwd !== "" ? header.cwd : null;
+}
+
 /** Find a session file by id, matching the header id or the filename suffix. */
 export async function resolveSessionFile(id: string, agentDir?: string): Promise<string | null> {
   if (!/^[0-9a-zA-Z-]+$/.test(id)) return null;
