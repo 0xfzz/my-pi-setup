@@ -3,6 +3,9 @@ import { Type } from "typebox";
 import { isSubagentChildSession } from "../lib/subagent-context.ts";
 import { AskUserPopup, type AskAnswer } from "../lib/ui/ask.ts";
 import { overlayRows, popupOverlayOptions } from "../lib/popup/frame.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../lib/web-plugins/actions.ts";
+import { publishWebView } from "../lib/web-plugins/publisher.ts";
+import type { DialogAction } from "../lib/web-plugins/view.ts";
 
 type AskResult = {
   status: "answered" | "cancelled" | "forwarded" | "unavailable";
@@ -31,6 +34,8 @@ function result(details: AskResult) {
   };
 }
 
+type AskToolResult = ReturnType<typeof result>;
+
 export default function askUser(pi: ExtensionAPI) {
   // A context message composes with other extensions without replacing their prompt
   // or maintaining branch-sensitive state. This API has no prompt-options result.
@@ -52,6 +57,97 @@ export default function askUser(pi: ExtensionAPI) {
     if (customType !== "subagent_ping") return;
     return { message: { customType: "ask-user-guidance", content: parentGuidance, display: false } };
   });
+
+  /**
+   * The web surface for ask_user: render the question as a plugin dialog whose
+   * option actions round-trip through the plugin action pipeline, then resolve
+   * the awaited answer. Free-text questions have no web input yet, so they
+   * report unavailable and let the model re-ask with options.
+   */
+  const ASK_WEB_PLUGIN_ID = "ask-user";
+
+  async function askInWeb(
+    question: string,
+    context: string | undefined,
+    options: string[] | undefined,
+    recommended: number | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<AskToolResult> {
+    if (options === undefined || options.length === 0) {
+      return result({
+        status: "unavailable", question,
+        message: "Unanswered: the web client has no free-text input. Ask again with `options` so the choices render as dialog actions.",
+      });
+    }
+
+    const cancelled = () => result({
+      status: "cancelled", question,
+      message: "Unanswered. No consent or approval was given.",
+    });
+
+    const choices = options;
+
+    // Encode the choice plus a per-question nonce into each action id so a late
+    // or duplicated action request can only resolve its own question.
+    const nonce = Math.random().toString(36).slice(2, 10);
+    const actions: DialogAction[] = [
+      ...choices.map((option, index) => ({
+        id: `opt-${nonce}-${index}`,
+        label: option,
+        ...(recommended === index + 1 ? { tone: "primary" as const } : {}),
+      })),
+      { id: `cancel-${nonce}`, label: "Cancel" },
+    ];
+
+    return new Promise<AskToolResult>((resolve) => {
+      let settled = false;
+      let unsubscribe = () => {};
+      function finish(value: AskToolResult) {
+        if (settled) return;
+        settled = true;
+        unsubscribe();
+        signal?.removeEventListener("abort", onAbort);
+        void publishWebView(pi, ASK_WEB_PLUGIN_ID, { type: "dialog", open: false });
+        resolve(value);
+      }
+      function onAbort() {
+        finish(cancelled());
+      }
+      function onAction(data: unknown) {
+        const request = data as Partial<ActionRequestPayload> | undefined;
+        if (request?.pluginId !== ASK_WEB_PLUGIN_ID) return;
+        const actionId = typeof request.actionId === "string" ? request.actionId : "";
+        if (actionId === `cancel-${nonce}`) {
+          finish(cancelled());
+          return;
+        }
+        const match = /^opt-([a-z0-9]+)-([0-9]+)$/.exec(actionId);
+        if (match?.[1] !== nonce) return;
+        const answer = choices[Number(match[2])];
+        if (answer === undefined) return;
+        finish(result({
+          status: "answered",
+          question,
+          answer: answer.trim(),
+          answeredWith: "option",
+          matchedOption: answer.trim(),
+        }));
+      }
+      unsubscribe = pi.events?.on(WEB_PLUGIN_ACTION_REQUEST_EVENT, onAction) ?? (() => {});
+      if (signal?.aborted) {
+        finish(cancelled());
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+      publishWebView(pi, ASK_WEB_PLUGIN_ID, {
+        type: "dialog",
+        title: question,
+        ...(context !== undefined ? { body: context } : {}),
+        actions,
+        open: true,
+      });
+    });
+  }
 
   pi.registerTool({
     name: "ask_user",
@@ -177,6 +273,13 @@ export default function askUser(pi: ExtensionAPI) {
         } finally {
           signal?.removeEventListener("abort", onAbort);
         }
+      }
+
+      // Web surface: the in-process server binds a headless UI context in
+      // "print" mode. Render the question as a plugin dialog whose option
+      // actions resolve through the plugin action pipeline.
+      if (ctx.mode !== "tui" && ctx.mode !== "rpc") {
+        return await askInWeb(question, context, options, recommended, signal);
       }
 
       try {

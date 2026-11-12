@@ -4,6 +4,8 @@ import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../lib/web-plugins/actions.ts";
+import { WEB_PLUGIN_VIEW_EVENT } from "../lib/web-plugins/view.ts";
 
 // Use Pi's existing loader/dependencies; no package installation is necessary.
 // Run: node --experimental-strip-types --test tests/ask-user.test.ts
@@ -151,6 +153,64 @@ test("RPC uses supported built-in selection, preserves an explicit negative answ
   status(out, "answered");
   assert.equal(out.details.answer, "no");
   assert.deepEqual(calls, [["select", "Proceed?", ["yes", "no"], { signal }]]);
+}));
+
+test("web renders an option dialog and resolves through the plugin action pipeline", () => withSession(false, async () => {
+  const tools: any[] = [];
+  const hooks: Record<string, Function> = {};
+  const actionHandlers: Array<(data: any) => void> = [];
+  const published: Array<{ pluginId: string; view: any }> = [];
+  const pi: any = {
+    registerTool: (tool: any) => tools.push(tool),
+    on: (event: string, handler: Function) => { hooks[event] = handler; },
+    events: {
+      emit: (channel: string, data: any) => {
+        if (channel === WEB_PLUGIN_VIEW_EVENT && data && typeof data === "object") {
+          published.push({ pluginId: (data as any).pluginId, view: (data as any).view });
+        }
+      },
+      on: (channel: string, handler: Function) => {
+        if (channel === WEB_PLUGIN_ACTION_REQUEST_EVENT) actionHandlers.push(handler as any);
+        return () => {};
+      },
+    },
+  };
+  extension(pi);
+  assert.equal(tools.length, 1);
+
+  const ctx: any = {
+    hasUI: true,
+    mode: "print",
+    sessionManager: { getSessionFile: () => undefined },
+    tools: [],
+  };
+
+  const pending = tools[0].execute(
+    "test",
+    { question: "Proceed?", options: ["yes", "no"], recommended: 2 },
+    undefined,
+    undefined,
+    ctx,
+  );
+  await Promise.resolve();
+
+  assert.equal(published.length, 1, "the question must publish one dialog view");
+  assert.equal(published[0]!.pluginId, "ask-user");
+  const view = published[0]!.view;
+  assert.equal(view.type, "dialog");
+  assert.equal(view.title, "Proceed?");
+  assert.equal(view.open, true);
+  assert.deepEqual(view.actions.map((a: any) => a.label), ["yes", "no", "Cancel"]);
+  assert.equal(view.actions[1].tone, "primary", "the recommended option is marked primary");
+
+  assert.equal(actionHandlers.length, 1);
+  const yesAction = view.actions.find((a: any) => a.label === "yes");
+  actionHandlers[0]!({ pluginId: "ask-user", actionId: yesAction.id, sessionId: "s1", requestId: "r1" });
+
+  const out = await pending;
+  status(out, "answered");
+  assert.equal(out.details.answer, "yes");
+  assert.equal(out.details.answeredWith, "option");
 }));
 
 test("dismissal and empty input are unanswered, never consent", () => withSession(false, async () => {
