@@ -7,14 +7,14 @@
 // downscaled client-side (max 1568px, JPEG re-encode when still large) so a
 // screenshot never needs a multi-megabyte request.
 
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { ArrowUp, Paperclip, Sparkle, Stop, X } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { filterCommands, type WebCommand } from "../shared/commands.ts";
 import { activeMentionToken } from "../shared/mentions.ts";
 import type { PiAutocompleteItem, PiAutocompleteSuggestions } from "../shared/pi-api.ts";
-import { contextUsageView, type ContextUsage } from "./context-usage.ts";
+import { contextUsageView, formatTokens, type ContextUsage } from "./context-usage.ts";
 
 export interface PendingImage {
   id: number;
@@ -101,25 +101,24 @@ async function downscaleDataUrl(dataUrl: string, mimeType: string): Promise<Read
   return { data: encoded.slice(encoded.indexOf(",") + 1), mimeType: "image/png" };
 }
 
-/** Thin context-window meter shown just above the input: muted normally,
- *  amber above 80%, red above 95%. */
-function ContextUsageBar({ usage }: { usage: ContextUsage }) {
+/** Compact context-window figure beside the model chip: green bold percent,
+ *  grey token counts, amber/red only past the warning thresholds. */
+function ContextUsageLabel({ usage }: { usage: ContextUsage }) {
   const view = contextUsageView(usage);
   return (
-    <div
+    <span
       className={`app-context-usage is-${view.level}`}
       role="meter"
       aria-label={`Context window ${Math.round(view.percent)}% used`}
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={Math.round(view.percent)}
-      style={{ "--context-pct": `${view.percent}%` } as CSSProperties}
     >
-      <span className="app-context-usage-track" aria-hidden="true">
-        <span className="app-context-usage-fill" />
+      <span className="app-context-usage-percent">{Math.round(view.percent)}%</span>
+      <span className="app-context-usage-tokens">
+        {formatTokens(usage.tokens)} / {formatTokens(usage.contextWindow)} tokens
       </span>
-      <span className="app-context-usage-label">{view.summary}</span>
-    </div>
+    </span>
   );
 }
 
@@ -403,8 +402,9 @@ export function Composer({
 
   return (
     <div className="app-composer" data-busy={busy ? "true" : undefined}>
-      {(model !== undefined || thinkingLevel !== undefined) ? (
+      {(model !== undefined || thinkingLevel !== undefined || contextUsage) ? (
         <div className="app-composer-meta">
+          {contextUsage ? <ContextUsageLabel usage={contextUsage} /> : null}
           {model !== undefined && onOpenModelPicker !== undefined ? (
             <button
               type="button"
@@ -487,7 +487,6 @@ export function Composer({
           ))}
         </div>
       ) : null}
-      {contextUsage ? <ContextUsageBar usage={contextUsage} /> : null}
       <div className="app-composer-row">
       <Textarea
         className="app-composer-input flex-1 resize-none max-h-52"

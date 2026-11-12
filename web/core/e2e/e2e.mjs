@@ -528,8 +528,8 @@ async function run() {
       (await modelChip.textContent())?.includes("claude-4-5"),
       "the model chip shows the synced current model",
     );
-    // The context-window meter reads the bridge's session state on the next
-    // settle refetch and renders its usage just above the prompt.
+    // The context-window figure reads the bridge's session state on the next
+    // settle refetch and renders its usage beside the model chip.
     await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -541,7 +541,7 @@ async function run() {
     const contextMeter = page.locator(".app-context-usage");
     await contextMeter.waitFor({ state: "visible", timeout: 10_000 });
     assert.ok(
-      (await contextMeter.textContent())?.includes("42% · 84k / 200k"),
+      (await contextMeter.textContent())?.includes("42%") && (await contextMeter.textContent())?.includes("84k / 200k tokens"),
       "the context meter shows the posted context usage",
     );
     await composerInput.fill("/");

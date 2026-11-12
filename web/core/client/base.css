@@ -1969,46 +1969,34 @@ a:focus-visible {
   position: relative;
 }
 
-/* Context-window meter above the prompt: a thin track whose fill tracks
- * usage; amber above 80%, red above 95%. */
+/* Compact context-window figure beside the model chip: green bold percent,
+ * grey token counts; amber above 80%, red above 95%. */
 .app-context-usage {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-right: auto;
   color: var(--fg-faint);
-  font-size: 10px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
-}
-
-.app-context-usage-track {
-  flex: 1;
-  height: 3px;
-  border-radius: 999px;
-  background: var(--border);
-  overflow: hidden;
-}
-
-.app-context-usage-fill {
-  display: block;
-  height: 100%;
-  width: var(--context-pct);
-  border-radius: 999px;
-  background: var(--fg-faint);
-  transition: width 0.25s ease, background-color 0.25s ease;
-}
-
-.app-context-usage.is-warning .app-context-usage-fill {
-  background: var(--warning);
-}
-
-.app-context-usage.is-critical .app-context-usage-fill {
-  background: var(--error);
-}
-
-.app-context-usage-label {
-  flex: none;
   white-space: nowrap;
+}
+
+.app-context-usage-percent {
+  font-weight: 700;
+  color: var(--ok);
+}
+
+.app-context-usage.is-warning .app-context-usage-percent {
+  color: var(--warning);
+}
+
+.app-context-usage.is-critical .app-context-usage-percent {
+  color: var(--error);
+}
+
+.app-context-usage-tokens {
+  color: var(--fg-faint);
 }
 
 .app-composer-row {
