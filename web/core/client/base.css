@@ -313,6 +313,7 @@ a:focus-visible {
   color: var(--fg-dim);
   font: inherit;
   text-align: left;
+  position: relative;
   cursor: pointer;
 }
 
@@ -387,12 +388,39 @@ a:focus-visible {
   }
 }
 
-.app-session-running {
-  flex: none;
-  color: var(--accent);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+/* A running session gets a green border whose dashes march clockwise around
+   the box, so it reads differently from an idle session without a text badge.
+   The overlay is layered on the row's own hover/selected background. */
+.app-session-item[data-state="running"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  pointer-events: none;
+  background-image:
+    linear-gradient(90deg, var(--ok) 50%, transparent 50%),
+    linear-gradient(90deg, var(--ok) 50%, transparent 50%),
+    linear-gradient(0deg, var(--ok) 50%, transparent 50%),
+    linear-gradient(0deg, var(--ok) 50%, transparent 50%);
+  background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+  background-size: 12px 2px, 12px 2px, 2px 12px, 2px 12px;
+  background-position: 0 0, 0 100%, 0 0, 100% 0;
+  animation: session-border-march 1s linear infinite;
+}
+
+@keyframes session-border-march {
+  0% {
+    background-position: 0 0, 0 100%, 0 0, 100% 0;
+  }
+  100% {
+    background-position: 12px 0, -12px 100%, 0 -12px, 100% 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-session-item[data-state="running"]::after {
+    animation: none;
+  }
 }
 
 /* The main column beside the sidebar. */

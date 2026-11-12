@@ -110,7 +110,6 @@ export function SessionSidebar({
                 </span>
               </span>
               <span className="app-session-time">{relativeTime(session.modifiedAt, now)}</span>
-              {state === "running" ? <span className="app-session-running">run</span> : null}
             </button>
           );
         })}
