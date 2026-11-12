@@ -2551,3 +2551,54 @@ a:focus-visible {
   opacity: 0.5;
   cursor: default;
 }
+
+/* Resizable shell panels (wide screens): react-resizable-panels wraps the
+ * session sidebar, main column and right panel in a horizontal group with
+ * keyboard + pointer drag handles. On narrow screens the group is not mounted
+ * and the overlay/drawer rules above keep working unchanged. */
+.app-shell-panels {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.app-panel-slot {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.app-panel-slot > .app-sidebar {
+  width: 100%;
+  height: 100%;
+}
+
+.app-panel-slot > .app-main {
+  width: 100%;
+  height: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.app-panel-slot > .app-side-panel {
+  width: 100%;
+  height: 100%;
+}
+
+.app-resize-handle {
+  flex: 0 0 6px;
+  width: 6px;
+  background: var(--border);
+  transition: background 0.12s;
+}
+
+.app-resize-handle:hover,
+.app-resize-handle:active,
+.app-resize-handle:focus-visible {
+  background: var(--accent);
+}

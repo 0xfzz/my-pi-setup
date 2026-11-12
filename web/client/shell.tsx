@@ -22,6 +22,7 @@ import { availablePanelPlugins, isPanelPlugin } from "./plugins/panel-policy.ts"
 import { pinPanel, seedPins, unpinPanel } from "./plugins/pin-policy.ts";
 import { browserStorage, loadPinnedIds, savePinnedIds } from "./plugins/pin-storage.ts";
 import { FilesPanel } from "./plugins/files/FilesPanel.tsx";
+import { Group, Panel, Separator } from "react-resizable-panels";
 import { PluginActionShortcuts } from "./plugins/PluginActionShortcuts.tsx";
 import { PluginPage, parsePluginRoute } from "./plugins/PluginLayout.tsx";
 import { PluginViewRenderer } from "./plugins/PluginViewRenderer.tsx";
@@ -58,6 +59,8 @@ export function AppShell() {
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   // Narrow screens: the sidebar starts collapsed and opens as an overlay.
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 720);
+  // Wide screens use resizable panels; narrow fall back to overlay/drawers.
+  const [wide, setWide] = useState(() => window.innerWidth > 720);
   // Right-hand plugin panel (Artifacts, Delegated work / monitor, etc.)
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
   const [activeSidePlugin, setActiveSidePlugin] = useState<string | null>(null);
@@ -110,12 +113,13 @@ export function AppShell() {
   useEffect(() => {
     let wasWide = window.innerWidth > 720;
     const onResize = (): void => {
-      const wide = window.innerWidth > 720;
-      if (wasWide && !wide) {
+      const wideNow = window.innerWidth > 720;
+      setWide(wideNow);
+      if (wasWide && !wideNow) {
         setSidebarOpen(false);
         setSidePanelOpen(false);
       }
-      wasWide = wide;
+      wasWide = wideNow;
     };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
@@ -436,150 +440,198 @@ export function AppShell() {
     ? activeSidePlugin
     : null;
 
+  const sidebarNode = (
+    <SessionSidebar
+      sessions={session.sessions}
+      selectedId={session.selectedId}
+      onSelect={(id) => {
+        session.setSelectedId(id);
+        if (window.innerWidth <= 720) setSidebarOpen(false);
+      }}
+      selectedRunning={session.streaming.isStreaming || session.uiRunning}
+      onNewSession={() => setNewSessionOpen(true)}
+    />
+  );
+
+  const mainColumn = (
+    <div className="app-main">
+      {regions.header !== undefined ? (
+        <header className="app-header">
+          <RegionOverrideView override={regions.header} region="header" />
+        </header>
+      ) : (
+        <header className="app-header">
+          <button
+            type="button"
+            className="app-sidebar-toggle"
+            aria-label="Toggle session list"
+            title={sidebarOpen ? "Hide sessions" : "Show sessions"}
+            aria-expanded={sidebarOpen}
+            onClick={() => setSidebarOpen((open) => !open)}
+          >
+            <SidebarSimple size={18} />
+          </button>
+          <div className="app-header-project" title={headerCwd || "Your local pi workspace"}>
+            <span className="app-header-title">{headerLabel}</span>
+            <span className="app-header-caption">{selected ? "Session" : "pi"}</span>
+          </div>
+          <StatusChips statuses={session.statuses} />
+          <span className="app-header-status">
+            {regions.status !== undefined ? (
+              <RegionOverrideView override={regions.status} region="status" />
+            ) : (
+              headerStatus
+            )}
+          </span>
+          <PanelLauncher
+            entries={panelEntries}
+            pinnedIds={resolvedPins}
+            activePanelId={openPanelPluginId}
+            onToggle={(id) => {
+              if (openPanelPluginId === id) setSidePanelOpen(false);
+              else handleOpenSidePanel(id);
+            }}
+            onPin={handlePin}
+            onUnpin={handleUnpin}
+            pinError={pinError}
+          />
+        </header>
+      )}
+      <UiPromptBanner prompt={session.uiPrompt} />
+      <ReloadingBanner active={session.reloading} />
+      {conflicts.length > 0 ? (
+        <div className="app-region-conflicts" role="status">
+          {conflicts.map((conflict) => (
+            <span key={conflict.region} className="app-region-conflict">
+              {conflict.region} override: {conflict.pluginIds.join(", ")} — last registered wins
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <SlotHost slot="top" plugins={inlinePlugins} views={session.pluginViews} />
+      {/* Keep transcript controls positioned over the scroller. Plugin
+          panels live beside the chat, not inside its reading area. */}
+      <div className="app-transcript-frame">
+        {regions.transcript !== undefined ? (
+          <main className="app-transcript" aria-live="polite">
+            <RegionOverrideView override={regions.transcript} region="transcript" />
+          </main>
+        ) : (
+          <Transcript
+            key={session.selectedId ?? "none"}
+            history={session.history}
+            userMessages={session.userMessages}
+            streaming={session.streaming}
+            toolStatus={session.toolStatus}
+            toolResults={session.toolResults}
+            working={session.working}
+            showWorking={showWorking}
+          />
+        )}
+      </div>
+      <EditorWidgets widgets={session.widgets} placement="aboveEditor" />
+      {regions.composer !== undefined ? (
+        <div className="app-composer app-composer-override">
+          <RegionOverrideView override={regions.composer} region="composer" />
+        </div>
+      ) : (
+        <Composer
+          disabled={session.selectedId === null || session.connection !== "connected"}
+          busy={session.streaming.isStreaming || session.uiRunning}
+          error={session.sendError}
+          sessionCommands={session.sessionCommands}
+          model={session.sessionState?.model}
+          thinkingLevel={session.sessionState?.thinkingLevel}
+          contextUsage={session.sessionState?.contextUsage ?? null}
+          onOpenModelPicker={() => setModelPickerOpen(true)}
+          onOpenThinkingPicker={() => setThinkingPickerOpen(true)}
+          onWebCommand={handleWebCommand}
+          onWebCommandDispatch={(name, args) => {
+            // The tree's pick carries the entry id; a bare /tree
+            // dispatch asks the pi process for its tree and the
+            // picker opens when the projection lands.
+            if (name === "tree" && args.trim() === "") openTreePicker();
+            void session.sendWebCommand(name, args);
+          }}
+          onSend={(text, images) => {
+            void session.sendPrompt(text, images);
+          }}
+          sessionId={session.selectedId}
+          onAbort={() => {
+            void session.abort();
+          }}
+        />
+      )}
+      <EditorWidgets widgets={session.widgets} placement="belowEditor" />
+      <SlotHost slot="bottom" plugins={inlinePlugins} views={session.pluginViews} />
+    </div>
+  );
+
+  const rightPanel = openPanelPluginId === FILES_PANEL_ID ? (
+    <FilesPanel
+      open={sidePanelOpen}
+      onClose={() => setSidePanelOpen(false)}
+      sessionId={session.selectedId}
+      rootLabel={selected?.cwd ?? ""}
+      key={session.selectedId ?? "none"}
+    />
+  ) : (
+    <PluginSidePanel
+      open={openPanelPluginId !== null}
+      activePluginId={openPanelPluginId}
+      onClose={() => setSidePanelOpen(false)}
+      plugins={panelPlugins}
+      views={session.pluginViews}
+      sessionId={session.selectedId}
+    />
+  );
+
   return (
     <div className="app-shell">
       <div className="app-body">
-        {sidebarOpen ? <div className="app-sidebar-scrim" onClick={() => setSidebarOpen(false)} /> : null}
-        <div className={sidebarOpen ? "app-sidebar-wrap is-open" : "app-sidebar-wrap"}>
-          <SessionSidebar
-            sessions={session.sessions}
-            selectedId={session.selectedId}
-            onSelect={(id) => {
-              session.setSelectedId(id);
-              if (window.innerWidth <= 720) setSidebarOpen(false);
-            }}
-            selectedRunning={session.streaming.isStreaming || session.uiRunning}
-            onNewSession={() => setNewSessionOpen(true)}
-          />
-        </div>
-        <div className="app-main">
-          {regions.header !== undefined ? (
-            <header className="app-header">
-              <RegionOverrideView override={regions.header} region="header" />
-            </header>
-          ) : (
-            <header className="app-header">
-              <button
-                type="button"
-                className="app-sidebar-toggle"
-                aria-label="Toggle session list"
-                title={sidebarOpen ? "Hide sessions" : "Show sessions"}
-                aria-expanded={sidebarOpen}
-                onClick={() => setSidebarOpen((open) => !open)}
-              >
-                <SidebarSimple size={18} />
-              </button>
-              <div className="app-header-project" title={headerCwd || "Your local pi workspace"}>
-                <span className="app-header-title">{headerLabel}</span>
-                <span className="app-header-caption">{selected ? "Session" : "pi"}</span>
-              </div>
-              <StatusChips statuses={session.statuses} />
-              <span className="app-header-status">
-                {regions.status !== undefined ? (
-                  <RegionOverrideView override={regions.status} region="status" />
-                ) : (
-                  headerStatus
-                )}
-              </span>
-              <PanelLauncher
-                entries={panelEntries}
-                pinnedIds={resolvedPins}
-                activePanelId={openPanelPluginId}
-                onToggle={(id) => {
-                  if (openPanelPluginId === id) setSidePanelOpen(false);
-                  else handleOpenSidePanel(id);
-                }}
-                onPin={handlePin}
-                onUnpin={handleUnpin}
-                pinError={pinError}
-              />
-            </header>
-          )}
-          <UiPromptBanner prompt={session.uiPrompt} />
-          <ReloadingBanner active={session.reloading} />
-          {conflicts.length > 0 ? (
-            <div className="app-region-conflicts" role="status">
-              {conflicts.map((conflict) => (
-                <span key={conflict.region} className="app-region-conflict">
-                  {conflict.region} override: {conflict.pluginIds.join(", ")} — last registered wins
-                </span>
-              ))}
-            </div>
-          ) : null}
-          <SlotHost slot="top" plugins={inlinePlugins} views={session.pluginViews} />
-          {/* Keep transcript controls positioned over the scroller. Plugin
-              panels live beside the chat, not inside its reading area. */}
-          <div className="app-transcript-frame">
-            {regions.transcript !== undefined ? (
-              <main className="app-transcript" aria-live="polite">
-                <RegionOverrideView override={regions.transcript} region="transcript" />
-              </main>
-            ) : (
-              <Transcript
-                key={session.selectedId ?? "none"}
-                history={session.history}
-                userMessages={session.userMessages}
-                streaming={session.streaming}
-                toolStatus={session.toolStatus}
-                toolResults={session.toolResults}
-                working={session.working}
-                showWorking={showWorking}
-              />
-            )}
-          </div>
-          <EditorWidgets widgets={session.widgets} placement="aboveEditor" />
-          {regions.composer !== undefined ? (
-            <div className="app-composer app-composer-override">
-              <RegionOverrideView override={regions.composer} region="composer" />
-            </div>
-          ) : (
-            <Composer
-              disabled={session.selectedId === null || session.connection !== "connected"}
-              busy={session.streaming.isStreaming || session.uiRunning}
-              error={session.sendError}
-              sessionCommands={session.sessionCommands}
-              model={session.sessionState?.model}
-              thinkingLevel={session.sessionState?.thinkingLevel}
-              contextUsage={session.sessionState?.contextUsage ?? null}
-              onOpenModelPicker={() => setModelPickerOpen(true)}
-              onOpenThinkingPicker={() => setThinkingPickerOpen(true)}
-              onWebCommand={handleWebCommand}
-              onWebCommandDispatch={(name, args) => {
-                // The tree's pick carries the entry id; a bare /tree
-                // dispatch asks the pi process for its tree and the
-                // picker opens when the projection lands.
-                if (name === "tree" && args.trim() === "") openTreePicker();
-                void session.sendWebCommand(name, args);
-              }}
-              onSend={(text, images) => {
-                void session.sendPrompt(text, images);
-              }}
-              sessionId={session.selectedId}
-              onAbort={() => {
-                void session.abort();
-              }}
-            />
-          )}
-          <EditorWidgets widgets={session.widgets} placement="belowEditor" />
-          <SlotHost slot="bottom" plugins={inlinePlugins} views={session.pluginViews} />
-        </div>
-        {openPanelPluginId === FILES_PANEL_ID ? (
-          <FilesPanel
-            open={sidePanelOpen}
-            onClose={() => setSidePanelOpen(false)}
-            sessionId={session.selectedId}
-            rootLabel={selected?.cwd ?? ""}
-            key={session.selectedId ?? "none"}
-          />
+        {wide ? (
+          <Group orientation="horizontal" className="app-shell-panels">
+            {sidebarOpen ? (
+              <>
+                <Panel
+                  id="sessions"
+                  defaultSize="18"
+                  minSize="11"
+                  maxSize="44"
+                  className="app-panel-slot"
+                >
+                  {sidebarNode}
+                </Panel>
+                <Separator className="app-resize-handle" />
+              </>
+            ) : null}
+            <Panel id="main" minSize="30" className="app-panel-slot">
+              {mainColumn}
+            </Panel>
+            {openPanelPluginId !== null ? (
+              <>
+                <Separator className="app-resize-handle" />
+                <Panel
+                  id="side"
+                  defaultSize="27"
+                  minSize="16"
+                  maxSize="60"
+                  className="app-panel-slot"
+                >
+                  {rightPanel}
+                </Panel>
+              </>
+            ) : null}
+          </Group>
         ) : (
-          <PluginSidePanel
-            open={openPanelPluginId !== null}
-            activePluginId={openPanelPluginId}
-            onClose={() => setSidePanelOpen(false)}
-            plugins={panelPlugins}
-            views={session.pluginViews}
-            sessionId={session.selectedId}
-          />
+          <>
+            {sidebarOpen ? <div className="app-sidebar-scrim" onClick={() => setSidebarOpen(false)} /> : null}
+            <div className={sidebarOpen ? "app-sidebar-wrap is-open" : "app-sidebar-wrap"}>
+              {sidebarNode}
+            </div>
+            {mainColumn}
+            {rightPanel}
+          </>
         )}
       </div>
       <CustomPopups custom={session.custom} />
