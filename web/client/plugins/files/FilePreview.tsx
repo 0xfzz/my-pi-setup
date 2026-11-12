@@ -10,6 +10,7 @@ import {
 } from "@phosphor-icons/react";
 import type { FileKind } from "../../../shared/file-kind.ts";
 import { MarkdownBody } from "../markdown.tsx";
+import { LoadingSpinner } from "../LoadingSpinner.tsx";
 import { downloadUrl, fetchText, type FileRef, type FilesTextData } from "./files-api.ts";
 
 const CodeMirrorView = lazy(() => import("./CodeMirrorView.tsx"));
@@ -109,7 +110,7 @@ export function FilePreview({ sessionId, file, onBack }: FilePreviewProps) {
 
   function previewBody() {
     if (wantsText && text === null && textError === null) {
-      return <div className="files-empty">Loading…</div>;
+      return <div className="files-empty"><LoadingSpinner label="Loading file…" /></div>;
     }
     if (wantsText && textError !== null) {
       return <div className="files-empty files-error" role="alert">{textError}</div>;
@@ -127,7 +128,7 @@ export function FilePreview({ sessionId, file, onBack }: FilePreviewProps) {
           {text.binary
             ? <UnsupportedPreview file={file} sessionId={sessionId} note="Binary content." />
             : (
-              <Suspense fallback={<div className="files-empty">Loading editor…</div>}>
+              <Suspense fallback={<LoadingSpinner label="Loading editor…" />}>
                 <CodeMirrorView text={text.text} />
               </Suspense>
             )}

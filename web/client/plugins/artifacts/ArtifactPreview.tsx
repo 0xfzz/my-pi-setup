@@ -6,6 +6,7 @@
 import { Suspense, lazy, useState } from "react";
 import { ArrowLeft, Clock, Copy } from "@phosphor-icons/react";
 import { MarkdownBody } from "../markdown.tsx";
+import { LoadingSpinner } from "../LoadingSpinner.tsx";
 import { artifactBodyKind, parseArtifactDetail } from "./artifact-detail.ts";
 
 const CodeMirrorView = lazy(() => import("../files/CodeMirrorView.tsx"));
@@ -81,7 +82,7 @@ export function ArtifactPreview({ title, detail, onBack }: ArtifactPreviewProps)
         {detail === null ? (
           <div className="artifacts-empty">No content recorded for this artifact.</div>
         ) : kind === "code" ? (
-          <Suspense fallback={<div className="artifacts-empty">Loading editor…</div>}>
+          <Suspense fallback={<LoadingSpinner label="Loading editor…" />}>
             <CodeMirrorView text={content} />
           </Suspense>
         ) : (

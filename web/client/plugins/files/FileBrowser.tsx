@@ -14,6 +14,7 @@ import {
   fetchDirectory, fetchSearch, fileRefOf,
   type DirEntry, type FileRef, type FilesListData,
 } from "./files-api.ts";
+import { LoadingSpinner } from "../LoadingSpinner.tsx";
 
 function fileIcon(fileKind: FileKind | undefined) {
   switch (fileKind) {
@@ -49,6 +50,7 @@ export function FileBrowser({ sessionId, onOpenFile }: FileBrowserProps) {
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState<Array<{ path: string; name: string }>>([]);
   const [searchTruncated, setSearchTruncated] = useState(false);
+  const [searchPending, setSearchPending] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -75,12 +77,15 @@ export function FileBrowser({ sessionId, onOpenFile }: FileBrowserProps) {
     if (trimmed === "") {
       setMatches([]);
       setSearchTruncated(false);
+      setSearchPending(false);
       return;
     }
     let cancelled = false;
+    setSearchPending(true);
     const timer = setTimeout(() => {
       void fetchSearch(sessionId, trimmed).then((result) => {
         if (cancelled) return;
+        setSearchPending(false);
         if (result.ok) {
           setMatches(result.data.matches);
           setSearchTruncated(result.data.truncated);
@@ -149,6 +154,7 @@ export function FileBrowser({ sessionId, onOpenFile }: FileBrowserProps) {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
+          {searchPending ? <LoadingSpinner size={14} /> : null}
           {searching ? (
             <button
               type="button"
@@ -192,7 +198,7 @@ export function FileBrowser({ sessionId, onOpenFile }: FileBrowserProps) {
         </div>
       ) : (
         <div className="files-list" role="listbox" aria-label="Files">
-          {loading ? <div className="files-empty">Loading…</div> : null}
+          {loading ? <div className="files-empty"><LoadingSpinner label="Loading files…" /></div> : null}
           {error !== null ? (
             <div className="files-empty files-error" role="alert">{error}</div>
           ) : null}
