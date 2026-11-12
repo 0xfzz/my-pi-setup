@@ -51,7 +51,8 @@ export function PanelLauncher({
   onUnpin,
   pinError,
 }: PanelLauncherProps) {
-  if (entries.length === 0) return null;
+  // Hide the launcher entirely when nothing can be opened right now.
+  if (entries.every((entry) => !entry.available)) return null;
 
   const entryById = new Map(entries.map((entry) => [entry.id, entry]));
   const maxedOut = pinnedIds.length >= MAX_PINS;
@@ -67,8 +68,6 @@ export function PanelLauncher({
     const entry = entryById.get(id);
     return entry === undefined || !entry.available;
   });
-
-  const availableEntries = entries.filter((entry) => entry.available);
 
   return (
     <DropdownMenu.Root>
@@ -109,7 +108,21 @@ export function PanelLauncher({
           <DropdownMenu.Label className="app-panel-menu-label">
             {maxedOut ? `${MAX_PINS} of ${MAX_PINS} pinned` : "Panels"}
           </DropdownMenu.Label>
-          {availableEntries.map((entry) => {
+          {entries.map((entry) => {
+            if (!entry.available) {
+              return (
+                <DropdownMenu.Item
+                  key={entry.id}
+                  className="app-panel-menu-item app-panel-menu-item-unavailable"
+                  disabled
+                  title={entry.unavailableReason}
+                >
+                  <span className="app-panel-menu-icon"><PanelIcon icon={entry.icon} /></span>
+                  <span className="app-panel-menu-title">{entry.title}</span>
+                  <span className="app-panel-menu-reason">{entry.unavailableReason}</span>
+                </DropdownMenu.Item>
+              );
+            }
             const active = entry.id === activePanelId;
             const pinned = pinnedIds.includes(entry.id);
             const pinDisabled = !pinned && maxedOut;

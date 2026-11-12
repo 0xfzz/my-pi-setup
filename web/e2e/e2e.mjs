@@ -147,31 +147,35 @@ async function run() {
     await selectFixtureSession(page);
     const panelNav = page.getByRole("navigation", { name: "Plugin panels" });
     await panelNav.waitFor();
-    assert.equal(await panelNav.locator("button").count(), 5, "one icon per published sidebar plugin");
-    assert.equal(await panelNav.locator("button svg").count(), 5, "each plugin has an icon");
+    assert.equal(await panelNav.locator("button").count(), 4, "three pinned icons plus the three-dot overflow");
     assert.equal(await page.locator(".plugin-slot-region").count(), 0, "sidebar plugins never duplicate into the chat");
     assert.equal(await page.locator(".app-side-panel").count(), 0, "panels start closed");
 
     const artifactsButton = panelNav.getByRole("button", { name: "Artifacts", exact: true });
-    const delegatedButton = panelNav.getByRole("button", { name: "Delegated work", exact: true });
+    const cacheButton = panelNav.getByRole("button", { name: "Cache health", exact: true });
+    const todoButton = panelNav.getByRole("button", { name: "Todo", exact: true });
+    const moreButton = panelNav.getByRole("button", { name: "More panels", exact: true });
+
     await artifactsButton.click();
     await page.getByRole("complementary", { name: "Artifacts panel" }).waitFor();
     assert.equal(await artifactsButton.getAttribute("aria-pressed"), "true");
     assert.ok((await page.locator(".app-side-panel").textContent()).includes("prd-phase-6.md"));
-    await delegatedButton.click();
+
+    // Delegated work is behind the three-dot menu, not one of the three pins.
+    await moreButton.click();
+    await page.getByRole("menuitem", { name: "Delegated work", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Open panel", exact: true }).click();
     await page.getByRole("complementary", { name: "Delegated work panel" }).waitFor();
     assert.equal(await page.locator(".app-side-panel").count(), 1);
     assert.equal(await artifactsButton.getAttribute("aria-pressed"), "false");
-    assert.equal(await delegatedButton.getAttribute("aria-pressed"), "true");
     assert.ok((await page.locator(".app-side-panel").textContent()).includes("worker-slots"));
-    await delegatedButton.click();
-    assert.equal(await page.locator(".app-side-panel").count(), 0, "clicking the active icon closes its panel");
+    await page.getByRole("button", { name: "Close panel", exact: true }).click();
 
-    await panelNav.getByRole("button", { name: "Todo", exact: true }).click();
+    await todoButton.click();
     await page.getByRole("complementary", { name: "Todo panel" }).waitFor();
     assert.ok((await page.locator(".app-side-panel").textContent()).includes("Implement frontend slots"));
     await page.getByRole("button", { name: "Close panel", exact: true }).click();
-    await panelNav.getByRole("button", { name: "Cache health", exact: true }).click();
+    await cacheButton.click();
     await page.getByRole("complementary", { name: "Cache health panel" }).waitFor();
     assert.ok((await page.locator(".app-side-panel").textContent()).includes("XSS Test"));
     await page.keyboard.press("Escape");
@@ -491,7 +495,7 @@ async function run() {
       { timeout: 15_000 },
     );
 
-    await page.getByRole("navigation", { name: "Plugin panels" }).waitFor({ state: "hidden" });
+    await page.getByRole("navigation", { name: "Plugin panels" }).waitFor({ state: "visible" });
     assert.equal(await page.locator(".app-side-panel").count(), 0, "switching sessions clears stale panel content");
 
     step("8b: slash command palette, model picker, web dialogs");

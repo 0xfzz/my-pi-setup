@@ -16,8 +16,12 @@ import { DialogLayer, InfoDialog, LoginDialog, LogoutDialog, ModelPickerDialog, 
 import type { WebTreeNode } from "../shared/tree.ts";
 import { SlotHost } from "./plugins/slots.tsx";
 import { PluginSidePanel } from "./plugins/PluginSidePanel.tsx";
-import { PluginPanelNav } from "./plugins/PluginPanelNav.tsx";
+import { PanelLauncher } from "./plugins/panel-launcher.tsx";
+import { buildPanelEntries, FILES_PANEL_ID } from "./plugins/panel-entry.ts";
 import { availablePanelPlugins, isPanelPlugin } from "./plugins/panel-policy.ts";
+import { pinPanel, seedPins, unpinPanel } from "./plugins/pin-policy.ts";
+import { browserStorage, loadPinnedIds, savePinnedIds } from "./plugins/pin-storage.ts";
+import { FilesPanel } from "./plugins/files/FilesPanel.tsx";
 import { PluginActionShortcuts } from "./plugins/PluginActionShortcuts.tsx";
 import { PluginPage, parsePluginRoute } from "./plugins/PluginLayout.tsx";
 import { PluginViewRenderer } from "./plugins/PluginViewRenderer.tsx";
@@ -57,6 +61,9 @@ export function AppShell() {
   // Right-hand plugin panel (Artifacts, Delegated work / monitor, etc.)
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
   const [activeSidePlugin, setActiveSidePlugin] = useState<string | null>(null);
+  // The launcher's pinned-panel list; null means "not seeded yet" (§5.2).
+  const [pinnedIds, setPinnedIds] = useState<string[] | null>(() => loadPinnedIds(browserStorage()));
+  const [pinError, setPinError] = useState<string | null>(null);
 
   const handleOpenSidePanel = (pluginId: string) => {
     setActiveSidePlugin(pluginId);
@@ -401,7 +408,31 @@ export function AppShell() {
   const { regions, conflicts } = resolveRegionOverrides(session.plugins, session.pluginViews);
   const panelPlugins = availablePanelPlugins(session.plugins, session.pluginViews);
   const inlinePlugins = session.plugins.filter((plugin) => !isPanelPlugin(plugin));
-  const openPanelPluginId = sidePanelOpen && panelPlugins.some((plugin) => plugin.id === activeSidePlugin)
+  const panelEntries = buildPanelEntries(
+    session.plugins,
+    new Set(panelPlugins.map((plugin) => plugin.id)),
+    session.selectedId !== null,
+  );
+  const availablePanelIdsInOrder = panelEntries.filter((entry) => entry.available).map((entry) => entry.id);
+  const resolvedPins = seedPins(availablePanelIdsInOrder, pinnedIds);
+  const handlePin = (id: string): void => {
+    const result = pinPanel(resolvedPins, id);
+    if (!result.ok) {
+      setPinError(result.error);
+      return;
+    }
+    setPinError(null);
+    setPinnedIds(result.pinned);
+    savePinnedIds(browserStorage(), result.pinned);
+  };
+  const handleUnpin = (id: string): void => {
+    const next = unpinPanel(resolvedPins, id);
+    setPinError(null);
+    setPinnedIds(next);
+    savePinnedIds(browserStorage(), next);
+  };
+  const openPanelPluginId = sidePanelOpen
+    && (activeSidePlugin === FILES_PANEL_ID || panelPlugins.some((plugin) => plugin.id === activeSidePlugin))
     ? activeSidePlugin
     : null;
 
@@ -450,13 +481,17 @@ export function AppShell() {
                   headerStatus
                 )}
               </span>
-              <PluginPanelNav
-                plugins={panelPlugins}
-                activePluginId={openPanelPluginId}
+              <PanelLauncher
+                entries={panelEntries}
+                pinnedIds={resolvedPins}
+                activePanelId={openPanelPluginId}
                 onToggle={(id) => {
                   if (openPanelPluginId === id) setSidePanelOpen(false);
                   else handleOpenSidePanel(id);
                 }}
+                onPin={handlePin}
+                onUnpin={handleUnpin}
+                pinError={pinError}
               />
             </header>
           )}
@@ -528,14 +563,24 @@ export function AppShell() {
           <EditorWidgets widgets={session.widgets} placement="belowEditor" />
           <SlotHost slot="bottom" plugins={inlinePlugins} views={session.pluginViews} />
         </div>
-        <PluginSidePanel
-          open={openPanelPluginId !== null}
-          activePluginId={openPanelPluginId}
-          onClose={() => setSidePanelOpen(false)}
-          plugins={panelPlugins}
-          views={session.pluginViews}
-          sessionId={session.selectedId}
-        />
+        {openPanelPluginId === FILES_PANEL_ID ? (
+          <FilesPanel
+            open={sidePanelOpen}
+            onClose={() => setSidePanelOpen(false)}
+            sessionId={session.selectedId}
+            rootLabel={selected?.cwd ?? ""}
+            key={session.selectedId ?? "none"}
+          />
+        ) : (
+          <PluginSidePanel
+            open={openPanelPluginId !== null}
+            activePluginId={openPanelPluginId}
+            onClose={() => setSidePanelOpen(false)}
+            plugins={panelPlugins}
+            views={session.pluginViews}
+            sessionId={session.selectedId}
+          />
+        )}
       </div>
       <CustomPopups custom={session.custom} />
       <ToastStack notifications={session.notifications} />
