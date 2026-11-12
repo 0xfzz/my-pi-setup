@@ -3,7 +3,7 @@
 // the state dot (pulsing while a turn runs), and how long ago it was active.
 
 import { useState } from "react";
-import { Moon, Plus, Sun } from "@phosphor-icons/react";
+import { MagnifyingGlass, Moon, Plus, Sun, Terminal } from "@phosphor-icons/react";
 import type { SessionSummary } from "./use-session.ts";
 import { useAuth } from "./auth-gate.tsx";
 import { toggleTheme, type Theme } from "./theme.ts";
@@ -45,8 +45,12 @@ export function SessionSidebar({
     document.documentElement.dataset.theme === "light" ? "light" : "dark",
   );
   const auth = useAuth();
+  const [search, setSearch] = useState("");
+  const query = search.trim().toLowerCase();
   const now = Date.now();
-  const ordered = [...sessions].sort((a, b) => {
+  const ordered = sessions.filter((session) =>
+    `${session.cwd} ${session.id}`.toLowerCase().includes(query),
+  ).sort((a, b) => {
     // Live sessions first, then most recently active.
     if (a.live !== b.live) return a.live ? -1 : 1;
     return b.modifiedAt - a.modifiedAt;
@@ -56,7 +60,61 @@ export function SessionSidebar({
     <nav className="app-sidebar" aria-label="Sessions">
       <div className="app-sidebar-head">
         <span className="app-title">pi</span>
-        <span className="app-subtitle">web</span>
+        <span className="app-subtitle">workspace</span>
+      </div>
+      <button
+        type="button"
+        className="app-sidebar-new"
+        onClick={onNewSession}
+        title="Start a new session (pick a project directory)"
+      >
+        <Plus size={16} /> New session
+      </button>
+      <label className="app-sidebar-search">
+        <MagnifyingGlass size={16} aria-hidden="true" />
+        <input
+          type="search"
+          aria-label="Search sessions"
+          placeholder="Search sessions"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+      </label>
+      <div className="app-sidebar-section">Sessions</div>
+      <div className="app-sidebar-list" role="listbox" aria-label="Sessions">
+        {ordered.length === 0 ? (
+          <div className="app-sidebar-empty">{query === "" ? "No sessions yet." : "No matching sessions."}</div>
+        ) : null}
+        {ordered.map((session) => {
+          const selected = session.id === selectedId;
+          const running = session.running === true || (selected && selectedRunning === true);
+          const state = running ? "running" : session.live ? "live" : "stopped";
+          return (
+            <button
+              key={session.id}
+              type="button"
+              role="option"
+              aria-selected={selected}
+              data-id={session.id}
+              className={`app-session-item${selected ? " is-selected" : ""}`}
+              data-state={state}
+              onClick={() => onSelect(session.id)}
+              title={`${session.cwd}\n${session.id}${state === "running" ? " — running" : state === "live" ? " — attached" : ""}`}
+            >
+              <span className={`app-session-dot app-session-dot-${state}`} aria-hidden="true" />
+              <span className="app-session-body">
+                <span className="app-session-name">{shortCwd(session.cwd)}</span>
+                <span className="app-session-meta">{session.id.slice(0, 8)}</span>
+              </span>
+              <span className="app-session-time">{relativeTime(session.modifiedAt, now)}</span>
+              {state === "running" ? <span className="app-session-running">run</span> : null}
+            </button>
+          );
+        })}
+      </div>
+      <div className="app-sidebar-footer">
+        <Terminal size={15} aria-hidden="true" />
+        <span>Local workspace</span>
         <button
           type="button"
           className="app-theme-toggle"
@@ -78,50 +136,6 @@ export function SessionSidebar({
             sign out
           </button>
         ) : null}
-      </div>
-      <button
-        type="button"
-        className="app-sidebar-new inline-flex items-center justify-center gap-1.5"
-        onClick={onNewSession}
-        title="Start a new session (pick a project directory)"
-      >
-        <Plus size={15} weight="bold" /> New session
-      </button>
-      <div className="app-sidebar-list" role="listbox" aria-label="Sessions">
-        {ordered.length === 0 ? (
-          <div className="app-sidebar-empty">No sessions yet.</div>
-        ) : null}
-        {ordered.map((session) => {
-          const selected = session.id === selectedId;
-          const running = session.running === true || (selected && selectedRunning === true);
-          const state = running
-            ? "running"
-            : session.live
-              ? "live"
-              : "stopped";
-          return (
-            <button
-              key={session.id}
-              type="button"
-              role="option"
-              aria-selected={selected}
-              data-id={session.id}
-              className={`app-session-item${selected ? " is-selected" : ""}`}
-              data-state={state}
-              onClick={() => onSelect(session.id)}
-              title={`${session.cwd}\n${session.id}${state === "running" ? " — running" : state === "live" ? " — attached" : ""}`}
-            >
-              <span className={`app-session-dot app-session-dot-${state}`} aria-hidden="true" />
-              <span className="app-session-body">
-                <span className="app-session-name">{shortCwd(session.cwd)}</span>
-                <span className="app-session-meta">
-                  {session.id.slice(0, 8)} · {relativeTime(session.modifiedAt, now)}
-                </span>
-              </span>
-              {state === "running" ? <span className="app-session-running">run</span> : null}
-            </button>
-          );
-        })}
       </div>
     </nav>
   );

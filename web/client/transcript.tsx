@@ -468,7 +468,11 @@ export function Transcript({
       <main className="app-transcript" aria-live="polite" ref={scrollRef} onScroll={handleScroll}>
         <div className="app-transcript-inner" ref={innerRef}>
           {entries.length === 0 && !streaming.isStreaming && !showWorking ? (
-            <div className="app-empty">No messages yet.</div>
+            <div className="app-empty">
+              <span className="app-empty-mark" aria-hidden="true">pi</span>
+              <h1>What are we working on?</h1>
+              <p>Start a session, or pick up where you left off.</p>
+            </div>
           ) : null}
           {entries.map((entry) => (
             <div key={entry.key} className={`msg msg-${entry.role}`}>

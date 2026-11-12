@@ -121,6 +121,24 @@ async function run() {
       timeout: 15_000,
     });
 
+    step("1b: minimalist shell — search and desktop sidebar toggle");
+    await page.getByRole("heading", { name: "What are we working on?" }).waitFor();
+    const sessionSearch = page.getByRole("searchbox", { name: "Search sessions" });
+    await sessionSearch.fill("no-such-workspace-9c2f");
+    await page.getByText("No matching sessions.", { exact: true }).waitFor();
+    assert.equal(await page.locator(".app-session-item").count(), 0);
+    await sessionSearch.fill("__test_session__");
+    await page.locator('.app-session-item[data-id="__test_session__"]').waitFor();
+    assert.equal(await page.locator(".app-session-item").count(), 1);
+    await sessionSearch.fill("");
+    const sessionToggle = page.getByRole("button", { name: "Toggle session list" });
+    await sessionToggle.click();
+    await page.locator(".app-sidebar").waitFor({ state: "hidden" });
+    assert.equal(await sessionToggle.getAttribute("aria-expanded"), "false");
+    await sessionToggle.click();
+    await page.locator(".app-sidebar").waitFor({ state: "visible" });
+    assert.equal(await sessionToggle.getAttribute("aria-expanded"), "true");
+
     step("2: fixture session + slots");
     // 2. Select the fixture session: slots render from the seeded views.
     await selectFixtureSession(page);
@@ -288,7 +306,7 @@ async function run() {
     );
     assert.equal(
       await page.evaluate(() => getComputedStyle(document.body).backgroundColor),
-      themeAfter === "light" ? "rgb(247, 248, 250)" : "rgb(16, 18, 20)",
+      themeAfter === "light" ? "rgb(255, 255, 255)" : "rgb(25, 25, 25)",
       "the active theme's palette applies",
     );
     // Back to the starting theme for the rest of the run.
@@ -308,7 +326,7 @@ async function run() {
     await page.waitForFunction(
       () => {
         const el = document.querySelector(".app-sidebar-wrap");
-        return el !== null && getComputedStyle(el).transform.includes("-21");
+        return el !== null && el.getBoundingClientRect().right <= 0;
       },
       undefined,
       { timeout: 5_000 },
@@ -321,7 +339,7 @@ async function run() {
     await page.waitForFunction(
       () => {
         const el = document.querySelector(".app-sidebar-wrap");
-        return el !== null && getComputedStyle(el).transform.includes("-21");
+        return el !== null && el.getBoundingClientRect().right <= 0;
       },
       undefined,
       { timeout: 5_000 },
@@ -334,6 +352,7 @@ async function run() {
       "no horizontal scrollbar at 420px",
     );
     await page.setViewportSize({ width: 1280, height: 800 });
+    await page.locator(".app-sidebar-toggle").click();
 
     step("5: Alt+M shortcut");
     // 5. Instant-action shortcut (before the confirmed action, so the

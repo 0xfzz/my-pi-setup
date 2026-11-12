@@ -443,6 +443,22 @@ action pipeline back to the extension. That, plus slots, region overrides,
 pages, toasts, statuses, widgets and the ui.* events, is the full kit an
 extension uses to extend the web UI.
 
+## Minimalist workspace
+
+The shell uses a Claude Code-inspired split layout: a quiet 232px session
+sidebar, a compact project header, a centered transcript, and a single bordered
+composer. Published plugin views open in the existing right-hand preview panel;
+no placeholder file browser or extra navigation is added.
+
+- **Search sessions** filters the sidebar by project path or session ID.
+- The header's **Sessions** toggle hides or restores the sidebar on desktop;
+  on phones it opens the existing off-canvas overlay.
+- Theme and sign-out controls live in the sidebar footer. Model and thinking
+  controls sit below the message box; commands, file mentions, attachments,
+  streaming, plugin actions, and region overrides keep their existing behavior.
+- Light and dark palettes are neutral, with color reserved for outcome/status
+  indicators. The web continues to follow the OS unless a theme is saved.
+
 ## Themes
 
 Both themes are the same slot variables. The legacy stylesheet
@@ -451,7 +467,7 @@ shadcn/Tailwind tokens (`web/client/globals.css`) switch on the `.dark`
 class. `theme.ts` moves both together, set before the first React render
 (no flash). The choice is `pi-web-theme` in localStorage; with no stored
 choice the web follows the OS and re-follows it live. The toggle is the
-Moon/Sun button in the sidebar head (a Phosphor icon). Shadows and modal
+Moon/Sun button in the sidebar footer (a Phosphor icon). Shadows and modal
 scrims are theme-aware (`--scrim`), so plugin views and popups read fine
 in both.
 

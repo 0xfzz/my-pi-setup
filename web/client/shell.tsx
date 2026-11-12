@@ -5,7 +5,7 @@
 // view is published, and the built-in region returns when it is not.
 
 import { useEffect, useState } from "react";
-import { List, SidebarSimple } from "@phosphor-icons/react";
+import { SidebarSimple } from "@phosphor-icons/react";
 import { usePiSession } from "./use-session.ts";
 import { Transcript } from "./transcript.tsx";
 import { Composer } from "./composer.tsx";
@@ -424,12 +424,16 @@ export function AppShell() {
                 type="button"
                 className="app-sidebar-toggle"
                 aria-label="Toggle session list"
-                title="Sessions"
+                title={sidebarOpen ? "Hide sessions" : "Show sessions"}
+                aria-expanded={sidebarOpen}
                 onClick={() => setSidebarOpen((open) => !open)}
               >
-                <List size={18} weight="bold" />
+                <SidebarSimple size={18} />
               </button>
-              {headerCwd !== "" ? <span className="app-subtitle">{headerCwd}</span> : null}
+              <div className="app-header-project" title={headerCwd || "Your local pi workspace"}>
+                <span className="app-header-title">{headerCwd.split("/").filter(Boolean).at(-1) || "Workspace"}</span>
+                <span className="app-header-caption">{selected ? "Session" : "pi"}</span>
+              </div>
               <StatusChips statuses={session.statuses} />
               <span className="app-header-status">
                 {regions.status !== undefined ? (

@@ -1,6 +1,6 @@
-/* shadcn/ui theme (Tailwind v4). The palette matches the app's established
- * neutral "ChatGPT-like" greys and its blue accent so the shadcn primitives
- * and the legacy stylesheet read as one system. Light = :root, dark = .dark;
+/* shadcn/ui theme (Tailwind v4). Restrained neutral tokens match the shell
+ * in both themes, including the monochrome primary controls.
+ * Light = :root, dark = .dark;
  * theme.ts toggles `.dark` on <html> in lock-step with `[data-theme]`. */
 
 @import "tailwindcss";
@@ -8,74 +8,74 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --radius: 0.625rem;
-  --background: #f7f8fa;
-  --foreground: #1f2428;
+  --radius: 0.5rem;
+  --background: #ffffff;
+  --foreground: #292927;
   --card: #ffffff;
-  --card-foreground: #1f2428;
+  --card-foreground: #292927;
   --popover: #ffffff;
-  --popover-foreground: #1f2428;
-  --primary: #2b7fd4;
+  --popover-foreground: #292927;
+  --primary: #41413c;
   --primary-foreground: #ffffff;
-  --secondary: #f0f2f5;
-  --secondary-foreground: #1f2428;
-  --muted: #f0f2f5;
-  --muted-foreground: #57616b;
-  --ui-accent: #eef1f4;
-  --ui-accent-foreground: #1f2428;
+  --secondary: #f4f4f2;
+  --secondary-foreground: #292927;
+  --muted: #f4f4f2;
+  --muted-foreground: #65655f;
+  --ui-accent: #f4f4f2;
+  --ui-accent-foreground: #292927;
   --destructive: #c94f38;
   --destructive-foreground: #ffffff;
-  --border: #e0e4e8;
-  --input: #d7dde3;
-  --ring: #2b7fd4;
-  --chart-1: #8b95a0;
-  --chart-2: #57616b;
-  --chart-3: #2b7fd4;
-  --chart-4: #e0e4e8;
-  --chart-5: #1f2428;
-  --sidebar: #f0f2f5;
-  --sidebar-foreground: #1f2428;
-  --sidebar-primary: #2b7fd4;
+  --border: #e9e9e5;
+  --input: #e9e9e5;
+  --ring: #767670;
+  --chart-1: #767670;
+  --chart-2: #65655f;
+  --chart-3: #41413c;
+  --chart-4: #e9e9e5;
+  --chart-5: #292927;
+  --sidebar: #f8f8f6;
+  --sidebar-foreground: #292927;
+  --sidebar-primary: #41413c;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #eef1f4;
-  --sidebar-accent-foreground: #1f2428;
-  --sidebar-border: #e0e4e8;
-  --sidebar-ring: #2b7fd4;
+  --sidebar-accent: #eaeae6;
+  --sidebar-accent-foreground: #292927;
+  --sidebar-border: #e9e9e5;
+  --sidebar-ring: #767670;
 }
 
 .dark {
-  --background: #101214;
-  --foreground: #d7dde3;
-  --card: #16191c;
-  --card-foreground: #d7dde3;
-  --popover: #16191c;
-  --popover-foreground: #d7dde3;
-  --primary: #4f9cf9;
-  --primary-foreground: #101214;
-  --secondary: #1c2024;
-  --secondary-foreground: #d7dde3;
-  --muted: #1c2024;
-  --muted-foreground: #8b949e;
-  --ui-accent: #1c2024;
-  --ui-accent-foreground: #d7dde3;
+  --background: #191919;
+  --foreground: #e7e7e5;
+  --card: #202020;
+  --card-foreground: #e7e7e5;
+  --popover: #202020;
+  --popover-foreground: #e7e7e5;
+  --primary: #d4d4cf;
+  --primary-foreground: #191919;
+  --secondary: #292929;
+  --secondary-foreground: #e7e7e5;
+  --muted: #292929;
+  --muted-foreground: #adadaa;
+  --ui-accent: #292929;
+  --ui-accent-foreground: #e7e7e5;
   --destructive: #f0705a;
-  --destructive-foreground: #101214;
-  --border: #24292e;
-  --input: #2a3138;
-  --ring: #4f9cf9;
-  --chart-1: #5c6670;
-  --chart-2: #8b949e;
-  --chart-3: #4f9cf9;
-  --chart-4: #24292e;
-  --chart-5: #d7dde3;
-  --sidebar: #16191c;
-  --sidebar-foreground: #d7dde3;
-  --sidebar-primary: #4f9cf9;
-  --sidebar-primary-foreground: #101214;
-  --sidebar-accent: #1c2024;
-  --sidebar-accent-foreground: #d7dde3;
-  --sidebar-border: #24292e;
-  --sidebar-ring: #4f9cf9;
+  --destructive-foreground: #191919;
+  --border: #303030;
+  --input: #303030;
+  --ring: #8e8e89;
+  --chart-1: #8e8e89;
+  --chart-2: #adadaa;
+  --chart-3: #d4d4cf;
+  --chart-4: #303030;
+  --chart-5: #e7e7e5;
+  --sidebar: #1e1e1e;
+  --sidebar-foreground: #e7e7e5;
+  --sidebar-primary: #d4d4cf;
+  --sidebar-primary-foreground: #191919;
+  --sidebar-accent: #333333;
+  --sidebar-accent-foreground: #e7e7e5;
+  --sidebar-border: #303030;
+  --sidebar-ring: #8e8e89;
 }
 
 @theme inline {

@@ -8,7 +8,7 @@
 // screenshot never needs a multi-megabyte request.
 
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
-import { Paperclip, PaperPlaneRight, Sparkle, Stop, X } from "@phosphor-icons/react";
+import { ArrowUp, Paperclip, Sparkle, Stop, X } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { filterCommands, type WebCommand } from "../shared/commands.ts";
@@ -463,8 +463,8 @@ export function Composer({
       ) : null}
       <div className="app-composer-row">
       <Textarea
-        className="app-composer-input flex-1 resize-none bg-card px-4 py-3 min-h-12 max-h-52 rounded-3xl"
-        placeholder={disabled ? "Select or start a session…" : "Message pi… (/ for commands, paste to attach)"}
+        className="app-composer-input flex-1 resize-none max-h-52"
+        placeholder={disabled ? "Select or start a session…" : "Message pi…"}
         disabled={disabled}
         value={text}
         ref={inputRef}
@@ -530,10 +530,11 @@ export function Composer({
           title="Send message"
           aria-label="Send message"
         >
-          <PaperPlaneRight size={18} weight="fill" />
+          <ArrowUp size={18} />
         </Button>
       )}
       </div>
+      <div className="app-composer-hint">/ commands · @ files · Shift+Enter for a new line</div>
       {notice ? <div className="app-composer-error" role="alert">{notice}</div> : null}
       {error ? <div className="app-composer-error" role="alert">{error}</div> : null}
     </div>
