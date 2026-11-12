@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | Draft — PRD only; no implementation or dependency installation |
+| **Status** | Implemented on `feat/file-manager-file-viewer-plugin`; see §12 for what shipped and what is deferred |
 | **Owner** | Faiz |
 | **Branch** | `feat/file-manager-file-viewer-plugin` |
 | **Parent** | [Plugin platform](pi-web-plugin-platform.md), [Pluggable UI](pi-web-pluggable-ui.md), [Plugin actions](plugin-actions.md) |
@@ -237,3 +237,15 @@ Keep refactors separate from behavior changes and commit each verified coherent 
 - Choose the final tree package after the bounded comparison; Headless Tree + TanStack Virtual is the proposed default, not an irreversible commitment.
 - Tune preview limits and timing budgets using recorded hardware/results without silently dropping safety requirements.
 - Cross-device pin sync, drag reordering, recursive live watching, multi-root browsing, multi-tab previews, git status/diffs, and editing remain future work.
+
+## 12. Implementation status (2026-11-12)
+
+Delivered on `feat/file-manager-file-viewer-plugin`:
+
+- **Launcher** — a shared Radix Dropdown Menu-based launcher with at most three pinned icons plus a ⋯ overflow menu; every installed sidebar-eligible panel is listed with icon, full title, active/pin state, an Open/Pin/Unpin submenu, an "Unavailable pins" section, and versioned localStorage persistence. Pure pin decisions are in `web/client/plugins/pin-policy.ts` with unit tests.
+- **Files server** — session-scoped, read-only endpoints (`list`, `read`, `search`, `download`) that resolve the root from the session id, re-validate every path (traversal, encoding, NUL, absolute-path and symlink rejection, canonical containment), cap reads/streams, and honor Range with attachment-forcing for HTML/SVG/unknown content. See `web/server/files.ts` + `web/server/files-policy.ts`.
+- **Files client** — a directory browser (breadcrumbs, filename search, hidden-files toggle, refresh, honest truncation banner) in the existing right sidebar, plus a preview by kind: read-only CodeMirror (lazy chunk), markdown rendered/source, native image/audio/video, and a metadata + download fallback for everything else. See `web/client/plugins/files/`.
+
+Deferred with the same boundaries §11 records: inline PDF rendering (currently the download fallback), DOCX/XLSX/PPTX, a virtualized tree (v1 ships a flat 500-entry page with a truncation notice, no offset pagination), resizable panels, and every mutation (create/edit/rename/move/delete/upload). The §8 performance contract is a release gate and has not been empirically benchmarked in this pass.
+
+`npm run tidy` passes (root and web); the web e2e was updated for the three-pin launcher but was not run here (it is outside the tidy gate and needs a full browser+server harness).
