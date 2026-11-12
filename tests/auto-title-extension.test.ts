@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import autoTitleExtension from "../extensions/auto-title.ts";
 import {
@@ -23,7 +26,8 @@ const exchange = [
 
 const replyText = (text: string) => async () => ({ stopReason: "stop", content: [{ type: "text", text }] });
 
-function harness(opts: { name?: string; branch?: any[]; reply?: () => Promise<any> } = {}) {
+function harness(opts: { name?: string; branch?: any[]; reply?: () => Promise<any>; stateFile?: string } = {}) {
+  const stateFile = opts.stateFile ?? join(mkdtempSync(join(tmpdir(), "auto-title-state-")), "auto-title.json");
   let name = opts.name;
   const handlers = new Map<string, Array<(event: any, ctx: any) => unknown>>();
   const eventHandlers = new Map<string, Array<(data: unknown) => void>>();
@@ -69,7 +73,7 @@ function harness(opts: { name?: string; branch?: any[]; reply?: () => Promise<an
       },
     },
   };
-  autoTitleExtension(pi);
+  autoTitleExtension(pi, { stateFile });
   const emit = async (event: string) => {
     for (const handler of handlers.get(event) ?? []) await handler({}, ctx);
     await new Promise((resolve) => setImmediate(resolve));
@@ -80,7 +84,7 @@ function harness(opts: { name?: string; branch?: any[]; reply?: () => Promise<an
     }
     await new Promise((resolve) => setImmediate(resolve));
   };
-  return { ctx, emit, action, views, notices, requests, commands, written, name: () => name, rename: (value: string) => { name = value; } };
+  return { ctx, emit, action, views, notices, requests, commands, written, stateFile, name: () => name, rename: (value: string) => { name = value; } };
 }
 
 const committedPlan = {
@@ -264,4 +268,50 @@ test("the view validates, and the descriptor is registered and valid", () => {
   assert.equal(validatePlugin(autoTitlePlugin, ["auto-title.ts"]).ok, true);
   assert.deepEqual(validateRegistry(WEB_PLUGINS), []);
   assert.ok(WEB_PLUGINS.some((plugin) => plugin.id === AUTO_TITLE_PLUGIN_ID));
+});
+
+test("/title lock keeps a generated name and spends the refinement; a name you set is already yours", async () => {
+  const h = harness({ branch: [...exchange, committedPlan] });
+  const { handler } = h.commands.get("title");
+  await h.emit("agent_end");
+  await handler("lock", h.ctx);
+  assert.match(h.notices.at(-1)!, /Title locked/);
+  await h.emit("agent_end");
+  assert.equal(h.requests.length, 1, "a locked title is not refined");
+
+  const mine = harness({ name: "Mine" });
+  await mine.commands.get("title").handler("lock", mine.ctx);
+  assert.match(mine.notices.at(-1)!, /Already yours/);
+});
+
+test("/title status reports ownership, tries and the usage budget", async () => {
+  const h = harness();
+  const { handler } = h.commands.get("title");
+  await h.emit("agent_end");
+  await handler("status", h.ctx);
+  assert.match(h.notices.at(-1)!, /source: generated; generations: 1\/3/);
+  const card = h.views.at(-1).rows;
+  assert.deepEqual(card.find((row: any) => row.label === "Source"), { label: "Source", value: "Generated" });
+  assert.deepEqual(card.find((row: any) => row.label === "Generations"), { label: "Generations", value: "1 / 3" });
+  assert.deepEqual(card.find((row: any) => row.label === "Model"), { label: "Model", value: "p/m" });
+});
+
+test("a name the person set reads as locked on the card", async () => {
+  const h = harness({ name: "Mine" });
+  await h.emit("session_start");
+  const status = h.views.at(-1).rows.find((row: any) => row.label === "Status");
+  assert.equal(status.value, "Locked (you named it)");
+});
+
+test("the on/off choice persists across processes", async () => {
+  const first = harness();
+  await first.commands.get("title").handler("off", first.ctx);
+  assert.equal(JSON.parse(readFileSync(first.stateFile, "utf-8")).enabled, false);
+
+  const second = harness({ stateFile: first.stateFile });
+  await second.emit("agent_end");
+  assert.equal(second.requests.length, 0, "the stored choice holds in a new process");
+
+  await second.commands.get("title").handler("on", second.ctx);
+  assert.equal(JSON.parse(readFileSync(second.stateFile, "utf-8")).enabled, true);
 });

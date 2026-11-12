@@ -15,12 +15,15 @@
  *
  * `PI_AUTO_TITLE=0` starts the session with it off; `/auto-title on|off` flips it.
  */
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { type AssistantMessage, type AssistantMessageEvent } from "@earendil-works/pi-ai/compat";
 import { buildTitleBrief, hasNaturalLanguage, type TitleBrief } from "../lib/title/brief.ts";
 import { titleRequest } from "../lib/title/prompt.ts";
 import { cleanTitle, type TitleRejection } from "../lib/title/clean.ts";
-import { decide, refineSignal, type PolicyEvent, type PolicyState, type SkipReason } from "../lib/title/policy.ts";
+import { AUTO_TITLE_CAP, decide, refineSignal, type PolicyEvent, type PolicyState, type SkipReason } from "../lib/title/policy.ts";
+import { AUTO_TITLE_STATE_FILE, readAutoTitleFlag, writeAutoTitleFlag } from "../lib/title/flag-store.ts";
 import { lengthRetryOptions, titleRequestOptions, type TitleRequestOptions } from "../lib/title/model-options.ts";
 import {
   automaticAttempts,
@@ -94,8 +97,18 @@ async function collectReply(stream: AsyncIterable<AssistantMessageEvent>): Promi
   return reply;
 }
 
-export default function autoTitleExtension(pi: ExtensionAPI): void {
-  let enabled = process.env.PI_AUTO_TITLE !== "0";
+function agentDir(): string {
+  try {
+    return getAgentDir();
+  } catch {
+    return join(homedir(), ".pi", "agent");
+  }
+}
+
+export default function autoTitleExtension(pi: ExtensionAPI, options: { stateFile?: string } = {}): void {
+  const stateFile = options.stateFile ?? join(agentDir(), AUTO_TITLE_STATE_FILE);
+  // PI_AUTO_TITLE=0 starts this process off; otherwise the stored choice decides, on by default.
+  let enabled = process.env.PI_AUTO_TITLE !== "0" && (readAutoTitleFlag(stateFile) ?? true);
   let phase: AutoTitlePhase = "idle";
   let lastError: string | undefined;
   let lastManualAt: number | undefined;
@@ -105,12 +118,28 @@ export default function autoTitleExtension(pi: ExtensionAPI): void {
 
   const currentName = () => pi.getSessionName()?.trim() ?? "";
 
+  /** What the card shows about the name: who owns it, the tries so far, and the model. */
+  function viewFacts(): { title?: string; source?: "auto" | "you"; attempts?: number; model?: string } {
+    const name = currentName();
+    const context = activeCtx;
+    if (context === undefined) return { title: name || undefined };
+    const sessionId = context.sessionManager.getSessionId();
+    const branch = context.sessionManager.getBranch();
+    return {
+      title: name || undefined,
+      source: name ? (isGeneratedName(branch, sessionId, name) ? "auto" : "you") : undefined,
+      attempts: automaticAttempts(branch, sessionId),
+      model: context.model ? `${context.model.provider}/${context.model.id}` : undefined,
+    };
+  }
+
   function publish(): void {
     publishWebView(pi, AUTO_TITLE_PLUGIN_ID, autoTitleWebView({
       enabled,
       phase,
-      title: currentName() || undefined,
       error: lastError,
+      cap: AUTO_TITLE_CAP,
+      ...viewFacts(),
     }));
   }
 
@@ -284,7 +313,55 @@ export default function autoTitleExtension(pi: ExtensionAPI): void {
   function setEnabled(value: boolean): void {
     enabled = value;
     if (!value) run?.abort();
+    // The choice outlives the process; a failed write still holds for this one.
+    try {
+      writeAutoTitleFlag(stateFile, value);
+    } catch {
+      // Persisting is a courtesy; the toggle itself has already taken effect.
+    }
     publish();
+  }
+
+  /** Mark a generated name as the person's: the automatic path stops for this session. */
+  function lock(context: ExtensionContext): void {
+    const name = currentName();
+    if (!name) return notify(context, "Nothing to lock: the session has no title.", "info");
+    const sessionId = context.sessionManager.getSessionId();
+    if (!isGeneratedName(context.sessionManager.getBranch(), sessionId, name)) {
+      return notify(context, "Already yours: a name you set is never replaced automatically.", "info");
+    }
+    recordAttempt(context, { source: "manual", kind: "refine", outcome: "kept", reason: "locked by you" });
+    publish();
+    notify(context, "Title locked: automatic titles will not change it.", "info");
+  }
+
+  function statusLine(): string {
+    const facts = viewFacts();
+    const parts = [
+      `Auto title ${enabled ? "on" : "off"}`,
+      `title: ${facts.title ?? "(none)"}`,
+      `source: ${facts.source === "auto" ? "generated" : facts.source === "you" ? "you" : "none"}`,
+      `generations: ${facts.attempts ?? 0}/${AUTO_TITLE_CAP}`,
+    ];
+    if (lastError) parts.push(`last error: ${lastError}`);
+    return parts.join("; ");
+  }
+
+  async function handleCommand(args: string, context: ExtensionContext): Promise<void> {
+    const [word = "", ...rest] = args.trim().split(/\s+/);
+    const arg = word.toLowerCase();
+    if (arg === "on" || arg === "off") {
+      setEnabled(arg === "on");
+      context.ui.notify(`Auto title ${arg}`, "info");
+    } else if (arg === "now") {
+      await generate(context, "manual", rest.join(" ") || undefined);
+    } else if (arg === "lock") {
+      lock(context);
+    } else if (arg === "" || arg === "status") {
+      context.ui.notify(statusLine(), "info");
+    } else {
+      context.ui.notify("Usage: /title [now [hint] | on | off | lock | status]", "warning");
+    }
   }
 
   async function onSettled(context: ExtensionContext): Promise<void> {
@@ -314,24 +391,13 @@ export default function autoTitleExtension(pi: ExtensionAPI): void {
     activeCtx = undefined;
   });
 
-  pi.registerCommand("auto-title", {
-    description: "Auto session title: now [hint] | on | off | status",
-    handler: async (args, context) => {
-      const text = args.trim();
-      const [word = "", ...rest] = text.split(/\s+/);
-      const arg = word.toLowerCase();
-      if (arg === "on" || arg === "off") {
-        setEnabled(arg === "on");
-        context.ui.notify(`Auto title ${arg}`, "info");
-      } else if (arg === "now") {
-        await generate(context, "manual", rest.join(" ") || undefined);
-      } else if (arg === "" || arg === "status") {
-        context.ui.notify(`Auto title ${enabled ? "on" : "off"}; title: ${currentName() || "(none)"}`, "info");
-      } else {
-        context.ui.notify("Usage: /auto-title now [hint] | on | off | status", "warning");
-      }
-    },
-  });
+  // /title is the operator's name for this; /auto-title stays as an alias.
+  for (const name of ["title", "auto-title"]) {
+    pi.registerCommand(name, {
+      description: "Session title: now [hint] | on | off | lock | status",
+      handler: (args, context) => handleCommand(args, context),
+    });
+  }
 
   pi.events?.on(WEB_PLUGIN_ACTION_REQUEST_EVENT, (data: unknown) => {
     const request = data as Partial<ActionRequestPayload> | undefined;
