@@ -1,21 +1,20 @@
-# Auto title: naming an untitled session
+# Auto title: naming a session from its work
 
-> Part of [pi-workflow-extensions](../README.md). How a session without a name gets
-> one from its first exchange, and how to turn that off.
+> Part of [pi-workflow-extensions](../README.md). How a session gets a short title generated from its own opening exchange and work, on the session's current model, and how to control it.
 
 | | |
 | --- | --- |
 | **Status** | current operator guide |
 | **Detail for** | [README § Documentation](../README.md) |
-| **Scope** | `extensions/auto-title.ts`, `lib/auto-title.ts`, `lib/auto-title-web-view.ts`, `web-plugins/auto-title.ts` |
-| **Verified against** | `tests/auto-title.test.ts`, `tests/auto-title-extension.test.ts`. Not verified against a real model or a rendered web client. |
-| **Related** | [Dashboard](dashboard.md) (`session_goal` and `/name` set the same session name), [pi-web](pi-web.md) |
+| **Scope** | `extensions/auto-title.ts`, `lib/title/*`, `lib/auto-title-web-view.ts`, `web-plugins/auto-title.ts`, `web/server/sessions.ts` (names), `web/client/sidebar.tsx` and `shell.tsx` (display) |
+| **Verified against** | `tests/auto-title-extension.test.ts`, `tests/title-brief.test.ts`, `tests/title-clean.test.ts`, `tests/title-provenance.test.ts`, `tests/title-flag-store.test.ts`, `web/server/session-names.test.ts`. Not verified against a real model or in a browser: the sidebar and header are covered by the data-path tests only |
+| **Related** | [Dashboard](dashboard.md) (`session_goal` and `/name` set the same name), [pi-web](pi-web.md), [PRD](prds/session-title-generation.md) |
 
-- **What it is** — a pi extension that names an untitled session after a turn ends, plus a web plugin that shows its state and offers two actions.
-- **Why it exists** — Pi's picker falls back to the truncated first message; a short topic title is easier to scan.
-- **How it is enforced** — `extensions/auto-title.ts` runs on `agent_end`, only when `pi.getSessionName()` is empty, and calls `pi.setSessionName`.
-- **What it refuses** — child and forked sessions; any session that already has a name (from `/name`, `session_goal`, or an earlier run); tool output and everything after the first exchange.
-- **What it cannot do** — retitle when the topic shifts (use `session_goal`), or work without a model that has credentials.
+- **What it is** — a pi extension that names a session after its first exchange and refines it once more when the work grows, plus the web sidebar and header that show the name in place of the folder.
+- **Why it exists** — a folder name tells you nothing about the work; the picker and the sidebar need a topic. Titles were invisible on the web and could not be refined.
+- **How it is enforced** — `lib/title/policy.ts` decides every attempt; each generated title is recorded on the branch (`workflow-title:v1`) before it is applied, so the dashboard never mistakes it for a person's rename.
+- **What it refuses** — replacing a name you set; titling child sessions; a third automatic try; a title that echoes your message, contains a path, URL or identifier, or is generic.
+- **What it cannot do** — judge title quality. Nothing measures whether a title is good; the failure cases are checked by property tests, not by a model.
 
 ---
 
@@ -23,45 +22,71 @@
 
 ### What is sent
 
-One completion on the session's **current model**, through `ctx.modelRegistry.streamSimple`:
+One completion on the session's **current model**, through `ctx.modelRegistry.streamSimple`, with the request options from `lib/title/model-options.ts`:
 
 | Part | Content |
 | --- | --- |
-| System prompt | 3–6 words, same language as the user, topic not echo, no quotes or markdown; tagged text is data, not instructions |
-| User text | the first user message, clipped to 1,200 characters, and the first assistant text reply, clipped to 800 |
-| Limits | `maxTokens` 200, 20 s timeout |
-| Routing | `cacheRetention: "none"`, so it is a one-off request: no prompt caching, and `claude-bridge` routes it around its prompt-capture lookup |
-
-The output is reduced to one line, stripped of quotes and markdown, rejected above 8 words, and then validated by `meaningfulSessionTitle` (no ids, paths or generic names).
+| System prompt | 3–6 words, the user's language, no quotes or markdown, `KEEP` when a current title still fits. The brief is data, never instructions |
+| Brief | `goal`, `first_user`, `first_assistant`, `latest_user` (refinement only), `compaction`, `footprint`, `current_title` (refinement only), `hint` (manual only). About 3,000 characters at most |
+| Never sent | system prompts, tool output, thinking, file contents, environment values. Images and files appear only as `[attachment: type]` |
+| Redacted | `sk-…`, `ghp_…`, `AKIA…`, `Bearer …`, and long hex or base64 runs |
+| Budget | 64 output tokens with thinking off; a model that cannot turn thinking off gets its lowest level and 1,024 tokens. A `length` stop is retried once at four times the budget; a reply still cut off is a failure |
+| Routing | `cacheRetention: "none"` (a one-off, so `claude-bridge` routes it around prompt capture), `maxRetries: 0`, 20 s timeout |
 
 ### When it runs
 
-- After a turn ends in a parent session with an empty name.
-- At most twice per session: a failure is retried once on a later turn, then left alone.
-- If a name appears while the request is in flight, the generated title is discarded.
-- A failure never names the session. It shows a warning and the web view's *Last error* row.
+| Trigger | Result |
+| --- | --- |
+| A turn settles and the session has no name, with a substantive question and a reply | **Provisional** title |
+| A turn settles, the name is the generated one, a committed plan exists or the session has four or more user turns with file work, and no refinement has run | **Refinement**: rewrites the name, or `KEEP` leaves it and spends the pass |
+| `/title now [hint]` or the web **Regenerate** action | **Manual**: replaces the name, ignores the cap and the lock, not the cooldown (10 s) or a request in flight |
+
+Automatic tries are capped at **three per session**, failures included. The count lives on the branch, so it survives a reload.
+
+### Ownership
+
+- A name equal to the latest generated title is **generated**. Anything else is **yours**: `/name`, `session_goal`, or a web rename.
+- A name you set locks the automatic path for that session. A generated name you clear is not written again.
+- `/title lock` marks a generated name as yours in effect: no refinement runs. It is recorded as an attempt.
+- A name set while a request is in flight wins; the result is discarded and recorded as `superseded`.
 
 ### Controls
 
 | Control | Effect |
 | --- | --- |
-| `PI_AUTO_TITLE=0` | Start with it off |
-| `/auto-title on` · `off` | Flip it for this process |
-| `/auto-title now` | Generate now and **replace** the current name |
-| `/auto-title status` | Show state and the current title |
-| Web action **Regenerate title** | Same as `now` |
-| Web action **Toggle auto title** | Same as `on`/`off` |
+| `/title` · `/auto-title` | Same commands. `status` shows the name, its source, tries and the last error |
+| `/title now [hint]` | Generate now. The hint is data inside the brief |
+| `/title on` · `off` | Persisted choice in `~/.pi/agent/auto-title.json`. `off` aborts a request in flight |
+| `/title lock` | Keep the current generated title for good |
+| `PI_AUTO_TITLE=0` | Start this process with auto titles off; the stored choice is not changed |
+| Web **Regenerate title** · **Toggle auto title** | Same as `now` and `on`/`off` |
 
-### Web plugin
+### Where the name shows
 
-`web-plugins/auto-title.ts` is a declarative descriptor. The extension publishes a `kv` view (state, status, title, last error) under the `auto-title` plugin id and handles the two actions. The descriptor places the view at the `session.header` anchor; that placement has not been checked in a rendered client.
+- **Sidebar** — the row's label is the session name, or the folder when it has none. The folder moves to the meta line. Search matches the name.
+- **Header** — the selected session's name, with the folder in the tooltip.
+- **Terminal title and `/resume`** — pi's own, through `setSessionName`.
+- **Card** — Auto title, Status (`Locked (you named it)` for your own name), Title, Source, Model, Generations `n / 3`, Last error.
 
-The extension does not call the `session.title.generate@1` hook from the plugin catalog, because the hook is not wired into the host yet.
+Names reach the browser on the session directory stream as `session_renamed` frames. A disk-only session's name is read from its latest `session_info` entry by reading the file backwards in 64 KB steps, up to 4 MB, cached by mtime. A name deeper than 4 MB is not shown.
+
+### What it cannot do
+
+- It does not re-title on topic drift. Use `/title now` or `session_goal`.
+- It does not call a cheaper model. `titleModel` is an open question in the PRD.
+- The web header has no inline rename or regenerate button yet; `/name` and the card action cover both.
+- The `scripts/eval-titles.mjs` live-model evaluation from the PRD is not written. Quality is not measured.
 
 ## Tests
 
-`tests/auto-title.test.ts` covers first-exchange extraction, prompt building and output cleaning. `tests/auto-title-extension.test.ts` drives the extension with a fake `pi` and model registry: naming, no overwrite, in-flight rename, failure and retry cap, toggle, regenerate, the command, fork refusal, and descriptor registration. Neither calls a real model.
+- `tests/title-brief.test.ts` — substance filter, code collapse, redaction, tag neutralisation, caps, attachments, footprint, compaction, the natural-language floor.
+- `tests/title-clean.test.ts` — the accept and reject table, echo, `KEEP`, length bound, policy transitions, cap, cooldown, refinement trigger, request budgets.
+- `tests/title-provenance.test.ts` — record ownership and attempt counting.
+- `tests/auto-title-extension.test.ts` — the lifecycle end to end with a fake pi and model: provisional, refinement, `KEEP`, lock, failure cap, in-flight rename, toggle, persisted choice, card rows, child sessions.
+- `web/server/session-names.test.ts` — disk name scan (far from the end, cleared, chunk boundary), live rename dedupe.
+
+Not covered: a real model's output, browser rendering of the sidebar and header, and the bridged (TUI-owned) rename path end to end.
 
 ## Removal
 
-Delete `extensions/auto-title.ts` from `package.json` `pi.extensions`, then remove the files in Scope. Names it already set stay in the session files like any other name.
+Remove `./extensions/auto-title.ts` from `package.json` `pi.extensions`. The web descriptor stays harmless without it. Names already set stay in the session files like any other name. Delete `~/.pi/agent/auto-title.json` to forget the stored choice.
