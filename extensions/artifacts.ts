@@ -471,15 +471,24 @@ export default function artifactsExtension(pi: ExtensionAPI) {
    * markdown — the host renders it through its own sanitising renderer, so the
    * catalog is readable in the browser, not just listed.
    */
+  /**
+   * The web row's opened body: a key:value metadata line, then the artifact's
+   * content. The meta keys are stable and parseable (`key:value` joined by
+   * " · " with the value after the FIRST colon, so ISO dates and `subagent:
+   * name:run` authors survive); the value is never markdown, so the browser's
+   * artifact previewer can read type/version/id/size/tags without parsing prose.
+   */
   function artifactDetail(art: Artifact): string {
     const size = formatBytes(Buffer.byteLength(art.content, "utf8"));
     const meta = [
-      `\`${art.type}\` v${art.version}`,
-      size,
-      `by ${art.createdBy}`,
-      art.updatedAt,
-      ...art.tags.map(tag => `\`${tag}\``),
-    ].filter(Boolean).join(" · ");
+      `id:${art.id}`,
+      `type:${art.type}`,
+      `version:${art.version}`,
+      `size:${size}`,
+      `author:${art.createdBy}`,
+      `updated:${art.updatedAt}`,
+      `tags:${JSON.stringify(art.tags)}`,
+    ].join(" · ");
     return `${meta}\n\n${art.content}`;
   }
 

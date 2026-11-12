@@ -22,11 +22,15 @@ import { availablePanelPlugins, isPanelPlugin } from "./plugins/panel-policy.ts"
 import { pinPanel, seedPins, unpinPanel } from "./plugins/pin-policy.ts";
 import { browserStorage, loadPinnedIds, savePinnedIds } from "./plugins/pin-storage.ts";
 import { FilesPanel } from "./plugins/files/FilesPanel.tsx";
+import { ArtifactsPanel } from "./plugins/artifacts/ArtifactsPanel.tsx";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import { PluginActionShortcuts } from "./plugins/PluginActionShortcuts.tsx";
 import { PluginPage, parsePluginRoute } from "./plugins/PluginLayout.tsx";
 import { PluginViewRenderer } from "./plugins/PluginViewRenderer.tsx";
 import { resolveRegionOverrides, type RegionOverride } from "../shared/regions.ts";
+
+/** Plugin id whose sidebar view the host renders with a dedicated catalog+preview panel. */
+const ARTIFACTS_PANEL_ID = "artifacts";
 
 function useRoute(): string {
   const [path, setPath] = useState(() => window.location.pathname);
@@ -573,6 +577,13 @@ export function AppShell() {
       onClose={() => setSidePanelOpen(false)}
       sessionId={session.selectedId}
       rootLabel={selected?.cwd ?? ""}
+      key={session.selectedId ?? "none"}
+    />
+  ) : openPanelPluginId === ARTIFACTS_PANEL_ID ? (
+    <ArtifactsPanel
+      open={sidePanelOpen}
+      onClose={() => setSidePanelOpen(false)}
+      view={session.pluginViews[ARTIFACTS_PANEL_ID]}
       key={session.selectedId ?? "none"}
     />
   ) : (
