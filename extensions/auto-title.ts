@@ -1,24 +1,35 @@
 /**
- * auto-title — names an untitled session from its first exchange.
+ * auto-title — names a session from its own work, on the session's current model.
  *
- * After a turn ends, if the session has no name, one short completion on the
- * session's current model turns the first user message and first assistant
- * reply into a 3–6 word title (see lib/auto-title.ts) and applies it with
- * `setSessionName`, so Pi's picker, the dashboard and the web all show it.
+ * After a turn settles, `lib/title/policy.ts` decides whether to write a
+ * provisional title (an untitled session with a first exchange), one refinement
+ * (once a plan or several turns of file work exist), or nothing. The request is
+ * built from `lib/title/brief.ts`, one completion on the session's own model, and
+ * the answer is cleaned by `lib/title/clean.ts`. A title is recorded on the
+ * branch before it is applied, so the dashboard and the web can tell it apart
+ * from a name a person chose.
  *
- * It only fills an empty slot: a name from `/name`, `session_goal` or an earlier
- * run is never replaced by the automatic path. The explicit `/auto-title now`
- * command and the web "Regenerate" action are the only ways to replace a name,
- * and a failure leaves the name as it was.
+ * It never replaces a name a person chose. `/auto-title now [hint]`, and the web
+ * action Regenerate, are the only manual paths; they ignore the cap and the lock
+ * but respect the cooldown and never run while a request is in flight.
  *
  * `PI_AUTO_TITLE=0` starts the session with it off; `/auto-title on|off` flips it.
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type AssistantMessage, type AssistantMessageEvent } from "@earendil-works/pi-ai/compat";
-import { generateAutoTitle } from "../lib/auto-title.ts";
+import { buildTitleBrief, hasNaturalLanguage, type TitleBrief } from "../lib/title/brief.ts";
+import { titleRequest } from "../lib/title/prompt.ts";
+import { cleanTitle, type TitleRejection } from "../lib/title/clean.ts";
+import { decide, refineSignal, type PolicyEvent, type PolicyState, type SkipReason } from "../lib/title/policy.ts";
+import { lengthRetryOptions, titleRequestOptions, type TitleRequestOptions } from "../lib/title/model-options.ts";
 import {
-  generationCount,
+  automaticAttempts,
+  isGeneratedName,
+  refinementTried,
+  successCount,
+  TITLE_ATTEMPT_ENTRY,
   TITLE_RECORD_ENTRY,
+  type TitleAttempt,
   type TitleRecord,
 } from "../lib/title/provenance.ts";
 import {
@@ -32,9 +43,29 @@ import { childContextState, isSubagentChildSession } from "../lib/subagent-conte
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../lib/web-plugins/actions.ts";
 import { publishWebView } from "../lib/web-plugins/publisher.ts";
 
-/** Automatic tries per session. A failed try is retried once on a later turn, then left alone. */
-export const AUTO_TITLE_ATTEMPTS = 2;
 export const AUTO_TITLE_TIMEOUT_MS = 20_000;
+
+const REJECTION_TEXT: Record<TitleRejection, string> = {
+  "empty": "the model returned no usable title",
+  "keep-without-current": "the model answered KEEP with no title to keep",
+  "too-few-words": "the title had too few words",
+  "too-many-words": "the title had too many words",
+  "generic": "the title was a generic label",
+  "path": "the title contained a path",
+  "url": "the title contained a URL",
+  "identifier": "the title contained an identifier",
+  "echo": "the title only repeated the first message",
+  "not-a-title": "the title was not a meaningful name",
+};
+
+const SKIP_TEXT: Partial<Record<SkipReason, string>> = {
+  busy: "a title is already being generated",
+  cooldown: "a title was generated a moment ago",
+  "no-exchange": "the session has no exchange to title yet",
+  child: "only parent sessions are titled",
+  disabled: "auto title is off",
+  cap: "the automatic title limit for this session is reached",
+};
 
 function isChild(context: ExtensionContext): boolean {
   try {
@@ -49,13 +80,28 @@ function isChild(context: ExtensionContext): boolean {
   }
 }
 
+function textOf(content: readonly any[]): string {
+  return content.map((block) => (block?.type === "text" && typeof block.text === "string" ? block.text : "")).join("\n");
+}
+
+async function collectReply(stream: AsyncIterable<AssistantMessageEvent>): Promise<AssistantMessage> {
+  let reply: AssistantMessage | undefined;
+  for await (const event of stream) {
+    if (event.type === "done") reply = event.message;
+    else if (event.type === "error") reply = event.error;
+  }
+  if (!reply) throw new Error("the model ended without a result");
+  return reply;
+}
+
 export default function autoTitleExtension(pi: ExtensionAPI): void {
   let enabled = process.env.PI_AUTO_TITLE !== "0";
   let phase: AutoTitlePhase = "idle";
   let lastError: string | undefined;
+  let lastManualAt: number | undefined;
   let activeCtx: ExtensionContext | undefined;
   let run: AbortController | undefined;
-  const attempts = new Map<string, number>();
+  const warned = new Set<string>();
 
   const currentName = () => pi.getSessionName()?.trim() ?? "";
 
@@ -68,98 +114,171 @@ export default function autoTitleExtension(pi: ExtensionAPI): void {
     }));
   }
 
-  /** One completion on the session's own model. Resolves true when a name was applied. */
-  async function generate(context: ExtensionContext, mode: "auto" | "forced"): Promise<boolean> {
+  function notify(context: ExtensionContext, message: string, level: "info" | "warning"): void {
+    try { context.ui?.notify?.(message, level); } catch { /* a notification is a courtesy */ }
+  }
+
+  /** Automatic failures warn once per reason; a manual request always answers. */
+  function reportFailure(context: ExtensionContext, trigger: PolicyEvent, reason: string): void {
+    if (trigger === "manual") return notify(context, `Auto title skipped: ${reason}`, "warning");
+    if (warned.has(reason)) return;
+    warned.add(reason);
+    notify(context, `Auto title skipped: ${reason}`, "warning");
+  }
+
+  function recordAttempt(context: ExtensionContext, attempt: Omit<TitleAttempt, "v" | "ownerSessionId">): void {
+    pi.appendEntry(TITLE_ATTEMPT_ENTRY, {
+      v: 1,
+      ownerSessionId: context.sessionManager.getSessionId(),
+      ...attempt,
+    } satisfies TitleAttempt);
+  }
+
+  function stateFor(
+    context: ExtensionContext,
+    branch: readonly any[],
+    brief: TitleBrief,
+    name: string,
+  ): PolicyState {
+    const sessionId = context.sessionManager.getSessionId();
+    // Both triggers need a substantive question and a reply to it; a manual run is no exception.
+    const exchange = brief.firstUser !== "" && brief.firstAssistant !== "" && hasNaturalLanguage(brief);
+    return {
+      enabled,
+      child: isChild(context),
+      busy: run !== undefined,
+      name,
+      generatedName: isGeneratedName(branch, sessionId, name || undefined),
+      successes: successCount(branch, sessionId),
+      automaticAttempts: automaticAttempts(branch, sessionId),
+      hasExchange: exchange,
+      refineSignal: refineSignal(brief),
+      refined: refinementTried(branch, sessionId),
+      sinceManualMs: lastManualAt === undefined ? undefined : Date.now() - lastManualAt,
+    };
+  }
+
+  async function requestTitle(
+    context: ExtensionContext,
+    options: TitleRequestOptions,
+    brief: TitleBrief,
+    signal: AbortSignal,
+  ): Promise<AssistantMessage> {
     const model = context.model;
-    if (run) return false;
-    if (!model) {
-      if (mode === "forced") {
-        phase = "failed";
-        lastError = "no model is available for this session";
-        publish();
-        try { context.ui?.notify?.(`Auto title skipped: ${lastError}`, "warning"); } catch { /* notify is a courtesy */ }
-      }
+    if (!model) throw new Error("no model is available for this session");
+    const { systemPrompt, prompt } = titleRequest(brief);
+    const send = (budget: TitleRequestOptions) => collectReply(context.modelRegistry.streamSimple(
+      model,
+      { systemPrompt, messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
+      // Reasoning is omitted (off) unless the model cannot turn it off. A one-off
+      // request marked cacheRetention "none" is routed around claude-bridge's
+      // prompt capture, and maxRetries 0 leaves retries to this policy.
+      { maxTokens: budget.maxTokens, signal, maxRetries: 0, cacheRetention: "none", ...(budget.reasoning ? { reasoning: budget.reasoning } : {}) },
+    ) as AsyncIterable<AssistantMessageEvent>);
+    let reply = await send(options);
+    if (reply.stopReason === "length") reply = await send(lengthRetryOptions(options));
+    if (reply.stopReason === "error" || reply.stopReason === "aborted") {
+      throw new Error(reply.errorMessage ?? "the model ended without a result");
+    }
+    // A reply that is still cut off is partial text; it is never a title.
+    if (reply.stopReason === "length") throw new Error("the title hit the token cap");
+    return reply;
+  }
+
+  /** One title attempt. Resolves true when a name was written. */
+  async function generate(context: ExtensionContext, trigger: PolicyEvent, hint?: string): Promise<boolean> {
+    const sessionId = context.sessionManager.getSessionId();
+    const branch = context.sessionManager.getBranch();
+    const name = currentName();
+    const probe = buildTitleBrief({ branch, sessionId, cwd: context.cwd });
+    const decision = decide(stateFor(context, branch, probe, name), trigger);
+    if (decision.action === "skip") {
+      if (trigger === "manual" && SKIP_TEXT[decision.reason]) notify(context, SKIP_TEXT[decision.reason]!, "info");
       return false;
     }
-    const sessionId = context.sessionManager.getSessionId();
+    const kind = decision.kind;
+    const model = context.model;
+    if (!model) {
+      phase = "failed";
+      lastError = "no model is available for this session";
+      publish();
+      reportFailure(context, trigger, lastError);
+      return false;
+    }
+    if (kind === "manual") lastManualAt = Date.now();
+
+    const brief = buildTitleBrief({
+      branch,
+      sessionId,
+      cwd: context.cwd,
+      currentTitle: kind === "provisional" ? undefined : name,
+      refinement: kind === "refine",
+      hint,
+    });
+    const budget = titleRequestOptions(model);
     const controller = new AbortController();
     run = controller;
     phase = "generating";
     lastError = undefined;
     publish();
+    context.ui?.setStatus?.("title", "naming…");
     try {
-      const title = await generateAutoTitle({
-        branch: context.sessionManager.getBranch(),
-        project: context.cwd.split("/").filter(Boolean).pop(),
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(AUTO_TITLE_TIMEOUT_MS)]),
-        async complete({ systemPrompt, prompt, maxTokens, signal }) {
-          // streamSimple with reasoning omitted means off: a title needs no
-          // thinking pass, so the 200-token budget reaches the title itself.
-          // cacheRetention "none" marks this as a one-off request the same way
-          // pi's compaction/summary calls do — it disables prompt caching, and
-          // claude-bridge routes it to an isolated process that skips its
-          // prompt-capture lookup, which would otherwise reject this custom system
-          // prompt for not matching the turn's captured prompt.
-          const stream = context.modelRegistry.streamSimple(
-            model,
-            { systemPrompt, messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
-            { maxTokens, signal, maxRetries: 0, cacheRetention: "none" },
-          );
-          let reply: AssistantMessage | undefined;
-          for await (const event of stream as AsyncIterable<AssistantMessageEvent>) {
-            if (event.type === "done") reply = event.message;
-            else if (event.type === "error") reply = event.error;
-          }
-          if (!reply || reply.stopReason === "error" || reply.stopReason === "aborted") {
-            throw new Error(reply?.errorMessage ?? "the model ended without a result");
-          }
-          return reply.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
-        },
-      });
+      const reply = await requestTitle(context, budget, brief, AbortSignal.any([controller.signal, AbortSignal.timeout(AUTO_TITLE_TIMEOUT_MS)]));
       if (controller.signal.aborted) return false;
-      if (!title) throw new Error("the model returned no usable title");
-      // The user or the agent may have named the session while the request was in flight.
-      if (mode === "auto" && currentName()) {
+      const verdict = cleanTitle(textOf(reply.content), {
+        project: context.cwd.split("/").filter(Boolean).pop(),
+        firstUser: brief.firstUser,
+        currentTitle: brief.currentTitle || undefined,
+      });
+      const source = trigger === "manual" ? "manual" : "auto";
+      if (verdict.kind === "rejected") {
+        throw Object.assign(new Error(REJECTION_TEXT[verdict.reason]), { attemptReason: verdict.reason });
+      }
+      // A person or another extension named the session while the request was in flight.
+      if (currentName() !== name) {
+        recordAttempt(context, { source, kind, outcome: "superseded", reason: "the name changed while the title was generated" });
         phase = "idle";
         return false;
       }
-      // Record provenance first: the rename event fires inside setSessionName,
-      // and the dashboard must find this record on the branch to skip it.
-      const branch = context.sessionManager.getBranch();
+      if (verdict.kind === "keep") {
+        recordAttempt(context, { source, kind, outcome: "kept", reason: "the current title still fits" });
+        phase = "done";
+        if (trigger === "manual") notify(context, `Session title kept: ${name}`, "info");
+        return false;
+      }
+      // Provenance first: the rename event fires inside setSessionName, and the
+      // dashboard must find this record on the branch to skip it.
       pi.appendEntry(TITLE_RECORD_ENTRY, {
         v: 1,
         ownerSessionId: sessionId,
-        title,
-        source: mode === "forced" ? "manual" : "auto",
-        generation: generationCount(branch, sessionId) + 1,
+        title: verdict.title,
+        source,
+        generation: successCount(branch, sessionId) + 1,
         model: `${model.provider}/${model.id}`,
+        ...(reply.usage ? { usage: { input: reply.usage.input, output: reply.usage.output } } : {}),
       } satisfies TitleRecord);
-      pi.setSessionName(title);
+      pi.setSessionName(verdict.title);
       phase = "done";
+      if (trigger === "manual") notify(context, `Session title: ${verdict.title}`, "info");
       return true;
     } catch (error) {
       if (controller.signal.aborted) return false;
       phase = "failed";
       lastError = error instanceof Error ? error.message : String(error ?? "unknown error");
-      try {
-        context.ui?.notify?.(`Auto title skipped: ${lastError}`, "warning");
-      } catch {
-        // A notification is a courtesy; a title failure never disturbs the session.
-      }
+      const attemptReason = (error as { attemptReason?: string })?.attemptReason ?? "request-failed";
+      recordAttempt(context, {
+        source: trigger === "manual" ? "manual" : "auto",
+        kind,
+        outcome: "failed",
+        reason: attemptReason,
+      });
+      reportFailure(context, trigger, lastError);
       return false;
     } finally {
       if (run === controller) run = undefined;
-      if (mode === "auto" && sessionId) attempts.set(sessionId, (attempts.get(sessionId) ?? 0) + 1);
+      context.ui?.setStatus?.("title", undefined);
       publish();
     }
-  }
-
-  async function onTurnEnd(context: ExtensionContext): Promise<void> {
-    activeCtx = context;
-    if (!enabled || run || isChild(context) || currentName()) return;
-    const sessionId = context.sessionManager.getSessionId();
-    if ((attempts.get(sessionId) ?? 0) >= AUTO_TITLE_ATTEMPTS) return;
-    await generate(context, "auto");
   }
 
   function setEnabled(value: boolean): void {
@@ -168,22 +287,25 @@ export default function autoTitleExtension(pi: ExtensionAPI): void {
     publish();
   }
 
-  function regenerate(context: ExtensionContext): void {
-    if (isChild(context)) return;
-    void generate(context, "forced");
+  async function onSettled(context: ExtensionContext): Promise<void> {
+    activeCtx = context;
+    await generate(context, "settled");
   }
 
   pi.on("session_start", (_event, context) => {
     activeCtx = context;
     run?.abort();
     run = undefined;
-    phase = currentName() ? "done" : "idle";
     lastError = undefined;
+    lastManualAt = undefined;
+    warned.clear();
+    phase = currentName() ? "done" : "idle";
+    // A child publishes nothing to the web: its parent owns the title.
     if (!isChild(context)) publish();
   });
 
   pi.on("agent_end", (_event, context) => {
-    void onTurnEnd(context);
+    void onSettled(context);
   });
 
   pi.on("session_shutdown", () => {
@@ -193,19 +315,20 @@ export default function autoTitleExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("auto-title", {
-    description: "Auto session title: now | on | off | status",
+    description: "Auto session title: now [hint] | on | off | status",
     handler: async (args, context) => {
-      const arg = args.trim().toLowerCase();
+      const text = args.trim();
+      const [word = "", ...rest] = text.split(/\s+/);
+      const arg = word.toLowerCase();
       if (arg === "on" || arg === "off") {
         setEnabled(arg === "on");
         context.ui.notify(`Auto title ${arg}`, "info");
       } else if (arg === "now") {
-        if (isChild(context)) return context.ui.notify("Only parent sessions are auto-titled.", "warning");
-        if (await generate(context, "forced")) context.ui.notify(`Session title: ${currentName()}`, "info");
+        await generate(context, "manual", rest.join(" ") || undefined);
       } else if (arg === "" || arg === "status") {
         context.ui.notify(`Auto title ${enabled ? "on" : "off"}; title: ${currentName() || "(none)"}`, "info");
       } else {
-        context.ui.notify("Usage: /auto-title now | on | off | status", "warning");
+        context.ui.notify("Usage: /auto-title now [hint] | on | off | status", "warning");
       }
     },
   });
@@ -214,6 +337,6 @@ export default function autoTitleExtension(pi: ExtensionAPI): void {
     const request = data as Partial<ActionRequestPayload> | undefined;
     if (request?.pluginId !== AUTO_TITLE_PLUGIN_ID || !activeCtx) return;
     if (request.actionId === AUTO_TITLE_TOGGLE_ACTION) setEnabled(!enabled);
-    else if (request.actionId === AUTO_TITLE_REGENERATE_ACTION) regenerate(activeCtx);
+    else if (request.actionId === AUTO_TITLE_REGENERATE_ACTION) void generate(activeCtx, "manual");
   });
 }

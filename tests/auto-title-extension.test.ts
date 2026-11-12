@@ -8,18 +8,20 @@ import {
   AUTO_TITLE_TOGGLE_ACTION,
   autoTitleWebView,
 } from "../lib/auto-title-web-view.ts";
+import { TITLE_ATTEMPT_ENTRY, TITLE_RECORD_ENTRY } from "../lib/title/provenance.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../lib/web-plugins/actions.ts";
-import { TITLE_RECORD_ENTRY } from "../lib/title/provenance.ts";
 import { validatePlugin } from "../lib/web-plugins/descriptor.ts";
 import { validateRegistry } from "../lib/web-plugins/registry.ts";
 import { WEB_PLUGIN_VIEW_EVENT, validateView } from "../lib/web-plugins/view.ts";
-import { WEB_PLUGINS, WEB_PLUGIN_OPT_OUT } from "../web-plugins/index.ts";
+import { WEB_PLUGINS } from "../web-plugins/index.ts";
 import { autoTitlePlugin } from "../web-plugins/auto-title.ts";
 
 const exchange = [
   { type: "message", message: { role: "user", content: "fix the login bug" } },
   { type: "message", message: { role: "assistant", content: [{ type: "text", text: "Found it in auth.ts" }] } },
 ];
+
+const replyText = (text: string) => async () => ({ stopReason: "stop", content: [{ type: "text", text }] });
 
 function harness(opts: { name?: string; branch?: any[]; reply?: () => Promise<any> } = {}) {
   let name = opts.name;
@@ -81,6 +83,12 @@ function harness(opts: { name?: string; branch?: any[]; reply?: () => Promise<an
   return { ctx, emit, action, views, notices, requests, commands, written, name: () => name, rename: (value: string) => { name = value; } };
 }
 
+const committedPlan = {
+  type: "custom",
+  customType: "workflow-todo:v2",
+  data: { v: 2, ownerSessionId: "s1", kind: "plan", plan: { scope: "committed", goal: "Build the export feature" } },
+};
+
 test("an untitled session is named once, from the first exchange, on the current model", async () => {
   const h = harness();
   await h.emit("session_start");
@@ -88,12 +96,14 @@ test("an untitled session is named once, from the first exchange, on the current
   assert.equal(h.name(), "Fix Login Bug");
   assert.equal(h.requests.length, 1);
   assert.equal(h.requests[0].model, h.ctx.model);
-  assert.ok(h.requests[0].options.maxTokens <= 256);
+  assert.equal(h.requests[0].options.maxTokens, 64);
   assert.equal(h.requests[0].options.cacheRetention, "none", "a one-off title request must not be treated as an agent turn");
-  assert.match(h.requests[0].context.messages[0].content, /fix the login bug/);
-  assert.match(h.requests[0].context.messages[0].content, /Found it in auth\.ts/);
+  assert.equal(h.requests[0].options.maxRetries, 0);
+  assert.equal(h.requests[0].options.reasoning, undefined, "thinking is off for a model that allows it");
+  assert.match(h.requests[0].context.messages[0].content, /<first_user>fix the login bug<\/first_user>/);
+  assert.match(h.requests[0].context.messages[0].content, /<first_assistant>Found it in auth\.ts<\/first_assistant>/);
   await h.emit("agent_end");
-  assert.equal(h.requests.length, 1, "a named session is not titled again");
+  assert.equal(h.requests.length, 1, "a titled session with no refinement signal is not titled again");
 });
 
 test("a generated title is recorded on the branch before it is applied", async () => {
@@ -119,6 +129,16 @@ test("an existing name is never replaced by the automatic path", async () => {
   assert.equal(h.name(), "My own name");
 });
 
+test("a name a person sets after the provisional title locks the automatic path", async () => {
+  const h = harness({ branch: [...exchange, committedPlan] });
+  await h.emit("agent_end");
+  assert.equal(h.name(), "Fix Login Bug");
+  h.rename("Mine");
+  await h.emit("agent_end");
+  assert.equal(h.requests.length, 1, "no refinement once a person has named it");
+  assert.equal(h.name(), "Mine");
+});
+
 test("a name set while the request is in flight wins", async () => {
   let release: (value: unknown) => void = () => {};
   const h = harness({ reply: () => new Promise((resolve) => { release = resolve; }) });
@@ -126,19 +146,54 @@ test("a name set while the request is in flight wins", async () => {
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(h.requests.length, 1, "the request is parked on the model");
   h.rename("Typed by the user");
-  release({ stopReason: "stop", content: [{ type: "text", text: "Generated Title" }] });
+  release({ stopReason: "stop", content: [{ type: "text", text: "Generated Title Here" }] });
   await pending;
   assert.equal(h.name(), "Typed by the user");
+  assert.equal(h.written.at(-1).customType, TITLE_ATTEMPT_ENTRY, "the discarded result is recorded as superseded");
+  assert.equal(h.written.at(-1).data.outcome, "superseded");
 });
 
-test("a failed reply keeps the session untitled, warns, and retries only once more", async () => {
+test("a refinement runs once, and a KEEP answer writes no name but spends the pass", async () => {
+  const answers = ["Fix Login Bug", "KEEP"];
+  const h = harness({
+    branch: [...exchange, committedPlan],
+    reply: () => replyText(answers.shift() ?? "Unused Title Here")(),
+  });
+  await h.emit("agent_end");
+  assert.equal(h.name(), "Fix Login Bug");
+  await h.emit("agent_end");
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests[1].context.messages[0].content.includes("<current_title>Fix Login Bug</current_title>"), true);
+  assert.equal(h.name(), "Fix Login Bug");
+  assert.equal(h.written.at(-1).data.kind, "refine");
+  assert.equal(h.written.at(-1).data.outcome, "kept");
+  await h.emit("agent_end");
+  assert.equal(h.requests.length, 2, "the refinement pass is spent");
+});
+
+test("a refinement that rewrites the title records generation two", async () => {
+  const answers = ["Fix Login Bug", "Login Redirect Loop Fix"];
+  const h = harness({
+    branch: [...exchange, committedPlan],
+    reply: () => replyText(answers.shift() ?? "Unused Title Here")(),
+  });
+  await h.emit("agent_end");
+  await h.emit("agent_end");
+  assert.equal(h.name(), "Login Redirect Loop Fix");
+  assert.equal(h.written.at(-1).data.generation, 2);
+});
+
+test("a failed reply writes no name, warns once, and the cap stops the third try", async () => {
   const h = harness({ reply: async () => ({ stopReason: "error", errorMessage: "quota", content: [] }) });
   await h.emit("agent_end");
   assert.equal(h.name(), undefined);
   assert.match(h.notices[0]!, /Auto title skipped: quota/);
   await h.emit("agent_end");
   await h.emit("agent_end");
-  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests.length, 3);
+  await h.emit("agent_end");
+  assert.equal(h.requests.length, 3, "three automatic tries per session, failures included");
+  assert.equal(h.notices.length, 1, "the same reason is not repeated");
   assert.deepEqual(h.views.at(-1).rows.find((row: any) => row.label === "Status"), { label: "Status", value: "Skipped" });
 });
 
@@ -166,11 +221,21 @@ test("regenerate replaces an existing name, and a failure leaves it alone", asyn
   assert.equal(failing.name(), "Old name");
 });
 
-test("/auto-title now generates; off disables; bad usage warns", async () => {
-  const h = harness();
+test("a manual regenerate inside the cooldown is refused with the reason", async () => {
+  const h = harness({ name: "Old name" });
   const { handler } = h.commands.get("auto-title");
   await handler("now", h.ctx);
+  await handler("now", h.ctx);
+  assert.equal(h.requests.length, 1);
+  assert.match(h.notices.at(-1)!, /generated a moment ago/);
+});
+
+test("/auto-title now takes an optional hint as data; off disables; bad usage warns", async () => {
+  const h = harness();
+  const { handler } = h.commands.get("auto-title");
+  await handler("now focus on the export feature", h.ctx);
   assert.equal(h.name(), "Fix Login Bug");
+  assert.match(h.requests[0].context.messages[0].content, /<hint>focus on the export feature<\/hint>/);
   await handler("off", h.ctx);
   await handler("status", h.ctx);
   assert.match(h.notices.at(-1)!, /Auto title off/);
@@ -178,7 +243,7 @@ test("/auto-title now generates; off disables; bad usage warns", async () => {
   assert.match(h.notices.at(-1)!, /Usage/);
 });
 
-test("a session seeded from a parent fork is never auto-titled", async () => {
+test("a session seeded from a parent fork is never auto-titled, and publishes nothing", async () => {
   const marker = {
     type: "custom",
     customType: "subagent-context:v1",
@@ -198,7 +263,5 @@ test("the view validates, and the descriptor is registered and valid", () => {
   }
   assert.equal(validatePlugin(autoTitlePlugin, ["auto-title.ts"]).ok, true);
   assert.deepEqual(validateRegistry(WEB_PLUGINS), []);
-  assert.ok(WEB_PLUGINS.some((p) => p.id === AUTO_TITLE_PLUGIN_ID));
-  assert.equal(Object.hasOwn(WEB_PLUGIN_OPT_OUT, "auto-title"), false);
-  assert.deepEqual(autoTitlePlugin.actions?.map((a) => a.id), [AUTO_TITLE_REGENERATE_ACTION, AUTO_TITLE_TOGGLE_ACTION]);
+  assert.ok(WEB_PLUGINS.some((plugin) => plugin.id === AUTO_TITLE_PLUGIN_ID));
 });

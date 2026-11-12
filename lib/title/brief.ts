@@ -238,8 +238,12 @@ export function buildTitleBrief(input: BriefInput): TitleBrief {
   };
 }
 
-/** Enough natural language to name something. A brief below this is not sent. */
+/**
+ * Enough natural language to name something: the opening exchange, goal and hint
+ * together. A brief below this is not sent, so an attachment-only opener cannot
+ * produce an empty or raw title.
+ */
 export function hasNaturalLanguage(brief: TitleBrief): boolean {
-  const words = [brief.goal, brief.firstUser, brief.latestUser, brief.hint].map(naturalText).join(" ");
+  const words = [brief.goal, brief.firstUser, brief.firstAssistant, brief.latestUser, brief.hint].map(naturalText).join(" ");
   return words.trim().length >= MIN_NATURAL_CHARS;
 }
