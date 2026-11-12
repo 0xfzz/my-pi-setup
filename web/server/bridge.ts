@@ -412,7 +412,7 @@ function handleBridgeEvent(sessionId: string, event: unknown): void {
     // Handled in postEvent: the models list is this connection's state.
     return;
   }
-  if (e.type === "agent_start" || e.type === "agent_settled" || e.type === "session_shutdown") {
+  if (e.type === "agent_start" || e.type === "agent_end" || e.type === "agent_settled" || e.type === "session_shutdown") {
     recordExtensionUi(sessionId, e);
   }
 }

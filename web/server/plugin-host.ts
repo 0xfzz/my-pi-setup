@@ -103,7 +103,7 @@ export function recordExtensionUi(
     if (update) webUiStore.publish(sessionId, update.type, update.payload, update.sourceKey);
   } else if (event.type === "extension_ui_closed") {
     webUiStore.publish(sessionId, "ui.custom.changed", { id: event.id, method: "closed", lines: null }, String(event.id));
-  } else if (["agent_start", "agent_settled", "session_shutdown"].includes(String(event.type))) {
+  } else if (["agent_start", "agent_end", "agent_settled", "session_shutdown"].includes(String(event.type))) {
     webUiStore.publish(
       sessionId,
       "ui.session.lifecycle",

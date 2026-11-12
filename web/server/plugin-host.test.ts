@@ -9,8 +9,10 @@ import {
   getPluginDescriptor,
   isKnownSession,
   recordActionAudit,
+  recordExtensionUi,
   relayActionRequest,
   webPluginsStore,
+  webUiStore,
   type MinimalEventBus,
 } from "./plugin-host.ts";
 import { WEB_PLUGIN_VIEW_EVENT } from "../../lib/web-plugins/view.ts";
@@ -52,6 +54,14 @@ function attach(sessionId: string): { detach: () => void; emissions: Array<{ ch:
   const detach = attachSessionPlugins({ sessionId, inner: { resourceLoader: { eventBus: bus } } });
   return { detach, emissions, bus };
 }
+
+test("recordExtensionUi clears the running flag on agent_end", () => {
+  recordExtensionUi("working-session", { type: "agent_start" });
+  assert.equal(webUiStore.snapshot().sessions["working-session"]?.running, true);
+
+  recordExtensionUi("working-session", { type: "agent_end" });
+  assert.equal(webUiStore.snapshot().sessions["working-session"]?.running, false);
+});
 
 test("recordView stores valid views and rejects invalid ones", () => {
   assert.equal(

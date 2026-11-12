@@ -142,6 +142,7 @@ export function attachAgentEventStream(
         // indicator reset) for every plugin surface following this stream.
         if (
           typed.type === "agent_start"
+          || typed.type === "agent_end"
           || typed.type === "agent_settled"
           || typed.type === "session_shutdown"
         ) {
