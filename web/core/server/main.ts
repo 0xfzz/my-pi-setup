@@ -371,7 +371,9 @@ function registerFixtureSession(): void {
         thinkingLevel: "off",
       }),
     },
-    process.cwd(),
+    // Files share the real session root (process.cwd()); the viewer e2e
+    // overrides it to a fixture directory so it can browse known files.
+    process.env.PI_WEB_TEST_FILES_ROOT ?? process.cwd(),
     "",
   );
 }
