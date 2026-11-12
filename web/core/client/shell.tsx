@@ -73,6 +73,13 @@ export function AppShell() {
     setSidePanelOpen(true);
   };
 
+  // The side panel (Files, Artifacts, plugin panels) is scoped to the
+  // selected session: switching sessions closes it so a stale panel cannot
+  // linger over the new session's chat.
+  useEffect(() => {
+    setSidePanelOpen(false);
+  }, [session.selectedId]);
+
   // The web-ported TUI dialogs. One open dialog at a time — like the TUI.
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [treeNodes, setTreeNodes] = useState<WebTreeNode[] | null>(null);
