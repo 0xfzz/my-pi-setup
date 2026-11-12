@@ -9,6 +9,7 @@ import {
   autoTitleWebView,
 } from "../lib/auto-title-web-view.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../lib/web-plugins/actions.ts";
+import { TITLE_RECORD_ENTRY } from "../lib/title/provenance.ts";
 import { validatePlugin } from "../lib/web-plugins/descriptor.ts";
 import { validateRegistry } from "../lib/web-plugins/registry.ts";
 import { WEB_PLUGIN_VIEW_EVENT, validateView } from "../lib/web-plugins/view.ts";
@@ -28,9 +29,11 @@ function harness(opts: { name?: string; branch?: any[]; reply?: () => Promise<an
   const notices: string[] = [];
   const requests: any[] = [];
   const commands = new Map<string, any>();
+  const written: any[] = [];
   const pi: any = {
     on: (event: string, handler: any) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
     registerCommand: (command: string, spec: unknown) => commands.set(command, spec),
+    appendEntry: (customType: string, data: unknown) => written.push({ type: "custom", customType, data }),
     getSessionName: () => name,
     setSessionName: (value: string) => { name = value; },
     events: {
@@ -46,7 +49,7 @@ function harness(opts: { name?: string; branch?: any[]; reply?: () => Promise<an
     ui: { notify: (message: string) => notices.push(message) },
     sessionManager: {
       getSessionId: () => "s1",
-      getBranch: () => opts.branch ?? exchange,
+      getBranch: () => [...(opts.branch ?? exchange), ...written],
       getHeader: () => undefined,
       getSessionFile: () => undefined,
     },
@@ -75,7 +78,7 @@ function harness(opts: { name?: string; branch?: any[]; reply?: () => Promise<an
     }
     await new Promise((resolve) => setImmediate(resolve));
   };
-  return { ctx, emit, action, views, notices, requests, commands, name: () => name, rename: (value: string) => { name = value; } };
+  return { ctx, emit, action, views, notices, requests, commands, written, name: () => name, rename: (value: string) => { name = value; } };
 }
 
 test("an untitled session is named once, from the first exchange, on the current model", async () => {
@@ -91,6 +94,22 @@ test("an untitled session is named once, from the first exchange, on the current
   assert.match(h.requests[0].context.messages[0].content, /Found it in auth\.ts/);
   await h.emit("agent_end");
   assert.equal(h.requests.length, 1, "a named session is not titled again");
+});
+
+test("a generated title is recorded on the branch before it is applied", async () => {
+  const h = harness();
+  await h.emit("agent_end");
+  assert.equal(h.name(), "Fix Login Bug");
+  assert.equal(h.written.length, 1);
+  assert.equal(h.written[0].customType, TITLE_RECORD_ENTRY);
+  assert.deepEqual(h.written[0].data, {
+    v: 1,
+    ownerSessionId: "s1",
+    title: "Fix Login Bug",
+    source: "auto",
+    generation: 1,
+    model: "p/m",
+  });
 });
 
 test("an existing name is never replaced by the automatic path", async () => {

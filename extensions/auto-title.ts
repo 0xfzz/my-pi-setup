@@ -17,6 +17,11 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { type AssistantMessage, type AssistantMessageEvent } from "@earendil-works/pi-ai/compat";
 import { generateAutoTitle } from "../lib/auto-title.ts";
 import {
+  generationCount,
+  TITLE_RECORD_ENTRY,
+  type TitleRecord,
+} from "../lib/title/provenance.ts";
+import {
   AUTO_TITLE_PLUGIN_ID,
   AUTO_TITLE_REGENERATE_ACTION,
   AUTO_TITLE_TOGGLE_ACTION,
@@ -118,6 +123,17 @@ export default function autoTitleExtension(pi: ExtensionAPI): void {
         phase = "idle";
         return false;
       }
+      // Record provenance first: the rename event fires inside setSessionName,
+      // and the dashboard must find this record on the branch to skip it.
+      const branch = context.sessionManager.getBranch();
+      pi.appendEntry(TITLE_RECORD_ENTRY, {
+        v: 1,
+        ownerSessionId: sessionId,
+        title,
+        source: mode === "forced" ? "manual" : "auto",
+        generation: generationCount(branch, sessionId) + 1,
+        model: `${model.provider}/${model.id}`,
+      } satisfies TitleRecord);
       pi.setSessionName(title);
       phase = "done";
       return true;
