@@ -272,7 +272,7 @@ The contract lives in `web/shared/pi-api.ts` (names, params, results);
 | `trust.read` / `trust.write` | `ProjectTrustStore` + `getProjectTrustOptions` from pi's trust-manager | the web `/trust` dialog |
 | `auth.read` / `auth.login` / `auth.state` / `auth.answer` / `auth.logout` | `ModelRuntime` (`listCredentials`, `login`, `logout`) against pi's shared auth.json | the web `/login` and `/logout` dialogs |
 
-Two consequences worth stating:
+Three consequences worth stating:
 
 - **@ mentions are pi's.** The composer gates when a picker appears
   (`activeMentionToken` — web UX); the suggestions and the insertion
@@ -287,6 +287,16 @@ Two consequences worth stating:
   `COMMAND_META` — `webPorted` / `web` / `tuiOnly`); commands pi ships that
   the web has never heard of pass through unflagged and dispatch as prompt
   text, exactly like typing them in the TUI.
+
+- **Project trust is core, not a plugin.** The “trust this folder?”
+  prompt that gates `.pi/` config, `mcp.json` and project extensions is
+  pi's built-in project trust. The web already bridges it with the
+  `/trust` dialog (`trust.read` / `trust.write` over pi's
+  `ProjectTrustStore`) and the `/settings` default-project-trust control —
+  no plugin is needed. A plugin `pi.on("project_trust")` cannot bridge the
+  *first* prompt anyway: project trust resolves **before** `session_start`
+  fires, so the web bridge is not attached yet. Answer it once in the
+  terminal (or pre-set it from the web) and it is persisted.
 
 ### Extending the facade
 
