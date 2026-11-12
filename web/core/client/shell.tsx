@@ -417,8 +417,8 @@ export function AppShell() {
     new Set(panelPlugins.map((plugin) => plugin.id)),
     session.selectedId !== null,
   );
-  const availablePanelIdsInOrder = panelEntries.filter((entry) => entry.available).map((entry) => entry.id);
-  const resolvedPins = seedPins(availablePanelIdsInOrder, pinnedIds);
+  const eligiblePanelIdsInOrder = panelEntries.map((entry) => entry.id);
+  const resolvedPins = seedPins(eligiblePanelIdsInOrder, pinnedIds);
   const handlePin = (id: string): void => {
     const result = pinPanel(resolvedPins, id);
     if (!result.ok) {

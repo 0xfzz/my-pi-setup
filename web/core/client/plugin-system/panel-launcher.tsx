@@ -51,16 +51,17 @@ export function PanelLauncher({
   onUnpin,
   pinError,
 }: PanelLauncherProps) {
-  // Hide the launcher entirely when nothing can be opened right now.
-  if (entries.every((entry) => !entry.available)) return null;
+  // The launcher is always present when there are installed panels; the
+  // unavailable ones are grayed out rather than making the whole control vanish.
+  if (entries.length === 0) return null;
 
   const entryById = new Map(entries.map((entry) => [entry.id, entry]));
   const maxedOut = pinnedIds.length >= MAX_PINS;
 
-  // The rail: pinned ids in pin order, kept only while their panel is openable.
+  // The rail: pinned ids in pin order, each rendered whether openable or not.
   const railEntries = pinnedIds
     .map((id) => entryById.get(id))
-    .filter((entry): entry is PanelEntry => entry !== undefined && entry.available);
+    .filter((entry): entry is PanelEntry => entry !== undefined);
 
   // Pinned ids whose panel is temporarily unavailable or no longer installed:
   // kept in their slot, hidden from the rail, removable from the ⋯ menu.
@@ -75,15 +76,18 @@ export function PanelLauncher({
       <nav className="app-plugin-panel-nav" aria-label="Plugin panels">
         {railEntries.map((entry) => {
           const active = entry.id === activePanelId;
+          const available = entry.available;
           return (
             <button
               key={entry.id}
               type="button"
-              className={`app-plugin-panel-button${active ? " is-active" : ""}`}
+              className={`app-plugin-panel-button${active ? " is-active" : ""}${available ? "" : " is-unavailable"}`}
               data-panel-id={entry.id}
               aria-label={entry.title}
               aria-pressed={active}
-              title={`${active ? "Close" : "Open"} ${entry.title}`}
+              aria-disabled={!available}
+              disabled={!available}
+              title={available ? `${active ? "Close" : "Open"} ${entry.title}` : (entry.unavailableReason ?? entry.title)}
               onClick={() => onToggle(entry.id)}
             >
               <PanelIcon icon={entry.icon} size={18} />

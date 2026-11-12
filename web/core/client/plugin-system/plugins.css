@@ -805,6 +805,11 @@
   color: var(--text);
 }
 
+.app-plugin-panel-button.is-unavailable {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .app-plugin-panel-button:focus-visible {
   outline-offset: 0;
 }
