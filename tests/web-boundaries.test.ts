@@ -103,7 +103,7 @@ interface ZoneRules {
   why: string;
 }
 
-const CONTRACT_LAYERS = ["web/shared/", "lib/web-plugins/"];
+const CONTRACT_LAYERS = ["web/core/shared/", "lib/web-plugins/"];
 
 function union(a: readonly string[], b: readonly string[] | null): readonly string[] {
   return b === null ? a : [...a, ...b];
@@ -111,18 +111,18 @@ function union(a: readonly string[], b: readonly string[] | null): readonly stri
 
 const ZONES: readonly ZoneRules[] = [
   {
-    // The browser bundle: interface only. React and the wire/plugin
-    // contracts are its entire world; pi behavior never enters it.
-    dir: "web/client",
-    runtimeAllow: ["web/client/", "web/shared/"],
+    // The browser bundle: interface only. React, the wire/plugin contracts
+    // and the plugin UI are its world; pi behavior never enters it.
+    dir: "web/core/client",
+    runtimeAllow: ["web/core/client/", "web/core/shared/", "web/plugins/"],
     typeOnlyAllow: CONTRACT_LAYERS,
-    why: "the client is interface only: it renders wire/plugin contracts and never runs pi behavior",
+    why: "the client is interface only: it renders wire/plugin contracts and plugin UI, and never runs pi behavior",
   },
   {
     // Wire contracts (client↔server): pure. Composing plugin-contract
     // types is fine; depending on runtimes is not.
-    dir: "web/shared",
-    runtimeAllow: ["web/shared/"],
+    dir: "web/core/shared",
+    runtimeAllow: ["web/core/shared/"],
     typeOnlyAllow: ["lib/web-plugins/"],
     why: "wire contracts stay pure — they compose the plugin contract's types but no runtime",
   },
@@ -130,8 +130,8 @@ const ZONES: readonly ZoneRules[] = [
     // The server is a host (it may run pi and call built-ins) and serves
     // the plugin descriptors; it serves the BUILT client and never imports
     // its source.
-    dir: "web/server",
-    runtimeAllow: ["web/server/", "web/shared/", "web-plugins/", "lib/", "@earendil-works/", "node:"],
+    dir: "web/core/server",
+    runtimeAllow: ["web/core/server/", "web/core/shared/", "web/plugins/", "lib/", "@earendil-works/", "node:"],
     typeOnlyAllow: null,
     why: "the server hosts sessions, serves plugin descriptors and the built client; importing client source couples build to runtime",
   },
@@ -145,12 +145,14 @@ const ZONES: readonly ZoneRules[] = [
     why: "extensions own behavior; the web is reached only through the bridge and lib contracts",
   },
   {
-    // Web plugin descriptors: declarative interface data. Contracts and
-    // shared constants; no pi, no web runtime, no node.
-    dir: "web-plugins",
-    runtimeAllow: ["web-plugins/", "lib/"],
+    // Web plugins: descriptors (declarative interface data) plus their own
+    // client UI. They may reach the core plugin-system renderers, wire
+    // contracts and shared lib constants — no pi runtime, no arbitrary web
+    // app internals.
+    dir: "web/plugins",
+    runtimeAllow: ["web/plugins/", "web/core/client/plugin-system/", "web/core/shared/", "lib/"],
     typeOnlyAllow: ["lib/"],
-    why: "web plugins are declarative descriptors: interface bridging only, no behavior imports",
+    why: "plugin descriptors are declarative and plugin UI reuses core renderers; they never import pi behavior",
   },
   {
     // The plugin contract layer: shared by pi-side publishers and web
@@ -164,7 +166,7 @@ const ZONES: readonly ZoneRules[] = [
     // The pi_api facade: the one place that imports pi's built-in modules
     // for the web. It implements the wire contract; never the web runtime.
     dir: "lib/web-pi-apis",
-    runtimeAllow: ["lib/", "web/shared/", "@earendil-works/", "node:"],
+    runtimeAllow: ["lib/", "web/core/shared/", "@earendil-works/", "node:"],
     typeOnlyAllow: null,
     why: "the facade calls pi built-ins and implements the wire contract — the web runtime stays out",
   },

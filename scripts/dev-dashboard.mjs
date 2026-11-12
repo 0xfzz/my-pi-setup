@@ -13,7 +13,7 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const here = resolve(fileURLToPath(new URL("../web/dashboard/", import.meta.url)));
+const here = resolve(fileURLToPath(new URL("../web/core/dashboard/", import.meta.url)));
 const dashboardDir = here;
 const portArgIndex = process.argv.indexOf("--port");
 const port = Number(portArgIndex > 0 ? process.argv[portArgIndex + 1] : process.env.PORT || 4789);
@@ -199,8 +199,8 @@ const sessions = {
           purpose: "implementation",
           task: "Rebuild the Work tab: grouped list, graph toggle and the detail drawer.",
           handoffId: "h-ui",
-          laneFiles: ["web/dashboard/index.html", "web/dashboard/style.css", "web/dashboard/src/app.mjs"],
-          lastMilestoneFiles: ["web/dashboard/src/graph.mjs", "web/dashboard/src/state.mjs"],
+          laneFiles: ["web/core/dashboard/index.html", "web/core/dashboard/style.css", "web/core/dashboard/src/app.mjs"],
+          lastMilestoneFiles: ["web/core/dashboard/src/graph.mjs", "web/core/dashboard/src/state.mjs"],
           artifactIds: ["code-worker"],
           startedAt: ago(51),
           pendingPing: true,
@@ -218,7 +218,7 @@ const sessions = {
           task: "Refresh the preview fixtures so every drawer state is reachable.",
           handoffId: "h-fixture",
           laneFiles: ["scripts/dev-dashboard.mjs"],
-          lastMilestoneFiles: ["scripts/dev-dashboard.mjs", "web/dashboard/README.md"],
+          lastMilestoneFiles: ["scripts/dev-dashboard.mjs", "web/core/dashboard/README.md"],
           artifactIds: ["preview-fixtures"],
           startedAt: ago(96),
           updatedAt: stamp(14),

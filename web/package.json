@@ -10,11 +10,11 @@
   },
   "scripts": {
     "build": "node build.mjs",
-    "start": "tsx server/main.ts",
+    "start": "tsx core/server/main.ts",
     "dev": "npm run build && npm run start",
     "check": "tsc --noEmit",
-    "test": "npm run build && node --experimental-strip-types --test server/*.test.ts client/*.test.ts shared/*.test.ts",
-    "test:e2e": "node e2e/e2e.mjs"
+    "test": "npm run build && node --experimental-strip-types --test core/server/*.test.ts core/client/*.test.ts core/shared/*.test.ts",
+    "test:e2e": "node core/e2e/e2e.mjs"
   },
   "dependencies": {
     "@codemirror/state": "^6.7.6",

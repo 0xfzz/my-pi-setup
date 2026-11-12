@@ -6,8 +6,8 @@ import { WEB_PLUGIN_VIEW_EVENT, validateView } from "../lib/web-plugins/view.ts"
 import { publishWebView } from "../lib/web-plugins/publisher.ts";
 import { validatePlugin, type WebPluginDescriptor } from "../lib/web-plugins/descriptor.ts";
 import { validateRegistry } from "../lib/web-plugins/registry.ts";
-import { WEB_PLUGINS, WEB_PLUGIN_OPT_OUT } from "../web-plugins/index.ts";
-import { modesPlugin } from "../web-plugins/modes.ts";
+import { WEB_PLUGINS, WEB_PLUGIN_OPT_OUT } from "../web/plugins/index.ts";
+import { modesPlugin } from "../web/plugins/modes.ts";
 
 const normal = { id: "normal", label: "Normal", summary: "AI chat & tools" };
 const plan = { id: "plan", label: "Plan", summary: "Read; artifacts RW" };

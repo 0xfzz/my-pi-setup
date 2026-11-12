@@ -8,12 +8,19 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./client/*"]
+      "@/*": ["./core/client/*"]
     },
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "types": ["node"],
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
-  "include": ["client/**/*.ts", "client/**/*.tsx", "server/**/*.ts", "shared/**/*.ts"]
+  "include": [
+    "core/client/**/*.ts",
+    "core/client/**/*.tsx",
+    "core/server/**/*.ts",
+    "core/shared/**/*.ts",
+    "plugins/**/*.ts",
+    "plugins/**/*.tsx"
+  ]
 }

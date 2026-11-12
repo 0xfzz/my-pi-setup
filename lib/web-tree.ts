@@ -7,9 +7,9 @@
  * `role: snippet`, and the branch structure drives indentation. This module
  * owns only that shared projection — the extension builds it for bridged
  * sessions, the server for in-process ones, and the web renders the wire
- * shape (web/shared/tree.ts).
+ * shape (web/core/shared/tree.ts).
  */
-import type { WebTreeNode } from "../web/shared/tree.ts";
+import type { WebTreeNode } from "../web/core/shared/tree.ts";
 
 export type { WebTreeNode };
 

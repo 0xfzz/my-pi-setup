@@ -63,8 +63,8 @@ web/
 ```
 
 The plugin contract itself lives in the root repo and is shared with the
-TUI: `lib/web-plugins/` (view vocabulary, descriptors, actions, kernel,
-publisher) and `web-plugins/` (the descriptors). Extensions publish views
+TUI: `lib/web/plugins/` (view vocabulary, descriptors, actions, kernel,
+publisher) and `web/plugins/` (the descriptors). Extensions publish views
 from `extensions/*.ts` — unchanged from the vendored era.
 
 ## Realtime design
@@ -201,7 +201,7 @@ fresh access token, so ordinary use never trips it. Logout and revocation take
 effect on the very next request, because access tokens are also checked against the
 live session.
 
-**Why no endpoint fails on an expired token.** The client (`web/client/auth.ts`):
+**Why no endpoint fails on an expired token.** The client (`web/core/client/auth.ts`):
 
 1. refreshes proactively, a minute before expiry and whenever a backgrounded tab wakes;
 2. wraps `fetch` so any `/api` 401 triggers one refresh, shared by every request
@@ -260,7 +260,7 @@ POST /api/agent/:id/pi_api   { "api": "<name>", "params": { … } }
                              → { "ok": true, "result": … } | { "ok": false, "error": … }
 ```
 
-The contract lives in `web/shared/pi-api.ts` (names, params, results);
+The contract lives in `web/core/shared/pi-api.ts` (names, params, results);
 `lib/web-pi-apis/` implements it as pluggable modules over pi's own code:
 
 | api | pi implementation | web surface |
@@ -283,7 +283,7 @@ Three consequences worth stating:
 - **The built-in command list is pi's.** `/api/agent/:id/commands` merges
   pi's `BUILTIN_SLASH_COMMANDS` at runtime with the session's live commands
   (`pi.getCommands()` + the web core registry, posted over the bridge).
-  The web adds only *presentation* flags (`web/shared/commands.ts`:
+  The web adds only *presentation* flags (`web/core/shared/commands.ts`:
   `COMMAND_META` — `webPorted` / `web` / `tuiOnly`); commands pi ships that
   the web has never heard of pass through unflagged and dispatch as prompt
   text, exactly like typing them in the TUI.
@@ -303,7 +303,7 @@ Three consequences worth stating:
 Add a module and register it — the route, validation and lifecycle are
 generic:
 
-1. Add the name + params + result to `web/shared/pi-api.ts`
+1. Add the name + params + result to `web/core/shared/pi-api.ts`
    (`PiApiName` / `PiApiParams` / `PiApiResult`).
 2. Implement a `PiApiModule` (`lib/web-pi-apis/types.ts`) — one file per
    api family; its `handle` calls pi's code, `init`/`dispose` own
@@ -333,7 +333,7 @@ ambient.
 > and the decision test are specified in
 > [`docs/web-plugin-architecture.md`](web-plugin-architecture.md).
 
-A descriptor (`web-plugins/*.ts`) declares **surfaces**:
+A descriptor (`web/plugins/*.ts`) declares **surfaces**:
 
 | Surface | Effect |
 |---|---|
@@ -343,7 +343,7 @@ A descriptor (`web-plugins/*.ts`) declares **surfaces**:
 | `{ kind: "sidebar" }` | navbar icon opens the view in the right-hand panel; takes precedence over inline slot placements |
 
 **Placement hints** (`ui[].placement` and `ui[].strategy`) are applied by the
-client's slot policy (`web/client/plugins/slot-policy.ts`):
+client's slot policy (`web/core/client/plugin-system/slot-policy.ts`):
 
 - `strategy: "compact"` renders the slot's one-line summary in any slot.
 - `maxHeight` bounds a centre card's body and a floating card; `maxWidth`
@@ -366,14 +366,14 @@ closed vocabulary, never plugin-supplied SVG, HTML, or URLs. The navbar is a
 single scrollable row on narrow screens; panels retain their mobile overlay.
 
 Extensions publish views with `publishWebView(pi, pluginId, view)` from
-`lib/web-plugins/publisher.ts`. Views are **declarative and validated
+`lib/web/plugins/publisher.ts`. Views are **declarative and validated
 server-side** — `kv`, `list` (status icons + markdown detail), `status`,
 `graph` (nodes, edges, markdown detail) — so a plugin never ships client
-code. The vocabulary: `lib/web-plugins/view.ts`.
+code. The vocabulary: `lib/web/plugins/view.ts`.
 
 **User plugins**: drop a descriptor with a server entry into
 `~/.pi/agent/web-plugins` (or `.pi/web-plugins` in a project); the kernel
-(`lib/web-plugins/kernel/`) discovers them, tracks enable state, and
+(`lib/web/plugins/kernel/`) discovers them, tracks enable state, and
 quarantines misbehaving ones — the same kernel the TUI-era host used.
 
 **Actions** are descriptor-declared and relayed over the session event bus:
@@ -391,7 +391,7 @@ dispatches, so a lock there would refuse the next click (e.g. rapid
 Normal↔Plan toggling). The web server never executes
 anything itself — the owning extension re-checks and republishes.
 
-**Region overrides** resolve per session in `web/shared/regions.ts`;
+**Region overrides** resolve per session in `web/core/shared/regions.ts`;
 when several plugins override one region, registry order decides and the
 conflict is reported in the `plugin_state` frame and shown as a banner.
 `example-override` is the reference plugin: inert until its instant
@@ -408,7 +408,7 @@ working line animates them while the session reports itself running.
 The web core ports pi's TUI interaction primitives, so any extension can
 bridge its TUI UI to the web without web-specific code. Extensions publish
 the same `ui.*` events in both hosts (`publishWebUi` in
-`lib/web-plugins/publisher.ts`); the unified store keeps per-session state
+`lib/web/plugins/publisher.ts`); the unified store keeps per-session state
 and the event stream ships it in every `plugin_state` frame. The client
 renders them in the same slots the TUI uses:
 
@@ -424,13 +424,13 @@ This is the "TUI design system" surface: a new dialog-ish primitive lands
 in the event model + store + client once, and every extension can use it
 from either host. The TUI's own `ctx.ui.notify`/`setStatus`/`setWidget`
 calls do not emit events, so bridging them means also calling `publishWebUi`
-from the extension — the contract lives in `lib/web-plugins/ui-contracts.ts`.
+from the extension — the contract lives in `lib/web/plugins/ui-contracts.ts`.
 
 ## Dialogs — the TUI command port and the model picker
 
 pi's TUI answers several commands with a selector or dialog; the web now
 answers them with its own. The composer intercepts the ported names
-(`webPorted` in `web/shared/commands.ts`) and runs the web side:
+(`webPorted` in `web/core/shared/commands.ts`) and runs the web side:
 
 | Command | TUI | Web |
 | --- | --- | --- |
@@ -489,8 +489,8 @@ no placeholder file browser or extra navigation is added.
 ## Themes
 
 Both themes are the same slot variables. The legacy stylesheet
-(`web/client/base.css`) switches on `data-theme` on `<html>`; the
-shadcn/Tailwind tokens (`web/client/globals.css`) switch on the `.dark`
+(`web/core/client/base.css`) switches on `data-theme` on `<html>`; the
+shadcn/Tailwind tokens (`web/core/client/globals.css`) switch on the `.dark`
 class. `theme.ts` moves both together, set before the first React render
 (no flash). The choice is `pi-web-theme` in localStorage; with no stored
 choice the web follows the OS and re-follows it live. The toggle is the
@@ -501,11 +501,11 @@ in both.
 ## Design system
 
 The client is styled with [shadcn/ui](https://ui.shadcn.com) primitives
-(vendored into `web/client/components/ui/`, new-york style, neutral color
+(vendored into `web/core/client/components/ui/`, new-york style, neutral color
 base) on top of Tailwind CSS v4, with [Phosphor icons](https://phosphoricons.com)
 (`@phosphor-icons/react`) for every icon so there is one consistent set.
 `@shadcn/lint` is wired through oxlint (`.oxlintrc.json`): app code under
-`web/client/` is checked against `no-inline-styles`, `no-raw-colors` and
+`web/core/client/` is checked against `no-inline-styles`, `no-raw-colors` and
 `no-arbitrary-values`, while the vendored `components/ui/` directory is
 excluded because it carries the canonical class strings those rules police
 elsewhere.

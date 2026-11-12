@@ -6,7 +6,7 @@
 | --- | --- |
 | **Status** | current operator guide |
 | **Detail for** | [README § Delegated-work web dashboard](../README.md) |
-| **Scope** | `web/dashboard/`, `extensions/dashboard.ts`, `lib/dashboard/` |
+| **Scope** | `web/core/dashboard/`, `extensions/dashboard.ts`, `lib/dashboard/` |
 | **Verified against** | `tests/dashboard-*.test.ts`, `tests/dashboard-host-runtime.test.ts` |
 | **Related** | [Delegation](delegation.md) |
 
@@ -89,7 +89,7 @@ node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/da
 npm run typecheck
 ```
 
-Implementation is split between `lib/dashboard/` (protocol, server, lifecycle, transport, projection), `extensions/dashboard.ts` and the mode/delegation/artifact publishers, and `web/dashboard/` (browser UI).
+Implementation is split between `lib/dashboard/` (protocol, server, lifecycle, transport, projection), `extensions/dashboard.ts` and the mode/delegation/artifact publishers, and `web/core/dashboard/` (browser UI).
 
 `tests/fixtures/dashboard-browser-fixture.ts` supplies explicitly synthetic sessions for manual browser verification; it is never loaded by production extensions. Use a private temporary directory when running it. Its control file changes only fixture state.
 

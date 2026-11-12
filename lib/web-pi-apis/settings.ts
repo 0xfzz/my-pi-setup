@@ -15,7 +15,7 @@
  * the running TUI on its next restart or /reload, exactly like pi's own
  * `pi config` edits from another process.
  */
-import type { PiSettingEntry } from "../../web/shared/pi-api.ts";
+import type { PiSettingEntry } from "../../web/core/shared/pi-api.ts";
 import type { PiApiContext, PiApiModule } from "./types.ts";
 
 /** The manager shape this module uses — pi's SettingsManager, structural. */

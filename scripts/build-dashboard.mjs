@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
-const dashboardDir = join(root, "web", "dashboard");
+const dashboardDir = join(root, "web", "core", "dashboard");
 const distDir = join(dashboardDir, "dist");
 const entry = join(dashboardDir, "src", "app.mjs");
 const outfile = join(distDir, "app.js");

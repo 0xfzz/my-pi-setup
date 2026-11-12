@@ -74,9 +74,9 @@ test("build and runtime inputs are fingerprinted separately, so a plugin edit do
   const repo = await tree();
   try {
     const serverDir = join(repo, "web");
-    await mkdir(join(serverDir, "client"), { recursive: true });
+    await mkdir(join(serverDir, "core", "client"), { recursive: true });
     await mkdir(join(repo, "lib", "web-plugins"), { recursive: true });
-    await writeFile(join(serverDir, "client", "shell.tsx"), "ui");
+    await writeFile(join(serverDir, "core", "client", "shell.tsx"), "ui");
     await writeFile(join(repo, "lib", "web-plugins", "host.ts"), "logic");
     const first = sourceFingerprints(serverDir, repo);
 
@@ -85,7 +85,7 @@ test("build and runtime inputs are fingerprinted separately, so a plugin edit do
     assert.equal(second.build, first.build, "runtime edit leaves the build fingerprint alone");
     assert.notEqual(second.runtime, first.runtime);
 
-    await writeFile(join(serverDir, "client", "shell.tsx"), "ui v2");
+    await writeFile(join(serverDir, "core", "client", "shell.tsx"), "ui v2");
     assert.notEqual(sourceFingerprints(serverDir, repo).build, second.build, "a UI edit changes the build fingerprint");
   } finally {
     await rm(repo, { recursive: true, force: true });
@@ -137,9 +137,9 @@ test("the reload lock is exclusive, and a lock whose owner died is taken over", 
 
 test("source roots name only the build inputs and our runtime directories", () => {
   const roots = sourceWatchRoots("/repo/web", "/repo");
-  assert.ok(roots.includes("/repo/web/client"));
+  assert.ok(roots.includes("/repo/web/core/client"));
+  assert.ok(roots.includes("/repo/web/plugins"));
   assert.ok(roots.includes("/repo/lib/web-plugins"));
-  assert.ok(roots.includes("/repo/web-plugins"));
   assert.equal(roots.some((r) => r.includes("node_modules") || r.endsWith("/web")), false);
 });
 

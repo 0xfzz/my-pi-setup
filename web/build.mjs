@@ -17,7 +17,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)));
-const client = resolve(root, "client");
+const client = resolve(root, "core", "client");
 const dist = resolve(client, "dist");
 
 // `dist` is created in place rather than removed: the pi runtime holds a
@@ -56,4 +56,4 @@ execFileSync(
 
 await cp(resolve(client, "index.html"), resolve(dist, "index.html"));
 await cp(resolve(client, "base.css"), resolve(dist, "app.css"));
-await cp(resolve(client, "plugins/plugins.css"), resolve(dist, "plugins.css"));
+await cp(resolve(client, "plugin-system", "plugins.css"), resolve(dist, "plugins.css"));

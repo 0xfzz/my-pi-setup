@@ -3,8 +3,8 @@
   "jsPlugins": ["@shadcn/lint"],
   "overrides": [
     {
-      "files": ["web/client/**"],
-      "excludeFiles": ["web/client/components/ui/**"],
+      "files": ["web/core/client/**"],
+      "excludeFiles": ["web/core/client/components/ui/**"],
       "rules": {
         "shadcn/no-inline-styles": "error",
         "shadcn/no-raw-colors": "error",

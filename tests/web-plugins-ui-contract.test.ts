@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { validateContributions, validatePlacement, normalizeContributions, resolveOverrides, type WebPluginUiContribution } from "../lib/web-plugins/ui-contracts.ts";
 import { validatePlugin } from "../lib/web-plugins/descriptor.ts";
 import { validateRegistry } from "../lib/web-plugins/registry.ts";
-import { WEB_PLUGINS } from "../web-plugins/index.ts";
+import { WEB_PLUGINS } from "../web/plugins/index.ts";
 
 const contribution: WebPluginUiContribution = { id: "working", component: "ui.working-indicator.v1", scope: "session", placement: { kind: "anchor", anchor: "chat.working" }, override: { target: "ui.working-indicator.v1", mode: "replace", fallback: "builtin" } };
 test("UI contract: anchor catalog, bounded overlay, responsive constraints and legacy normalization", () => {
@@ -63,7 +63,7 @@ test("UI registry: conflicting exclusive replacements name both owners", () => {
 });
 test("plugin navigation rides the shared session state instead of a separate fetch", async () => {
   const { readFile } = await import("node:fs/promises");
-  const source = await readFile("web/client/plugins/PluginLayout.tsx", "utf8");
+  const source = await readFile("web/core/client/plugin-system/PluginLayout.tsx", "utf8");
   // The minimal client's nav is prop-driven: one session hook owns the single
   // EventSource, so navigation surfaces never open their own connections.
   assert.match(source, /plugins\s*:\s*readonly WebPluginDescriptor\[\]/);
@@ -72,7 +72,7 @@ test("plugin navigation rides the shared session state instead of a separate fet
 test("PRD AC3: no pi-web UI source contains a plugin-ID-specific renderer branch", async () => {
   const { readdir, readFile } = await import("node:fs/promises");
   const { join } = await import("node:path");
-  const roots = ["web/client", "web/shared"];
+  const roots = ["web/core/client", "web/core/shared"];
   for (const root of roots) {
     for (const entry of await readdir(root, { recursive: true })) {
       if (!entry.endsWith(".tsx") && !entry.endsWith(".ts")) continue;

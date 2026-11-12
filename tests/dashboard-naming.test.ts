@@ -14,7 +14,7 @@ import {
   managerName,
   roleFor,
   titleCase,
-} from "../web/dashboard/src/naming.mjs";
+} from "../web/core/dashboard/src/naming.mjs";
 
 /* ------------------------------------------------------------- dictionary */
 

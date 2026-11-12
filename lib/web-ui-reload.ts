@@ -4,7 +4,7 @@
  * Two kinds of input matter, and they cost different amounts:
  *  - build inputs: the vendored fork's app, components, lib, hooks and config. The
  *    production build bakes these in, so a change needs a rebuild and a restart.
- *  - runtime inputs: our `lib/web-plugins/` and `web-plugins/`. The server loads
+ *  - runtime inputs: our `lib/web-plugins/` kernel and contracts. The server loads
  *    them through jiti at runtime, so a change needs only a restart.
  *
  * Fingerprints are built from size and mtime of each file, not contents, so a walk
@@ -17,7 +17,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
 /** Minimal server directories and files the build reads. */
-export const BUILD_INPUT_DIRS = ["client", "server", "shared"] as const;
+export const BUILD_INPUT_DIRS = ["core/client", "core/server", "core/shared", "plugins"] as const;
 export const BUILD_INPUT_FILES = [
   "package.json",
   "package-lock.json",
@@ -25,7 +25,7 @@ export const BUILD_INPUT_FILES = [
   "build.mjs",
 ] as const;
 /** Our directories the running server loads at runtime (relative to the repo root). */
-export const RUNTIME_INPUT_DIRS = ["lib/web-plugins", "web-plugins"] as const;
+export const RUNTIME_INPUT_DIRS = ["lib/web-plugins"] as const;
 
 const SKIPPED_DIRS = new Set(["node_modules", "dist", "test-results", "e2e"]);
 const TEST_FILE = /\.test\.(ts|tsx|mjs|js)$/;

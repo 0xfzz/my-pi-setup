@@ -199,7 +199,7 @@ the local changes are in each `VENDORED.md`; licences are kept next to the code.
 | --- | --- | --- | --- |
 | [pi-herdr-subagents](https://github.com/modem-dev/pi-herdr-subagents) | Justin (modem-dev) | MIT | Vendored in [`vendor/pi-herdr-subagents/`](vendor/pi-herdr-subagents/VENDORED.md): the Herdr launch planner, socket client, watcher and the `agent_done` / `agent_ping` handshake that delegation runs on. Locally patched. |
 | [pi-antigravity](https://github.com/Rahularya01/pi-antigravity) | Rahul Arya | MIT | Vendored in [`vendor/antigravity/`](vendor/antigravity/VENDORED.md) ([licence](vendor/antigravity/LICENSE)): the Antigravity / Cloud Code Assist provider. The multi-account layer on top is this package's own. |
-| [Phosphor Icons](https://github.com/phosphor-icons/core) | Phosphor Icons | MIT | Dashboard icon sprite, unmodified ([provenance](web/dashboard/ICONS.md), [licence](web/dashboard/licenses/phosphor-icons-MIT.txt)). |
+| [Phosphor Icons](https://github.com/phosphor-icons/core) | Phosphor Icons | MIT | Dashboard icon sprite, unmodified ([provenance](web/core/dashboard/ICONS.md), [licence](web/core/dashboard/licenses/phosphor-icons-MIT.txt)). |
 | [ascii.rest/aquarium](https://ascii.rest/aquarium/) | @bas3line | MIT | Aquarium art and swimming equations, adapted for the sidebar animation. |
 | [pi-vcc](https://www.npmjs.com/package/pi-vcc) | its authors | see package | Not bundled; the compaction engine this package's VCC controller wraps. |
 | [pi-model-router](https://github.com/yeliu84/pi-model-router/) | yeliu84 | see repo | Prior art for virtual-model routing; no code copied. |

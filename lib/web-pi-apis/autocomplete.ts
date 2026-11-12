@@ -10,7 +10,7 @@
  * The provider is bound to the session cwd; it is rebuilt when the cwd
  * changes (clone/fork into another directory) and dropped on dispose.
  */
-import type { PiAutocompleteSuggestions } from "../../web/shared/pi-api.ts";
+import type { PiAutocompleteSuggestions } from "../../web/core/shared/pi-api.ts";
 import type { PiApiContext, PiApiModule } from "./types.ts";
 
 /** pi's public editor/autocomplete package. */

@@ -44,7 +44,7 @@ export const DEFAULT_HEALTH_ENDPOINT = `${DEFAULT_WEB_UI_URL}/api/health`;
 export const DEFAULT_PKILL_COMMAND = `pkill -f "pi-web-minimal"`;
 export const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 export const DEFAULT_BUILD_TIMEOUT_MS = 600_000;
-export const DEFAULT_BUILD_MARKER = "client/dist/app.js";
+export const DEFAULT_BUILD_MARKER = "core/client/dist/app.js";
 export const DEFAULT_POLL_INTERVAL_MS = 250;
 
 export interface WebUiState {
@@ -287,7 +287,7 @@ export function defaultKillProcess(pid: number): void {
 
 /** Arguments for serving the built client: the minimal server, run directly. */
 export function serverSpawnArgs(): string[] {
-  return ["--experimental-strip-types", "server/main.ts"];
+  return ["--experimental-strip-types", "core/server/main.ts"];
 }
 
 /** True when the built client output exists to serve. */

@@ -673,7 +673,7 @@ test("webExtension: command registration, subcommands, and notifications", async
 
 test("serverSpawnArgs: runs the minimal server directly, never a dev watcher", () => {
   const args = serverSpawnArgs();
-  assert.deepEqual(args, ["--experimental-strip-types", "server/main.ts"]);
+  assert.deepEqual(args, ["--experimental-strip-types", "core/server/main.ts"]);
   assert.ok(!args.includes("dev"), "dev mode must never be used by /web start");
   assert.ok(!args.includes("build"), "build is a separate step, not a server flag");
 });

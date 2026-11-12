@@ -1,7 +1,7 @@
 /**
  * Human naming for dashboard and parent-session entities — the Node/TS authority.
  *
- * The browser dashboard has its own copy at `web/dashboard/src/naming.mjs`.
+ * The browser dashboard has its own copy at `web/core/dashboard/src/naming.mjs`.
  * Pi's extension loader cannot reliably import that ESM file: it hands back a
  * module object without the named exports, which crashed `/reload` with
  * `meaningfulSessionTitle is not a function`. A duplicated 300-line pure module
@@ -10,7 +10,7 @@
  * `tests/naming-parity.test.ts` runs both implementations over the same fixture
  * set, so they cannot drift silently. Pure: no DOM, no I/O, no Node APIs.
  *
- * Rules (see web/dashboard/NAMES.md):
+ * Rules (see web/core/dashboard/NAMES.md):
  *  - a worker's given name is a pure function of its stable id, hashed into the
  *    vendored Javanese dictionary and probed past names already claimed;
  *  - ids are processed in sorted order, so the same set of children always

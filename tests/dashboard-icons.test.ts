@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
-const dashboard = join(root, "web", "dashboard");
+const dashboard = join(root, "web", "core", "dashboard");
 
 const indexHtml = readFileSync(join(dashboard, "index.html"), "utf8");
 const styleCss = readFileSync(join(dashboard, "style.css"), "utf8");

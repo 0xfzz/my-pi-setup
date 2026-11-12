@@ -25,13 +25,13 @@ import {
   type WebPluginSurface,
 } from "../lib/web-plugins/registry.ts";
 import { publishWebView } from "../lib/web-plugins/publisher.ts";
-import { cacheStatsPlugin } from "../web-plugins/cache-stats.ts";
-import { todoPlugin } from "../web-plugins/todo.ts";
-import { artifactsPlugin } from "../web-plugins/artifacts.ts";
-import { bubblySpinnerPlugin } from "../web-plugins/bubbly-spinner.ts";
-import { subagentCheckpointsPlugin } from "../web-plugins/subagent-checkpoints.ts";
-import { subagentMonitorPlugin } from "../web-plugins/subagent-monitor.ts";
-import { WEB_PLUGINS, WEB_PLUGIN_OPT_OUT } from "../web-plugins/index.ts";
+import { cacheStatsPlugin } from "../web/plugins/cache-stats.ts";
+import { todoPlugin } from "../web/plugins/todo.ts";
+import { artifactsPlugin } from "../web/plugins/artifacts/descriptor.ts";
+import { bubblySpinnerPlugin } from "../web/plugins/bubbly-spinner.ts";
+import { subagentCheckpointsPlugin } from "../web/plugins/subagent-checkpoints.ts";
+import { subagentMonitorPlugin } from "../web/plugins/subagent-monitor.ts";
+import { WEB_PLUGINS, WEB_PLUGIN_OPT_OUT } from "../web/plugins/index.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 

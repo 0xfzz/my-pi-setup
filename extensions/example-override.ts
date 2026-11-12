@@ -1,4 +1,4 @@
-// Reference override plugin (see web-plugins/example-override.ts; the
+// Reference override plugin (see web/plugins/example-override.ts; the
 // shared constants live in lib/example-override-web-view.ts): the
 // "Replace the composer" action publishes a view; while it is published the
 // web client renders that view instead of the composer region. Inert until
