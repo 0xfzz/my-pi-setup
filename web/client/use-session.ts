@@ -177,6 +177,8 @@ interface OptimisticUserMessage {
 
 /** localStorage key for the selected session: reloads and plugin-page navigation keep the session context. */
 const SELECTED_SESSION_KEY = "pi-web-minimal:selected-session";
+/** How long the reloading banner stays before a missing completion signal expires it. */
+const RELOAD_INDICATOR_TIMEOUT_MS = 20_000;
 
 export function usePiSession() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -208,6 +210,8 @@ export function usePiSession() {
   const [pluginViews, setPluginViews] = useState<Record<string, WebView>>({});
   const [working, setWorking] = useState<WorkingModelLike | null>(null);
   const [uiRunning, setUiRunning] = useState(false);
+  /** True while a /reload is in flight: the extension is re-running. */
+  const [reloading, setReloading] = useState(false);
   /** Model list for the web picker (web_models events + /models fetch). */
   const [models, setModels] = useState<ModelsState>({ models: [] });
   /** A session-side command asked the web to open one of its dialogs. */
@@ -239,6 +243,15 @@ export function usePiSession() {
       setStreaming(next);
     }
   }, []);
+
+  // A /reload re-runs the extension and re-attaches the bridge; if no
+  // completion signal lands (commands_changed, bridge_resync, session_state),
+  // expire the banner so it never sticks around as a false "still reloading".
+  useEffect(() => {
+    if (!reloading) return;
+    const timer = setTimeout(() => setReloading(false), RELOAD_INDICATOR_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [reloading]);
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -355,6 +368,7 @@ export function usePiSession() {
     setPluginViews({});
     setWorking(null);
     setUiRunning(false);
+    setReloading(false);
     setStatuses({});
     setWidgets({});
     setCustom({});
@@ -708,6 +722,7 @@ export function usePiSession() {
           // The TUI-side bridge re-attached after a drop; reload the history
           // in case events were missed while it was away. Optimistic user
           // messages come back with the reloaded history.
+          setReloading(false);
           setUserMessages([]);
           setHistoryEpoch((epoch) => epoch + 1);
           break;
@@ -715,6 +730,7 @@ export function usePiSession() {
           // The TUI-side model/thinking state, pushed at attach, at each
           // turn start and after any change — this is the sync that keeps
           // the model chip honest in both directions.
+          setReloading(false);
           const pushed = data as { model?: { provider?: unknown; id?: unknown }; thinkingLevel?: unknown };
           const pushedModel = typeof pushed.model?.provider === "string" && typeof pushed.model?.id === "string"
             ? { provider: pushed.model.provider, id: pushed.model.id }
@@ -757,6 +773,7 @@ export function usePiSession() {
         case "commands_changed":
           // The session posted a new command list (web_commands): refetch so
           // the palette and the dispatch channel stay current.
+          setReloading(false);
           if (selectedId !== null) {
             void fetch(`/api/agent/${encodeURIComponent(selectedId)}/commands`)
               .then((res) => (res.ok ? (res.json() as Promise<{ commands?: WebCommand[] }>) : { commands: [] }))
@@ -876,6 +893,7 @@ export function usePiSession() {
     const id = selectedId;
     if (id === null) return;
     setSendError(null);
+    if (name === "reload") setReloading(true);
     try {
       const res = await fetch(`/api/agent/${encodeURIComponent(id)}`, {
         method: "POST",
@@ -987,6 +1005,7 @@ export function usePiSession() {
     pluginViews,
     working,
     uiRunning,
+    reloading,
     models,
     fetchModels,
     setModel,

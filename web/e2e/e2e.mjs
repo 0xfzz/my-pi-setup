@@ -684,6 +684,25 @@ async function run() {
     // The composer cleared: the command did not go out as prompt text.
     assert.equal(await composerInput.inputValue(), "");
 
+    step("8e-reload: the reload indicator tracks a dispatched /reload");
+    await composerInput.fill("/reload");
+    await page.locator(".app-command-item", { hasText: "reload" }).first().waitFor({
+      state: "visible",
+      timeout: 5_000,
+    });
+    await composerInput.press("Enter");
+    await page.locator(".app-reloading-banner").waitFor({ state: "visible", timeout: 5_000 });
+    // The extension re-posts its command list after it has re-run; that is the
+    // completion signal that clears the banner.
+    await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        events: [{ type: "web_commands", commands: [{ name: "compact", description: "Compact (web core)", web: true }] }],
+      }),
+    });
+    await page.locator(".app-reloading-banner").waitFor({ state: "hidden", timeout: 5_000 });
+
     step("8: prompting from browser");
     // Prompt in the browser → the fake TUI receives it as a bridge command.
     await composerInput.fill("hello from the web");

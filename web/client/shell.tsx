@@ -11,7 +11,7 @@ import { Transcript } from "./transcript.tsx";
 import { Composer } from "./composer.tsx";
 import { SessionSidebar } from "./sidebar.tsx";
 import { NewSessionDialog } from "./new-session-dialog.tsx";
-import { CustomPopups, EditorWidgets, StatusChips, ToastStack, UiPromptBanner } from "./popups.tsx";
+import { CustomPopups, EditorWidgets, ReloadingBanner, StatusChips, ToastStack, UiPromptBanner } from "./popups.tsx";
 import { DialogLayer, InfoDialog, LoginDialog, LogoutDialog, ModelPickerDialog, ScopedModelsDialog, SettingsDialog, ThinkingPickerDialog, TreeSelectorDialog, TrustDialog } from "./dialogs.tsx";
 import type { WebTreeNode } from "../shared/tree.ts";
 import { SlotHost } from "./plugins/slots.tsx";
@@ -460,6 +460,7 @@ export function AppShell() {
             </header>
           )}
           <UiPromptBanner prompt={session.uiPrompt} />
+          <ReloadingBanner active={session.reloading} />
           {conflicts.length > 0 ? (
             <div className="app-region-conflicts" role="status">
               {conflicts.map((conflict) => (

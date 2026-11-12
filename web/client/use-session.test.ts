@@ -13,5 +13,7 @@ const source = readFileSync(fileURLToPath(new URL("./use-session.ts", import.met
 test("use-session holds a directory EventSource, not a /api/sessions poll", () => {
   assert.match(source, /new EventSource\("\/api\/sessions\/events"\)/, "the directory stream is opened");
   assert.doesNotMatch(source, /setInterval/, "no interval timer drives the session list refresh");
-  assert.doesNotMatch(source, /setTimeout\(/, "no timeout timer drives the session list refresh");
+  // A one-shot fallback timer (the /reload indicator expiry) is fine; what
+  // must never return is a timer wired to the session-list refresh.
+  assert.doesNotMatch(source, /setTimeout\([^)]*refreshSessions/, "no timeout timer drives the session list refresh");
 });
