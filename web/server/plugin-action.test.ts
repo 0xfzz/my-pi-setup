@@ -152,7 +152,32 @@ test("action route submits instant actions without a confirm", async () => {
   });
 });
 
-test("action route enforces one in-flight action per session (409)", async () => {
+test("instant actions do not hold the in-flight lock (rapid mode toggling)", async () => {
+  attachActionBus("instant-repeat-session");
+  const modes = getPluginDescriptor("modes");
+  const instant = modes?.actions?.find((a) => a.confirm === undefined && a.keybinding !== undefined);
+  assert.ok(instant, "modes must declare an instant keybound action");
+
+  await withActionServer(async (baseUrl) => {
+    const first = await postAction(baseUrl, {
+      sessionId: "instant-repeat-session",
+      pluginId: "modes",
+      actionId: instant.id,
+    });
+    assert.equal(first.status, 200, "the first toggle submits");
+
+    // The moment the mode flips back, the user toggles again: an instant
+    // action must not be refused by the 60 s lock meant for confirmed actions.
+    const second = await postAction(baseUrl, {
+      sessionId: "instant-repeat-session",
+      pluginId: "modes",
+      actionId: instant.id,
+    });
+    assert.equal(second.status, 200, "rapid instant toggles never hit the in-flight lock");
+  });
+});
+
+test("action route enforces one in-flight CONFIRMED action per session (409)", async () => {
   const monitor = getPluginDescriptor("subagent-monitor");
   const action = monitor?.actions?.find((a) => a.confirm !== undefined);
   assert.ok(action && action.confirm !== undefined);

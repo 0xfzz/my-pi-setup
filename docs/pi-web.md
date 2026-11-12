@@ -374,8 +374,11 @@ quarantines misbehaving ones — the same kernel the TUI-era host used.
   the modes switch; shortcuts never fire while typing in a field)
 
 Semantics: 404 before validation, 403 on a confirm mismatch (nothing
-emitted), 409 while another action is in flight for the session, then
-audit + single-use requestId relay. The web server never executes
+emitted), 409 while another *confirmed* action is in flight for the
+session, then audit + single-use requestId relay. Instant actions and the
+web core channel skip the in-flight lock — they are fire-and-forget
+dispatches, so a lock there would refuse the next click (e.g. rapid
+Normal↔Plan toggling). The web server never executes
 anything itself — the owning extension re-checks and republishes.
 
 **Region overrides** resolve per session in `web/shared/regions.ts`;

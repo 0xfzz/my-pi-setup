@@ -137,12 +137,14 @@ async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Pr
     return;
   }
 
-  // 3. At most one in-flight action per session held for 60 s (409). The
-  //    web core channel is exempt: its picker answers are instant
-  //    fire-and-forget dispatches, not long-running plugin actions — a
-  //    60 s lock there would block the next picker answer.
+  // 3. At most one in-flight CONFIRMED action per session, held for 60 s
+  //    (409). Instant actions (no declared confirm) and the web core
+  //    channel are exempt: both are fire-and-forget dispatches, so a lock
+  //    here would refuse the next click — the exact failure behind rapid
+  //    Normal↔Plan toggling. Confirmed actions stay locked to stop a
+  //    cost-intense re-submission while the first is still processing.
   const requestId = randomUUID();
-  if (!isWebCore && !checkAndSetInFlightAction(sessionId, requestId, 60_000)) {
+  if (action?.confirm !== undefined && !checkAndSetInFlightAction(sessionId, requestId, 60_000)) {
     sendJson(res, 409, { error: "Action already in flight for this session" });
     return;
   }
