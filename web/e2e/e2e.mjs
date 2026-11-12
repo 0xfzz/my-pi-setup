@@ -953,6 +953,19 @@ async function run() {
     await page
       .locator(`.app-session-item[data-id="${bridgeId}"][data-state="live"]`)
       .waitFor({ timeout: 10_000 });
+    step("8h: a session name replaces the folder in the sidebar row");
+    // 8h. A bridged rename (a /name, or a generated title) arrives as a
+    //     session_name event: the sidebar row shows it in place of the folder,
+    //     and the header shows it once the session is selected.
+    await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events: [{ type: "session_name", name: "Generated Title Check" }] }),
+    });
+    await page
+      .locator(`.app-session-item[data-id="${bridgeId}"] .app-session-name`)
+      .filter({ hasText: "Generated Title Check" })
+      .waitFor({ timeout: 10_000 });
     // Return to the bridge session for the remaining steps. The sidebar
     // reorders on activity — wait for the selection AND the stream's
     // connection before events flow, exactly like a user watching the
@@ -963,6 +976,10 @@ async function run() {
     await page
       .locator(`.app-session-item[data-id="${bridgeId}"].is-selected`)
       .waitFor({ timeout: 5_000 });
+    await page
+      .locator(".app-header-title")
+      .filter({ hasText: "Generated Title Check" })
+      .waitFor({ timeout: 10_000 });
     // "connecting" contains "connected" — match the exact terminal states
     // (the model name once state lands, or the bare "connected").
     await page.waitForFunction(
