@@ -48,7 +48,7 @@ A session title is the handle a person uses to find work again. Today, in this s
 ## 4. Non-goals (v1)
 
 - A configurable cheaper title model (`titleModel`). You asked for the current model; revisit only with data (open question Q1).
-- Retitling continuously or on every message (see §3 evidence from opencode in §5).
+- Retitling continuously or on every message (opencode's every-message regeneration, §5.1).
 - Wiring `session.title.generate@1` / `service:title-generator`. Model access exists only in the extension process; a web-side hook would not be able to call it. The seam stays reserved.
 - Titling subagent children or `herdr` child sessions (v0 already skips them; keep that).
 - Web actions that carry arguments. [plugin-actions](plugin-actions.md) A7 forbids payloads, so a regenerate **hint** is TUI-only.
@@ -119,7 +119,7 @@ User:
 <brief>
 <goal>…</goal>
 <first_user>…</first_user>
-<first_assistant>…</assistant>
+<first_assistant>…</first_assistant>
 <latest_user>…</latest_user>
 <footprint>edit×7 read×12 bash×5; auth/session.ts, auth/csrf.ts; branch fix/session-csrf</footprint>
 <current_title>…</current_title>
