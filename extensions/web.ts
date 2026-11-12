@@ -316,13 +316,25 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   };
 
 
-  // Push the current model/thinking to the web client (SSE `session_state`).
+  // Push the current model/thinking/context to the web client (SSE `session_state`).
   const postSessionState = (ctx: ExtensionContext): void => {
     bridgePoster?.post({
       type: "session_state",
       model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
       thinkingLevel: ctx.thinkingLevel,
+      ...contextUsageOf(ctx),
     });
+  };
+
+  // High-frequency stream events (message/tool deltas) should not POST per
+  // token; once a second is plenty for a live context figure.
+  let lastStreamStateAt = 0;
+  const STREAM_STATE_THROTTLE_MS = 1000;
+  const postSessionStateThrottled = (ctx: ExtensionContext): void => {
+    const now = Date.now();
+    if (now - lastStreamStateAt < STREAM_STATE_THROTTLE_MS) return;
+    lastStreamStateAt = now;
+    postSessionState(ctx);
   };
 
   // Push the model list for the web picker (SSE `web_models`).
@@ -683,10 +695,16 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     }
   });
   pi.on("message_start", forwardToBridge);
-  pi.on("message_update", forwardToBridge);
+  pi.on("message_update", (event, ctx) => {
+    forwardToBridge(event);
+    if (bridgeSessionId !== null) postSessionStateThrottled(ctx);
+  });
   pi.on("message_end", forwardToBridge);
   pi.on("tool_execution_start", forwardToBridge);
-  pi.on("tool_execution_update", forwardToBridge);
+  pi.on("tool_execution_update", (event, ctx) => {
+    forwardToBridge(event);
+    if (bridgeSessionId !== null) postSessionStateThrottled(ctx);
+  });
   pi.on("tool_execution_end", forwardToBridge);
   // User-run bash (`!` commands): pi's extension events only announce the
   // command, so the web extension supplies pi's local shell as custom

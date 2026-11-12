@@ -14,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { filterCommands, type WebCommand } from "../shared/commands.ts";
 import { activeMentionToken } from "../shared/mentions.ts";
 import type { PiAutocompleteItem, PiAutocompleteSuggestions } from "../shared/pi-api.ts";
-import { contextUsageView, formatTokens, type ContextUsage } from "./context-usage.ts";
+import { contextUsageDisplay, type ContextUsage } from "./context-usage.ts";
 
 export interface PendingImage {
   id: number;
@@ -103,26 +103,25 @@ async function downscaleDataUrl(dataUrl: string, mimeType: string): Promise<Read
 
 /** Compact context-window bar beside the model chip: a small fill track,
  *  bold green percent and grey "{used} / {max}" count, amber/red only past
- *  the warning thresholds. */
-function ContextUsageBar({ usage }: { usage: ContextUsage }) {
-  const view = contextUsageView(usage);
-  const percent = Math.round(view.percent);
+ *  the warning thresholds. Always rendered; missing data shows em-dashes. */
+function ContextUsageBar({ usage }: { usage: ContextUsage | null }) {
+  const view = contextUsageDisplay(usage);
   return (
     <span
       className={`app-context-usage is-${view.level}`}
       role="meter"
-      aria-label={`Context window ${percent}% used`}
+      aria-label={`Context window ${view.fillPercent}% used`}
       aria-valuemin={0}
       aria-valuemax={100}
-      aria-valuenow={percent}
-      style={{ "--context-pct": `${percent}%` } as CSSProperties}
+      aria-valuenow={view.fillPercent}
+      style={{ "--context-pct": `${view.fillPercent}%` } as CSSProperties}
     >
       <span className="app-context-usage-track" aria-hidden="true">
         <span className="app-context-usage-fill" />
       </span>
-      <span className="app-context-usage-percent">{percent}%</span>
+      <span className="app-context-usage-percent">{view.percentLabel}</span>
       <span className="app-context-usage-tokens">
-        {formatTokens(usage.tokens)} / {formatTokens(usage.contextWindow)}
+        {view.tokensLabel} / {view.maxLabel}
       </span>
     </span>
   );
@@ -408,10 +407,9 @@ export function Composer({
 
   return (
     <div className="app-composer" data-busy={busy ? "true" : undefined}>
-      {(model !== undefined || thinkingLevel !== undefined || contextUsage) ? (
-        <div className="app-composer-meta">
-          {contextUsage ? <ContextUsageBar usage={contextUsage} /> : null}
-          {model !== undefined && onOpenModelPicker !== undefined ? (
+      <div className="app-composer-meta">
+        <ContextUsageBar usage={contextUsage ?? null} />
+        {model !== undefined && onOpenModelPicker !== undefined ? (
             <button
               type="button"
               className="app-model-chip"
@@ -433,7 +431,6 @@ export function Composer({
             </button>
           ) : null}
         </div>
-      ) : null}
       {paletteOpen ? (
         <div className="app-command-palette" role="listbox" aria-label="Commands">
           {matches.map((command, index) => (

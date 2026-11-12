@@ -21,14 +21,15 @@ import {
   type SessionDirectoryEvent,
   type SessionInfo,
 } from "./sessions.ts";
-import { getRegisteredPlugins, recordExtensionUi, webUiStore } from "./plugin-host.ts";
+import { getRegisteredPlugins, recordExtensionUi, webPluginsStore, webUiStore } from "./plugin-host.ts";
 import { resolveRegionOverrides } from "../shared/regions.ts";
+import { WEB_PLUGIN_UI_SYNC_EVENT } from "../../../lib/web-plugins/ui-event-models.ts";
 
 const TOOL_UPDATE_COALESCE_MS = 150;
 const STREAM_HIGH_WATER_MARK_BYTES = 512 * 1024;
 const STREAM_BACKLOG_LIMIT_BYTES = 16 * 1024 * 1024;
 
-export interface EventStreamSession extends Pick<SessionCore, "subscribe" | "isStreaming" | "getStreamSnapshot"> {}
+export interface EventStreamSession extends Pick<SessionCore, "subscribe" | "isStreaming" | "getStreamSnapshot" | "getState"> {}
 
 /**
  * Attach an SSE stream to `res` for `sessionId`. `sessionPromise` resolves
@@ -56,6 +57,7 @@ export function attachAgentEventStream(
   let unsubscribeUi: (() => void) | null = null;
   let unsubscribeReplaced: (() => void) | null = null;
   let toolUpdateTimer: ReturnType<typeof setTimeout> | null = null;
+  let syncInterval: ReturnType<typeof setInterval> | null = null;
   const pendingToolUpdates = new Map<unknown, AgentEventLike>();
 
   const cleanup = (finish: boolean): void => {
@@ -63,6 +65,7 @@ export function attachAgentEventStream(
     closed = true;
     if (heartbeat !== null) clearInterval(heartbeat);
     if (toolUpdateTimer !== null) clearTimeout(toolUpdateTimer);
+    if (syncInterval !== null) clearInterval(syncInterval);
     pendingToolUpdates.clear();
     unsubscribe?.();
     unsubscribe = null;
@@ -226,6 +229,27 @@ export function attachAgentEventStream(
       unsubscribeUi = webUiStore.subscribe(() => {
         sendPluginState();
       });
+
+      // While a turn runs, keep the live context-window figure and the
+      // declarative plugin views fresh. The session state frame carries
+      // contextUsage/model/thinking to the client; the ui-sync asks every
+      // publisher to re-emit its current view (todo, artifacts, …).
+      let lastSessionStateJson = "";
+      syncInterval = setInterval(() => {
+        if (closed || !session.isStreaming()) return;
+        webPluginsStore.sessionBuses.get(sessionId)?.emit?.(WEB_PLUGIN_UI_SYNC_EVENT, {});
+        const state = session.getState();
+        const frame = {
+          type: "session_state" as const,
+          model: state.model,
+          thinkingLevel: state.thinkingLevel,
+          contextUsage: state.contextUsage ?? null,
+        };
+        const json = JSON.stringify(frame);
+        if (json === lastSessionStateJson) return;
+        lastSessionStateJson = json;
+        send(frame, { droppable: true });
+      }, 1000);
     } catch (error) {
       if (closed) return;
       send({

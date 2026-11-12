@@ -34,19 +34,40 @@ export function formatTokens(tokens: number): string {
   return `${(tokens / 1_000_000).toFixed(1)}M`;
 }
 
-export interface ContextUsageView {
-  /** 0–100, clamped. */
-  percent: number;
+/** Parts the composer renders, ready to display even when some data is missing. */
+export interface ContextUsageDisplay {
+  /** "42%", or "—" when the window is unknown. */
+  percentLabel: string;
+  /** "84k" used tokens, or "—" when no usage reading exists. */
+  tokensLabel: string;
+  /** "200k" window, or "—" when the window is unknown. */
+  maxLabel: string;
+  /** 0–100 fill length; 0 when the percentage is unknown. */
+  fillPercent: number;
   level: ContextLevel;
-  /** "84% · 84k / 200k" */
-  summary: string;
 }
 
-export function contextUsageView(usage: ContextUsage): ContextUsageView {
-  const percent = clampPercent(usage.percent);
+/**
+ * Format a context usage for the bar. A missing window (or a missing whole
+ * reading) renders as em-dashes rather than a misleading `0 / 0`, so a new
+ * session and an existing session with an unknown window stay honest.
+ */
+export function contextUsageDisplay(usage: ContextUsage | null | undefined): ContextUsageDisplay {
+  if (usage === null || usage === undefined) {
+    return { percentLabel: "—", tokensLabel: "—", maxLabel: "—", fillPercent: 0, level: "normal" };
+  }
+
+  const hasWindow = Number.isFinite(usage.contextWindow) && usage.contextWindow > 0;
+  const hasTokens = Number.isFinite(usage.tokens) && usage.tokens >= 0;
+  const percent = hasWindow && Number.isFinite(usage.percent)
+    ? clampPercent(usage.percent)
+    : null;
+
   return {
-    percent,
-    level: contextLevel(percent),
-    summary: `${Math.round(percent)}% · ${formatTokens(usage.tokens)} / ${formatTokens(usage.contextWindow)}`,
+    percentLabel: percent === null ? "—" : `${Math.round(percent)}%`,
+    tokensLabel: hasTokens ? formatTokens(usage.tokens) : "—",
+    maxLabel: hasWindow ? formatTokens(usage.contextWindow) : "—",
+    fillPercent: percent === null ? 0 : percent,
+    level: percent === null ? "normal" : contextLevel(percent),
   };
 }

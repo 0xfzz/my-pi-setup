@@ -34,6 +34,7 @@ import {
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
 import { publishWebView } from "../lib/web-plugins/publisher.ts";
 import type { ListItem } from "../lib/web-plugins/view.ts";
+import { WEB_PLUGIN_UI_SYNC_EVENT } from "../lib/web-plugins/ui-event-models.ts";
 import { markVolatileTail } from "../lib/cache-anchor.ts";
 import { TODO_DETAILS_HINT } from "../lib/workflow-actions.ts";
 import { planModeFromBranch } from "../lib/plan/plan-mode.ts";
@@ -504,6 +505,7 @@ export default function todoExtension(pi: ExtensionAPI) {
 
   // ── Lifecycle ──────────────────────────────────────────────────────────
   pi.events?.on(REFRESH_EVENT, () => { if (uiContext) draw(uiContext); });
+  pi.events?.on(WEB_PLUGIN_UI_SYNC_EVENT, () => { if (uiContext) draw(uiContext); });
   pi.events?.on("workflow-todo:open-dialog", () => { if (uiContext?.hasUI) void showDialog(uiContext); });
   pi.on("session_start", (_e, ctx) => restore(ctx));
   pi.on("session_tree", (_e, ctx) => restore(ctx));

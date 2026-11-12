@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   clampPercent,
   contextLevel,
-  contextUsageView,
+  contextUsageDisplay,
   formatTokens,
 } from "./context-usage.ts";
 
@@ -36,17 +36,25 @@ test("formatTokens renders raw, kilo and mega counts", () => {
   assert.equal(formatTokens(Number.NaN), "0");
 });
 
-test("contextUsageView clamps, classifies and summarizes the meter", () => {
+test("contextUsageDisplay formats full, missing-window and missing-reading cases", () => {
   assert.deepEqual(
-    contextUsageView({ percent: 42, contextWindow: 200_000, tokens: 84_000 }),
-    { percent: 42, level: "normal", summary: "42% · 84k / 200k" },
+    contextUsageDisplay({ percent: 42, contextWindow: 200_000, tokens: 84_000 }),
+    { percentLabel: "42%", tokensLabel: "84k", maxLabel: "200k", fillPercent: 42, level: "normal" },
   );
   assert.deepEqual(
-    contextUsageView({ percent: 88, contextWindow: 200_000, tokens: 176_000 }),
-    { percent: 88, level: "warning", summary: "88% · 176k / 200k" },
+    contextUsageDisplay({ percent: 130, contextWindow: 200_000, tokens: 240_000 }),
+    { percentLabel: "100%", tokensLabel: "240k", maxLabel: "200k", fillPercent: 100, level: "critical" },
   );
   assert.deepEqual(
-    contextUsageView({ percent: 130, contextWindow: 200_000, tokens: 240_000 }),
-    { percent: 100, level: "critical", summary: "100% · 240k / 200k" },
+    contextUsageDisplay({ percent: 0, contextWindow: 0, tokens: 84_000 }),
+    { percentLabel: "—", tokensLabel: "84k", maxLabel: "—", fillPercent: 0, level: "normal" },
   );
+  assert.deepEqual(contextUsageDisplay(null), {
+    percentLabel: "—",
+    tokensLabel: "—",
+    maxLabel: "—",
+    fillPercent: 0,
+    level: "normal",
+  });
+  assert.deepEqual(contextUsageDisplay(undefined), contextUsageDisplay(null));
 });

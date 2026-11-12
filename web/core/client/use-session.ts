@@ -746,20 +746,33 @@ export function usePiSession() {
           setHistoryEpoch((epoch) => epoch + 1);
           break;
         case "session_state": {
-          // The TUI-side model/thinking state, pushed at attach, at each
-          // turn start and after any change — this is the sync that keeps
-          // the model chip honest in both directions.
+          // The TUI-side model/thinking/context state, pushed at attach, at
+          // each turn start and continuously while a turn runs — this keeps
+          // the model chip and context-window figure live.
           setReloading(false);
-          const pushed = data as { model?: { provider?: unknown; id?: unknown }; thinkingLevel?: unknown };
+          const pushed = data as {
+            model?: { provider?: unknown; id?: unknown };
+            thinkingLevel?: unknown;
+            contextUsage?: { percent?: unknown; contextWindow?: unknown; tokens?: unknown } | null;
+          };
           const pushedModel = typeof pushed.model?.provider === "string" && typeof pushed.model?.id === "string"
             ? { provider: pushed.model.provider, id: pushed.model.id }
+            : undefined;
+          const pushedContextUsage = typeof pushed.contextUsage?.percent === "number"
+            && typeof pushed.contextUsage?.contextWindow === "number"
+            && typeof pushed.contextUsage?.tokens === "number"
+            ? {
+              percent: pushed.contextUsage.percent,
+              contextWindow: pushed.contextUsage.contextWindow,
+              tokens: pushed.contextUsage.tokens,
+            }
             : undefined;
           setSessionState((prev) => ({
             isStreaming: prev?.isStreaming ?? false,
             isBashRunning: prev?.isBashRunning ?? false,
             isCompacting: prev?.isCompacting ?? false,
             model: pushedModel ?? prev?.model,
-            contextUsage: prev?.contextUsage ?? null,
+            contextUsage: pushedContextUsage ?? prev?.contextUsage ?? null,
             thinkingLevel: typeof pushed.thinkingLevel === "string" ? pushed.thinkingLevel : prev?.thinkingLevel ?? "off",
           }));
           break;
