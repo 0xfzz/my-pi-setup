@@ -20,6 +20,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { meaningfulSessionTitle, sessionTitle } from "../lib/naming.ts";
 import { DASHBOARD_GOAL_ENTRY, latestGoalTitle, type GoalTitleRecord } from "../lib/dashboard/goal-title.ts";
+import { isGeneratedName } from "../lib/title/provenance.ts";
 
 import {
   DASHBOARD_ARTIFACTS_EVENT,
@@ -204,6 +205,9 @@ export default function dashboardExtension(pi: ExtensionAPI, options: DashboardE
   // file-global; the event lets us capture explicit renames at this branch.
   pi.on("session_info_changed", (event, context) => {
     if (childGuard(context)) return;
+    // A title the generator wrote is not a goal; only a person's rename is.
+    const session = projectSession(context, mode);
+    if (isGeneratedName(context.sessionManager.getBranch(), session.id, event.name)) return;
     setGoal(context, event.name ?? "", "rename");
   });
 
