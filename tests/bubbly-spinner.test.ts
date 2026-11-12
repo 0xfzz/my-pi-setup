@@ -14,6 +14,7 @@ import {
   javaneseSpinnerVerbs,
   memeAndMagicSpinners,
 } from "../lib/bubbly-spinner.ts";
+import { WEB_UI_EVENT } from "../lib/web-plugins/ui-event-models.ts";
 
 function stripAnsi(text: string): string {
   // oxlint-disable-next-line no-control-regex
@@ -190,7 +191,19 @@ test("bubblySpinnerExtension registers hooks and manages working indicator/messa
     ui: fakeUi,
   };
 
+  const webUiEvents: Array<{ type: string; payload: Record<string, unknown> }> = [];
+
   const fakePi: any = {
+    events: {
+      emit: (channel: string, data: any) => {
+        if (channel === WEB_UI_EVENT && data && typeof data === "object") {
+          webUiEvents.push({
+            type: String((data as { type?: unknown }).type),
+            payload: ((data as { payload?: unknown }).payload ?? {}) as Record<string, unknown>,
+          });
+        }
+      },
+    },
     on: (event: string, handler: any) => {
       events.set(event, handler);
       return () => events.delete(event);
@@ -215,6 +228,13 @@ test("bubblySpinnerExtension registers hooks and manages working indicator/messa
   assert.equal(indicatorSet, BUBBLY_INDICATOR_OPTIONS);
   assert.equal(messages.length, 1);
   assert.ok(stripAnsi(messages[0]!).endsWith("..."));
+
+  // The same session_start bridges the bubbly word into the web working line.
+  const workingChanges = webUiEvents.filter((event) => event.type === "ui.working.changed");
+  assert.ok(workingChanges.length >= 2, "session_start publishes both the message and indicator frames");
+  const bridgedMessage = workingChanges.find((event) => typeof event.payload.message === "string");
+  assert.ok(typeof bridgedMessage?.payload.message === "string" && bridgedMessage.payload.message.endsWith("..."));
+  assert.ok(workingChanges.some((event) => Array.isArray(event.payload.frames)));
 
   // Test agent_start
   await events.get("agent_start")!({}, fakeCtx);

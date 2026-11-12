@@ -4,18 +4,40 @@ import {
   BUBBLY_TEXT_INTERVAL_MS,
   BubblyWordAnimator,
 } from "../lib/bubbly-spinner.ts";
+import { publishWebUi } from "../lib/web-plugins/publisher.ts";
 
 export default function bubblySpinnerExtension(pi: ExtensionAPI) {
   const animator = new BubblyWordAnimator();
   let waveTimer: NodeJS.Timeout | null = null;
   let activeContext: ExtensionContext | null = null;
 
+  /**
+   * Mirror the animated verb into the web's unified `ui.working.changed`
+   * stream. Only the TUI line consumes `ctx.ui.setWorkingMessage`; the web
+   * working line consumes `publishWebUi`, so bridged and in-process sessions
+   * both show the bubbly verb instead of the default "pi is working…".
+   */
+  function postWorkingIndicator(): void {
+    publishWebUi(pi, "ctx.ui.working", "ui.working.changed", {
+      frames: BUBBLY_INDICATOR_OPTIONS.frames ?? null,
+      intervalMs: BUBBLY_INDICATOR_OPTIONS.intervalMs ?? 80,
+    });
+  }
+
+  function postWorkingMessage(message: string): void {
+    publishWebUi(pi, "ctx.ui.working", "ui.working.changed", { message });
+  }
+
   function renderCurrentFrame(ctx: ExtensionContext) {
-    ctx.ui.setWorkingMessage(animator.getCurrentText());
+    const text = animator.getCurrentText();
+    ctx.ui.setWorkingMessage(text);
+    postWorkingMessage(text);
   }
 
   function advanceFrame(ctx: ExtensionContext) {
-    ctx.ui.setWorkingMessage(animator.nextFrame());
+    const text = animator.nextFrame();
+    ctx.ui.setWorkingMessage(text);
+    postWorkingMessage(text);
   }
 
   function startWaveAnimation(ctx: ExtensionContext) {
@@ -37,11 +59,11 @@ export default function bubblySpinnerExtension(pi: ExtensionAPI) {
     activeContext = null;
   }
 
-  // Set the bubbly indicator and initial verb on startup.
-  // The web working UI consumes these standard ctx.ui events through the
-  // unified ui.working.changed stream; no second web publication is needed.
+  // Set the bubbly indicator and initial verb on startup, and mirror both into
+  // the web's working line through the unified ui.working.changed stream.
   pi.on("session_start", async (_event, ctx) => {
     ctx.ui.setWorkingIndicator(BUBBLY_INDICATOR_OPTIONS);
+    postWorkingIndicator();
     renderCurrentFrame(ctx);
   });
 
