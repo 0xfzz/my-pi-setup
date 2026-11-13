@@ -1,7 +1,8 @@
 // The sidebar launcher: up to three pinned feature icons ahead of a single
 // ⋯ overflow menu. The ⋯ menu lists every installed panel (pinned or not)
-// with its icon and full title, and a per-panel submenu carries the Open and
-// Pin/Unpin actions. Menu focus, keyboard navigation, typeahead and Escape
+// with its icon and full title. Desktop submenus carry Open and Pin/Unpin;
+// phones use direct Open and adjacent Pin/Unpin items to avoid sideways clipping.
+// Menu focus, keyboard navigation, typeahead and Escape
 // layering come from Radix Dropdown Menu — no hand-rolled popup here.
 
 import {
@@ -35,6 +36,7 @@ export interface PanelLauncherProps {
   /** Resolved (seeded/capped) pin list, in pin order. */
   pinnedIds: readonly string[];
   activePanelId: string | null;
+  menuLayout: "inline" | "submenu";
   onToggle: (id: string) => void;
   onPin: (id: string) => void;
   onUnpin: (id: string) => void;
@@ -46,6 +48,7 @@ export function PanelLauncher({
   entries,
   pinnedIds,
   activePanelId,
+  menuLayout,
   onToggle,
   onPin,
   onUnpin,
@@ -108,7 +111,7 @@ export function PanelLauncher({
       </nav>
 
       <DropdownMenu.Portal>
-        <DropdownMenu.Content className="app-panel-menu" align="end" sideOffset={6}>
+        <DropdownMenu.Content className="app-panel-menu" align="end" sideOffset={6} collisionPadding={8}>
           <DropdownMenu.Label className="app-panel-menu-label">
             {maxedOut ? `${MAX_PINS} of ${MAX_PINS} pinned` : "Panels"}
           </DropdownMenu.Label>
@@ -130,16 +133,43 @@ export function PanelLauncher({
             const active = entry.id === activePanelId;
             const pinned = pinnedIds.includes(entry.id);
             const pinDisabled = !pinned && maxedOut;
+            const label = (
+              <>
+                <span className="app-panel-menu-icon"><PanelIcon icon={entry.icon} /></span>
+                <span className="app-panel-menu-title">{entry.title}</span>
+                {active ? <Check className="app-panel-menu-active" size={14} aria-label="active" /> : null}
+                {pinned && menuLayout === "submenu" ? <PushPin className="app-panel-menu-pin" size={13} aria-label="pinned" /> : null}
+              </>
+            );
+            if (menuLayout === "inline") {
+              return (
+                <DropdownMenu.Group key={entry.id} className="app-panel-menu-inline-row">
+                  <DropdownMenu.Item
+                    className="app-panel-menu-item app-panel-menu-open"
+                    aria-label={entry.title}
+                    onSelect={() => onToggle(entry.id)}
+                  >
+                    {label}
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    className="app-panel-menu-item app-panel-menu-pin-action"
+                    aria-label={`${pinned ? "Unpin" : "Pin"} ${entry.title}`}
+                    title={pinDisabled ? `Unpin another panel first (${MAX_PINS} pins maximum)` : `${pinned ? "Unpin" : "Pin"} ${entry.title}`}
+                    disabled={pinDisabled}
+                    onSelect={() => pinned ? onUnpin(entry.id) : onPin(entry.id)}
+                  >
+                    <PushPin size={16} weight={pinned ? "fill" : "regular"} aria-hidden="true" />
+                  </DropdownMenu.Item>
+                </DropdownMenu.Group>
+              );
+            }
             return (
               <DropdownMenu.Sub key={entry.id}>
                 <DropdownMenu.SubTrigger className="app-panel-menu-row">
-                  <span className="app-panel-menu-icon"><PanelIcon icon={entry.icon} /></span>
-                  <span className="app-panel-menu-title">{entry.title}</span>
-                  {active ? <Check className="app-panel-menu-active" size={14} aria-label="active" /> : null}
-                  {pinned ? <PushPin className="app-panel-menu-pin" size={13} aria-label="pinned" /> : null}
+                  {label}
                 </DropdownMenu.SubTrigger>
                 <DropdownMenu.Portal>
-                  <DropdownMenu.SubContent className="app-panel-menu" sideOffset={2} alignOffset={-4}>
+                  <DropdownMenu.SubContent className="app-panel-menu" sideOffset={2} alignOffset={-4} collisionPadding={8}>
                     <DropdownMenu.Item
                       className="app-panel-menu-item"
                       onSelect={() => onToggle(entry.id)}

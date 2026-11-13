@@ -74,6 +74,27 @@ async function selectFixtureSession(page) {
   await page.waitForSelector('[data-region-override="composer"]', { timeout: 15_000 });
 }
 
+async function assertMobilePanelLauncher(page, viewport) {
+  await page.setViewportSize(viewport);
+  await page.getByRole("button", { name: "More panels", exact: true }).click();
+  const menu = page.getByRole("menu");
+  const box = await menu.boundingBox();
+  assert.ok(box.x >= 0 && box.x + box.width <= viewport.width, "panel menu fits the phone width");
+  assert.ok(box.y >= 0 && box.y + box.height <= viewport.height, "panel menu fits the phone height");
+  assert.equal(await menu.locator('[aria-haspopup="menu"]').count(), 0, "phone actions never open sideways submenus");
+  await menu.getByRole("menuitem", { name: "Unpin Cache health", exact: true }).click();
+  await page.getByRole("button", { name: "More panels", exact: true }).click();
+  await menu.getByRole("menuitem", { name: "Pin Cache health", exact: true }).click();
+  await page.getByRole("button", { name: "More panels", exact: true }).click();
+  await menu.getByRole("menuitem", { name: "Files", exact: true }).click();
+  const panel = page.getByRole("complementary", { name: "Files panel" });
+  await panel.waitFor();
+  const panelBox = await panel.boundingBox();
+  assert.ok(panelBox.x >= 0 && panelBox.x + panelBox.width <= viewport.width, "Files panel fits the phone width");
+  await page.getByRole("button", { name: "Close panel", exact: true }).click();
+  assert.equal(await page.locator(".app-side-panel-scrim").count(), 0, "closing Files restores the chat");
+}
+
 async function run() {
   // Detached: the server runs in its own process group so the teardown can
   // kill the whole tree (npx → tsx → node). A SIGTERM to the npx wrapper
@@ -412,6 +433,10 @@ async function run() {
     await page.getByRole("button", { name: "Close panel", exact: true }).click();
     assert.equal(await page.locator(".app-side-panel-scrim").count(), 0);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
+    step("4g: phone panel actions — no clipped sideways submenus");
+    for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 420, height: 800 }]) {
+      await assertMobilePanelLauncher(page, viewport);
+    }
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.locator(".app-sidebar-toggle").click();
 

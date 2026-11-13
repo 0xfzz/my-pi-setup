@@ -494,6 +494,7 @@ export function AppShell() {
             entries={panelEntries}
             pinnedIds={resolvedPins}
             activePanelId={openPanelPluginId}
+            menuLayout={wide ? "submenu" : "inline"}
             onToggle={(id) => {
               if (openPanelPluginId === id) setSidePanelOpen(false);
               else handleOpenSidePanel(id);
