@@ -105,7 +105,7 @@ Three contract surfaces exist, and each has exactly one home:
 | pi built-in calls | `web/core/pi-api/` (the facade) | server ↔ pi's own modules |
 
 **Shared constants are the neutral ground.** The reference pattern is
-modes: `lib/modes-web-view.ts` defines `MODES_PLUGIN_ID` and the action
+modes: `web/plugins/modes/contract.ts` defines `MODES_PLUGIN_ID` and the action
 ids; `extensions/modes.ts` (behavior) and `web/plugins/modes/descriptor.ts`
 (interface) both import from there. Neither side imports the other. The
 guard fails any extension that imports `web/plugins/` directly.
@@ -175,7 +175,7 @@ Ask, for anything new:
 Worked examples from this repo:
 
 - **modes** — the full reference pattern: behavior in
-  `extensions/modes.ts`, constants in `lib/modes-web-view.ts`, interface
+  `extensions/modes.ts`, constants in `web/plugins/modes/contract.ts`, interface
   in `web/plugins/modes/descriptor.ts`.
 - **@ mentions** — the client gates the picker (UX); pi's provider
   supplies the suggestions (pi_api); pi's read tool resolves the sent

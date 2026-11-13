@@ -41,7 +41,7 @@ import {
   AUTO_TITLE_TOGGLE_ACTION,
   autoTitleWebView,
   type AutoTitlePhase,
-} from "../lib/auto-title-web-view.ts";
+} from "../web/plugins/auto-title/contract.ts";
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
 import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";

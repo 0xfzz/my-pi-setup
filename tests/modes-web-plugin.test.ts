@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { MODES_LEAVE_PLAN_ACTION, MODES_PLUGIN_ID, MODES_TOGGLE_MODE_ACTION, modeWebView } from "../lib/modes-web-view.ts";
+import { MODES_LEAVE_PLAN_ACTION, MODES_PLUGIN_ID, MODES_TOGGLE_MODE_ACTION, modeWebView } from "../web/plugins/modes/contract.ts";
 import { WEB_PLUGIN_VIEW_EVENT, validateView } from "../web/core/plugin-contracts/view.ts";
 import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 import { validatePlugin, type WebPluginDescriptor } from "../web/core/plugin-contracts/descriptor.ts";

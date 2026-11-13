@@ -3,7 +3,7 @@ import {
   AUTO_TITLE_PLUGIN_ID,
   AUTO_TITLE_REGENERATE_ACTION,
   AUTO_TITLE_TOGGLE_ACTION,
-} from "../../../lib/auto-title-web-view.ts";
+} from "./contract.ts";
 
 export const autoTitlePlugin: WebPluginDescriptor = {
   id: AUTO_TITLE_PLUGIN_ID,

@@ -6,7 +6,7 @@
 | --- | --- |
 | **Status** | current operator guide |
 | **Detail for** | [README § Documentation](../README.md) |
-| **Scope** | `extensions/auto-title.ts`, `lib/title/*`, `lib/auto-title-web-view.ts`, `web/plugins/auto-title/descriptor.ts`, `web/core/server/sessions.ts` (names), `web/core/client/sidebar.tsx` and `shell.tsx` (display) |
+| **Scope** | `extensions/auto-title.ts`, `lib/title/*`, `web/plugins/auto-title/contract.ts`, `web/plugins/auto-title/descriptor.ts`, `web/core/server/sessions.ts` (names), `web/core/client/sidebar.tsx` and `shell.tsx` (display) |
 | **Verified against** | `tests/auto-title-extension.test.ts`, `tests/title-brief.test.ts`, `tests/title-clean.test.ts`, `tests/title-provenance.test.ts`, `tests/title-flag-store.test.ts`, `web/core/server/session-names.test.ts`. Not verified against a real model or in a browser: the sidebar and header are covered by the data-path tests only |
 | **Related** | [Dashboard](dashboard.md) (`session_goal` and `/name` set the same name), [pi-web](pi-web.md), [PRD](prds/session-title-generation.md) |
 

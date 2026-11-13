@@ -12,7 +12,7 @@ import { isRetiredDelegationTool, stripRetiredTools } from "../lib/delegation-to
 import { waitCommandProblem } from "../lib/delegation/wait-guard.ts";
 import { hasLiveDelegation } from "../lib/delegation/live.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardMode } from "../lib/dashboard/integration.ts";
-import { MODES_LEAVE_PLAN_ACTION, MODES_PLUGIN_ID, MODES_TOGGLE_MODE_ACTION, modeWebView } from "../lib/modes-web-view.ts";
+import { MODES_LEAVE_PLAN_ACTION, MODES_PLUGIN_ID, MODES_TOGGLE_MODE_ACTION, modeWebView } from "../web/plugins/modes/contract.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
 import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 

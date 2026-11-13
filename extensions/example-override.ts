@@ -1,5 +1,5 @@
 // Reference override plugin (see web/plugins/example-override/descriptor.ts; the
-// shared constants live in lib/example-override-web-view.ts): the
+// shared constants live in web/plugins/example-override/contract.ts): the
 // "Replace the composer" action publishes a view; while it is published the
 // web client renders that view instead of the composer region. Inert until
 // the action runs, and a fresh session starts with no view again — the
@@ -11,7 +11,7 @@ import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 import {
   EXAMPLE_OVERRIDE_PLUGIN_ID,
   EXAMPLE_OVERRIDE_SHOW_ACTION,
-} from "../lib/example-override-web-view.ts";
+} from "../web/plugins/example-override/contract.ts";
 
 export default function exampleOverrideExtension(pi: ExtensionAPI): void {
   pi.events?.on(WEB_PLUGIN_ACTION_REQUEST_EVENT, (data: unknown) => {

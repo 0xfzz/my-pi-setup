@@ -202,6 +202,13 @@ function allowed(zone: ZoneRules, edge: ImportEdge): boolean {
     // Deep file imports of npm packages (allowed only where pi is).
     return allow.some((prefix) => edge.target.startsWith(prefix === "@earendil-works/" ? "node_modules/@earendil-works/" : prefix));
   }
+  // A pi extension bridges to a web plugin only through that plugin's
+  // contract file (web/plugins/<id>/contract.ts) — never its descriptor or
+  // its client UI. Everything else under web/ stays off-limits to
+  // extensions.
+  if (zone.dir === "extensions" && edge.target.startsWith("web/plugins/")) {
+    return edge.target.endsWith("/contract.ts");
+  }
   return allow.some((prefix) => edge.target.startsWith(prefix));
 }
 

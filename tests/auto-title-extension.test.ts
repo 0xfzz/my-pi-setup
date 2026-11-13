@@ -10,7 +10,7 @@ import {
   AUTO_TITLE_REGENERATE_ACTION,
   AUTO_TITLE_TOGGLE_ACTION,
   autoTitleWebView,
-} from "../lib/auto-title-web-view.ts";
+} from "../web/plugins/auto-title/contract.ts";
 import { TITLE_ATTEMPT_ENTRY, TITLE_RECORD_ENTRY } from "../lib/title/provenance.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../web/core/plugin-contracts/actions.ts";
 import { validatePlugin } from "../web/core/plugin-contracts/descriptor.ts";

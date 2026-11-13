@@ -2,7 +2,7 @@ import type { WebPluginDescriptor } from "../../core/plugin-contracts/descriptor
 import {
   EXAMPLE_OVERRIDE_PLUGIN_ID,
   EXAMPLE_OVERRIDE_SHOW_ACTION,
-} from "../../../lib/example-override-web-view.ts";
+} from "./contract.ts";
 
 /**
  * Reference override plugin: while its view is published, the minimal web
