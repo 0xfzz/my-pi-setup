@@ -7,20 +7,20 @@ import {
   filterArtifacts,
   projectGraph,
   topologySignature,
-} from "../web/core/dashboard/src/graph.mjs";
+} from "../web/plugins/dashboard/app/src/graph.mjs";
 import {
   escapeDotString,
   isSafeLinkUrl,
   renderMarkdownSafe,
   sanitizeSvgMarkup,
   stripActiveMarkup,
-} from "../web/core/dashboard/src/sanitize.mjs";
-import * as S from "../web/core/dashboard/src/state.mjs";
-import * as GraphModel from "../web/core/dashboard/src/graph.mjs";
-import { ApiError, createApi, createChangeCoalescer, parseChangeEvent } from "../web/core/dashboard/src/api.mjs";
-import { renderDot } from "../web/core/dashboard/src/graphviz.mjs";
-import { decorateGraphSvg, graphNodeFromEvent, selectGraphNode, updateGraphSvg } from "../web/core/dashboard/src/graph-dom.mjs";
-import { MOTION, planGraphMotion, staggerDelayMs } from "../web/core/dashboard/src/motion.mjs";
+} from "../web/plugins/dashboard/app/src/sanitize.mjs";
+import * as S from "../web/plugins/dashboard/app/src/state.mjs";
+import * as GraphModel from "../web/plugins/dashboard/app/src/graph.mjs";
+import { ApiError, createApi, createChangeCoalescer, parseChangeEvent } from "../web/plugins/dashboard/app/src/api.mjs";
+import { renderDot } from "../web/plugins/dashboard/app/src/graphviz.mjs";
+import { decorateGraphSvg, graphNodeFromEvent, selectGraphNode, updateGraphSvg } from "../web/plugins/dashboard/app/src/graph-dom.mjs";
+import { MOTION, planGraphMotion, staggerDelayMs } from "../web/plugins/dashboard/app/src/motion.mjs";
 
 type Any = any;
 

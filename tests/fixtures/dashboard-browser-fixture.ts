@@ -6,8 +6,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { watch } from "node:fs";
 import { join } from "node:path";
-import { DashboardProducer } from "../../lib/dashboard/producer.ts";
-import { emptyDelegation, type DashboardSnapshot } from "../../lib/dashboard/protocol.ts";
+import { DashboardProducer } from "../../web/plugins/dashboard/lib/producer.ts";
+import { emptyDelegation, type DashboardSnapshot } from "../../web/plugins/dashboard/lib/protocol.ts";
 
 const directory = process.argv[2];
 if (!directory) throw new Error("Provide a private temporary fixture directory");

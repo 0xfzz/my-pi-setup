@@ -1,0 +1,7 @@
+{
+  "name": "@pi-web-plugin/dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "First-party dashboard plugin: the per-session delegated-work graph and the standalone dashboard app."
+}

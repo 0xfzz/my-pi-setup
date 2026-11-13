@@ -27,9 +27,9 @@ import {
   stopDashboardByRuntimeDir,
   checkDashboardHealth,
   LOCK_FILE,
-} from "../lib/dashboard/lifecycle.ts";
-import type { DashboardAddress } from "../lib/dashboard/lifecycle.ts";
-import { readRuntimeMetadata } from "../lib/dashboard/server.ts";
+} from "../web/plugins/dashboard/lib/lifecycle.ts";
+import type { DashboardAddress } from "../web/plugins/dashboard/lib/lifecycle.ts";
+import { readRuntimeMetadata } from "../web/plugins/dashboard/lib/server.ts";
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -93,7 +93,7 @@ interface Fixture {
 
 before(async () => {
   fixturePath = join(await tempDir("pi-dash-fixture-"), "producer-fixture.mjs");
-  const producerUrl = pathToFileURL(join(REPO_ROOT, "lib", "dashboard", "producer.ts")).href;
+  const producerUrl = pathToFileURL(join(REPO_ROOT, "web", "plugins", "dashboard", "lib", "producer.ts")).href;
   await writeFile(
     fixturePath,
     `import { DashboardProducer } from ${JSON.stringify(producerUrl)};

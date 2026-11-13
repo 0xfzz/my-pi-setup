@@ -75,7 +75,7 @@ function importsOf(file: string): ImportEdge[] {
   return edges;
 }
 
-function sourceFiles(dir: string): string[] {
+function sourceFiles(dir: string, skip: readonly string[] = []): string[] {
   const out: string[] = [];
   const walk = (current: string): void => {
     for (const entry of readdirSync(current, { withFileTypes: true })) {
@@ -85,6 +85,8 @@ function sourceFiles(dir: string): string[] {
       // is third-party. The boundary is about the code we author.
       if (entry.name === "dist" || entry.name === "node_modules") continue;
       const full = join(current, entry.name);
+      const relFull = relative(process.cwd(), full);
+      if (skip.some((s) => relFull === s || relFull.startsWith(`${s}/`))) continue;
       if (entry.isDirectory()) walk(full);
       else if (/\.(ts|tsx|mjs|cjs|js)$/.test(entry.name) && !/\.test\.(ts|mjs|js)$/.test(entry.name)) out.push(full);
     }
@@ -101,6 +103,8 @@ interface ZoneRules {
   /** Type-only targets in addition to runtimeAllow. */
   typeOnlyAllow: readonly string[] | null;
   why: string;
+  /** Repo-relative subpaths classified by a more specific zone, skipped here. */
+  skip?: readonly string[];
 }
 
 const CONTRACT_LAYERS = ["web/core/shared/", "web/core/plugin-contracts/"];
@@ -152,6 +156,7 @@ const ZONES: readonly ZoneRules[] = [
     dir: "web/plugins",
     runtimeAllow: ["web/plugins/", "web/core/client/plugin-system/", "web/core/shared/", "lib/"],
     typeOnlyAllow: ["lib/", "web/core/plugin-contracts/"],
+    skip: ["web/plugins/dashboard"],
     why: "plugin descriptors are declarative and plugin UI reuses core renderers; they never import pi behavior",
   },
   {
@@ -177,6 +182,16 @@ const ZONES: readonly ZoneRules[] = [
     runtimeAllow: ["web/core/auth/", "node:"],
     typeOnlyAllow: null,
     why: "web auth is server-side infrastructure — it never depends on the client or pi runtimes",
+  },
+  {
+    // The first-party dashboard plugin: a server-side library (HTTP server,
+    // graph build, projection, lifecycle) plus the standalone browser app.
+    // It is behavior + a page, not a declarative descriptor — hence its own
+    // zone rather than the descriptor `web/plugins` rules.
+    dir: "web/plugins/dashboard",
+    runtimeAllow: ["web/plugins/dashboard/", "web/core/plugin-contracts/", "lib/", "node:"],
+    typeOnlyAllow: null,
+    why: "the dashboard plugin runs server-side and integrates with shared lib; its browser app is bundled separately",
   },
 ];
 
@@ -207,7 +222,11 @@ function allowed(zone: ZoneRules, edge: ImportEdge): boolean {
   // its client UI. Everything else under web/ stays off-limits to
   // extensions.
   if (zone.dir === "extensions" && edge.target.startsWith("web/plugins/")) {
-    return edge.target.endsWith("/contract.ts");
+    // A plugin's bridge contract, or the dashboard plugin's shared
+    // publisher/projection library (the one feature several behavior
+    // extensions integrate with, not a single declarative bridge).
+    return edge.target.endsWith("/contract.ts")
+      || edge.target.startsWith("web/plugins/dashboard/lib/");
   }
   return allow.some((prefix) => edge.target.startsWith(prefix));
 }
@@ -216,7 +235,7 @@ test("the web↔extension boundary holds on the import graph", () => {
   const violations: string[] = [];
 
   for (const zone of ZONES) {
-    for (const file of sourceFiles(join(process.cwd(), zone.dir))) {
+    for (const file of sourceFiles(join(process.cwd(), zone.dir), zone.skip ?? [])) {
       for (const edge of importsOf(file)) {
         if (!allowed(zone, edge)) {
           violations.push(

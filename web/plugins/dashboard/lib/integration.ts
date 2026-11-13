@@ -124,13 +124,13 @@ export type DashboardProducerFactory = (
 export async function defaultDashboardProducerFactory(
   options: DashboardProducerOptions,
 ): Promise<DashboardProducerLike> {
-  // Non-literal on purpose: lib/dashboard/producer.ts is owned by the shared
+  // Non-literal on purpose: web/plugins/dashboard/lib/producer.ts is owned by the shared
   // runtime lane, so this file must not fail to resolve before it lands.
   const specifier = "./producer" + ".ts";
   const module: any = await import(new URL(specifier, import.meta.url).href);
   const Producer = module?.DashboardProducer;
   if (typeof Producer !== "function") {
-    throw new Error("DashboardProducer is not available in lib/dashboard/producer.ts");
+    throw new Error("DashboardProducer is not available in web/plugins/dashboard/lib/producer.ts");
   }
   return new Producer(options);
 }

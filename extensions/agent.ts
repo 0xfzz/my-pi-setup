@@ -155,8 +155,8 @@ import {
   spawnRefusal,
 } from "../lib/spawn-policy.ts";
 import type { SpawnPurpose } from "../lib/delegation-tools.ts";
-import { DASHBOARD_SYNC_EVENT, publishDashboardState } from "../lib/dashboard/integration.ts";
-import { projectChildProvenance, projectDelegation } from "../lib/dashboard/projection.ts";
+import { DASHBOARD_SYNC_EVENT, publishDashboardState } from "../web/plugins/dashboard/lib/integration.ts";
+import { projectChildProvenance, projectDelegation } from "../web/plugins/dashboard/lib/projection.ts";
 import { displayName as namingDisplayName, givenNameFor, givenNamePart, isHumanName } from "../lib/naming.ts";
 import { stringEnum } from "../lib/schema.ts";
 

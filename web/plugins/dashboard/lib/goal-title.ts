@@ -1,5 +1,5 @@
 /** Branch-owned, user-goal identity. Never reads transcripts or child plans. */
-import { meaningfulSessionTitle, sessionTitle } from "../naming.ts";
+import { meaningfulSessionTitle, sessionTitle } from "../../../../lib/naming.ts";
 
 export const DASHBOARD_GOAL_ENTRY = "workflow-dashboard-goal:v1";
 export interface GoalTitleRecord {

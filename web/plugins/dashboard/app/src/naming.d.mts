@@ -1,7 +1,7 @@
 /**
  * Type declarations for the shared naming authority. The canonical module is
  * `naming.mjs` (pure, no DOM/Node); this file lets TypeScript callers
- * (`lib/dashboard/projection.ts`, `extensions/orchestrator.ts`) import it.
+ * (`web/plugins/dashboard/lib/projection.ts`, `extensions/orchestrator.ts`) import it.
  */
 
 export interface NamesSource {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Build the dashboard browser bundle into web/dashboard/dist/app.js.
+ * Build the dashboard browser bundle into web/plugins/dashboard/app/dist/app.js.
  *
  * Everything is local: esbuild bundles Graphviz's WebAssembly build (the wasm
  * payload is embedded in @viz-js/viz), marked, DOMPurify and a highlight.js
@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
-const dashboardDir = join(root, "web", "core", "dashboard");
+const dashboardDir = join(root, "web", "plugins", "dashboard", "app");
 const distDir = join(dashboardDir, "dist");
 const entry = join(dashboardDir, "src", "app.mjs");
 const outfile = join(distDir, "app.js");

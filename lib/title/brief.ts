@@ -7,7 +7,7 @@
  * taken from tool calls. Every signal has its own cap, so the brief stays near
  * 750 tokens however long the session is.
  */
-import { initialPlanTitle, latestGoalTitle } from "../dashboard/goal-title.ts";
+import { initialPlanTitle, latestGoalTitle } from "../../web/plugins/dashboard/lib/goal-title.ts";
 
 export const BRIEF_CAPS = Object.freeze({
   goal: 200,

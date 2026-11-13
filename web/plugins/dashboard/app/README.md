@@ -143,7 +143,7 @@ If the catalog moved while an artifact was open, the request answers `409` and t
 view keeps what it has behind a "Load latest" action rather than silently
 replacing the body.
 
-## Routes (served by `lib/dashboard`)
+## Routes (served by `web/plugins/dashboard/lib`)
 
 | Path | File |
 | --- | --- |
@@ -151,7 +151,7 @@ replacing the body.
 | `/style.css` | `style.css` |
 | `/dist/app.js` | built bundle (gitignored) |
 
-The UI reads the same-origin API described in `lib/dashboard/protocol.ts`:
+The UI reads the same-origin API described in `web/plugins/dashboard/lib/protocol.ts`:
 
 - `GET /api/sessions` → `{ sessions }`
 - `GET /api/session?id=…` → `{ session }`

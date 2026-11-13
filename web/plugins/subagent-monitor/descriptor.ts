@@ -1,5 +1,5 @@
 import type { WebPluginDescriptor } from "../../core/plugin-contracts/descriptor.ts";
-import { SUBAGENT_MONITOR_PLUGIN_ID, SUBAGENT_MONITOR_SYNC_ACTION } from "../../../lib/dashboard/graph-view.ts";
+import { SUBAGENT_MONITOR_PLUGIN_ID, SUBAGENT_MONITOR_SYNC_ACTION } from "./contract.ts";
 
 export const subagentMonitorPlugin: WebPluginDescriptor = {
   id: SUBAGENT_MONITOR_PLUGIN_ID,

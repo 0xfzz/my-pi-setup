@@ -26,8 +26,8 @@ import {
 import { recordsFromBranch as childRecordsFromBranch } from "../lib/subagent-state.ts";
 import { isSubagentChildProcess } from "../lib/subagent-context.ts";
 import { isChildReadOnlyArtifact } from "../lib/delegation/handoff-artifact.ts";
-import { DASHBOARD_SYNC_EVENT, publishDashboardArtifacts } from "../lib/dashboard/integration.ts";
-import { toArtifactRecord, type DashboardArtifactRecord } from "../lib/dashboard/projection.ts";
+import { DASHBOARD_SYNC_EVENT, publishDashboardArtifacts } from "../web/plugins/dashboard/lib/integration.ts";
+import { toArtifactRecord, type DashboardArtifactRecord } from "../web/plugins/dashboard/lib/projection.ts";
 import { stringEnum } from "../lib/schema.ts";
 
 export async function readSidecarArtifact(filePath: string): Promise<Artifact | undefined> {

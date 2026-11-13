@@ -17,8 +17,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { DASHBOARD_PROTOCOL } from "../lib/dashboard/protocol.ts";
-import type { DashboardSnapshot } from "../lib/dashboard/protocol.ts";
+import { DASHBOARD_PROTOCOL } from "../web/plugins/dashboard/lib/protocol.ts";
+import type { DashboardSnapshot } from "../web/plugins/dashboard/lib/protocol.ts";
 import {
   ensureDashboard,
   stopDashboard,
@@ -26,18 +26,18 @@ import {
   readDashboardAddress,
   defaultRuntimeDir,
   LOCK_FILE,
-} from "../lib/dashboard/lifecycle.ts";
-import type { DashboardAddress } from "../lib/dashboard/lifecycle.ts";
-import { DashboardProducer } from "../lib/dashboard/producer.ts";
+} from "../web/plugins/dashboard/lib/lifecycle.ts";
+import type { DashboardAddress } from "../web/plugins/dashboard/lib/lifecycle.ts";
+import { DashboardProducer } from "../web/plugins/dashboard/lib/producer.ts";
 import {
   startDashboardServer,
   readRuntimeMetadata,
   SingletonUnavailableError,
   METADATA_FILE,
-} from "../lib/dashboard/server.ts";
-import type { DashboardServerHandle, DashboardServerOptions } from "../lib/dashboard/server.ts";
-import { MAX_ARTIFACT_BYTES, sanitizeSnapshot, ValidationError } from "../lib/dashboard/validation.ts";
-import { parseServerArgs } from "../lib/dashboard/server-main.ts";
+} from "../web/plugins/dashboard/lib/server.ts";
+import type { DashboardServerHandle, DashboardServerOptions } from "../web/plugins/dashboard/lib/server.ts";
+import { MAX_ARTIFACT_BYTES, sanitizeSnapshot, ValidationError } from "../web/plugins/dashboard/lib/validation.ts";
+import { parseServerArgs } from "../web/plugins/dashboard/lib/server-main.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 

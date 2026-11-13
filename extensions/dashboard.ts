@@ -19,7 +19,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { meaningfulSessionTitle, sessionTitle } from "../lib/naming.ts";
-import { DASHBOARD_GOAL_ENTRY, latestGoalTitle, type GoalTitleRecord } from "../lib/dashboard/goal-title.ts";
+import { DASHBOARD_GOAL_ENTRY, latestGoalTitle, type GoalTitleRecord } from "../web/plugins/dashboard/lib/goal-title.ts";
 import { isGeneratedName } from "../lib/title/provenance.ts";
 
 import {
@@ -27,7 +27,7 @@ import {
   DASHBOARD_MODE_EVENT,
   DASHBOARD_REQUEST_EVENT,
   DASHBOARD_STATE_EVENT,
-} from "../lib/dashboard/protocol.ts";
+} from "../web/plugins/dashboard/lib/protocol.ts";
 import {
   DashboardBridge,
   defaultDashboardProducerFactory,
@@ -36,18 +36,19 @@ import {
   type DashboardModeNotice,
   type DashboardProducerFactory,
   type DashboardStateNotice,
-} from "../lib/dashboard/integration.ts";
-import { projectSession } from "../lib/dashboard/projection.ts";
+} from "../web/plugins/dashboard/lib/integration.ts";
+import { projectSession } from "../web/plugins/dashboard/lib/projection.ts";
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";
 import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../web/core/plugin-contracts/actions.ts";
-import { delegationToGraphView, SUBAGENT_MONITOR_PLUGIN_ID, SUBAGENT_MONITOR_SYNC_ACTION } from "../lib/dashboard/graph-view.ts";
-import type { DashboardSnapshot } from "../lib/dashboard/protocol.ts";
+import { delegationToGraphView } from "../web/plugins/dashboard/lib/graph-view.ts";
+import { SUBAGENT_MONITOR_PLUGIN_ID, SUBAGENT_MONITOR_SYNC_ACTION } from "../web/plugins/subagent-monitor/contract.ts";
+import type { DashboardSnapshot } from "../web/plugins/dashboard/lib/protocol.ts";
 
 export interface DashboardExtensionOptions {
   /**
    * Test/embedding seam. Defaults to the lazy runtime factory for
-   * `lib/dashboard/producer.ts`; the DashboardProducer constructor contract is
+   * `web/plugins/dashboard/lib/producer.ts`; the DashboardProducer constructor contract is
    * unchanged (`{ onReady?, onError?, runtimeDir?, heartbeatMs? }`, publish, close).
    */
   producerFactory?: DashboardProducerFactory;

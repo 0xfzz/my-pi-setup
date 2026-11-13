@@ -2,7 +2,7 @@
 /**
  * Optional local preview server for the dashboard UI (development only).
  *
- * The production runtime serves the same routes from `lib/dashboard/`; this
+ * The production runtime serves the same routes from `web/plugins/dashboard/lib/`; this
  * harness exists so the UI can be exercised without a live Pi session. It has
  * no authentication and must never be exposed beyond localhost.
  *
@@ -13,7 +13,7 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const here = resolve(fileURLToPath(new URL("../web/core/dashboard/", import.meta.url)));
+const here = resolve(fileURLToPath(new URL("../web/plugins/dashboard/app/", import.meta.url)));
 const dashboardDir = here;
 const portArgIndex = process.argv.indexOf("--port");
 const port = Number(portArgIndex > 0 ? process.argv[portArgIndex + 1] : process.env.PORT || 4789);
@@ -178,11 +178,11 @@ const sessions = {
           handoffId: "h-api",
           reviewRunId: "sr-1",
           laneFiles: [
-            "lib/dashboard/protocol.ts",
-            "lib/dashboard/producer.ts",
-            "lib/dashboard/server.ts",
+            "web/plugins/dashboard/lib/protocol.ts",
+            "web/plugins/dashboard/lib/producer.ts",
+            "web/plugins/dashboard/lib/server.ts",
           ],
-          lastMilestoneFiles: ["lib/dashboard/server.ts", "tests/dashboard-web.test.ts"],
+          lastMilestoneFiles: ["web/plugins/dashboard/lib/server.ts", "tests/dashboard-web.test.ts"],
           artifactIds: ["spec-api"],
           supersededIds: ["c-legacy"],
           startedAt: ago(58),
@@ -199,8 +199,8 @@ const sessions = {
           purpose: "implementation",
           task: "Rebuild the Work tab: grouped list, graph toggle and the detail drawer.",
           handoffId: "h-ui",
-          laneFiles: ["web/core/dashboard/index.html", "web/core/dashboard/style.css", "web/core/dashboard/src/app.mjs"],
-          lastMilestoneFiles: ["web/core/dashboard/src/graph.mjs", "web/core/dashboard/src/state.mjs"],
+          laneFiles: ["web/plugins/dashboard/app/index.html", "web/plugins/dashboard/app/style.css", "web/plugins/dashboard/app/src/app.mjs"],
+          lastMilestoneFiles: ["web/plugins/dashboard/app/src/graph.mjs", "web/plugins/dashboard/app/src/state.mjs"],
           artifactIds: ["code-worker"],
           startedAt: ago(51),
           pendingPing: true,
@@ -218,7 +218,7 @@ const sessions = {
           task: "Refresh the preview fixtures so every drawer state is reachable.",
           handoffId: "h-fixture",
           laneFiles: ["scripts/dev-dashboard.mjs"],
-          lastMilestoneFiles: ["scripts/dev-dashboard.mjs", "web/core/dashboard/README.md"],
+          lastMilestoneFiles: ["scripts/dev-dashboard.mjs", "web/plugins/dashboard/app/README.md"],
           artifactIds: ["preview-fixtures"],
           startedAt: ago(96),
           updatedAt: stamp(14),
@@ -235,7 +235,7 @@ const sessions = {
           task: "Wire the artifact version guard into the drawer's fetch path.",
           handoffId: "h-api",
           reviewRunId: "sr-1",
-          laneFiles: ["lib/dashboard/server.ts"],
+          laneFiles: ["web/plugins/dashboard/lib/server.ts"],
           lastMilestoneFiles: [],
           startedAt: ago(63),
           updatedAt: stamp(9),

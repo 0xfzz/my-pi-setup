@@ -146,7 +146,7 @@ export interface DashboardServerOptions {
   runtimeDir: string;
   /** Preferred fixed port; `0` means "ephemeral only". Defaults to 9177, falling back to ephemeral. */
   preferredPort?: number;
-  /** Directory holding `index.html` + `dist/`. Defaults to `<repo>/web/dashboard`. */
+  /** Directory holding `index.html` + `dist/`. Defaults to `<repo>/web/plugins/dashboard/app`. */
   webRoot?: string;
   /** Shut down after this long with no producers and no browsers. `0` disables idle shutdown. */
   idleMs?: number;
@@ -234,8 +234,8 @@ class HttpError extends Error {
 }
 
 function defaultWebRoot(): string {
-  // lib/dashboard/server.ts -> ../../../web/core/dashboard
-  return fileURLToPath(new URL("../../../web/core/dashboard/", import.meta.url));
+  // web/plugins/dashboard/lib/server.ts -> ../app
+  return fileURLToPath(new URL("../app/", import.meta.url));
 }
 
 /** Derive the OS-level singleton name from runtime directory + user + protocol. */
@@ -1329,8 +1329,8 @@ class DashboardRuntime {
 <html lang="en"><head><meta charset="utf-8"><title>Pi dashboard</title>
 <style>body{font-family:system-ui,sans-serif;margin:2rem;color:#ddd;background:#15171c}a{color:#8ab4f8}</style>
 </head><body><h1>Pi dashboard</h1>
-<p>The dashboard API is running, but no UI bundle was found in <code>web/core/dashboard/</code>.</p>
-<p>Build the UI (or place <code>web/core/dashboard/index.html</code>) and reload.</p>
+<p>The dashboard API is running, but no UI bundle was found in <code>web/plugins/dashboard/app/</code>.</p>
+<p>Build the UI (or place <code>web/plugins/dashboard/app/index.html</code>) and reload.</p>
 <p>API: <a href="/api/sessions">/api/sessions</a></p>
 </body></html>`;
     securityHeaders(res);
