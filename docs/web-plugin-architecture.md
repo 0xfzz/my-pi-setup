@@ -34,11 +34,19 @@ surface is the HTTP bridge + the `lib/` contracts.
 
 ### web plugin — interface bridging
 
-`web/core/plugins/*.ts` (or `web/core/plugins/<id>/descriptor.ts`) — a **declarative descriptor**, data not code. It says:
+`web/core/plugins/<id>/descriptor.ts` — a **declarative descriptor**, data not code. It says:
 "extension X publishes view V; render it in region/slot S; offer action A."
 It may import only `lib/` contracts. No pi packages, no node, no web
 runtime, no logic. The web client learns descriptors at runtime from
 `/api/plugins` — the client never imports them either.
+
+Every plugin owns one folder `web/core/plugins/<id>/` with its own
+`package.json` (`@pi-web-plugin/<id>`, private), so a plugin's npm
+dependencies belong to the plugin and never pile up in `web/package.json`.
+The web root declares those folders as npm workspaces
+(`"workspaces": ["core/plugins/*"]`), so plugin dependencies still install
+and hoist into `web/node_modules`. Register the plugin in
+`web/core/plugins/index.ts` and it ships.
 
 A plugin with a bespoke panel (Files, Artifacts) keeps its React UI in
 its own folder and registers the panel in `web/core/plugins/panels.tsx`, reusing
@@ -98,7 +106,7 @@ Three contract surfaces exist, and each has exactly one home:
 
 **Shared constants are the neutral ground.** The reference pattern is
 modes: `lib/modes-web-view.ts` defines `MODES_PLUGIN_ID` and the action
-ids; `extensions/modes.ts` (behavior) and `web/core/plugins/modes.ts`
+ids; `extensions/modes.ts` (behavior) and `web/core/plugins/modes/descriptor.ts`
 (interface) both import from there. Neither side imports the other. The
 guard fails any extension that imports `web/core/plugins/` directly.
 
@@ -106,7 +114,7 @@ guard fails any extension that imports `web/core/plugins/` directly.
 
 ### A web surface, end to end
 
-1. **Descriptor** — `web/core/plugins/foo.ts` declares the view, placement
+1. **Descriptor** — `web/core/plugins/foo/descriptor.ts` declares the view, placement
    (`region`/`slot`/`anchor`), surfaces and actions. Registered in
    `web/core/plugins/index.ts` (`WEB_PLUGINS`).
 2. **Serving** — the server's plugin host (`web/core/server/plugin-host.ts`)
@@ -168,7 +176,7 @@ Worked examples from this repo:
 
 - **modes** — the full reference pattern: behavior in
   `extensions/modes.ts`, constants in `lib/modes-web-view.ts`, interface
-  in `web/core/plugins/modes.ts`.
+  in `web/core/plugins/modes/descriptor.ts`.
 - **@ mentions** — the client gates the picker (UX); pi's provider
   supplies the suggestions (pi_api); pi's read tool resolves the sent
   mention (behavior, in pi).

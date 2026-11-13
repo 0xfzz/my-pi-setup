@@ -333,7 +333,7 @@ ambient.
 > and the decision test are specified in
 > [`docs/web-plugin-architecture.md`](web-plugin-architecture.md).
 
-A descriptor (`web/core/plugins/*.ts`) declares **surfaces**:
+A descriptor (`web/core/plugins/<id>/descriptor.ts`) declares **surfaces**:
 
 | Surface | Effect |
 |---|---|

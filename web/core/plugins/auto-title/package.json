@@ -1,0 +1,7 @@
+{
+  "name": "@pi-web-plugin/auto-title",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Names an untitled session from its first exchange. Regenerate the title or switch auto-titling off."
+}

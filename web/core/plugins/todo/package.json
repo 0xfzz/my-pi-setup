@@ -1,0 +1,7 @@
+{
+  "name": "@pi-web-plugin/todo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Task intent graph, dependencies, and execution state."
+}

@@ -17,7 +17,7 @@ import { validatePlugin } from "../lib/web-plugins/descriptor.ts";
 import { validateRegistry } from "../lib/web-plugins/registry.ts";
 import { WEB_PLUGIN_VIEW_EVENT, validateView } from "../lib/web-plugins/view.ts";
 import { WEB_PLUGINS } from "../web/core/plugins/index.ts";
-import { autoTitlePlugin } from "../web/core/plugins/auto-title.ts";
+import { autoTitlePlugin } from "../web/core/plugins/auto-title/descriptor.ts";
 
 const exchange = [
   { type: "message", message: { role: "user", content: "fix the login bug" } },

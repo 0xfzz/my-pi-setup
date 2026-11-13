@@ -1,0 +1,7 @@
+{
+  "name": "@pi-web-plugin/example-override",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reference plugin: replaces the composer region with a declarative view while it is published."
+}

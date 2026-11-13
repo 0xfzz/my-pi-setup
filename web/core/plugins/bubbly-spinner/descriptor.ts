@@ -1,4 +1,4 @@
-import type { WebPluginDescriptor } from "../../../lib/web-plugins/descriptor.ts";
+import type { WebPluginDescriptor } from "../../../../lib/web-plugins/descriptor.ts";
 
 export const bubblySpinnerPlugin: WebPluginDescriptor = {
   id: "bubbly-spinner",

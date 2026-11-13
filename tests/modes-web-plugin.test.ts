@@ -7,7 +7,7 @@ import { publishWebView } from "../lib/web-plugins/publisher.ts";
 import { validatePlugin, type WebPluginDescriptor } from "../lib/web-plugins/descriptor.ts";
 import { validateRegistry } from "../lib/web-plugins/registry.ts";
 import { WEB_PLUGINS, WEB_PLUGIN_OPT_OUT } from "../web/core/plugins/index.ts";
-import { modesPlugin } from "../web/core/plugins/modes.ts";
+import { modesPlugin } from "../web/core/plugins/modes/descriptor.ts";
 
 const normal = { id: "normal", label: "Normal", summary: "AI chat & tools" };
 const plan = { id: "plan", label: "Plan", summary: "Read; artifacts RW" };

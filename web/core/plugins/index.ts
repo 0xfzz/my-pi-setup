@@ -1,12 +1,12 @@
 import { artifactsPlugin } from "./artifacts/descriptor.ts";
-import { autoTitlePlugin } from "./auto-title.ts";
-import { bubblySpinnerPlugin } from "./bubbly-spinner.ts";
-import { cacheStatsPlugin } from "./cache-stats.ts";
-import { exampleOverridePlugin } from "./example-override.ts";
-import { modesPlugin } from "./modes.ts";
-import { subagentCheckpointsPlugin } from "./subagent-checkpoints.ts";
-import { subagentMonitorPlugin } from "./subagent-monitor.ts";
-import { todoPlugin } from "./todo.ts";
+import { autoTitlePlugin } from "./auto-title/descriptor.ts";
+import { bubblySpinnerPlugin } from "./bubbly-spinner/descriptor.ts";
+import { cacheStatsPlugin } from "./cache-stats/descriptor.ts";
+import { exampleOverridePlugin } from "./example-override/descriptor.ts";
+import { modesPlugin } from "./modes/descriptor.ts";
+import { subagentCheckpointsPlugin } from "./subagent-checkpoints/descriptor.ts";
+import { subagentMonitorPlugin } from "./subagent-monitor/descriptor.ts";
+import { todoPlugin } from "./todo/descriptor.ts";
 import type { WebPluginDescriptor } from "../../../lib/web-plugins/descriptor.ts";
 
 export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [

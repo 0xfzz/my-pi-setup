@@ -1,0 +1,7 @@
+{
+  "name": "@pi-web-plugin/bubbly-spinner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Animated working message indicator and session activity status."
+}

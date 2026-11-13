@@ -1,0 +1,16 @@
+{
+  "name": "@pi-web-plugin/files",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Session-scoped file browser, preview, and document viewer.",
+  "dependencies": {
+    "@file-viewer/core": "^3.3.3",
+    "@file-viewer/preset-office": "^3.3.3",
+    "@file-viewer/react": "^3.3.3",
+    "@phosphor-icons/react": "^2.1.10"
+  },
+  "devDependencies": {
+    "file-viewer-copy-assets": "^3.3.3"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "@pi-web-plugin/cache-stats",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Monitor prompt cache hit rates and token efficiency across models."
+}

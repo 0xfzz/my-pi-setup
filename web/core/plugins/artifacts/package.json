@@ -1,0 +1,10 @@
+{
+  "name": "@pi-web-plugin/artifacts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Persisted workspace artifacts catalog and editor.",
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.10"
+  }
+}

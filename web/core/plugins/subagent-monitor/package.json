@@ -1,0 +1,7 @@
+{
+  "name": "@pi-web-plugin/subagent-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Per-session delegated work graph: parent, child workers, handoffs, reviews and escalations."
+}

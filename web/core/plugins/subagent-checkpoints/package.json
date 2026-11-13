@@ -1,0 +1,7 @@
+{
+  "name": "@pi-web-plugin/subagent-checkpoints",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Child agent checkpointing, milestone sidecars, and state recovery."
+}

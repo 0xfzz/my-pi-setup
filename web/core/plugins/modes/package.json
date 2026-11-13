@@ -1,0 +1,7 @@
+{
+  "name": "@pi-web-plugin/modes",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Current input mode (Normal or Plan) shown above the composer."
+}
