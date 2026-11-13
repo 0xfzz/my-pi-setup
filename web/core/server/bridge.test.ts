@@ -4,7 +4,7 @@ import { startWebServer } from "./main.ts";
 import { getBridge, healBridgeRegistration } from "./bridge.ts";
 import { getPluginDescriptor, registerWebPlugins } from "./plugin-host.ts";
 import { clearWebPluginStateForTests } from "./plugin-host.ts";
-import { clearSessionsForTests, getSession, registerSession } from "./sessions.ts";
+import { clearSessionsForTests, getSession, registerSession, subscribeSessionDirectory, type SessionDirectoryEvent } from "./sessions.ts";
 import { piBuiltinCommands } from "../pi-api/index.ts";
 import { annotateBuiltinCommands } from "../shared/commands.ts";
 import { WEB_PLUGINS } from "../../plugins/index.ts";
@@ -249,6 +249,47 @@ test("a browser prompt becomes a bridge command; state posts surface in the stat
     assert.equal(state.state?.thinkingLevel, "high");
 
     tui.detach();
+  });
+});
+
+// Regression: the sidebar's running dot only flipped on forwarded lifecycle
+// events, so a turn that started across a bridge gap stayed invisible until
+// an unrelated refresh. The state post must flip the directory on its own.
+test("a bridge state post flips the session running indicator", async () => {
+  await withServer(async (baseUrl) => {
+    const events: SessionDirectoryEvent[] = [];
+    const unsubscribe = subscribeSessionDirectory((event) => {
+      events.push(event);
+    });
+    try {
+      const tui = await attachFakeTui(baseUrl, "bridge-run", "/tmp/bridge-run");
+      const postState = async (isStreaming: boolean): Promise<void> => {
+        const res = await fetch(`${baseUrl}/api/bridge/bridge-run/events`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ state: { isStreaming } }),
+        });
+        assert.equal(res.status, 200);
+      };
+
+      await postState(true);
+      await postState(true);
+      assert.deepEqual(
+        events.filter((e) => e.type === "session_running"),
+        [{ type: "session_running", id: "bridge-run", running: true }],
+        "the running flip is announced once despite a repeated state post",
+      );
+
+      await postState(false);
+      assert.equal(
+        events.filter((e) => e.type === "session_running" && !e.running).length,
+        1,
+        "the idle flip is announced",
+      );
+      tui.detach();
+    } finally {
+      unsubscribe();
+    }
   });
 });
 

@@ -26,6 +26,7 @@ import {
   registerSession,
   unregisterSession,
   recordSessionName,
+  setSessionRunning,
   type SessionCore,
   type SessionStateLite,
 } from "./sessions.ts";
@@ -293,6 +294,11 @@ export function attachBridge(options: {
     postState(partial: Partial<BridgeState>): void {
       if (closed) return;
       Object.assign(state, partial);
+      // The state post is the flip source for bridged sessions: a turn that
+      // starts while the owning pi process is re-attaching (or whose events
+      // were lost across a bridge gap) still reaches the sidebar through
+      // the attach/agent_start/settle state posts.
+      if (typeof partial.isStreaming === "boolean") setSessionRunning(metadata.sessionId, partial.isStreaming);
       if (partial.name !== undefined) recordSessionName(metadata.sessionId, partial.name);
     },
     getCommands(): Array<{ name: string; description?: string }> {

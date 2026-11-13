@@ -160,6 +160,20 @@ function emitDirectory(event: SessionDirectoryEvent): void {
 // session's own lifecycle events so listeners see transitions, not a re-read.
 const directoryTaps = new Map<string, () => void>();
 
+// The last running value announced per session, so both detection paths
+// (lifecycle events and bridge state posts) dedupe their flips.
+const directoryRunning = new Map<string, boolean>();
+
+/**
+ * Announce a running/idle flip for one session — deduped: a repeated value
+ * (an attach-time state post matching the last known flip, say) is silent.
+ */
+export function setSessionRunning(id: string, running: boolean): void {
+  if (directoryRunning.get(id) === running) return;
+  directoryRunning.set(id, running);
+  emitDirectory({ type: "session_running", id, running });
+}
+
 // ── The split-brain guard ──────────────────────────────────────────────────
 // A TUI bridge OWNS its session. While the bridge is attached — or within
 // the self-heal grace window after it drops — the web must NEVER resume
@@ -293,17 +307,13 @@ function trackSessionDirectory(core: SessionCore): void {
   const id = core.sessionId;
   directoryTaps.get(id)?.();
   directoryTaps.delete(id);
-  let running = core.getState().isStreaming;
+  directoryRunning.set(id, core.getState().isStreaming);
   const unsubscribe = core.subscribe((event: unknown) => {
     const type = (event as { type?: unknown } | null)?.type;
     if (type === "agent_start") {
-      if (running) return;
-      running = true;
-      emitDirectory({ type: "session_running", id, running: true });
+      setSessionRunning(id, true);
     } else if (type === "agent_settled" || type === "session_shutdown") {
-      if (!running) return;
-      running = false;
-      emitDirectory({ type: "session_running", id, running: false });
+      setSessionRunning(id, false);
     } else if (type === "session_info_changed") {
       recordSessionName(id, (event as { name?: string }).name);
     }
@@ -465,6 +475,7 @@ export function clearSessionsForTests(): void {
   bridgeOwnership.clear();
   for (const unsubscribe of directoryTaps.values()) unsubscribe();
   directoryTaps.clear();
+  directoryRunning.clear();
   directoryListeners.clear();
 }
 
@@ -477,6 +488,7 @@ export function unregisterSession(id: string): void {
   liveSessions.delete(id);
   directoryTaps.get(id)?.();
   directoryTaps.delete(id);
+  directoryRunning.delete(id);
   emitDirectory({ type: "session_removed", id });
 }
 

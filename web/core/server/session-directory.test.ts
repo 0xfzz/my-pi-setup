@@ -4,6 +4,7 @@ import { startWebServer } from "./main.ts";
 import {
   clearSessionsForTests,
   registerSession,
+  setSessionRunning,
   subscribeSessionDirectory,
   unregisterSession,
   type SessionCore,
@@ -118,6 +119,42 @@ test("re-registering a session (bridge takeover) re-announces membership", () =>
     if (added[1]?.type === "session_added") {
       assert.equal(added[1].session.running, true, "the new owner's running state is carried");
     }
+  } finally {
+    unsubscribe();
+  }
+});
+
+// Regression: a bridged session's turn flips arrived only via forwarded
+// lifecycle events; a turn starting across a bridge gap never flipped the
+// sidebar dot (it showed only after an unrelated refresh). The state post
+// path (postState -> setSessionRunning) must flip it on its own.
+test("setSessionRunning flips the directory without lifecycle events and dedupes repeats", () => {
+  const events: SessionDirectoryEvent[] = [];
+  const unsubscribe = subscribeSessionDirectory((event) => {
+    events.push(event);
+  });
+  try {
+    const { core } = directoryCore("dir-3");
+    registerSession(core, "/tmp/project");
+    events.length = 0;
+
+    setSessionRunning("dir-3", true);
+    setSessionRunning("dir-3", true);
+    assert.deepEqual(
+      events.filter((e) => e.type === "session_running"),
+      [{ type: "session_running", id: "dir-3", running: true }],
+      "an out-of-band flip is announced once",
+    );
+
+    // A lifecycle flip with the same value is still silent; the next
+    // change is announced once more.
+    setSessionRunning("dir-3", false);
+    setSessionRunning("dir-3", false);
+    assert.equal(
+      events.filter((e) => e.type === "session_running" && !e.running).length,
+      1,
+      "the idle flip is announced once despite a repeated value",
+    );
   } finally {
     unsubscribe();
   }
