@@ -184,6 +184,7 @@ const RELOAD_INDICATOR_TIMEOUT_MS = 20_000;
 
 export function usePiSession() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
   const [selectedId, setSelectedIdState] = useState<string | null>(() => {
     try {
       return window.localStorage.getItem(SELECTED_SESSION_KEY);
@@ -203,6 +204,7 @@ export function usePiSession() {
     }
   }, []);
   const [history, setHistory] = useState<HistoryEntryLike[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(selectedId !== null);
   const [userMessages, setUserMessages] = useState<OptimisticUserMessage[]>([]);
   const [streaming, setStreaming] = useState<StreamingState>(INITIAL_STREAMING_STATE);
   const [toolStatus, setToolStatus] = useState<Record<string, ToolCallStatus>>({});
@@ -282,6 +284,7 @@ export function usePiSession() {
         case "sessions_snapshot": {
           const body = data as { sessions?: SessionSummary[] };
           setSessions(body.sessions ?? []);
+          setSessionsLoading(false);
           break;
         }
         case "session_running": {
@@ -382,6 +385,7 @@ export function usePiSession() {
   useEffect(() => {
     setUserMessages([]);
     setHistory([]);
+    setHistoryLoading(selectedId !== null);
     setToolStatus({});
     setSessionState(null);
     setPluginViews({});
@@ -488,6 +492,7 @@ export function usePiSession() {
     ): void => {
       if (closed) return;
       historyApplied = true;
+      setHistoryLoading(false);
       // The overlap window: an entry completing between this stream's
       // subscribe and the history file's read is BOTH a buffered live
       // append AND the history tail. The covered entries are the leading
@@ -1025,6 +1030,8 @@ export function usePiSession() {
 
   return {
     sessions,
+    sessionsLoading,
+    historyLoading,
     selectedId,
     setSelectedId,
     history,

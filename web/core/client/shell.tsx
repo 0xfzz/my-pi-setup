@@ -452,13 +452,17 @@ export function AppShell() {
   const sidebarNode = (
     <SessionSidebar
       sessions={session.sessions}
+      loading={session.sessionsLoading}
       selectedId={session.selectedId}
       onSelect={(id) => {
         session.setSelectedId(id);
         if (window.innerWidth <= 720) setSidebarOpen(false);
       }}
       selectedRunning={session.streaming.isStreaming || session.uiRunning}
-      onNewSession={() => setNewSessionOpen(true)}
+      onNewSession={() => {
+        setNewSessionOpen(true);
+        if (window.innerWidth <= 720) setSidebarOpen(false);
+      }}
     />
   );
 
@@ -530,6 +534,7 @@ export function AppShell() {
           <Transcript
             key={session.selectedId ?? "none"}
             history={session.history}
+            loading={session.historyLoading}
             userMessages={session.userMessages}
             streaming={session.streaming}
             toolStatus={session.toolStatus}

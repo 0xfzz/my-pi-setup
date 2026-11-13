@@ -84,6 +84,38 @@ body {
   overflow: hidden;
 }
 
+/* Portaled above full-screen plugins and dialogs; follow the same visual
+ * viewport offset as the keyboard-aware root without intercepting taps. */
+.app-request-loading {
+  position: fixed;
+  top: calc(var(--app-viewport-top, 0px) + max(60px, env(safe-area-inset-top)));
+  right: 12px;
+  z-index: 120;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  max-width: calc(100% - 24px);
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  color: var(--fg);
+  box-shadow: 0 4px 16px var(--scrim);
+  pointer-events: none;
+}
+
+.app-request-count {
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+.app-content-loading {
+  display: flex;
+  justify-content: center;
+  padding: 24px 16px;
+}
+
 .app-shell {
   display: flex;
   flex-direction: column;

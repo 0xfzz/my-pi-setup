@@ -33,6 +33,14 @@ async function writeFixtures() {
   await writeFile(join(fixtureDir, "hello.txt"), "hello from the text viewer\nsecond line\n");
   await writeFile(join(fixtureDir, "data.csv"), "name,count\nalpha,1\nbeta,2\n");
   await writeFile(join(fixtureDir, "pixel.png"), makePng(12, 12, [200, 40, 40]));
+  // One second of silent mono PCM; metadata is decoded by native <audio>.
+  const audio = Buffer.alloc(8044, 128);
+  audio.write("RIFF", 0); audio.writeUInt32LE(8036, 4); audio.write("WAVEfmt ", 8);
+  audio.writeUInt32LE(16, 16); audio.writeUInt16LE(1, 20); audio.writeUInt16LE(1, 22);
+  audio.writeUInt32LE(8000, 24); audio.writeUInt32LE(8000, 28);
+  audio.writeUInt16LE(1, 32); audio.writeUInt16LE(8, 34);
+  audio.write("data", 36); audio.writeUInt32LE(8000, 40);
+  await writeFile(join(fixtureDir, "audio.wav"), audio);
   await writeFile(join(fixtureDir, "sample.pdf"), makePdf());
   await writeFile(join(fixtureDir, "report.docx"), makeDocx());
   await writeFile(join(fixtureDir, "spreadsheet.xlsx"), makeXlsx());
@@ -105,6 +113,36 @@ async function assertDocumentRenders(page) {
   await page.locator(".files-document-view").first().waitFor({ state: "visible", timeout: 10_000 });
 }
 
+async function assertPreviewLoading(page, { name, label, fail = false }) {
+  const requests = [];
+  const pattern = url => url.pathname.endsWith("/files/download") && url.searchParams.get("path") === name;
+  const route = request => { requests.push(request); };
+  const release = () => Promise.all(requests.splice(0).map(request => fail
+    ? request.fulfill({ status: 503, body: "unavailable" })
+    : request.continue()));
+  await page.route(pattern, route);
+  try {
+    await openFile(page, name);
+    const loading = page.getByRole("status", { name: label, exact: true });
+    await loading.waitFor({ timeout: 5_000 });
+    const box = await loading.boundingBox();
+    const viewport = page.viewportSize();
+    assert.ok(box.width > 0 && box.x >= 0 && box.x + box.width <= viewport.width,
+      "preview loading text is visible within the panel, including phone widths");
+    assert.equal(await page.locator(".files-preview-body > [aria-busy=true]").count(), 1);
+    await release();
+    await loading.waitFor({ state: "hidden", timeout: 15_000 });
+    if (fail) await page.getByText("The image could not be rendered.", { exact: true }).waitFor();
+  } catch (error) {
+    console.error("preview loading failure", { name, pending: requests.length, body: await page.locator(".files-preview-body").innerText() });
+    throw error;
+  } finally {
+    await release();
+    await page.unroute(pattern, route);
+  }
+  await backToFiles(page);
+}
+
 async function assertFullScreenFiles(page) {
   const panel = page.getByRole("complementary", { name: "Files panel" });
   const docked = await panel.boundingBox();
@@ -146,6 +184,7 @@ async function assertPhoneFiles(page) {
   await page.getByRole("menuitem", { name: "Files", exact: true }).click();
   await page.getByTestId("files-browser").waitFor();
   await assertPanelFillsViewport(page);
+  await assertPreviewLoading(page, { name: "pixel.png", label: "Loading image…" });
   assert.ok(await page.getByRole("searchbox", { name: "Search filenames" }).evaluate(el => parseFloat(getComputedStyle(el).fontSize) >= 16), "phone file search avoids focus zoom");
   await openFile(page, "README.md");
   await page.locator(".files-markdown-rendered h1").waitFor();
@@ -201,6 +240,11 @@ async function run() {
     await openFilesPanel(page);
     step("full-screen explorer and preview preserve state and restore the docked panel");
     await assertFullScreenFiles(page);
+    step("image, media and document previews show loading before their bytes arrive");
+    await assertPreviewLoading(page, { name: "pixel.png", label: "Loading image…" });
+    await assertPreviewLoading(page, { name: "pixel.png", label: "Loading image…", fail: true });
+    await assertPreviewLoading(page, { name: "audio.wav", label: "Loading media…" });
+    await assertPreviewLoading(page, { name: "report.docx", label: "Loading document…" });
 
     step("markdown viewer renders and toggles to source");
     await openFile(page, "README.md");

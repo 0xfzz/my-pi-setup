@@ -10,6 +10,7 @@ import type { AssistantBlock, BashBlock, ImageBlock, ToolCallBlock } from "./str
 import type { HistoryEntryLike, ToolCallStatus, ToolResultLike } from "./use-session.ts";
 import type { WorkingModelLike } from "./plugin-system/contract.ts";
 import { MarkdownBody } from "./plugin-system/markdown.tsx";
+import { LoadingSpinner } from "./plugin-system/LoadingSpinner.tsx";
 import { INITIAL_FOLLOW, reduceFollow, type FollowEvent, type FollowState, type ScrollMetrics } from "./transcript-follow.ts";
 
 const RESULT_PREVIEW_LIMIT = 8_000;
@@ -357,6 +358,7 @@ export interface TranscriptUserMessage {
 
 export interface TranscriptProps {
   history: HistoryEntryLike[];
+  loading?: boolean;
   userMessages: TranscriptUserMessage[];
   streaming: { isStreaming: boolean; streamingMessage: { content: AssistantBlock[] } | null };
   toolStatus: Record<string, ToolCallStatus>;
@@ -391,6 +393,7 @@ const UserBlocks = memo(function UserBlocks({ blocks }: { blocks: AssistantBlock
 
 export function Transcript({
   history,
+  loading = false,
   userMessages,
   streaming,
   toolStatus,
@@ -485,9 +488,10 @@ export function Transcript({
 
   return (
     <>
-      <main className="app-transcript" aria-live="polite" ref={scrollRef} onScroll={handleScroll}>
+      <main className="app-transcript" aria-live="polite" aria-busy={loading} ref={scrollRef} onScroll={handleScroll}>
         <div className="app-transcript-inner" ref={innerRef}>
-          {entries.length === 0 && !streaming.isStreaming && !showWorking ? (
+          {loading ? <div className="app-content-loading"><LoadingSpinner label="Loading conversation…" /></div> : null}
+          {!loading && entries.length === 0 && !streaming.isStreaming && !showWorking ? (
             <div className="app-empty">
               <span className="app-empty-mark" aria-hidden="true">pi</span>
               <h1>What are we working on?</h1>

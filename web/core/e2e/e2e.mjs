@@ -103,6 +103,64 @@ async function assertMobilePanelLauncher(page, viewport) {
   assert.equal(await page.locator(".app-side-panel-scrim").count(), 0, "closing Files restores the chat");
 }
 
+async function assertSessionLoading(page) {
+  const requests = [];
+  const route = request => { requests.push(request); };
+  const pattern = "**/api/agent/__test_session__/history";
+  await page.route(pattern, route);
+  const loading = page.getByRole("status", { name: "Loading conversation…", exact: true });
+  try {
+    await selectFixtureSession(page);
+    await loading.waitFor({ timeout: 5_000 });
+    assert.equal(await page.getByRole("heading", { name: "What are we working on?" }).count(), 0,
+      "an unread conversation must not be presented as empty");
+  } finally {
+    await Promise.all(requests.map(request => request.continue()));
+    await page.unroute(pattern, route);
+  }
+  await loading.waitFor({ state: "hidden" });
+}
+
+async function assertRequestLoading(page) {
+  const pendingRoutes = [];
+  const route = request => { pendingRoutes.push(request); };
+  const release = () => Promise.all(pendingRoutes.splice(0).map(request =>
+    request.fulfill({ json: { path: "/loading-test", parent: null, entries: [] } }),
+  ));
+  await page.route("**/api/directories?*", route);
+  try {
+    await page.setViewportSize({ width: 320, height: 568 });
+    await page.locator(".app-shell-panels").waitFor({ state: "hidden" });
+    await page.getByRole("button", { name: "Toggle session list", exact: true }).click();
+    await page.getByRole("button", { name: "New session", exact: true }).click();
+    await page.locator(".app-sidebar-wrap:not(.is-open)").waitFor({ state: "attached" });
+    const loading = page.getByTestId("request-loading");
+    await loading.waitFor({ timeout: 5_000 });
+    assert.match(await loading.innerText(), /Loading.*Please wait/s);
+    await page.getByRole("status", { name: "Loading directories…", exact: true }).waitFor();
+    assert.equal(await loading.evaluate(el => getComputedStyle(el).pointerEvents), "none", "loading feedback never blocks the page");
+    for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 350 }]) {
+      await page.setViewportSize(viewport);
+      const box = await loading.boundingBox();
+      assert.ok(box.x >= 0 && box.y >= 0 && box.x + box.width <= viewport.width && box.y + box.height <= viewport.height,
+        "loading feedback stays within small phone and keyboard-height screens");
+    }
+    await release();
+    await loading.waitFor({ state: "hidden" });
+    await page.getByRole("button", { name: "Close", exact: true }).click();
+  } finally {
+    await release();
+    await page.unroute("**/api/directories?*", route);
+    const close = page.getByRole("dialog", { name: "Start a new session", exact: true }).getByRole("button", { name: "Close", exact: true });
+    if (await close.isVisible()) await close.click();
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.locator(".app-shell-panels").waitFor();
+    if (!await page.locator(".app-sidebar").isVisible()) {
+      await page.getByRole("button", { name: "Toggle session list", exact: true }).click();
+    }
+  }
+}
+
 async function assertPhoneComposer(browser, sessionId, commands) {
   const phone = await browser.newPage({ viewport: { width: 390, height: 780 }, isMobile: true, hasTouch: true });
   try {
@@ -238,8 +296,11 @@ async function run() {
     await page.locator(".app-sidebar").waitFor({ state: "visible" });
     assert.equal(await sessionToggle.getAttribute("aria-expanded"), "true");
 
+    step("1b: request feedback appears before a delayed fetch and fits small screens");
+    await assertRequestLoading(page);
+
     step("2: sidebar plugin icons — clean chat, open, switch and close");
-    await selectFixtureSession(page);
+    await assertSessionLoading(page);
     const panelNav = page.getByRole("navigation", { name: "Plugin panels" });
     await panelNav.waitFor();
     assert.equal(await panelNav.locator("button").count(), 4, "three pinned icons plus the three-dot overflow");
@@ -666,7 +727,8 @@ async function run() {
       }),
     });
     const contextMeter = page.locator(".app-context-usage");
-    await contextMeter.waitFor({ state: "visible", timeout: 10_000 });
+    // The meter exists before the settle refetch completes; wait for its data.
+    await contextMeter.filter({ hasText: "84k / 200k" }).waitFor({ state: "visible", timeout: 10_000 });
     assert.ok(
       (await contextMeter.textContent())?.includes("42%") && (await contextMeter.textContent())?.includes("84k / 200k"),
       "the context meter shows the posted context usage",

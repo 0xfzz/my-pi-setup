@@ -4,6 +4,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { getAuth } from "./auth.ts";
+import { LoadingSpinner } from "./plugin-system/LoadingSpinner.tsx";
 
 type Phase = "checking" | "open" | "login" | "offline" | "unavailable";
 
@@ -164,7 +165,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         <h1 className="auth-title">
           pi <span className="auth-title-dim">web</span>
         </h1>
-        {phase === "checking" ? <p className="auth-lede">Connecting…</p> : null}
+        {phase === "checking" ? <p className="auth-lede"><LoadingSpinner label="Connecting…" /></p> : null}
         {phase === "offline" ? (
           <>
             <p className="auth-error">Cannot reach the server.</p>

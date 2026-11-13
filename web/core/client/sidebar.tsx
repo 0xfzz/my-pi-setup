@@ -7,6 +7,7 @@ import { MagnifyingGlass, Moon, Plus, Sun, Terminal } from "@phosphor-icons/reac
 import type { SessionSummary } from "./use-session.ts";
 import { useAuth } from "./auth-gate.tsx";
 import { toggleTheme, type Theme } from "./theme.ts";
+import { LoadingSpinner } from "./plugin-system/LoadingSpinner.tsx";
 
 function shortCwd(cwd: string): string {
   const parts = cwd.split("/").filter((part) => part.length > 0);
@@ -26,6 +27,7 @@ function relativeTime(modifiedAt: number, now: number): string {
 
 export interface SessionSidebarProps {
   sessions: SessionSummary[];
+  loading?: boolean;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   onNewSession: () => void;
@@ -35,6 +37,7 @@ export interface SessionSidebarProps {
 
 export function SessionSidebar({
   sessions,
+  loading,
   selectedId,
   onSelect,
   onNewSession,
@@ -81,8 +84,9 @@ export function SessionSidebar({
         />
       </label>
       <div className="app-sidebar-section">Sessions</div>
-      <div className="app-sidebar-list" role="listbox" aria-label="Sessions">
-        {ordered.length === 0 ? (
+      <div className="app-sidebar-list" role="listbox" aria-label="Sessions" aria-busy={loading}>
+        {loading ? <div className="app-sidebar-empty"><LoadingSpinner label="Connecting to sessions…" /></div> : null}
+        {!loading && ordered.length === 0 ? (
           <div className="app-sidebar-empty">{query === "" ? "No sessions yet." : "No matching sessions."}</div>
         ) : null}
         {ordered.map((session) => {

@@ -18,6 +18,8 @@
 // told, and the app shows the login screen. A refresh that fails any other way (offline,
 // 5xx) is NOT a logout — it is retried later and the user keeps their session.
 
+import { requestActivity } from "./request-activity.ts";
+
 export type RefreshOutcome = "ok" | "denied" | "unavailable";
 
 export interface AuthStatus {
@@ -319,9 +321,8 @@ export function createAuthClient(deps: AuthClientDeps): AuthClient {
 
 /** The app's single client, wired to the real browser. */
 function createBrowserAuth(): AuthClient {
-  const nativeFetch = window.fetch.bind(window);
   const client = createAuthClient({
-    fetch: nativeFetch,
+    fetch: requestActivity.fetch,
     now: () => Date.now(),
     origin: window.location.origin,
     storage: window.localStorage,

@@ -1539,6 +1539,7 @@
 }
 
 .files-media {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -1546,6 +1547,27 @@
   justify-content: center;
   padding: 16px;
   overflow: auto;
+}
+
+.files-media-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  pointer-events: none;
+}
+
+.files-media-loading .loading-spinner {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--bg-panel);
+}
+
+.files-image.is-loading img {
+  visibility: hidden;
 }
 
 .files-image img {
@@ -1562,6 +1584,7 @@
 /* The document viewer hosts Flyfish File Viewer; give its mount point the
    full remaining pane and let the component size its own content. */
 .files-document {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -1853,6 +1876,8 @@
 /* ── Loading spinner ─────────────────────────────────────────────────────── */
 .loading-spinner {
   display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   justify-content: center;
   gap: 8px;
@@ -1861,11 +1886,14 @@
 }
 
 .loading-spinner-icon {
+  flex-shrink: 0;
   animation: pi-spin 0.8s linear infinite;
 }
 
 .loading-spinner-label {
-  line-height: 1;
+  min-width: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 @keyframes pi-spin {

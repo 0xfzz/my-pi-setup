@@ -540,6 +540,22 @@ in-app full-screen layout, not the browser Fullscreen API, so it works on
 mobile Safari too. File search uses 16px text and phone file controls have
 44px touch targets.
 
+Loading feedback starts before each fetch: the host shows a non-blocking
+“Loading… Please wait.” status above dialogs and full-screen plugins. It
+counts concurrent requests (and JSON/text/blob body reads), only disappearing
+once they settle, including errors and cancellation. It fits narrow phones
+and keyboard-sized screens without moving the layout or intercepting taps.
+Plugins need no request-tracking dependency: the host wraps browser fetch
+before authentication and plugin requests start. Persistent EventSource
+connections do not keep this indicator spinning forever.
+
+Sessions, conversation history, directory browsing and lazy file viewers have
+local loading messages instead of premature empty states. Native image and
+media previews show loading until decoding/metadata is ready, and media
+shows it again when buffering. Office previews follow the viewer's loading
+state; streamed PDFs retain the PDF reader's own loading feedback. Errors
+replace loading, and spinner animation respects reduced-motion preferences.
+
 On the performance side, message bodies and markdown are memoized: stream
 deltas, plugin_state frames and status changes re-render only the live
 message, not the transcript's history. Before that, every frame re-parsed

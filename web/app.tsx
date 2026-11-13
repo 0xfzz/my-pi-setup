@@ -8,6 +8,7 @@ import { createRoot } from "react-dom/client";
 import { AuthGate } from "./core/client/auth-gate.tsx";
 import { getAuth } from "./core/client/auth.ts";
 import { AppShell } from "./core/client/shell.tsx";
+import { RequestLoading } from "./core/client/request-loading.tsx";
 import { initTheme } from "./core/client/theme.ts";
 // Side-effect import: registers the Files and Artifacts bespoke panels.
 import "./plugins/panels.tsx";
@@ -25,6 +26,7 @@ if (rootElement === null) {
 
 createRoot(rootElement).render(
   <StrictMode>
+    <RequestLoading />
     <AuthGate>
       <AppShell />
     </AuthGate>

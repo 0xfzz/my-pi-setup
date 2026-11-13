@@ -6,15 +6,25 @@
 // out of the critical bundle. Shadow-DOM style isolation is the default, so
 // the panel's CSS can neither break the viewer nor the other way round.
 
-import FileViewer from "@file-viewer/react";
-import { setDefaultFileViewerAssetBaseUrl } from "@file-viewer/core";
+import FileViewer, { useFileViewerState } from "@file-viewer/react";
+import { setDefaultFileViewerAssetBaseUrl, type FileViewerOptions } from "@file-viewer/core";
 import officePreset from "@file-viewer/preset-office";
 import { downloadUrl, type FileRef } from "./lib/files-api.ts";
+import { LoadingSpinner } from "../../core/client/plugin-system/LoadingSpinner.tsx";
 
 // The bundled default derives the asset base from import.meta.url, which
 // esbuild rewrites to a chunk URL: workers then 404 at the site root. Pin it
 // to the self-hosted copy build.mjs writes into dist/file-viewer/.
 setDefaultFileViewerAssetBaseUrl("/file-viewer/");
+
+// State notifications re-render this component. A stable options reference
+// keeps those renders from issuing another viewer.update (and notification).
+const DOCUMENT_OPTIONS: FileViewerOptions = {
+  preset: officePreset,
+  rendererMode: "replace",
+  theme: "light", // Documents render as paper regardless of the app theme.
+  toolbar: { position: "bottom-right" },
+};
 
 interface DocumentViewerProps {
   sessionId: string;
@@ -22,21 +32,23 @@ interface DocumentViewerProps {
 }
 
 export function DocumentViewer({ sessionId, file }: DocumentViewerProps) {
+  const { state, onStateChange } = useFileViewerState();
+  const loading = !state.ready && state.error === null;
   return (
-    <div className="files-document" data-testid="files-document">
+    <div className="files-document" data-testid="files-document" aria-busy={loading}>
+      {loading ? <div className="files-media-loading"><LoadingSpinner label="Loading document…" /></div> : null}
+      {state.error !== null ? (
+        <div className="files-empty files-error" role="alert">
+          {state.error instanceof Error ? state.error.message : "The document could not be loaded. Try Download instead."}
+        </div>
+      ) : null}
       <FileViewer
         className="files-document-view"
+        onStateChange={onStateChange}
         url={downloadUrl(sessionId, file.path, false)}
         filename={file.name}
         size={file.size}
-        options={{
-          preset: officePreset,
-          rendererMode: "replace",
-          // Documents render as paper; a fixed light theme keeps them readable
-          // and avoids the viewer re-theming with the app chrome.
-          theme: "light",
-          toolbar: { position: "bottom-right" },
-        }}
+        options={DOCUMENT_OPTIONS}
       />
     </div>
   );

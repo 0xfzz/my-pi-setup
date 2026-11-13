@@ -179,14 +179,17 @@ function previewIcon(fileKind: FileKind) {
 
 function ImagePreview({ sessionId, file }: { sessionId: string; file: FileRef }) {
   const [errored, setErrored] = useState(false);
+  const [loading, setLoading] = useState(true);
   if (errored) {
     return <UnsupportedPreview file={file} sessionId={sessionId} note="The image could not be rendered." />;
   }
   return (
-    <div className="files-media files-image">
+    <div className={`files-media files-image${loading ? " is-loading" : ""}`} aria-busy={loading}>
+      {loading ? <div className="files-media-loading"><LoadingSpinner label="Loading image…" /></div> : null}
       <img
         src={downloadUrl(sessionId, file.path, false)}
         alt={file.name}
+        onLoad={() => setLoading(false)}
         onError={() => setErrored(true)}
       />
     </div>
@@ -194,14 +197,26 @@ function ImagePreview({ sessionId, file }: { sessionId: string; file: FileRef })
 }
 
 function MediaPreview({ sessionId, file, kind }: { sessionId: string; file: FileRef; kind: "audio" | "video" }) {
-  const src = downloadUrl(sessionId, file.path, false);
+  const [loading, setLoading] = useState(true);
+  const [errored, setErrored] = useState(false);
+  if (errored) return <UnsupportedPreview file={file} sessionId={sessionId} note="The media could not be loaded." />;
+  const playback = {
+    src: downloadUrl(sessionId, file.path, false),
+    controls: true,
+    preload: "metadata",
+    "aria-label": file.name,
+    onLoadStart: () => setLoading(true),
+    // preload=metadata may never fire canplay until Play is pressed.
+    onLoadedMetadata: () => setLoading(false),
+    onCanPlay: () => setLoading(false),
+    onPlaying: () => setLoading(false),
+    onWaiting: () => setLoading(true),
+    onError: () => setErrored(true),
+  };
   return (
-    <div className="files-media">
-      {kind === "audio" ? (
-        <audio controls preload="metadata" src={src} aria-label={file.name} />
-      ) : (
-        <video controls preload="metadata" src={src} aria-label={file.name} className="files-video" />
-      )}
+    <div className="files-media" aria-busy={loading}>
+      {loading ? <div className="files-media-loading"><LoadingSpinner label="Loading media…" /></div> : null}
+      {kind === "audio" ? <audio {...playback} /> : <video {...playback} className="files-video" />}
     </div>
   );
 }

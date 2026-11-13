@@ -2,9 +2,10 @@
 // Recent projects from the session list, a directory browser (navigate into
 // subdirectories, up to the parent), and a free-form path input.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUp, Folder, X } from "@phosphor-icons/react";
 import type { SessionSummary } from "./use-session.ts";
+import { LoadingSpinner } from "./plugin-system/LoadingSpinner.tsx";
 
 interface DirectoryListing {
   path: string;
@@ -25,6 +26,8 @@ export function NewSessionDialog({ open, sessions, onClose, onStart }: NewSessio
   const [pathInput, setPathInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const directoryRequest = useRef<AbortController | null>(null);
 
   // Recent projects: unique cwds, most recently active first.
   const recent = [...new Map(
@@ -32,10 +35,15 @@ export function NewSessionDialog({ open, sessions, onClose, onStart }: NewSessio
   ).keys()].slice(0, 6);
 
   const load = useCallback(async (path: string) => {
+    directoryRequest.current?.abort();
+    const request = new AbortController();
+    directoryRequest.current = request;
+    setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/directories?path=${encodeURIComponent(path)}`);
+      const res = await fetch(`/api/directories?path=${encodeURIComponent(path)}`, { signal: request.signal });
       const body = (await res.json()) as DirectoryListing & { error?: string };
+      if (request.signal.aborted) return;
       if (!res.ok) {
         setError(body.error ?? `could not list ${path}`);
         return;
@@ -43,7 +51,9 @@ export function NewSessionDialog({ open, sessions, onClose, onStart }: NewSessio
       setListing(body);
       setPathInput(body.path);
     } catch {
-      setError("could not reach the server");
+      if (!request.signal.aborted) setError("could not reach the server");
+    } finally {
+      if (!request.signal.aborted) setLoading(false);
     }
   }, []);
 
@@ -52,7 +62,9 @@ export function NewSessionDialog({ open, sessions, onClose, onStart }: NewSessio
     if (!open) {
       setListing(null);
       setError(null);
+      setLoading(false);
     }
+    return () => directoryRequest.current?.abort();
     // recent[0] intentionally not a dep: load once per open.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -136,13 +148,14 @@ export function NewSessionDialog({ open, sessions, onClose, onStart }: NewSessio
           {error ? <div className="app-dialog-error" role="alert">{error}</div> : null}
         </div>
 
+        {loading ? <div className="app-dialog-empty"><LoadingSpinner label="Loading directories…" /></div> : null}
         {listing !== null ? (
-          <div className="app-dialog-browser">
+          <div className="app-dialog-browser" aria-busy={loading}>
             <div className="app-dialog-browser-head">
               <button
                 type="button"
                 className="app-dialog-up"
-                disabled={listing.parent === null}
+                disabled={loading || listing.parent === null}
                 onClick={() => listing.parent !== null && void load(listing.parent)}
                 title="Parent directory"
               >
@@ -161,6 +174,7 @@ export function NewSessionDialog({ open, sessions, onClose, onStart }: NewSessio
                   key={entry.path}
                   type="button"
                   className="app-dialog-entry"
+                  disabled={loading}
                   onClick={() => void load(entry.path)}
                   title={entry.path}
                 >
