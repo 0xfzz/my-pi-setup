@@ -11,8 +11,8 @@ export type FileKind =
 export const TEXT_PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
 /** Raster images larger than this are metadata + download only. */
 export const IMAGE_PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
-/** PDFs larger than this download instead of rendering inline (v1). */
-export const PDF_PREVIEW_MAX_BYTES = 50 * 1024 * 1024;
+/** PDFs and office documents larger than this download instead of rendering inline. */
+export const DOCUMENT_PREVIEW_MAX_BYTES = 50 * 1024 * 1024;
 /** One directory page. A larger listing must be paged, never truncated silently. */
 export const MAX_DIR_ENTRIES = 500;
 /** Filename-search results per response. */

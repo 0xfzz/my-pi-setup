@@ -30,6 +30,13 @@ const MIME_TYPES: Record<string, string> = {
   ".ico": "image/x-icon",
   ".json": "application/json; charset=utf-8",
   ".map": "application/json; charset=utf-8",
+  // Flyfish File Viewer's self-hosted runtime assets (/file-viewer/).
+  ".wasm": "application/wasm",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".pfb": "application/x-font-type1",
+  ".bcmap": "application/octet-stream",
 };
 
 const DEFAULT_PORT = Number(process.env.PI_WEB_PORT ?? 30142);

@@ -1,20 +1,24 @@
 // File preview: the header (identity, copy path, download) dispatches to a
 // lazy viewer by file kind. Text and markdown fetch once here and share the
 // read; images and media stream from the download endpoint with native
-// decoding; everything else falls back to metadata + download.
+// decoding; PDF and office documents render via the File Viewer component;
+// everything else falls back to metadata + download.
 
 import { Suspense, lazy, useEffect, useState } from "react";
 import {
   ArrowLeft, ArrowSquareOut, Clock, Copy, FileAudio, FileCsv, FileDoc, FileImage,
   FilePdf, FilePpt, FileVideo, FileText, FileXls,
 } from "@phosphor-icons/react";
-import { PDF_PREVIEW_MAX_BYTES, type FileKind } from "../../core/shared/file-kind.ts";
+import { DOCUMENT_PREVIEW_MAX_BYTES, type FileKind } from "../../core/shared/file-kind.ts";
 import { MarkdownBody } from "../../core/client/plugin-system/markdown.tsx";
 import { LoadingSpinner } from "../../core/client/plugin-system/LoadingSpinner.tsx";
 import { downloadUrl, fetchText, type FileRef, type FilesTextData } from "./files-api.ts";
 
 const CodeMirrorView = lazy(() => import("../../core/client/plugin-system/CodeMirrorView.tsx"));
-const PdfViewer = lazy(() => import("./PdfViewer.tsx").then((module) => ({ default: module.PdfViewer })));
+const DocumentViewer = lazy(() => import("./DocumentViewer.tsx").then((module) => ({ default: module.DocumentViewer })));
+
+/** Kinds rendered by the document viewer (PDF and the office families). */
+const DOCUMENT_KINDS = new Set<FileKind>(["pdf", "document", "spreadsheet", "presentation"]);
 
 function formatBytes(size: number | undefined): string {
   if (size === undefined) return "—";
@@ -126,13 +130,13 @@ export function FilePreview({ sessionId, file, onBack }: FilePreviewProps) {
     if (file.fileKind === "audio" || file.fileKind === "video") {
       return <MediaPreview sessionId={sessionId} file={file} kind={file.fileKind} />;
     }
-    if (file.fileKind === "pdf") {
-      if (file.size !== undefined && file.size > PDF_PREVIEW_MAX_BYTES) {
-        return <UnsupportedPreview file={file} sessionId={sessionId} note="This PDF is too large to preview; download it instead." />;
+    if (DOCUMENT_KINDS.has(file.fileKind)) {
+      if (file.size !== undefined && file.size > DOCUMENT_PREVIEW_MAX_BYTES) {
+        return <UnsupportedPreview file={file} sessionId={sessionId} note="This document is too large to preview; download it instead." />;
       }
       return (
-        <Suspense fallback={<div className="files-empty"><LoadingSpinner label="Loading PDF viewer…" /></div>}>
-          <PdfViewer sessionId={sessionId} file={file} />
+        <Suspense fallback={<div className="files-empty"><LoadingSpinner label="Loading document viewer…" /></div>}>
+          <DocumentViewer sessionId={sessionId} file={file} />
         </Suspense>
       );
     }
@@ -154,9 +158,6 @@ export function FilePreview({ sessionId, file, onBack }: FilePreviewProps) {
       return text.binary
         ? <UnsupportedPreview file={file} sessionId={sessionId} note="Binary content." />
         : <MarkdownPreview text={text.text} />;
-    }
-    if (file.fileKind === "document" || file.fileKind === "spreadsheet" || file.fileKind === "presentation") {
-      return <UnsupportedPreview file={file} sessionId={sessionId} note={`${kindLabel(file.fileKind)} files open in their desktop app; download to view it.`} />;
     }
     return <UnsupportedPreview file={file} sessionId={sessionId} />;
   }

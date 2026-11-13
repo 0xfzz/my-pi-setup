@@ -1,8 +1,12 @@
-// Focused e2e for the Files panel viewers: PDF, image, text, markdown, CSV,
-// and the office/binary download fallbacks. Boots the standalone server with
+// Focused e2e for the Files panel viewers: PDF, Word, Excel, PowerPoint via
+// Flyfish File Viewer; image, text, markdown, CSV via the native previews;
+// unknown binary via the download fallback. Boots the standalone server with
 // the fixture session rooted at a throwaway directory of known files, then
 // drives the Files panel through a real browser and asserts each viewer
 // renders (or degrades to the documented download fallback) without a crash.
+//
+// The document viewer renders in shadow DOM; Playwright locators pierce open
+// shadow roots, so text/canvas assertions work across the boundary.
 
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
@@ -10,7 +14,7 @@ import { once } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deflateSync, crc32 } from "node:zlib";
+import { makeDocx, makePdf, makePng, makePptx, makeXlsx } from "./viewer-fixtures.mjs";
 import assert from "node:assert/strict";
 
 const PORT = 30_000 + Math.floor(Math.random() * 10_000);
@@ -24,63 +28,19 @@ const fixtureDir = await mkdtemp(join(tmpdir(), "pi-web-viewers-files-"));
 /** Step marker: pins where a stall happens. */
 const step = (name) => console.log(`[viewers-e2e] ${name}`);
 
-/** A valid RGB PNG: signature + IHDR + deflate'd raw scanlines + IEND. */
-function pngChunk(type, data) {
-  const length = Buffer.alloc(4);
-  length.writeUInt32BE(data.length);
-  const typeBuf = Buffer.from(type, "ascii");
-  const crcBuf = Buffer.alloc(4);
-  crcBuf.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])) >>> 0);
-  return Buffer.concat([length, typeBuf, data, crcBuf]);
+async function writeFixtures() {
+  await writeFile(join(fixtureDir, "README.md"), "# Viewer E2E\n\n- alpha\n- beta\n");
+  await writeFile(join(fixtureDir, "hello.txt"), "hello from the text viewer\nsecond line\n");
+  await writeFile(join(fixtureDir, "data.csv"), "name,count\nalpha,1\nbeta,2\n");
+  await writeFile(join(fixtureDir, "pixel.png"), makePng(12, 12, [200, 40, 40]));
+  await writeFile(join(fixtureDir, "sample.pdf"), makePdf());
+  await writeFile(join(fixtureDir, "report.docx"), makeDocx());
+  await writeFile(join(fixtureDir, "spreadsheet.xlsx"), makeXlsx());
+  await writeFile(join(fixtureDir, "slide.pptx"), makePptx());
+  await writeFile(join(fixtureDir, "mystery.xyz"), Buffer.from([0x00, 0x01, 0x02, 0x03]));
 }
 
-function makePng(width, height, rgb) {
-  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8; // bit depth
-  ihdr[9] = 2; // colour type: truecolour RGB
-  const stride = 1 + width * 3;
-  const raw = Buffer.alloc(height * stride);
-  for (let y = 0; y < height; y += 1) {
-    raw[y * stride] = 0; // filter: none
-    for (let x = 0; x < width; x += 1) {
-      const offset = y * stride + 1 + x * 3;
-      raw[offset] = rgb[0];
-      raw[offset + 1] = rgb[1];
-      raw[offset + 2] = rgb[2];
-    }
-  }
-  return Buffer.concat([signature, pngChunk("IHDR", ihdr), pngChunk("IDAT", deflateSync(raw)), pngChunk("IEND", Buffer.alloc(0))]);
-}
-
-/** A minimal one-page PDF with a correct xref table, built without a library. */
-function makePdf() {
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-  ];
-  const content = "BT /F1 24 Tf 50 240 Td (PDF Viewer e2e) Tj ET";
-  objects.push(`<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`);
-
-  let pdf = "%PDF-1.4\n";
-  const offsets = [0];
-  for (let i = 0; i < objects.length; i += 1) {
-    offsets.push(Buffer.byteLength(pdf));
-    pdf += `${i + 1} 0 obj\n${objects[i]}\nendobj\n`;
-  }
-  const xrefPos = Buffer.byteLength(pdf);
-  pdf += `xref\n0 ${objects.length + 1}\n`;
-  pdf += "0000000000 65535 f \n";
-  for (let i = 1; i <= objects.length; i += 1) {
-    pdf += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
-  }
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`;
-  return Buffer.from(pdf, "latin1");
-}
+// ── Harness ────────────────────────────────────────────────────────────────
 
 async function waitForHealth(baseUrl, timeoutMs = 30_000, serverExitCode = () => null, logs = []) {
   const deadline = Date.now() + timeoutMs;
@@ -98,18 +58,6 @@ async function waitForHealth(baseUrl, timeoutMs = 30_000, serverExitCode = () =>
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(`server did not become healthy\n${logs.join("")}`);
-}
-
-async function writeFixtures() {
-  await writeFile(join(fixtureDir, "README.md"), "# Viewer E2E\n\n- alpha\n- beta\n");
-  await writeFile(join(fixtureDir, "hello.txt"), "hello from the text viewer\nsecond line\n");
-  await writeFile(join(fixtureDir, "data.csv"), "name,count\nalpha,1\nbeta,2\n");
-  await writeFile(join(fixtureDir, "pixel.png"), makePng(12, 12, [200, 40, 40]));
-  await writeFile(join(fixtureDir, "sample.pdf"), makePdf());
-  await writeFile(join(fixtureDir, "report.docx"), "fake docx payload");
-  await writeFile(join(fixtureDir, "spreadsheet.xlsx"), "fake xlsx payload");
-  await writeFile(join(fixtureDir, "slide.pptx"), "fake pptx payload");
-  await writeFile(join(fixtureDir, "mystery.xyz"), Buffer.from([0x00, 0x01, 0x02, 0x03]));
 }
 
 async function selectFixtureSession(page) {
@@ -149,6 +97,12 @@ async function assertPreviewBodyContains(page, text) {
     text,
     { timeout: 10_000 },
   );
+}
+
+/** Wait for a document-viewer render signal that is not the loading spinner. */
+async function assertDocumentRenders(page) {
+  await page.getByTestId("files-document").waitFor({ state: "visible", timeout: 10_000 });
+  await page.locator(".files-document-view").first().waitFor({ state: "visible", timeout: 10_000 });
 }
 
 async function run() {
@@ -223,42 +177,43 @@ async function run() {
     );
     await backToFiles(page);
 
-    step("pdf viewer renders a page canvas");
+    step("pdf viewer renders the page (canvas) via File Viewer");
     await openFile(page, "sample.pdf");
     await assertKind(page, "PDF");
-    await page.locator(".files-pdf-page").first().waitFor({ state: "visible", timeout: 15_000 });
-    assert.ok((await page.locator(".files-pdf-page").count()) >= 1, "pdf.js renders at least one page");
-    const canvasWidth = await page.locator(".files-pdf-page").first().evaluate((el) => el.width);
-    assert.ok(canvasWidth > 0, `the rendered page has pixels (width ${canvasWidth})`);
+    await assertDocumentRenders(page);
+    // pdf.js draws each page into a canvas; the text layer carries the words.
+    await page.locator(".files-document-view canvas").first().waitFor({ state: "visible", timeout: 20_000 });
+    await page.getByText("PDF Viewer e2e").first().waitFor({ state: "attached", timeout: 20_000 });
     await backToFiles(page);
 
-    step("docx viewer falls back to the documented download prompt");
+    step("docx viewer renders the document text via File Viewer");
     await openFile(page, "report.docx");
     await assertKind(page, "Document");
-    await assertPreviewBodyContains(page, "Preview unavailable for this file type.");
-    await assertPreviewBodyContains(page, "Document files open in their desktop app");
-    const docxHref = await page.locator(".files-unsupported a.files-action").getAttribute("href");
-    assert.ok(docxHref?.includes("report.docx") && docxHref.includes("download=1"), "the download link targets the file as an attachment");
+    await assertDocumentRenders(page);
+    await page.getByText("Hello docx").first().waitFor({ state: "visible", timeout: 20_000 });
     await backToFiles(page);
 
-    step("xlsx viewer falls back to the documented download prompt");
+    step("xlsx viewer renders the sheet grid via File Viewer");
     await openFile(page, "spreadsheet.xlsx");
     await assertKind(page, "Spreadsheet");
-    await assertPreviewBodyContains(page, "Spreadsheet files open in their desktop app");
+    await assertDocumentRenders(page);
+    // The visible sheet tab is a button; a hidden "Preparing …" placeholder
+    // carries the same title, so match the tab itself.
+    await page.getByRole("button", { name: "Sheet1", exact: true }).first().waitFor({ state: "visible", timeout: 20_000 });
+    await page.getByText(/2 rows, 1 columns/).first().waitFor({ state: "visible", timeout: 20_000 });
     await backToFiles(page);
 
-    step("pptx viewer falls back to the documented download prompt");
+    step("pptx viewer renders the slide via File Viewer");
     await openFile(page, "slide.pptx");
     await assertKind(page, "Presentation");
-    await assertPreviewBodyContains(page, "Presentation files open in their desktop app");
+    await assertDocumentRenders(page);
+    await page.getByText("Hello pptx").first().waitFor({ state: "visible", timeout: 20_000 });
     await backToFiles(page);
 
     step("unknown binary degrades to the generic fallback with no crash");
     await openFile(page, "mystery.xyz");
     await assertKind(page, "Binary");
     await assertPreviewBodyContains(page, "Preview unavailable for this file type.");
-    const binaryBody = (await page.locator(".files-preview-body").textContent()) ?? "";
-    assert.ok(!binaryBody.includes("open in their desktop app"), "the generic fallback carries no desktop-app note");
 
     assert.deepEqual(pageErrors, [], "the browser must stay error-free across every viewer");
 

@@ -58,10 +58,18 @@ await cp(resolve(client, "index.html"), resolve(dist, "index.html"));
 await cp(resolve(client, "base.css"), resolve(dist, "app.css"));
 await cp(resolve(client, "plugin-system", "plugins.css"), resolve(dist, "plugins.css"));
 
-// The PDF.js worker is an ES-module file served beside the client so the PDF
-// viewer can spawn it without a CDN. PDFs are fetched and rendered by pdf.js
-// (fetch is not blocked by X-Frame-Options, unlike an <iframe>).
-await cp(
-  resolve(root, "node_modules", "pdfjs-dist", "build", "pdf.worker.min.mjs"),
-  resolve(dist, "pdf.worker.min.mjs"),
+// Flyfish File Viewer's Workers/WASM/fonts are self-hosted beside the client
+// and resolved at /file-viewer/ (the default asset base). Only the renderers
+// the Files panel uses are copied — PDF, Word, spreadsheet, presentation —
+// keeping the payload at ~15 MB instead of the full 190 MB matrix. The
+// document viewer fetches bytes through the download endpoint (fetch is not
+// blocked by X-Frame-Options, unlike an <iframe>).
+execFileSync(
+  resolve(root, "node_modules", ".bin", process.platform === "win32" ? "file-viewer-copy-assets.cmd" : "file-viewer-copy-assets"),
+  [
+    resolve(dist, "file-viewer"),
+    "--renderers",
+    "pdf,office-word-openxml,spreadsheet-openxml,office-presentation,office-presentation-binary",
+  ],
+  { stdio: "inherit" },
 );
