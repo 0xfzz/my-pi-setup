@@ -435,7 +435,24 @@ export async function streamFile(
   }
   const start = range?.start ?? 0;
   const end = range?.end ?? size - 1;
-  createReadStream(resolved.abs, { fd: handle.fd, start, end })
-    .on("error", () => res.destroy())
-    .pipe(res);
+  // autoClose stays off: the FileHandle (not the stream) owns the fd, and only
+  // handle.close() clears Node's GC finalizer. Closing the raw fd number while
+  // the handle still counts itself open crashed the server later with
+  // "EBADF: Closing file descriptor … on garbage collection failed".
+  const stream = createReadStream(resolved.abs, { fd: handle.fd, start, end, autoClose: false });
+  let closed = false;
+  const closeHandle = (): void => {
+    if (closed) return;
+    closed = true;
+    void handle.close().catch(() => {
+      // A lost race with a destroy is harmless; the fd is already gone.
+    });
+  };
+  // 'close' covers normal completion and destroy(); res 'close' covers a
+  // client hanging up mid-body (navigation away from a preview) — without it
+  // the unpiped stream kept the fd open until GC killed the process.
+  stream.on("close", closeHandle);
+  stream.on("error", () => res.destroy());
+  res.on("close", closeHandle);
+  stream.pipe(res);
 }
