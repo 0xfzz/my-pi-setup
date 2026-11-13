@@ -1,5 +1,5 @@
-import type { WebPluginDescriptor } from "../../../../lib/web-plugins/descriptor.ts";
-import { MODES_LEAVE_PLAN_ACTION, MODES_PLUGIN_ID, MODES_TOGGLE_MODE_ACTION } from "../../../../lib/modes-web-view.ts";
+import type { WebPluginDescriptor } from "../../../lib/web-plugins/descriptor.ts";
+import { MODES_LEAVE_PLAN_ACTION, MODES_PLUGIN_ID, MODES_TOGGLE_MODE_ACTION } from "../../../lib/modes-web-view.ts";
 
 export const modesPlugin: WebPluginDescriptor = {
   id: MODES_PLUGIN_ID,

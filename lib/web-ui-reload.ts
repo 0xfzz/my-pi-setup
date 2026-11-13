@@ -17,7 +17,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
 /** Minimal server directories and files the build reads. */
-export const BUILD_INPUT_DIRS = ["core/client", "core/server", "core/shared", "core/plugins"] as const;
+export const BUILD_INPUT_DIRS = ["core/client", "core/server", "core/shared", "plugins"] as const;
 export const BUILD_INPUT_FILES = [
   "package.json",
   "package-lock.json",

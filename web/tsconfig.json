@@ -20,7 +20,7 @@
     "core/client/**/*.tsx",
     "core/server/**/*.ts",
     "core/shared/**/*.ts",
-    "core/plugins/**/*.ts",
-    "core/plugins/**/*.tsx"
+    "plugins/**/*.ts",
+    "plugins/**/*.tsx"
   ]
 }

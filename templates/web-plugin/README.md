@@ -15,7 +15,7 @@ A plugin is **two halves plus one neutral file**:
 | --- | --- | --- | --- |
 | Shared constants + view factory | `lib/hello-world-web-view.ts` | `lib/<id>-web-view.ts` | pure data (no pi, no web) |
 | pi extension (behavior) | `extension/hello-world.ts` | `extensions/<id>.ts` | behavior (imports pi + `lib/`) |
-| Web descriptor + `package.json` | `web/hello-world/` | `web/core/plugins/<id>/` | interface (declarative, imports `lib/` only) |
+| Web descriptor + `package.json` | `web/hello-world/` | `web/plugins/<id>/` | interface (declarative, imports `lib/` only) |
 
 ## 1. Copy and rename
 
@@ -24,9 +24,9 @@ id=hello-world   # your plugin id, ^[a-z][a-z0-9-]*$
 
 cp templates/web-plugin/lib/hello-world-web-view.ts "lib/$id-web-view.ts"
 cp templates/web-plugin/extension/hello-world.ts        "extensions/$id.ts"
-mkdir -p "web/core/plugins/$id"
-cp templates/web-plugin/web/hello-world/descriptor.ts   "web/core/plugins/$id/descriptor.ts"
-cp templates/web-plugin/web/hello-world/package.json    "web/core/plugins/$id/package.json"
+mkdir -p "web/plugins/$id"
+cp templates/web-plugin/web/hello-world/descriptor.ts   "web/plugins/$id/descriptor.ts"
+cp templates/web-plugin/web/hello-world/package.json    "web/plugins/$id/package.json"
 ```
 
 Then, in `sed -i "s/hello-world/$id/g"` for each copied file (mind the hyphen —
@@ -38,7 +38,7 @@ accordingly).
 
 - **Extension** — append `"./extensions/$id.ts"` to
   `package.json` → `pi.extensions` (the root package, not the web one).
-- **Descriptor** — import it in `web/core/plugins/index.ts` and add it to the
+- **Descriptor** — import it in `web/plugins/index.ts` and add it to the
   `WEB_PLUGINS` array.
 
 `npm run tidy` will then typecheck, lint, and test both halves, and the
@@ -70,13 +70,13 @@ when a new web surface must call into a pi built-in.
 
 Every plugin owns its folder's `package.json` (`@pi-web-plugin/<id>`, private).
 Put npm dependencies there, and they install via the web root's npm workspaces
-(`web/package.json` → `"workspaces": ["core/plugins/*"]`). The web root's own
+(`web/package.json` → `"workspaces": ["plugins/*"]`). The web root's own
 `package.json` must not carry plugin-internal dependencies.
 
 ## 5. Where a panel goes (only when you need one)
 
 Most plugins are declarative only — no React. A panel (like Files, Artifacts) is
-the exception: keep its components in `web/core/plugins/<id>/`, register them in
-`web/core/plugins/panels.tsx` (`PLUGIN_PANELS`), and reuse
+the exception: keep its components in `web/plugins/<id>/`, register them in
+`web/plugins/panels.tsx` (`PLUGIN_PANELS`), and reuse
 `web/core/client/plugin-system/` renderers. The descriptor itself stays
 declarative.

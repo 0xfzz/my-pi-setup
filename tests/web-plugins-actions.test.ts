@@ -21,8 +21,8 @@ import {
   type ActionDescriptor as RegistryActionDescriptor,
   type ActionRequestPayload as RegistryActionPayload,
 } from "../lib/web-plugins/registry.ts";
-import { WEB_PLUGINS } from "../web/core/plugins/index.ts";
-import { subagentMonitorPlugin } from "../web/core/plugins/subagent-monitor/descriptor.ts";
+import { WEB_PLUGINS } from "../web/plugins/index.ts";
+import { subagentMonitorPlugin } from "../web/plugins/subagent-monitor/descriptor.ts";
 import dashboardExtension from "../extensions/dashboard.ts";
 
 test("registry re-exports action constants and types", () => {

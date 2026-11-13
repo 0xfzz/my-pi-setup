@@ -6,7 +6,7 @@
   "description": "Minimal realtime pi web client with an extensible, overridable plugin system",
   "license": "MIT",
   "workspaces": [
-    "core/plugins/*"
+    "plugins/*"
   ],
   "engines": {
     "node": ">=22.6.0"

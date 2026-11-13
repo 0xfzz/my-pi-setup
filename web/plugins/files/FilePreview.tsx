@@ -9,12 +9,12 @@ import {
   ArrowLeft, ArrowSquareOut, Clock, Copy, FileAudio, FileCsv, FileDoc, FileImage,
   FilePdf, FilePpt, FileVideo, FileText, FileXls,
 } from "@phosphor-icons/react";
-import { DOCUMENT_PREVIEW_MAX_BYTES, type FileKind } from "../../shared/file-kind.ts";
-import { MarkdownBody } from "../../client/plugin-system/markdown.tsx";
-import { LoadingSpinner } from "../../client/plugin-system/LoadingSpinner.tsx";
+import { DOCUMENT_PREVIEW_MAX_BYTES, type FileKind } from "../../core/shared/file-kind.ts";
+import { MarkdownBody } from "../../core/client/plugin-system/markdown.tsx";
+import { LoadingSpinner } from "../../core/client/plugin-system/LoadingSpinner.tsx";
 import { downloadUrl, fetchText, type FileRef, type FilesTextData } from "./files-api.ts";
 
-const CodeMirrorView = lazy(() => import("../../client/plugin-system/CodeMirrorView.tsx"));
+const CodeMirrorView = lazy(() => import("../../core/client/plugin-system/CodeMirrorView.tsx"));
 const DocumentViewer = lazy(() => import("./DocumentViewer.tsx").then((module) => ({ default: module.DocumentViewer })));
 
 /** Kinds rendered by the document viewer (PDF and the office families). */

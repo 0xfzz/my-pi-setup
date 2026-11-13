@@ -1,8 +1,8 @@
-import type { WebPluginDescriptor } from "../../../../lib/web-plugins/descriptor.ts";
+import type { WebPluginDescriptor } from "../../../lib/web-plugins/descriptor.ts";
 import {
   EXAMPLE_OVERRIDE_PLUGIN_ID,
   EXAMPLE_OVERRIDE_SHOW_ACTION,
-} from "../../../../lib/example-override-web-view.ts";
+} from "../../../lib/example-override-web-view.ts";
 
 /**
  * Reference override plugin: while its view is published, the minimal web

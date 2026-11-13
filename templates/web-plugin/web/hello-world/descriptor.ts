@@ -1,12 +1,12 @@
-import type { WebPluginDescriptor } from "../../../../lib/web-plugins/descriptor.ts";
+import type { WebPluginDescriptor } from "../../../lib/web-plugins/descriptor.ts";
 import {
   HELLO_WORLD_GREET_ACTION,
   HELLO_WORLD_PLUGIN_ID,
-} from "../../../../lib/hello-world-web-view.ts";
+} from "../../../lib/hello-world-web-view.ts";
 
 /**
- * Copy this file to `web/core/plugins/hello-world/descriptor.ts` and import it
- * in `web/core/plugins/index.ts` (the `WEB_PLUGINS` registry). The descriptor
+ * Copy this file to `web/plugins/hello-world/descriptor.ts` and import it
+ * in `web/plugins/index.ts` (the `WEB_PLUGINS` registry). The descriptor
  * is declarative data only — it maps the extension's published view to a
  * placement and declares the actions the web may forward back. No logic here.
  */
