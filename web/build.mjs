@@ -30,7 +30,10 @@ if (!existsSync(dist)) {
 }
 
 await build({
-  entryPoints: [resolve(client, "app.tsx")],
+  // The client entry is the top-level composition root, which imports the
+  // core shell and the first-party plugin panel registrations. It lives
+  // outside core so the core client never imports a plugin module.
+  entryPoints: [resolve(root, "app.tsx")],
   bundle: true,
   format: "esm",
   outdir: dist,

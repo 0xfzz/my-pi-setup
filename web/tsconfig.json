@@ -16,6 +16,8 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": [
+    "app.tsx",
+    "server.ts",
     "core/client/**/*.ts",
     "core/client/**/*.tsx",
     "core/server/**/*.ts",
