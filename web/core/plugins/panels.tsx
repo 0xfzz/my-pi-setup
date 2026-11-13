@@ -4,7 +4,7 @@
 // shell never imports a plugin directly.
 
 import type { ComponentType } from "react";
-import type { WebView } from "../core/client/plugin-system/contract.ts";
+import type { WebView } from "../client/plugin-system/contract.ts";
 import { ArtifactsPanel } from "./artifacts/ArtifactsPanel.tsx";
 import { FilesPanel } from "./files/FilesPanel.tsx";
 

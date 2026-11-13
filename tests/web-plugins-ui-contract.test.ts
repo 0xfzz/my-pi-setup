@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { validateContributions, validatePlacement, normalizeContributions, resolveOverrides, type WebPluginUiContribution } from "../lib/web-plugins/ui-contracts.ts";
 import { validatePlugin } from "../lib/web-plugins/descriptor.ts";
 import { validateRegistry } from "../lib/web-plugins/registry.ts";
-import { WEB_PLUGINS } from "../web/plugins/index.ts";
+import { WEB_PLUGINS } from "../web/core/plugins/index.ts";
 
 const contribution: WebPluginUiContribution = { id: "working", component: "ui.working-indicator.v1", scope: "session", placement: { kind: "anchor", anchor: "chat.working" }, override: { target: "ui.working-indicator.v1", mode: "replace", fallback: "builtin" } };
 test("UI contract: anchor catalog, bounded overlay, responsive constraints and legacy normalization", () => {

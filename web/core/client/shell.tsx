@@ -22,7 +22,7 @@ import { availablePanelPlugins, isPanelPlugin } from "./plugin-system/panel-poli
 import { pinPanel, seedPins, unpinPanel } from "./plugin-system/pin-policy.ts";
 import { browserStorage, loadPinnedIds, savePinnedIds } from "./plugin-system/pin-storage.ts";
 import { Group, Panel, Separator } from "react-resizable-panels";
-import { hasPluginPanel, PLUGIN_PANELS } from "../../plugins/panels.tsx";
+import { hasPluginPanel, PLUGIN_PANELS } from "../plugins/panels.tsx";
 import { PluginActionShortcuts } from "./plugin-system/PluginActionShortcuts.tsx";
 import { PluginPage, parsePluginRoute } from "./plugin-system/PluginLayout.tsx";
 import { PluginViewRenderer } from "./plugin-system/PluginViewRenderer.tsx";

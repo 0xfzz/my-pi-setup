@@ -5,11 +5,11 @@
 
 import { Suspense, lazy, useState } from "react";
 import { ArrowLeft, Clock, Copy } from "@phosphor-icons/react";
-import { MarkdownBody } from "../../core/client/plugin-system/markdown.tsx";
-import { LoadingSpinner } from "../../core/client/plugin-system/LoadingSpinner.tsx";
+import { MarkdownBody } from "../../client/plugin-system/markdown.tsx";
+import { LoadingSpinner } from "../../client/plugin-system/LoadingSpinner.tsx";
 import { artifactBodyKind, parseArtifactDetail } from "./artifact-detail.ts";
 
-const CodeMirrorView = lazy(() => import("../../core/client/plugin-system/CodeMirrorView.tsx"));
+const CodeMirrorView = lazy(() => import("../../client/plugin-system/CodeMirrorView.tsx"));
 
 function formatBytes(content: string): string {
   const bytes = new TextEncoder().encode(content).length;

@@ -64,7 +64,7 @@ web/
 
 The plugin contract itself lives in the root repo and is shared with the
 TUI: `lib/web/plugins/` (view vocabulary, descriptors, actions, kernel,
-publisher) and `web/plugins/` (the descriptors). Extensions publish views
+publisher) and `web/core/plugins/` (the descriptors). Extensions publish views
 from `extensions/*.ts` — unchanged from the vendored era.
 
 ## Realtime design
@@ -333,7 +333,7 @@ ambient.
 > and the decision test are specified in
 > [`docs/web-plugin-architecture.md`](web-plugin-architecture.md).
 
-A descriptor (`web/plugins/*.ts`) declares **surfaces**:
+A descriptor (`web/core/plugins/*.ts`) declares **surfaces**:
 
 | Surface | Effect |
 |---|---|

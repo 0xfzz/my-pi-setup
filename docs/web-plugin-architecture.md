@@ -29,19 +29,19 @@ review discipline.
 - import pi packages, `lib/`, vendored pi-side code
 
 It may **not** import anything under `web/core/` (client, server, wire
-contracts) or `web/plugins/` (interface descriptors). Its entire web
+contracts) or `web/core/plugins/` (interface descriptors). Its entire web
 surface is the HTTP bridge + the `lib/` contracts.
 
 ### web plugin — interface bridging
 
-`web/plugins/*.ts` (or `web/plugins/<id>/descriptor.ts`) — a **declarative descriptor**, data not code. It says:
+`web/core/plugins/*.ts` (or `web/core/plugins/<id>/descriptor.ts`) — a **declarative descriptor**, data not code. It says:
 "extension X publishes view V; render it in region/slot S; offer action A."
 It may import only `lib/` contracts. No pi packages, no node, no web
 runtime, no logic. The web client learns descriptors at runtime from
 `/api/plugins` — the client never imports them either.
 
 A plugin with a bespoke panel (Files, Artifacts) keeps its React UI in
-its own folder and registers the panel in `web/plugins/panels.tsx`, reusing
+its own folder and registers the panel in `web/core/plugins/panels.tsx`, reusing
 only the core renderers (`web/core/client/plugin-system/`). Descriptors stay
 declarative; the UI is still presentation, never behavior.
 
@@ -54,7 +54,7 @@ decides anything; it declares.
 ```
 ┌────────────────────────── pi process ──────────────────────────┐
 │  extensions/*          behavior: commands, tools, handlers     │
-│    │ imports: pi, lib/, vendor/          NOT web/core/*, web/plugins/* │
+│    │ imports: pi, lib/, vendor/          NOT web/core/*, web/core/plugins/* │
 │    │ publishes: publishWebView(pi, id, view)                   │
 ├──────────────────────────── contracts ─────────────────────────┤
 │  lib/web/plugins/      plugin contract: descriptors, views,     │
@@ -67,7 +67,7 @@ decides anything; it declares.
 │                        commands, mentions, pi-api shapes        │
 ├────────────────────────── web server ──────────────────────────┤
 │  web/core/server/           host: routes, SSE, bridge, plugin host;  │
-│    │ imports: shared, lib/, web/plugins/, pi      NOT web/core/client│
+│    │ imports: shared, lib/, web/core/plugins/, pi      NOT web/core/client│
 ├────────────────────────── browser ─────────────────────────────┤
 │  web/core/client/           interface: renders state, forwards       │
 │    │ imports: shared (+ type-only lib/web-plugins)             │
@@ -98,17 +98,17 @@ Three contract surfaces exist, and each has exactly one home:
 
 **Shared constants are the neutral ground.** The reference pattern is
 modes: `lib/modes-web-view.ts` defines `MODES_PLUGIN_ID` and the action
-ids; `extensions/modes.ts` (behavior) and `web/plugins/modes.ts`
+ids; `extensions/modes.ts` (behavior) and `web/core/plugins/modes.ts`
 (interface) both import from there. Neither side imports the other. The
-guard fails any extension that imports `web/plugins/` directly.
+guard fails any extension that imports `web/core/plugins/` directly.
 
 ## The lifecycle
 
 ### A web surface, end to end
 
-1. **Descriptor** — `web/plugins/foo.ts` declares the view, placement
+1. **Descriptor** — `web/core/plugins/foo.ts` declares the view, placement
    (`region`/`slot`/`anchor`), surfaces and actions. Registered in
-   `web/plugins/index.ts` (`WEB_PLUGINS`).
+   `web/core/plugins/index.ts` (`WEB_PLUGINS`).
 2. **Serving** — the server's plugin host (`web/core/server/plugin-host.ts`)
    loads the registry, validates descriptors, and serves them at
    `/api/plugins`; disabled or quarantined plugins are hidden and their
@@ -168,7 +168,7 @@ Worked examples from this repo:
 
 - **modes** — the full reference pattern: behavior in
   `extensions/modes.ts`, constants in `lib/modes-web-view.ts`, interface
-  in `web/plugins/modes.ts`.
+  in `web/core/plugins/modes.ts`.
 - **@ mentions** — the client gates the picker (UX); pi's provider
   supplies the suggestions (pi_api); pi's read tool resolves the sent
   mention (behavior, in pi).
@@ -182,13 +182,13 @@ Worked examples from this repo:
 
 - A web component computing pi behavior (routing, decisions, state
   mutation) — behavior belongs in the extension.
-- An extension importing `web/core/shared/` or `web/plugins/` — the bridge
+- An extension importing `web/core/shared/` or `web/core/plugins/` — the bridge
   and lib contracts are its only web surface.
 - The client importing pi packages, even types — pi's shapes cross as
   wire contracts, defined in `web/core/shared` or `lib/web-plugins`.
 - Copying pi data into web source (command lists, changelogs) — call it
   at runtime (pi_api, routes) so upgrades cannot drift.
-- A "plugin" with logic in `web/plugins/` — descriptors are data; the
+- A "plugin" with logic in `web/core/plugins/` — descriptors are data; the
   moment they need code, the code belongs in `lib/` (contract) or the
   extension (behavior).
 

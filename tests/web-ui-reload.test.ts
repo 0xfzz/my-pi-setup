@@ -138,7 +138,7 @@ test("the reload lock is exclusive, and a lock whose owner died is taken over", 
 test("source roots name only the build inputs and our runtime directories", () => {
   const roots = sourceWatchRoots("/repo/web", "/repo");
   assert.ok(roots.includes("/repo/web/core/client"));
-  assert.ok(roots.includes("/repo/web/plugins"));
+  assert.ok(roots.includes("/repo/web/core/plugins"));
   assert.ok(roots.includes("/repo/lib/web-plugins"));
   assert.equal(roots.some((r) => r.includes("node_modules") || r.endsWith("/web")), false);
 });

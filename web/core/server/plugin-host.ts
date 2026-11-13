@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createJiti } from "jiti";
-import { WEB_PLUGINS } from "../../plugins/index.ts";
+import { WEB_PLUGINS } from "../plugins/index.ts";
 import {
   WEB_PLUGIN_VIEW_EVENT,
   validateView,
@@ -122,7 +122,7 @@ export function recordWorkingUi(sessionId: string, payload: unknown): boolean {
 // Plugin kernel: discovery of user/project plugins, enable state, hooks.
 // One host per process; the Symbol.for guard keeps double evaluation safe.
 
-const webPluginsDir = fileURLToPath(new URL("../../plugins", import.meta.url));
+const webPluginsDir = fileURLToPath(new URL("../plugins", import.meta.url));
 
 // Test processes get their own state file so a suite never writes into a real home directory.
 function defaultPluginStatePath(): string {

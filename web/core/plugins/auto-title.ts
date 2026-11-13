@@ -1,9 +1,9 @@
-import type { WebPluginDescriptor } from "../../lib/web-plugins/descriptor.ts";
+import type { WebPluginDescriptor } from "../../../lib/web-plugins/descriptor.ts";
 import {
   AUTO_TITLE_PLUGIN_ID,
   AUTO_TITLE_REGENERATE_ACTION,
   AUTO_TITLE_TOGGLE_ACTION,
-} from "../../lib/auto-title-web-view.ts";
+} from "../../../lib/auto-title-web-view.ts";
 
 export const autoTitlePlugin: WebPluginDescriptor = {
   id: AUTO_TITLE_PLUGIN_ID,
