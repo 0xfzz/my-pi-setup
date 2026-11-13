@@ -13,7 +13,7 @@ import { classifyFile } from "../../core/shared/file-kind.ts";
 import {
   fetchDirectory, fetchSearch, fileRefOf,
   type DirEntry, type FileRef, type FilesListData,
-} from "./files-api.ts";
+} from "./lib/files-api.ts";
 import { LoadingSpinner } from "../../core/client/plugin-system/LoadingSpinner.tsx";
 
 function fileIcon(fileKind: FileKind | undefined) {

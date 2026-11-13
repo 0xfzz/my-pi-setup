@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from "react";
 import { X } from "@phosphor-icons/react";
-import type { FileRef } from "./files-api.ts";
+import type { FileRef } from "./lib/files-api.ts";
 import { FileBrowser } from "./FileBrowser.tsx";
 import { FilePreview } from "./FilePreview.tsx";
 

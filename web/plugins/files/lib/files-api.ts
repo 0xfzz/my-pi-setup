@@ -2,7 +2,7 @@
 // the server resolves the root and re-validates the path. Returns a
 // discriminated result so the UI can tell a real failure from a partial page.
 
-import type { FileKind } from "../../core/shared/file-kind.ts";
+import type { FileKind } from "../../../core/shared/file-kind.ts";
 
 export type FilesFailure = { ok: false; code: string; message: string; status: number };
 export type FilesResult<T> = { ok: true; data: T } | FilesFailure;

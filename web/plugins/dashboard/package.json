@@ -3,5 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "First-party dashboard plugin: the per-session delegated-work graph and the standalone dashboard app."
+  "description": "First-party dashboard plugin: the per-session delegated-work graph and the standalone dashboard app.",
+  "dependencies": {
+    "@viz-js/viz": "^3.31.0",
+    "dompurify": "^3.4.17",
+    "highlight.js": "^11.12.0",
+    "marked": "^18.1.1"
+  }
 }

@@ -12,7 +12,7 @@ import {
 import { DOCUMENT_PREVIEW_MAX_BYTES, type FileKind } from "../../core/shared/file-kind.ts";
 import { MarkdownBody } from "../../core/client/plugin-system/markdown.tsx";
 import { LoadingSpinner } from "../../core/client/plugin-system/LoadingSpinner.tsx";
-import { downloadUrl, fetchText, type FileRef, type FilesTextData } from "./files-api.ts";
+import { downloadUrl, fetchText, type FileRef, type FilesTextData } from "./lib/files-api.ts";
 
 const CodeMirrorView = lazy(() => import("../../core/client/plugin-system/CodeMirrorView.tsx"));
 const DocumentViewer = lazy(() => import("./DocumentViewer.tsx").then((module) => ({ default: module.DocumentViewer })));

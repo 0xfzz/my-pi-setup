@@ -9,7 +9,7 @@
 import FileViewer from "@file-viewer/react";
 import { setDefaultFileViewerAssetBaseUrl } from "@file-viewer/core";
 import officePreset from "@file-viewer/preset-office";
-import { downloadUrl, type FileRef } from "./files-api.ts";
+import { downloadUrl, type FileRef } from "./lib/files-api.ts";
 
 // The bundled default derives the asset base from import.meta.url, which
 // esbuild rewrites to a chunk URL: workers then 404 at the site root. Pin it

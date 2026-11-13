@@ -7,7 +7,7 @@ import { Suspense, lazy, useState } from "react";
 import { ArrowLeft, Clock, Copy } from "@phosphor-icons/react";
 import { MarkdownBody } from "../../core/client/plugin-system/markdown.tsx";
 import { LoadingSpinner } from "../../core/client/plugin-system/LoadingSpinner.tsx";
-import { artifactBodyKind, parseArtifactDetail } from "./artifact-detail.ts";
+import { artifactBodyKind, parseArtifactDetail } from "./lib/artifact-detail.ts";
 
 const CodeMirrorView = lazy(() => import("../../core/client/plugin-system/CodeMirrorView.tsx"));
 

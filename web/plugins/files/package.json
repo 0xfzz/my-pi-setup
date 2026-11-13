@@ -10,6 +10,9 @@
     "@file-viewer/react": "^3.3.3",
     "@phosphor-icons/react": "^2.1.10"
   },
+  "peerDependencies": {
+    "react": "^19.2.4"
+  },
   "devDependencies": {
     "file-viewer-copy-assets": "^3.3.3"
   }

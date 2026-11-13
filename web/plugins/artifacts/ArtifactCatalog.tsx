@@ -2,7 +2,7 @@
 // type/version/size line. Selecting a row opens its preview in the same panel.
 
 import { Code, FileText, GitPullRequest, ListChecks, Note, Package, type Icon } from "@phosphor-icons/react";
-import { parseArtifactDetail } from "./artifact-detail.ts";
+import { parseArtifactDetail } from "./lib/artifact-detail.ts";
 
 const TYPE_ICONS: Record<string, Icon> = {
   plan: ListChecks,
