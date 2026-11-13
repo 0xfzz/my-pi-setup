@@ -48,6 +48,13 @@ The web root declares those folders as npm workspaces
 and hoist into `web/node_modules`. Register the plugin in
 `web/plugins/index.ts` and it ships.
 
+The only place core and plugins meet is the composition roots outside
+`web/core/`: `web/app.tsx` (client) imports the shell and the panel
+registrations, and `web/server.ts` registers `WEB_PLUGINS` into the server
+plugin host before serving. Core itself never imports a plugin — the
+dependency stays one-way (plugins → core, core ↛ plugins), enforced by
+`tests/web-boundaries.test.ts`.
+
 A plugin with a bespoke panel (Files, Artifacts) keeps its React UI in
 its own folder and registers the panel in `web/plugins/panels.tsx`, reusing
 only the core renderers (`web/core/client/plugin-system/`). Descriptors stay
@@ -76,7 +83,7 @@ decides anything; it declares.
 │                        commands, mentions, pi-api shapes        │
 ├────────────────────────── web server ──────────────────────────┤
 │  web/core/server/           host: routes, SSE, bridge, plugin host;  │
-│    │ imports: shared, lib/, web/plugins/, pi      NOT web/core/client│
+│    │ imports: shared, lib/, pi           NOT web/core/client, plugins│
 ├────────────────────────── browser ─────────────────────────────┤
 │  web/core/client/           interface: renders state, forwards       │
 │    │ imports: shared (+ type-only web/core/plugin-contracts)             │
@@ -124,10 +131,11 @@ bridge an extension installed as an external pi package, so
 1. **Descriptor** — `web/plugins/foo/descriptor.ts` declares the view, placement
    (`region`/`slot`/`anchor`), surfaces and actions. Registered in
    `web/plugins/index.ts` (`WEB_PLUGINS`).
-2. **Serving** — the server's plugin host (`web/core/server/plugin-host.ts`)
-   loads the registry, validates descriptors, and serves them at
-   `/api/plugins`; disabled or quarantined plugins are hidden and their
-   actions refused in the same request.
+2. **Serving** — the composition root `web/server.ts` registers `WEB_PLUGINS`
+   into the server plugin host (`web/core/server/plugin-host.ts`), which
+   validates descriptors and serves them at `/api/plugins`; disabled or
+   quarantined plugins are hidden and their actions refused in the same
+   request.
 3. **Publishing** — the pi extension calls
    `publishWebView(pi, "foo", view)`; the view rides
    `WEB_PLUGIN_VIEW_EVENT` → the bridge → the client's plugin-state
