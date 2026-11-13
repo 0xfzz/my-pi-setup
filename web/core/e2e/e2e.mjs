@@ -174,6 +174,29 @@ async function run() {
     await todoButton.click();
     await page.getByRole("complementary", { name: "Todo panel" }).waitFor();
     assert.ok((await page.locator(".app-side-panel").textContent()).includes("Implement frontend slots"));
+    // Rich rows (status icon + expandable detail): the chevron pins to the
+    // row's right edge, and an expanded detail card stacks below its row.
+    // A row-level flex put the card beside the toggle, squeezing both into
+    // slivers and leaving the chevron floating after short titles.
+    const todoRow = page.locator(".app-side-panel .plugin-list-item-toggle").first();
+    const rowBox = await todoRow.boundingBox();
+    const chevronBox = await todoRow.locator(".plugin-list-item-chevron").boundingBox();
+    assert.ok(
+      rowBox.x + rowBox.width - (chevronBox.x + chevronBox.width) < 24,
+      "the chevron pins to the row's right edge",
+    );
+    await todoRow.click();
+    const todoDetail = page.locator(".app-side-panel .plugin-item-detail");
+    await todoDetail.waitFor();
+    const detailBox = await todoDetail.boundingBox();
+    assert.ok(
+      detailBox.y >= rowBox.y + rowBox.height,
+      "an expanded detail renders below its row, not beside it",
+    );
+    assert.ok(
+      detailBox.width > rowBox.width * 0.75,
+      "an expanded detail keeps the row's width instead of squeezing beside it",
+    );
     await page.getByRole("button", { name: "Close panel", exact: true }).click();
     await cacheButton.click();
     await page.getByRole("complementary", { name: "Cache health panel" }).waitFor();

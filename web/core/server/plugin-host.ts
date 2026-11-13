@@ -542,7 +542,11 @@ export function checkAndSeedFixtures(store = webPluginsStore): void {
       store.recordView(testSessionId, "todo", {
         type: "list",
         title: "Active tasks",
-        items: ["Implement frontend slots", "Verify e2e test suite"],
+        items: [
+          { text: "Implement frontend slots", status: "done", detail: "**Status:** done\n**Evidence:**\n- file `web/core/client/plugin-system/slots.tsx`" },
+          { text: "Verify e2e test suite", status: "active", detail: "**Status:** claimed\n**Claim:** worker · 12 min left" },
+          { text: "A much longer task title that will wrap onto a second line in the narrow sidebar panel", status: "pending", detail: "**Status:** open" },
+        ],
       });
     }
     if (!store.getView(testSessionId, "artifacts")) {

@@ -115,8 +115,10 @@ function ListItemRow({ item }: { item: string | RichItem }) {
   if (item.detail === undefined) {
     return (
       <li className="plugin-list-item plugin-list-item-rich">
-        {icon}
-        <span className="plugin-list-item-text">{item.text}</span>
+        <span className="plugin-list-item-row">
+          {icon}
+          <span className="plugin-list-item-text">{item.text}</span>
+        </span>
       </li>
     );
   }
