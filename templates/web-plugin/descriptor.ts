@@ -1,20 +1,20 @@
-import type { WebPluginDescriptor } from "../../../web/core/plugin-contracts/descriptor.ts";
+import type { WebPluginDescriptor } from "../../core/plugin-contracts/descriptor.ts";
 import {
   HELLO_WORLD_GREET_ACTION,
   HELLO_WORLD_PLUGIN_ID,
-} from "../../../lib/hello-world-web-view.ts";
+} from "./contract.ts";
 
 /**
- * Copy this file to `web/plugins/hello-world/descriptor.ts` and import it
- * in `web/plugins/index.ts` (the `WEB_PLUGINS` registry). The descriptor
- * is declarative data only — it maps the extension's published view to a
- * placement and declares the actions the web may forward back. No logic here.
+ * The declarative bridge for the hello-world extension. Copy this file to
+ * `web/plugins/<id>/descriptor.ts` and import it in `web/plugins/index.ts`
+ * (the `WEB_PLUGINS` registry). Data only — it maps the extension's published
+ * view to a placement and declares the action the web forwards back.
  */
 export const helloWorldPlugin: WebPluginDescriptor = {
   id: HELLO_WORLD_PLUGIN_ID,
   extension: "hello-world",
   title: "Hello world",
-  description: "Reference plugin: a status view and one action over the bridge.",
+  description: "Reference bridge: a status view and one action.",
   ui: [{
     id: "greeting",
     component: "ui.plugin-view.v1",

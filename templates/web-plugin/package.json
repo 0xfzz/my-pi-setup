@@ -3,5 +3,5 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Reference plugin: a status view and one action over the bridge."
+  "description": "Reference bridge plugin: a status view and one action."
 }

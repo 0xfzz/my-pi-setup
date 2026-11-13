@@ -1,82 +1,89 @@
 # Web plugin boilerplate
 
-The reference template for a web plugin in this repo. Copy the four pieces
-below into place, rename `hello-world` to your plugin id, and register it.
-The template compiles from a single rule (see
-[`docs/web-plugin-architecture.md`](../../docs/web-plugin-architecture.md)):
+A **plugin** is a thin, declarative **bridge** for a pi extension. The
+extension owns behavior; the plugin owns the web surface. The extension is
+**optional** — you can write a plugin for an extension installed elsewhere
+(an external pi package).
 
 > **If it changes what pi does, it is a pi extension.
 > If it changes what the web shows, it is a web plugin.
-> The only things that cross the line are contracts.**
+> The only thing that crosses the line is the contract.**
 
-A plugin is **two halves plus one neutral file**:
+A plugin is **one folder with three files**:
 
-| Piece | Template path | Copy to | Kind |
-| --- | --- | --- | --- |
-| Shared constants + view factory | `lib/hello-world-web-view.ts` | `lib/<id>-web-view.ts` | pure data (no pi, no web) |
-| pi extension (behavior) | `extension/hello-world.ts` | `extensions/<id>.ts` | behavior (imports pi + `lib/`) |
-| Web descriptor + `package.json` | `web/hello-world/` | `web/plugins/<id>/` | interface (declarative, imports `lib/` only) |
-
-## 1. Copy and rename
-
-```sh
-id=hello-world   # your plugin id, ^[a-z][a-z0-9-]*$
-
-cp templates/web-plugin/lib/hello-world-web-view.ts "lib/$id-web-view.ts"
-cp templates/web-plugin/extension/hello-world.ts        "extensions/$id.ts"
-mkdir -p "web/plugins/$id"
-cp templates/web-plugin/web/hello-world/descriptor.ts   "web/plugins/$id/descriptor.ts"
-cp templates/web-plugin/web/hello-world/package.json    "web/plugins/$id/package.json"
+```
+web/plugins/<id>/
+├── package.json      # @pi-web-plugin/<id> (private)
+├── contract.ts       # plugin id + action ids + view factory (the bridge seam)
+└── descriptor.ts     # declarative: slots, placement, actions — imports contract.ts
 ```
 
-Then, in `sed -i "s/hello-world/$id/g"` for each copied file (mind the hyphen —
-an id like `my-plugin` cannot be a JS identifier, so also rename the exported
-symbols `helloWorldWebView` / `helloWorldPlugin` / `helloWorldExtension`
-accordingly).
+The **extension** imports the plugin's `contract.ts` to publish views and
+answer actions. The descriptor imports it to declare them. Neither imports the
+other directly.
 
-## 2. Register it
+## 1. Copy and register
 
-- **Extension** — append `"./extensions/$id.ts"` to
-  `package.json` → `pi.extensions` (the root package, not the web one).
-- **Descriptor** — import it in `web/plugins/index.ts` and add it to the
-  `WEB_PLUGINS` array.
+```sh
+id=hello-world   # your id, ^[a-z][a-z0-9-]*$
 
-`npm run tidy` will then typecheck, lint, and test both halves, and the
-boundary guard (`tests/web-boundaries.test.ts`) will confirm neither half
-reaches across the contract.
+mkdir -p "web/plugins/$id"
+cp templates/web-plugin/contract.ts   "web/plugins/$id/contract.ts"
+cp templates/web-plugin/descriptor.ts "web/plugins/$id/descriptor.ts"
+cp templates/web-plugin/package.json  "web/plugins/$id/package.json"
+```
 
-## 3. The bridge (pi APIs)
+Rename `hello-world` → `$id` across the three files (mind that an id like
+`my-plugin` is not a JS identifier, so also rename the `helloWorldWebView` /
+`helloWorldPlugin` symbols). Then import the descriptor in
+`web/plugins/index.ts` and add it to the `WEB_PLUGINS` array.
 
-The two halves never import each other; they talk through two typed channels.
+## 2. Wire the extension (the bridge)
 
-**Extension → web.** `publishWebView(pi, PLUGIN_ID, view)` pushes a validated
-declarative view (`status`, `kv`, `list`, `graph`, `dialog`) over the event
-bus; the web client renders it where the descriptor places it. The view shape
-comes from `web/core/plugin-contracts/view.ts`; per-plugin constants belong in
-`lib/<id>-web-view.ts` so both halves import the same ids and factory.
+Your extension (in `extensions/<id>.ts`, or an external package) publishes the
+view and answers the action by importing the plugin's contract:
 
-**Web → extension.** The descriptor declares `actions`; when the user runs one,
-the client emits `WEB_PLUGIN_ACTION_REQUEST_EVENT` with
-`{ requestId, pluginId, actionId, sessionId }`. The extension subscribes and
-matches on `pluginId` first, then `actionId`. Confirm-style actions are
-enforced by the host before the event is emitted.
+```ts
+import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
+import { HELLO_WORLD_GREET_ACTION, HELLO_WORLD_PLUGIN_ID, helloWorldWebView } from "../web/plugins/hello-world/contract.ts";
 
-**Web → pi built-ins.** Anything the web UI itself needs from pi (autocomplete,
-settings, trust, auth, built-in commands) goes through the one facade
-`web/core/pi-api/` — not through a plugin descriptor. Register a module there
-when a new web surface must call into a pi built-in.
+export default function helloWorldExtension(pi: ExtensionAPI) {
+  let greets = 0;
+  const publish = () => publishWebView(pi, HELLO_WORLD_PLUGIN_ID, helloWorldWebView(++greets));
 
-## 4. Plugin dependencies
+  pi.on("session_start", () => publish());
+  pi.events?.on(WEB_PLUGIN_ACTION_REQUEST_EVENT, (data: unknown) => {
+    const request = data as Partial<ActionRequestPayload> | undefined;
+    if (request?.pluginId === HELLO_WORLD_PLUGIN_ID && request.actionId === HELLO_WORLD_GREET_ACTION) {
+      publish();
+    }
+  });
+}
+```
 
-Every plugin owns its folder's `package.json` (`@pi-web-plugin/<id>`, private).
-Put npm dependencies there, and they install via the web root's npm workspaces
-(`web/package.json` → `"workspaces": ["plugins/*"]`). The web root's own
-`package.json` must not carry plugin-internal dependencies.
+The two channels, both through the shared contract:
 
-## 5. Where a panel goes (only when you need one)
+- **extension → web** — `publishWebView(pi, PLUGIN_ID, view)` pushes a
+  validated `status`/`kv`/`list`/`graph`/`dialog` view; the client renders it
+  where the descriptor placed it.
+- **web → extension** — the descriptor declares `actions`; when the user runs
+  one, the client emits `WEB_PLUGIN_ACTION_REQUEST_EVENT` with
+  `{ requestId, pluginId, actionId, sessionId }`. Match `pluginId` first,
+  then `actionId`.
 
-Most plugins are declarative only — no React. A panel (like Files, Artifacts) is
-the exception: keep its components in `web/plugins/<id>/`, register them in
-`web/plugins/panels.tsx` (`PLUGIN_PANELS`), and reuse
-`web/core/client/plugin-system/` renderers. The descriptor itself stays
-declarative.
+The generic vocabulary lives in `web/core/plugin-contracts/`; the per-plugin
+ids and view shape live in `contract.ts` inside the plugin folder.
+
+## 3. Plugin dependencies
+
+A plugin's npm dependencies belong to its own `package.json` and install via
+the web root's npm workspaces (`web/package.json` → `"workspaces": ["plugins/*"]`).
+Keep plugin-internal dependencies out of `web/package.json`.
+
+## 4. When you need a panel (rare)
+
+Most plugins are declarative only — no React. A bespoke panel (Files, Artifacts)
+keeps its components in `web/plugins/<id>/`, registers them in
+`web/plugins/panels.tsx` (`PLUGIN_PANELS`), and reuses
+`web/core/client/plugin-system/` renderers. The descriptor stays declarative.

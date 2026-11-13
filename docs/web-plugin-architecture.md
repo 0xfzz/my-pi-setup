@@ -62,13 +62,14 @@ decides anything; it declares.
 ```
 ┌────────────────────────── pi process ──────────────────────────┐
 │  extensions/*          behavior: commands, tools, handlers     │
-│    │ imports: pi, lib/, vendor/          NOT web/core/*, web/plugins/* │
+│    │ imports: pi, lib/, vendor/, plugin-contracts, a plugin's  │
+│    │ contract.ts      NOT client/server/shared, descriptors     │
 │    │ publishes: publishWebView(pi, id, view)                   │
 ├──────────────────────────── contracts ─────────────────────────┤
 │  web/core/plugin-contracts/      plugin contract: descriptors, views,     │
 │                        actions, UI events, validation           │
-│  lib/<x>-web-view.ts   per-plugin shared constants (neutral     │
-│                        home both sides import)                  │
+│  web/plugins/<id>/contract.ts   per-plugin bridge contract      │
+│                        (id + actions + view factory)            │
 │  web/core/pi-api/      the pi_api facade: the ONE place that    │
 │                        imports pi's built-in modules for the    │
 │  web/core/shared/           wire contracts (client↔server):          │
@@ -100,15 +101,21 @@ Three contract surfaces exist, and each has exactly one home:
 | Contract | Home | Speaks between |
 |---|---|---|
 | Plugin contract (descriptor/view/action shapes) | `web/core/plugin-contracts/` | extension ↔ web plugin ↔ client renderer |
-| Per-plugin constants (ids, action names) | `lib/<plugin>-web-view.ts` | the extension and the descriptor |
+| Per-plugin bridge contract (id, actions, view shape) | `web/plugins/<id>/contract.ts` | extension ↔ its plugin descriptor |
 | Wire contract (commands, pi_api, mentions) | `web/core/shared/` | client ↔ server |
 | pi built-in calls | `web/core/pi-api/` (the facade) | server ↔ pi's own modules |
 
-**Shared constants are the neutral ground.** The reference pattern is
-modes: `web/plugins/modes/contract.ts` defines `MODES_PLUGIN_ID` and the action
+**The contract is the bridge seam.** The reference pattern is modes:
+`web/plugins/modes/contract.ts` defines `MODES_PLUGIN_ID` and the action
 ids; `extensions/modes.ts` (behavior) and `web/plugins/modes/descriptor.ts`
-(interface) both import from there. Neither side imports the other. The
-guard fails any extension that imports `web/plugins/` directly.
+(interface) both import from there. Neither side imports the other: the
+extension never imports the descriptor, and the web never imports the
+extension. The guard allows an extension to reach a plugin *only* through
+`web/plugins/<id>/contract.ts` (or the dashboard plugin's shared library).
+
+The `extension` field on a descriptor is an id, not a file path: a plugin may
+bridge an extension installed as an external pi package, so
+`validatePlugin` no longer requires `extensions/<id>.ts` to exist.
 
 ## The lifecycle
 
