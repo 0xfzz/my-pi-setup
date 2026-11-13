@@ -283,6 +283,55 @@ test("/web reload force-kills an old server that ignores SIGTERM, then starts th
   }
 });
 
+test("/web reload adopts and restarts an unmanaged healthy server", async () => {
+  const dir = await tree();
+  try {
+    const calls: string[] = [];
+    let up = true;
+    let state: WebUiState | null | "corrupt" = "corrupt";
+    const deps: Partial<WebUiDeps> = {
+      statePath: join(dir, "state.json"),
+      checkServerDir: () => true,
+      hasBuild: () => true,
+      sessionId: "s",
+      pollIntervalMs: 1,
+      startupTimeoutMs: 1000,
+      sleep: async () => {},
+      fetchHealth: async () => up,
+      readState: async () => state,
+      removeState: async () => {
+        calls.push("removeState");
+        state = null;
+      },
+      killProcess: () => {},
+      forceKillProcess: () => {},
+      stopGraceMs: 1000,
+      killUnmanaged: async () => {
+        calls.push("killUnmanaged");
+        up = false;
+        return true;
+      },
+      spawnServer: () => {
+        calls.push("spawn");
+        up = true;
+        return { pid: 2222, unref: () => {} };
+      },
+      buildServer: async () => {
+        calls.push("build");
+        return { ok: true };
+      },
+      fingerprints: async () => ({ build: "b", runtime: "r" }),
+      readRecord: async () => ({ build: "b", runtime: "r", builtAt: "t" }),
+      onProgress: () => {},
+    };
+    const result = await reloadWebUi(deps);
+    assert.equal(result.status, "started");
+    assert.deepEqual(calls, ["killUnmanaged", "removeState", "spawn"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("/web reload refuses to start a second instance when the old one survives even SIGKILL", async () => {
   const dir = await tree();
   try {

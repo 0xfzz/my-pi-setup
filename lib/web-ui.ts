@@ -12,8 +12,9 @@
  * 5. Production serving: `/web start` serves the built client, running the
  *    esbuild bundle first when no build output exists, when a rebuild is asked for,
  *    or when the sources changed since the last build. Dev mode is never used.
- * 5a. Reload: `/web reload` stops a managed server, waits for it to go down, and starts it
- *    again (rebuilding when needed). A running session reloads on its own when our sources change.
+ * 5a. Reload: `/web reload` stops the running server (managed or unmanaged),
+ *    waits for it to go down, and starts it again (rebuilding when needed). A
+ *    running session reloads on its own when our sources change.
  * 6. Complete testability: IO (health check, state persistence, process spawning,
  *    clocks, pid probing) is injectable; tests never bind real ports or modify production files.
  */
@@ -109,6 +110,8 @@ export interface WebUiDeps {
   killProcess: (pid: number) => void;
   /** Force-stop a server that ignored SIGTERM (Next waits for open connections before it exits). */
   forceKillProcess: (pid: number) => void;
+  /** Kill every pi-web-minimal process (the unmanaged case: no PID in state). */
+  killUnmanaged: () => Promise<boolean>;
   /** How long a stopping server may take after SIGTERM before it is force-killed. */
   stopGraceMs: number;
   removeState: (path: string) => Promise<void>;
@@ -285,6 +288,17 @@ export function defaultKillProcess(pid: number): void {
   }
 }
 
+/** Kill every pi-web-minimal process (the unmanaged case: no PID in state). */
+export function defaultKillUnmanaged(command: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const child = spawn(command, { shell: true, stdio: "ignore" });
+    child.on("error", () => resolve(false));
+    // pkill exits 1 when no process matched; the health wait below decides
+    // whether the server is actually gone, so any clean spawn counts as sent.
+    child.on("exit", () => resolve(true));
+  });
+}
+
 /** Arguments for serving the built client: the minimal server, run directly. */
 export function serverSpawnArgs(): string[] {
   return ["--experimental-strip-types", "server.ts"];
@@ -406,11 +420,12 @@ function throttledProgress(deps: WebUiDeps, label: (elapsed: string) => string):
 function resolveDeps(overrides: Partial<WebUiDeps> = {}): WebUiDeps {
   const statePath = overrides.statePath ?? defaultWebUiStatePath();
   const serverDir = overrides.serverDir ?? defaultServerDir();
+  const pkillCommand = overrides.pkillCommand ?? DEFAULT_PKILL_COMMAND;
   return {
     statePath,
     serverDir,
     healthUrl: overrides.healthUrl ?? DEFAULT_HEALTH_ENDPOINT,
-    pkillCommand: overrides.pkillCommand ?? DEFAULT_PKILL_COMMAND,
+    pkillCommand,
     isPidAlive: overrides.isPidAlive ?? defaultIsPidAlive,
     fetchHealth: overrides.fetchHealth ?? defaultFetchHealth,
     checkServerDir: overrides.checkServerDir ?? existsSync,
@@ -425,6 +440,7 @@ function resolveDeps(overrides: Partial<WebUiDeps> = {}): WebUiDeps {
     acquireReloadLock: overrides.acquireReloadLock ?? (() => acquireReloadLock(reloadLockPath(statePath), defaultIsPidAlive)),
     killProcess: overrides.killProcess ?? defaultKillProcess,
     forceKillProcess: overrides.forceKillProcess ?? defaultForceKillProcess,
+    killUnmanaged: overrides.killUnmanaged ?? (() => defaultKillUnmanaged(pkillCommand)),
     stopGraceMs: overrides.stopGraceMs ?? DEFAULT_STOP_GRACE_MS,
     removeState: overrides.removeState ?? defaultRemoveState,
     readState: overrides.readState ?? defaultReadState,
@@ -667,8 +683,24 @@ async function waitUntilDown(deps: WebUiDeps, pid: number): Promise<boolean> {
 }
 
 /**
- * Execute `/web reload`: stop the managed server, wait until it is down, then start it
- * again, rebuilding when the sources changed. An unmanaged server is not ours to restart.
+ * Wait until a server killed by pkill stops answering. There is no PID to poll
+ * in the unmanaged case, so the health endpoint is the only signal a new server
+ * would not race the old one for the port.
+ */
+async function waitUntilUnmanagedDown(deps: WebUiDeps): Promise<boolean> {
+  const deadline = deps.now() + deps.startupTimeoutMs;
+  while (deps.now() < deadline) {
+    if (!(await deps.fetchHealth(deps.healthUrl))) return true;
+    await deps.sleep(deps.pollIntervalMs);
+  }
+  return false;
+}
+
+/**
+ * Execute `/web reload`: stop the running server, wait until it is down, then start it
+ * again, rebuilding when the sources changed. A healthy server with no (or a corrupt)
+ * state file is adopted: it is killed by pkill and restarted as a managed instance, so a
+ * reload never needs a manual pkill + `/web start`.
  */
 export async function reloadWebUi(options: Partial<WebUiDeps> = {}): Promise<WebUiCommandResult> {
   const deps = resolveDeps(options);
@@ -677,13 +709,16 @@ export async function reloadWebUi(options: Partial<WebUiDeps> = {}): Promise<Web
   const decision = decideStop(state, healthy, deps.isPidAlive);
 
   if (decision.action === "unmanaged_running") {
-    return {
-      status: "info",
-      message: `pi-web is serving as an unmanaged instance, so /web reload cannot restart it. Kill it with:\n  ${deps.pkillCommand}\nthen run /web start.`,
-      details: { unmanaged: true, pkillCommand: deps.pkillCommand },
-    };
-  }
-  if (decision.action === "kill") {
+    deps.onProgress("pi-web is serving as an unmanaged instance; restarting it automatically…");
+    if (!(await deps.killUnmanaged()) || !(await waitUntilUnmanagedDown(deps))) {
+      return {
+        status: "error",
+        message: `pi-web is serving as an unmanaged instance, so /web reload cannot restart it. Kill it with:\n  ${deps.pkillCommand}\nthen run /web start.`,
+        details: { unmanaged: true, pkillCommand: deps.pkillCommand },
+      };
+    }
+    if (state !== null) await deps.removeState(deps.statePath);
+  } else if (decision.action === "kill") {
     deps.onProgress(`Stopping pi-web (PID ${decision.pid})…`);
     deps.killProcess(decision.pid);
     await deps.removeState(deps.statePath);
@@ -707,15 +742,14 @@ export type AutoReloadResult =
   | WebUiCommandResult;
 
 /**
- * The automatic reload a running session triggers when our sources change. It acts only
- * on a managed server that is up, and only when the sources differ from what it runs.
- * The reload lock is shared, so two sessions watching the same tree reload once.
+ * The automatic reload a running session triggers when our sources change. It acts on
+ * any server that is up — managed or unmanaged — and only when the sources differ from
+ * what it runs. The reload lock is shared, so two sessions watching the same tree reload once.
  */
 export async function reloadWebUiIfChanged(options: Partial<WebUiDeps> = {}): Promise<AutoReloadResult> {
   const deps = resolveDeps(options);
-  const state = await deps.readState(deps.statePath);
   const healthy = await deps.fetchHealth(deps.healthUrl);
-  if (!healthy || !state || state === "corrupt") return { status: "idle" };
+  if (!healthy) return { status: "idle" };
 
   const change = evaluateChange(await deps.fingerprints(), await deps.readRecord());
   if (!change.build && !change.runtime) return { status: "unchanged" };
