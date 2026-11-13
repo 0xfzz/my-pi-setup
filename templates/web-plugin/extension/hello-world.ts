@@ -33,9 +33,9 @@ export default function helloWorldExtension(pi: ExtensionAPI) {
   // terminal and gives the operator a way to nudge the view.
   pi.registerCommand("hello", {
     description: "Re-publish the hello-world web view",
-    handler: () => {
+    handler: async (_args, ctx) => {
       publish();
-      return "Published the hello-world view.";
+      ctx.ui.notify("Published the hello-world view.", "info");
     },
   });
 
