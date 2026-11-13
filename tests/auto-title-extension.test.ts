@@ -29,6 +29,7 @@ const replyText = (text: string) => async () => ({ stopReason: "stop", content: 
 function harness(opts: { name?: string; branch?: any[]; reply?: () => Promise<any>; stateFile?: string } = {}) {
   const stateFile = opts.stateFile ?? join(mkdtempSync(join(tmpdir(), "auto-title-state-")), "auto-title.json");
   let name = opts.name;
+  let stale = false;
   const handlers = new Map<string, Array<(event: any, ctx: any) => unknown>>();
   const eventHandlers = new Map<string, Array<(data: unknown) => void>>();
   const views: any[] = [];
@@ -39,9 +40,18 @@ function harness(opts: { name?: string; branch?: any[]; reply?: () => Promise<an
   const pi: any = {
     on: (event: string, handler: any) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
     registerCommand: (command: string, spec: unknown) => commands.set(command, spec),
-    appendEntry: (customType: string, data: unknown) => written.push({ type: "custom", customType, data }),
-    getSessionName: () => name,
-    setSessionName: (value: string) => { name = value; },
+    appendEntry: (customType: string, data: unknown) => {
+      if (stale) throw new Error("stale extension ctx");
+      written.push({ type: "custom", customType, data });
+    },
+    getSessionName: () => {
+      if (stale) throw new Error("stale extension ctx");
+      return name;
+    },
+    setSessionName: (value: string) => {
+      if (stale) throw new Error("stale extension ctx");
+      name = value;
+    },
     events: {
       on: (channel: string, handler: any) => eventHandlers.set(channel, [...(eventHandlers.get(channel) ?? []), handler]),
       emit: (channel: string, data: any) => {
@@ -52,7 +62,13 @@ function harness(opts: { name?: string; branch?: any[]; reply?: () => Promise<an
   const ctx: any = {
     cwd: "/work/my-project",
     model: { provider: "p", id: "m" },
-    ui: { notify: (message: string) => notices.push(message) },
+    get ui() {
+      if (stale) throw new Error("stale extension ctx");
+      return {
+        notify: (message: string) => notices.push(message),
+        setStatus: (_key: string, _text: string | undefined) => {},
+      };
+    },
     sessionManager: {
       getSessionId: () => "s1",
       getBranch: () => [...(opts.branch ?? exchange), ...written],
@@ -84,7 +100,7 @@ function harness(opts: { name?: string; branch?: any[]; reply?: () => Promise<an
     }
     await new Promise((resolve) => setImmediate(resolve));
   };
-  return { ctx, emit, action, views, notices, requests, commands, written, stateFile, name: () => name, rename: (value: string) => { name = value; } };
+  return { ctx, emit, action, views, notices, requests, commands, written, stateFile, name: () => name, rename: (value: string) => { name = value; }, stale: () => { stale = true; } };
 }
 
 const committedPlan = {
@@ -155,6 +171,20 @@ test("a name set while the request is in flight wins", async () => {
   assert.equal(h.name(), "Typed by the user");
   assert.equal(h.written.at(-1).customType, TITLE_ATTEMPT_ENTRY, "the discarded result is recorded as superseded");
   assert.equal(h.written.at(-1).data.outcome, "superseded");
+});
+
+test("a title settled after the session is replaced does not crash", async () => {
+  let release: (value: unknown) => void = () => {};
+  const h = harness({ reply: () => new Promise((resolve) => { release = resolve; }) });
+  const pending = h.emit("agent_end");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.requests.length, 1, "the request is parked on the model");
+  h.stale();
+  await h.emit("session_shutdown");
+  release({ stopReason: "stop", content: [{ type: "text", text: "Generated Title Here" }] });
+  await pending;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.name(), undefined);
 });
 
 test("a refinement runs once, and a KEEP answer writes no name but spends the pass", async () => {

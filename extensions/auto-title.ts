@@ -147,6 +147,10 @@ export default function autoTitleExtension(pi: ExtensionAPI, options: { stateFil
     try { context.ui?.notify?.(message, level); } catch { /* a notification is a courtesy */ }
   }
 
+  function setStatus(context: ExtensionContext, key: string, text: string | undefined): void {
+    try { context.ui?.setStatus?.(key, text); } catch { /* a status update is a courtesy */ }
+  }
+
   /** Automatic failures warn once per reason; a manual request always answers. */
   function reportFailure(context: ExtensionContext, trigger: PolicyEvent, reason: string): void {
     if (trigger === "manual") return notify(context, `Auto title skipped: ${reason}`, "warning");
@@ -251,7 +255,7 @@ export default function autoTitleExtension(pi: ExtensionAPI, options: { stateFil
     phase = "generating";
     lastError = undefined;
     publish();
-    context.ui?.setStatus?.("title", "naming…");
+    setStatus(context, "title", "naming…");
     try {
       const reply = await requestTitle(context, budget, brief, AbortSignal.any([controller.signal, AbortSignal.timeout(AUTO_TITLE_TIMEOUT_MS)]));
       if (controller.signal.aborted) return false;
@@ -306,8 +310,13 @@ export default function autoTitleExtension(pi: ExtensionAPI, options: { stateFil
       return false;
     } finally {
       if (run === controller) run = undefined;
-      context.ui?.setStatus?.("title", undefined);
-      publish();
+      // A session replaced or reloaded while the request was in flight aborts
+      // this run (session_shutdown); the ctx and pi are stale after that, and
+      // their accessors throw. Do not touch them once the session is gone.
+      if (!controller.signal.aborted) {
+        setStatus(context, "title", undefined);
+        publish();
+      }
     }
   }
 
@@ -383,7 +392,9 @@ export default function autoTitleExtension(pi: ExtensionAPI, options: { stateFil
   });
 
   pi.on("agent_end", (_event, context) => {
-    void onSettled(context);
+    // generate() resolves false on its own failures, but a rejected fire-and-
+    // forget promise becomes an uncaughtException and would kill pi.
+    void onSettled(context).catch(() => { /* a title is a courtesy */ });
   });
 
   pi.on("session_shutdown", () => {
@@ -404,6 +415,8 @@ export default function autoTitleExtension(pi: ExtensionAPI, options: { stateFil
     const request = data as Partial<ActionRequestPayload> | undefined;
     if (request?.pluginId !== AUTO_TITLE_PLUGIN_ID || !activeCtx) return;
     if (request.actionId === AUTO_TITLE_TOGGLE_ACTION) setEnabled(!enabled);
-    else if (request.actionId === AUTO_TITLE_REGENERATE_ACTION) void generate(activeCtx, "manual");
+    else if (request.actionId === AUTO_TITLE_REGENERATE_ACTION) {
+      void generate(activeCtx, "manual").catch(() => { /* a title is a courtesy */ });
+    }
   });
 }
