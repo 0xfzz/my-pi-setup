@@ -60,7 +60,6 @@ const PAGE_PATH_REGEX = /^\/plugins\/[a-z0-9\-/]*$/;
 
 export function validatePlugin(
   input: unknown,
-  knownExtensions: readonly string[],
 ): ValidatePluginResult {
   try {
     if (typeof input !== "object" || input === null || Array.isArray(input)) {
@@ -93,20 +92,6 @@ export function validatePlugin(
       return {
         ok: false,
         error: `Plugin "${pluginName}": extension is missing or empty`,
-      };
-    }
-
-    const normalizedKnown = new Set(
-      knownExtensions.map((e) => (e.endsWith(".ts") ? e : `${e}.ts`)),
-    );
-    const expectedFile = raw.extension.endsWith(".ts")
-      ? raw.extension
-      : `${raw.extension}.ts`;
-
-    if (!normalizedKnown.has(expectedFile)) {
-      return {
-        ok: false,
-        error: `Plugin "${pluginName}": unknown extension "${raw.extension}", missing file extensions/${expectedFile}`,
       };
     }
 

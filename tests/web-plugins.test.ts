@@ -118,11 +118,9 @@ test("enforcement: synthetic failures on missing, duplicate, and stale opt-outs"
   assert.equal(dupReport.duplicate[0], "extensions/alpha.ts");
 });
 
-test("descriptor: every WEB_PLUGINS entry passes validatePlugin against real readdir of extensions/", async () => {
-  const diskFiles = (await readdir(join(root, "extensions"))).filter((f) => f.endsWith(".ts"));
-
+test("descriptor: every WEB_PLUGINS entry passes validatePlugin", () => {
   for (const plugin of WEB_PLUGINS) {
-    const result = validatePlugin(plugin, diskFiles);
+    const result = validatePlugin(plugin);
     assert.equal(
       result.ok,
       true,
@@ -132,20 +130,20 @@ test("descriptor: every WEB_PLUGINS entry passes validatePlugin against real rea
 });
 
 test("descriptor icons survive validation and remain optional for existing plugins", () => {
-  const withIcon = validatePlugin({ ...artifactsPlugin, icon: "files" }, ["artifacts.ts"]);
+  const withIcon = validatePlugin({ ...artifactsPlugin, icon: "files" });
   assert.equal(withIcon.ok, true);
   if (withIcon.ok) assert.equal(withIcon.plugin.icon, "files");
 
   const { icon, ...legacyPlugin } = artifactsPlugin;
   assert.equal(icon, "files");
-  const legacy = validatePlugin(legacyPlugin, ["artifacts.ts"]);
+  const legacy = validatePlugin(legacyPlugin);
   assert.equal(legacy.ok, true);
   if (legacy.ok) assert.equal(legacy.plugin.icon, undefined);
 });
 
 test("descriptor icons reject unsupported names and non-string values", () => {
   for (const icon of ["unknown-icon", "<svg onload=alert(1)>", "", null, 42, {}]) {
-    const result = validatePlugin({ ...artifactsPlugin, icon }, ["artifacts.ts"]);
+    const result = validatePlugin({ ...artifactsPlugin, icon });
     assert.equal(result.ok, false);
     if (!result.ok) assert.match(result.error, /icon/);
   }
@@ -165,80 +163,61 @@ test("registry: validateRegistry(WEB_PLUGINS) returns no errors", () => {
 });
 
 test("descriptor validation: enforces id regex, title, extension check, surfaces, and page path", () => {
-  const known = ["cache-stats.ts"];
 
   const badIdResult = validatePlugin(
-    { ...cacheStatsPlugin, id: "123-Invalid" },
-    known,
-  );
+    { ...cacheStatsPlugin, id: "123-Invalid" });
   assert.equal(badIdResult.ok, false);
   assert.match(badIdResult.error, /id must match/);
 
   const missingTitleResult = validatePlugin(
-    { ...cacheStatsPlugin, title: "   " },
-    known,
-  );
+    { ...cacheStatsPlugin, title: "   " });
   assert.equal(missingTitleResult.ok, false);
   assert.match(missingTitleResult.error, /title is missing or empty/);
 
-  const unknownExtResult = validatePlugin(
-    { ...cacheStatsPlugin, extension: "non-existent-plugin" },
-    known,
-  );
-  assert.equal(unknownExtResult.ok, false);
-  assert.match(
-    unknownExtResult.error,
-    /missing file extensions\/non-existent-plugin\.ts/,
-    "Error message must name the missing file extensions/<x>.ts",
-  );
+  // A plugin bridges an extension by id; the extension need not live in this
+  // repo (it may be an external pi package), so a non-local id is valid.
+  const externalExtResult = validatePlugin(
+    { ...cacheStatsPlugin, extension: "acme.external-extension" });
+  assert.equal(externalExtResult.ok, true);
+
+  const emptyExtResult = validatePlugin(
+    { ...cacheStatsPlugin, extension: "   " });
+  assert.equal(emptyExtResult.ok, false);
+  assert.match(emptyExtResult.error, /extension is missing or empty/);
 
   const zeroSurfacesResult = validatePlugin(
-    { ...cacheStatsPlugin, surfaces: [], ui: undefined },
-    known,
-  );
+    { ...cacheStatsPlugin, surfaces: [], ui: undefined });
   assert.equal(zeroSurfacesResult.ok, false);
   assert.match(zeroSurfacesResult.error, /must have at least one surface/);
 
   const unknownSurfaceResult = validatePlugin(
-    { ...cacheStatsPlugin, surfaces: [{ kind: "modal" }] },
-    known,
-  );
+    { ...cacheStatsPlugin, surfaces: [{ kind: "modal" }] });
   assert.equal(unknownSurfaceResult.ok, false);
   assert.match(unknownSurfaceResult.error, /unknown surface kind/);
 
   const badPathResult = validatePlugin(
-    { ...cacheStatsPlugin, surfaces: [{ kind: "page", path: "/invalid/path" }] },
-    known,
-  );
+    { ...cacheStatsPlugin, surfaces: [{ kind: "page", path: "/invalid/path" }] });
   assert.equal(badPathResult.ok, false);
   assert.match(badPathResult.error, /invalid page path/);
 
   const badPathCharsResult = validatePlugin(
-    { ...cacheStatsPlugin, surfaces: [{ kind: "page", path: "/plugins/Bad_Path!" }] },
-    known,
-  );
+    { ...cacheStatsPlugin, surfaces: [{ kind: "page", path: "/plugins/Bad_Path!" }] });
   assert.equal(badPathCharsResult.ok, false);
   assert.match(badPathCharsResult.error, /invalid page path/);
 
   for (const slot of ["top", "center", "bottom", "floating"] as const) {
     const validSlotResult = validatePlugin(
-      { ...cacheStatsPlugin, surfaces: [{ kind: "slot", slot }] },
-      known,
-    );
+      { ...cacheStatsPlugin, surfaces: [{ kind: "slot", slot }] });
     assert.equal(validSlotResult.ok, true);
   }
 
   const badSlotResult = validatePlugin(
-    { ...cacheStatsPlugin, surfaces: [{ kind: "slot", slot: "invalid-slot" }] },
-    known,
-  );
+    { ...cacheStatsPlugin, surfaces: [{ kind: "slot", slot: "invalid-slot" }] });
   assert.equal(badSlotResult.ok, false);
   assert.match(badSlotResult.error, /invalid slot/);
 
   const nonStringSlotResult = validatePlugin(
-    { ...cacheStatsPlugin, surfaces: [{ kind: "slot", slot: 123 }] },
-    known,
-  );
+    { ...cacheStatsPlugin, surfaces: [{ kind: "slot", slot: 123 }] });
   assert.equal(nonStringSlotResult.ok, false);
   assert.match(nonStringSlotResult.error, /invalid slot/);
 });
@@ -256,7 +235,7 @@ test("registry validation: detects duplicate plugin ids and duplicate page paths
     title: "Plugin B",
     surfaces: [{ kind: "page", path: "/plugins/page-b" }],
   };
-  const errorsDupId = validateRegistry([pluginA, pluginB], ["cache-stats.ts"]);
+  const errorsDupId = validateRegistry([pluginA, pluginB]);
   assert.ok(errorsDupId.some((e) => e.includes('Duplicate plugin id: "dup-id"')));
 
   const pluginC: WebPluginDescriptor = {
@@ -271,7 +250,7 @@ test("registry validation: detects duplicate plugin ids and duplicate page paths
     title: "Plugin D",
     surfaces: [{ kind: "page", path: "/plugins/shared-page" }],
   };
-  const errorsDupPath = validateRegistry([pluginC, pluginD], ["cache-stats.ts"]);
+  const errorsDupPath = validateRegistry([pluginC, pluginD]);
   assert.ok(errorsDupPath.some((e) => e.includes('Duplicate page path: "/plugins/shared-page"')));
 });
 
@@ -812,11 +791,11 @@ test("phase 6 placements: WEB_PLUGINS declared with exact slot and page placemen
   assert.ok(subagentMonitorPlugin.actions && subagentMonitorPlugin.actions.length > 0, "the subagent monitor keeps its sync action");
 
   for (const descriptor of WEB_PLUGINS) {
-    const result = validatePlugin(descriptor, diskFiles);
+    const result = validatePlugin(descriptor);
     assert.equal(result.ok, true, `Descriptor "${descriptor.id}" failed: ${!result.ok ? result.error : ""}`);
   }
 
-  const regErrors = validateRegistry(WEB_PLUGINS, diskFiles);
+  const regErrors = validateRegistry(WEB_PLUGINS);
   assert.deepEqual(regErrors, [], `validateRegistry failed: ${regErrors.join("; ")}`);
 });
 

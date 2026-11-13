@@ -318,7 +318,7 @@ test("the view validates, and the descriptor is registered and valid", () => {
     const view = autoTitleWebView({ enabled: true, phase, title: "T", error: phase === "failed" ? "e" : undefined });
     assert.equal(validateView(view).ok, true, phase);
   }
-  assert.equal(validatePlugin(autoTitlePlugin, ["auto-title.ts"]).ok, true);
+  assert.equal(validatePlugin(autoTitlePlugin).ok, true);
   assert.deepEqual(validateRegistry(WEB_PLUGINS), []);
   assert.ok(WEB_PLUGINS.some((plugin) => plugin.id === AUTO_TITLE_PLUGIN_ID));
 });

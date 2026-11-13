@@ -133,7 +133,6 @@ test("validateActions: an omitted confirm marks an instant action, and a keybind
 });
 
 test("validatePlugin: accepts valid actions and rejects malformed actions", () => {
-  const known = ["dashboard.ts"];
 
   const validDescriptor: WebPluginDescriptor = {
     id: "dashboard",
@@ -145,7 +144,7 @@ test("validatePlugin: accepts valid actions and rejects malformed actions", () =
     ],
   };
 
-  const okResult = validatePlugin(validDescriptor, known);
+  const okResult = validatePlugin(validDescriptor);
   assert.equal(okResult.ok, true);
   if (okResult.ok) {
     assert.ok(okResult.plugin.actions);
@@ -158,9 +157,7 @@ test("validatePlugin: accepts valid actions and rejects malformed actions", () =
     {
       ...validDescriptor,
       actions: [{ id: "BAD-ID", title: "Title", confirm: "confirm" }],
-    },
-    known,
-  );
+    });
   assert.equal(badResult.ok, false);
   if (!badResult.ok) {
     assert.match(badResult.error, /id must match/);
@@ -171,14 +168,11 @@ test("validatePlugin: accepts valid actions and rejects malformed actions", () =
     {
       ...validDescriptor,
       actions: "not-an-array",
-    },
-    known,
-  );
+    });
   assert.equal(notArrayResult.ok, false);
 });
 
 test("validateRegistry: rejects duplicate action ids within a plugin", () => {
-  const known = ["dashboard.ts"];
   const pluginWithDups: WebPluginDescriptor = {
     id: "dashboard",
     extension: "dashboard",
@@ -190,7 +184,7 @@ test("validateRegistry: rejects duplicate action ids within a plugin", () => {
     ],
   };
 
-  const errors = validateRegistry([pluginWithDups], known);
+  const errors = validateRegistry([pluginWithDups]);
   assert.ok(errors.length > 0, "must report duplicate action id error");
   assert.ok(
     errors.some((err) => err.includes('Plugin "dashboard": duplicate action id "duplicate-id"')),
@@ -302,7 +296,6 @@ test("AC4: dashboard extension ignores unrecognised action requests and guards p
 });
 
 test("phase 6 slot surfaces: validation and placement mapping", () => {
-  const known = ["cache-stats.ts", "todo.ts", "artifacts.ts", "subagent-checkpoints.ts", "dashboard.ts", "example-override.ts"];
 
   // Valid slot surfaces
   for (const slot of ["top", "center", "bottom", "floating"] as const) {
@@ -312,9 +305,7 @@ test("phase 6 slot surfaces: validation and placement mapping", () => {
         extension: "cache-stats",
         title: "Test",
         surfaces: [{ kind: "slot", slot }],
-      },
-      known,
-    );
+      });
     assert.equal(res.ok, true);
   }
 
@@ -325,9 +316,7 @@ test("phase 6 slot surfaces: validation and placement mapping", () => {
       extension: "cache-stats",
       title: "Test",
       surfaces: [{ kind: "slot", slot: "sidebar" as never }],
-    },
-    known,
-  );
+    });
   assert.equal(badSlotRes.ok, false);
   assert.match(badSlotRes.error, /invalid slot/);
 
@@ -356,7 +345,6 @@ test("phase 6 slot surfaces: validation and placement mapping", () => {
 });
 
 test("override surfaces validate against the region vocabulary", () => {
-  const known = ["cache-stats.ts", "todo.ts", "artifacts.ts", "subagent-checkpoints.ts", "dashboard.ts", "example-override.ts"];
 
   for (const region of ["header", "status", "transcript", "composer"] as const) {
     const valid = validatePlugin(
@@ -365,9 +353,7 @@ test("override surfaces validate against the region vocabulary", () => {
         extension: "cache-stats",
         title: "Override demo",
         surfaces: [{ kind: "override", region }],
-      },
-      known,
-    );
+      });
     assert.ok(valid.ok, `region ${region} must validate`);
   }
 
@@ -378,9 +364,7 @@ test("override surfaces validate against the region vocabulary", () => {
         extension: "cache-stats",
         title: "Override demo",
         surfaces: [{ kind: "override", region: bad }],
-      },
-      known,
-    );
+      });
     assert.equal(invalid.ok, false, `region ${bad} must be rejected`);
     assert.match(invalid.error, /invalid override region/);
   }

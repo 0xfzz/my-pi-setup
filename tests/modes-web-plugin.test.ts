@@ -35,8 +35,7 @@ test("publishing the mode view emits the standard view event under the modes plu
 });
 
 test("the modes descriptor is valid, declares the leave-plan action, and is registered", () => {
-  const known = ["modes.ts", "todo.ts"];
-  const result = validatePlugin(modesPlugin, known);
+  const result = validatePlugin(modesPlugin);
   assert.equal(result.ok, true, result.ok ? "" : result.error);
   assert.deepEqual(modesPlugin.actions?.map((a) => a.id), [MODES_TOGGLE_MODE_ACTION, MODES_LEAVE_PLAN_ACTION]);
   const toggle = modesPlugin.actions?.find((a) => a.id === MODES_TOGGLE_MODE_ACTION);

@@ -10,7 +10,7 @@ test("UI contract: anchor catalog, bounded overlay, responsive constraints and l
   assert.equal(validateContributions([contribution], "fixture").ok, true);
   assert.equal(validatePlacement({ kind: "overlay", maxWidth: 320, maxHeight: 240, mobileFallback: "chat.after", inset: { bottom: 12 } }).ok, true);
   assert.deepEqual(normalizeContributions({ surfaces: [{ kind: "slot", slot: "top" }] })[0]?.placement, { kind: "region", region: "top" });
-  assert.equal(validatePlugin({ id: "fixture", title: "Fixture", extension: "fixture", surfaces: [], ui: [contribution] }, ["fixture"]).ok, true);
+  assert.equal(validatePlugin({ id: "fixture", title: "Fixture", extension: "fixture", surfaces: [], ui: [contribution] }).ok, true);
 });
 test("UI contract: malformed/unsafe placements and contribution fields are named and rejected", () => {
   for (const placement of [
@@ -59,7 +59,7 @@ test("adopted plugins declare session-scoped UI without duplicating legacy slots
 });
 test("UI registry: conflicting exclusive replacements name both owners", () => {
   const plugins = ["first", "second"].map(id => ({ id, title: id, extension: "fixture", surfaces: [], ui: [contribution] }));
-  assert.match(validateRegistry(plugins, ["fixture"]).join("\n"), /second.*working.*first\/working/);
+  assert.match(validateRegistry(plugins).join("\n"), /second.*working.*first\/working/);
 });
 test("plugin navigation rides the shared session state instead of a separate fetch", async () => {
   const { readFile } = await import("node:fs/promises");
