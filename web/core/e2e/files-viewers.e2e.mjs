@@ -105,6 +105,64 @@ async function assertDocumentRenders(page) {
   await page.locator(".files-document-view").first().waitFor({ state: "visible", timeout: 10_000 });
 }
 
+async function assertFullScreenFiles(page) {
+  const panel = page.getByRole("complementary", { name: "Files panel" });
+  const docked = await panel.boundingBox();
+  const search = page.getByRole("searchbox", { name: "Search filenames" });
+  await search.fill("README");
+  await page.getByRole("button", { name: "README.md", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Expand file explorer", exact: true }).click();
+  assert.equal(await search.inputValue(), "README", "expanding preserves the explorer's search state");
+  await assertPanelFillsViewport(page);
+  await page.getByRole("button", { name: "Exit full screen", exact: true }).click();
+  assert.ok(Math.abs((await panel.boundingBox()).width - docked.width) < 1, "restore returns to the same docked width");
+  await search.fill("");
+  await openFile(page, "README.md");
+  await page.getByRole("button", { name: "Expand file preview", exact: true }).click();
+  await assertPanelFillsViewport(page);
+  await page.locator(".files-markdown-rendered h1").waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("files-preview").waitFor();
+  await page.getByRole("button", { name: "Expand file preview", exact: true }).waitFor();
+  assert.ok(Math.abs((await panel.boundingBox()).width - docked.width) < 1, "Escape restores the preview without closing it");
+  await backToFiles(page);
+}
+
+async function assertPanelFillsViewport(page) {
+  const viewport = page.viewportSize();
+  // resize/visualViewport events are delivered after setViewportSize resolves.
+  await page.waitForFunction(({ width, height }) => {
+    const box = document.querySelector('.files-panel.is-fullscreen')?.getBoundingClientRect();
+    return box !== undefined && Math.abs(box.width - width) < 1 && Math.abs(box.height - height) < 1;
+  }, viewport);
+  const box = await page.getByRole("complementary", { name: "Files panel" }).boundingBox();
+  assert.ok(Math.abs(box.x) < 1 && Math.abs(box.y) < 1, "full-screen Files starts at the viewport origin");
+  assert.ok(Math.abs(box.width - viewport.width) < 1 && Math.abs(box.height - viewport.height) < 1, "Files fills the available viewport, not its narrow panel slot");
+}
+
+async function assertPhoneFiles(page) {
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.getByRole("button", { name: "More panels", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Files", exact: true }).click();
+  await page.getByTestId("files-browser").waitFor();
+  await assertPanelFillsViewport(page);
+  assert.ok(await page.getByRole("searchbox", { name: "Search filenames" }).evaluate(el => parseFloat(getComputedStyle(el).fontSize) >= 16), "phone file search avoids focus zoom");
+  await openFile(page, "README.md");
+  await page.locator(".files-markdown-rendered h1").waitFor();
+  await page.getByRole("button", { name: "Exit full screen", exact: true }).click();
+  await page.getByRole("button", { name: "Expand file preview", exact: true }).click();
+  for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 360 }, { width: 720, height: 600 }]) {
+    await page.setViewportSize(viewport);
+    await assertPanelFillsViewport(page);
+  }
+  await backToFiles(page);
+  await assertPanelFillsViewport(page);
+  await page.keyboard.press("Escape");
+  await page.getByTestId("files-browser").waitFor();
+  await page.keyboard.press("Escape");
+  assert.equal(await page.getByRole("complementary", { name: "Files panel" }).count(), 0, "Escape closes the restored phone explorer");
+}
+
 async function run() {
   const server = spawn("npx", ["tsx", "server.ts"], {
     cwd: new URL("../..", import.meta.url).pathname,
@@ -141,6 +199,8 @@ async function run() {
     await page.waitForSelector(".app-shell", { timeout: 20_000 });
     await selectFixtureSession(page);
     await openFilesPanel(page);
+    step("full-screen explorer and preview preserve state and restore the docked panel");
+    await assertFullScreenFiles(page);
 
     step("markdown viewer renders and toggles to source");
     await openFile(page, "README.md");
@@ -184,6 +244,14 @@ async function run() {
     // pdf.js draws each page into a canvas; the text layer carries the words.
     await page.locator(".files-document-view canvas").first().waitFor({ state: "visible", timeout: 20_000 });
     await page.getByText("PDF Viewer e2e").first().waitFor({ state: "attached", timeout: 20_000 });
+    // PDF.js may replace canvases when fitting a new width; the viewer's
+    // toolbar must survive so maximize/restore doesn't recreate the document.
+    const pdfToolbar = await page.locator(".files-document-view .pdf-toolbar").first().elementHandle();
+    await page.getByRole("button", { name: "Expand file preview", exact: true }).click();
+    await assertPanelFillsViewport(page);
+    assert.ok(await pdfToolbar.evaluate(el => el.isConnected), "maximizing does not remount the loaded PDF viewer");
+    await page.getByRole("button", { name: "Exit full screen", exact: true }).click();
+    assert.ok(await pdfToolbar.evaluate(el => el.isConnected), "restoring keeps the same loaded PDF viewer");
     await backToFiles(page);
 
     step("docx viewer renders the document text via File Viewer");
@@ -214,6 +282,9 @@ async function run() {
     await openFile(page, "mystery.xyz");
     await assertKind(page, "Binary");
     await assertPreviewBodyContains(page, "Preview unavailable for this file type.");
+    await backToFiles(page);
+    step("phone explorer and previews use the full viewport with restore controls");
+    await assertPhoneFiles(page);
 
     assert.deepEqual(pageErrors, [], "the browser must stay error-free across every viewer");
 

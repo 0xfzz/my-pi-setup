@@ -1189,6 +1189,49 @@
 }
 
 /* ── Files panel ────────────────────────────────────────────────────────── */
+/* Position the existing panel, rather than moving it into a portal: explorer
+ * location/search and loaded document viewers survive maximize and restore. */
+.app-side-panel.files-panel.is-fullscreen {
+  position: fixed;
+  top: var(--app-viewport-top, 0px);
+  left: 0;
+  right: 0;
+  bottom: auto;
+  width: 100%;
+  height: var(--app-viewport-height, 100dvh);
+  z-index: 80;
+  border-left: 0;
+}
+
+@media (max-width: 720px) {
+  .app-side-panel.files-panel {
+    top: var(--app-viewport-top, 0px);
+    bottom: auto;
+    height: var(--app-viewport-height, 100dvh);
+  }
+
+  .files-panel .app-side-panel-header {
+    padding: 4px 8px;
+  }
+
+  .files-panel .app-side-panel-action-btn,
+  .files-panel .files-icon-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .files-panel .files-row,
+  .files-panel .files-breadcrumb,
+  .files-panel .files-action {
+    min-height: 44px;
+  }
+
+  .files-panel .files-search-input {
+    font-size: 16px;
+    min-height: 32px;
+  }
+}
+
 .app-files-panel-body {
   padding: 0;
   gap: 0;

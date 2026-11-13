@@ -531,6 +531,15 @@ zoom. The app follows `visualViewport` resize and pan events so the composer
 stays above the software keyboard, and restores its height when the keyboard
 closes. Pinch zoom does not trigger a layout resize.
 
+The Files plugin opens full-screen on phones. Its header's expand/restore
+button also lets desktop users maximize either the explorer or a file
+preview. Restore returns to the docked panel/drawer without resetting the
+explorer search or remounting a loaded document viewer. Escape first exits
+full-screen mode; a second Escape closes the restored panel. This is an
+in-app full-screen layout, not the browser Fullscreen API, so it works on
+mobile Safari too. File search uses 16px text and phone file controls have
+44px touch targets.
+
 On the performance side, message bodies and markdown are memoized: stream
 deltas, plugin_state frames and status changes re-render only the live
 message, not the transcript's history. Before that, every frame re-parsed

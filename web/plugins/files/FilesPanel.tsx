@@ -3,7 +3,7 @@
 // owning its own header/close and the browser ↔ preview switch.
 
 import { useEffect, useState } from "react";
-import { X } from "@phosphor-icons/react";
+import { ArrowsIn, ArrowsOut, X } from "@phosphor-icons/react";
 import type { FileRef } from "./lib/files-api.ts";
 import { FileBrowser } from "./FileBrowser.tsx";
 import { FilePreview } from "./FilePreview.tsx";
@@ -17,6 +17,8 @@ export interface FilesPanelProps {
 
 export function FilesPanel({ open, onClose, sessionId, rootLabel }: FilesPanelProps) {
   const [selected, setSelected] = useState<FileRef | null>(null);
+  const [fullScreen, setFullScreen] = useState(() => window.matchMedia("(max-width: 720px)").matches);
+  const expandLabel = selected === null ? "Expand file explorer" : "Expand file preview";
 
   // Auto-close on Esc, but never swallow an Escape a nested control (the ⋯
   // menu) already handled.
@@ -24,11 +26,13 @@ export function FilesPanel({ open, onClose, sessionId, rootLabel }: FilesPanelPr
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
-      onClose();
+      event.preventDefault();
+      if (fullScreen) setFullScreen(false);
+      else onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
+  }, [open, onClose, fullScreen]);
 
   if (!open) return null;
 
@@ -37,13 +41,23 @@ export function FilesPanel({ open, onClose, sessionId, rootLabel }: FilesPanelPr
       <div className="app-side-panel-scrim" onClick={onClose} aria-hidden="true" />
       <aside
         id="plugin-side-panel"
-        className="app-side-panel"
+        className={`app-side-panel files-panel${fullScreen ? " is-fullscreen" : ""}`}
         role="complementary"
         aria-label="Files panel"
       >
         <div className="app-side-panel-header">
           <span className="app-side-panel-title" title={rootLabel}>Files · {rootLabel}</span>
           <div className="app-side-panel-actions">
+            <button
+              type="button"
+              className="app-side-panel-action-btn"
+              onClick={() => setFullScreen((value) => !value)}
+              title={fullScreen ? "Exit full screen" : expandLabel}
+              aria-label={fullScreen ? "Exit full screen" : expandLabel}
+              aria-pressed={fullScreen}
+            >
+              {fullScreen ? <ArrowsIn size={18} aria-hidden="true" /> : <ArrowsOut size={18} aria-hidden="true" />}
+            </button>
             <button
               type="button"
               className="app-side-panel-action-btn"
