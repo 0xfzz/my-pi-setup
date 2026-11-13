@@ -43,9 +43,16 @@ interface PersistedWebUiState {
 
 function webUiStatePath(): string {
   // Test processes get their own file so a suite never writes into a real home dir.
-  return process.env.NODE_TEST_CONTEXT
-    ? join(tmpdir(), "pi-web-ui-state", `${process.pid}.json`)
-    : join(homedir(), ".pi", "agent", "web-ui-state.json");
+  if (process.env.NODE_TEST_CONTEXT) {
+    return join(tmpdir(), "pi-web-ui-state", `${process.pid}.json`);
+  }
+  // The server's own plugin-view persistence lives in a DIFFERENT file from the
+  // extension's web management state (web-ui-state.json). They shared one path
+  // before: the server's {version, views} write clobbered the extension's
+  // {pid, port, url, startedBy, startedAt} record, so /web reload saw a healthy
+  // server with a "corrupt" state file and refused it as unmanaged.
+  const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
+  return join(agentDir, "web-plugin-ui-state.json");
 }
 
 function readPersistedWebUiState(): PersistedWebUiState {
