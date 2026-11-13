@@ -23,7 +23,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { createLocalBashOperations, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 // pi's own share/bug primitives — deep imports, since the package "exports"
@@ -46,7 +46,7 @@ import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 import { buildWebTree, type PiTreeNodeLike } from "../lib/web-tree.ts";
 import { sseFrameData, takeSseFrames } from "../lib/web-sse.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
-import { defaultServerDir, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiDeps } from "../lib/web-ui.ts";
+import { defaultServerDir, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiCommandResult, type WebUiDeps } from "../lib/web-ui.ts";
 import { repoRootFromServerDir, sourceWatchRoots, watchSources, type SourceWatcher } from "../lib/web-ui-reload.ts";
 import { WebAuthConfigCache, loadWebAuthConfig, removeWebPassword, webAuthConfigPath, writeWebPassword } from "../web/core/auth/config.ts";
 import { MIN_PASSWORD_LENGTH, passwordProblem } from "../web/core/auth/password.ts";
@@ -67,6 +67,48 @@ export interface WebExtensionOptions {
 export const AUTO_RELOAD_DEBOUNCE_MS = 2_000;
 /** One status line, updated in place while a start, reload or automatic reload runs. */
 export const WEB_PROGRESS_STATUS_KEY = "web-reload";
+
+const WEB_UI_TELEMETRY_VERSION = 1;
+
+/** Whether a web-management outcome belongs in the error/diagnostic telemetry log. */
+function isNotableWebUiOutcome(status: string, details?: Record<string, unknown>): boolean {
+  return status === "error" || status === "denied" || details?.unmanaged === true;
+}
+
+/**
+ * Append one web-management telemetry line (JSONL) to the agent dir. Errors,
+ * denied starts, and unmanaged-instance refusals are recorded so a failed
+ * reload/start is inspectable long after the in-session notification is gone.
+ * Never throws: telemetry must not break a /web command.
+ */
+function appendWebUiTelemetry(record: Record<string, unknown>): void {
+  try {
+    appendFileSync(
+      join(getAgentDir(), "web-ui-telemetry.jsonl"),
+      `${JSON.stringify({ ts: new Date().toISOString(), version: WEB_UI_TELEMETRY_VERSION, ...record })}\n`,
+      "utf8",
+    );
+  } catch {
+    // A full disk or a read-only agent dir must not break a web command.
+  }
+}
+
+function logWebUiTelemetry(
+  operation: "start" | "reload" | "stop" | "auto-reload",
+  result: WebUiCommandResult,
+  sessionId: string,
+): void {
+  if (!isNotableWebUiOutcome(result.status, result.details)) return;
+  appendWebUiTelemetry(Object.assign(
+    {
+      operation,
+      status: result.status,
+      message: result.message,
+      sessionId,
+    },
+    result.details,
+  ));
+}
 
 /** Where the minimal web server listens; PI_WEB_URL overrides (tests). */
 function bridgeServerUrl(): string {
@@ -1316,6 +1358,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
 
       if (sub === "start") {
         const result = await withProgress(ctx, () => startWebUi({ ...deps, rebuild }));
+        logWebUiTelemetry("start", result, sessionIdOf(ctx));
         const level = result.status === "denied" ? "warning" : result.status === "error" ? "error" : "info";
         ctx.ui?.notify(result.message, level);
         if (result.status !== "error") {
@@ -1329,6 +1372,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
 
       if (sub === "reload") {
         const result = await withProgress(ctx, () => reloadWebUi({ ...deps, rebuild }));
+        logWebUiTelemetry("reload", result, sessionIdOf(ctx));
         const level = result.status === "error" ? "error" : result.status === "denied" ? "warning" : "info";
         ctx.ui?.notify(result.message, level);
         return;
@@ -1336,6 +1380,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
 
       if (sub === "stop") {
         const result = await stopWebUi(deps);
+        logWebUiTelemetry("stop", result, sessionIdOf(ctx));
         const level = result.status === "error" ? "error" : "info";
         ctx.ui?.notify(result.message, level);
         return;
@@ -1393,6 +1438,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     const result = await withProgress(ctx, () => reloadWebUiIfChanged(depsFor(ctx)));
     // Only a reload that actually ran has a message; idle, unchanged and busy stay quiet.
     if (!("message" in result)) return;
+    logWebUiTelemetry("auto-reload", result, sessionIdOf(ctx));
     const level = result.status === "error" ? "error" : "info";
     // The session may have moved on; a notice that cannot be shown is not worth failing over.
     try {
