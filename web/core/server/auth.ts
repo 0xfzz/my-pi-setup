@@ -1,5 +1,5 @@
 // HTTP layer of the web password: the /api/auth routes, the request gate, cookies.
-// The token logic itself is lib/web-auth/service.ts; this file only maps it onto HTTP.
+// The token logic itself is web/core/auth/service.ts; this file only maps it onto HTTP.
 //
 // Browser sessions ride on two HttpOnly, SameSite=Strict cookies, so page script (and any
 // XSS in it) can never read a token, and EventSource — which cannot set headers — still
@@ -10,7 +10,7 @@
 // (`returnTokens: true`) and present `Authorization: Bearer <access token>`.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { IssuedTokens, WebAuthService } from "../../../lib/web-auth/service.ts";
+import type { IssuedTokens, WebAuthService } from "../auth/service.ts";
 
 export const ACCESS_COOKIE = "pi_web_at";
 export const REFRESH_COOKIE = "pi_web_rt";

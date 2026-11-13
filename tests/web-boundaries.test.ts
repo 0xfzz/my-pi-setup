@@ -131,7 +131,7 @@ const ZONES: readonly ZoneRules[] = [
     // the plugin descriptors; it serves the BUILT client and never imports
     // its source.
     dir: "web/core/server",
-    runtimeAllow: ["web/core/server/", "web/core/shared/", "web/core/plugin-contracts/", "web/core/pi-api/", "web/plugins/", "lib/", "@earendil-works/", "node:"],
+    runtimeAllow: ["web/core/server/", "web/core/shared/", "web/core/plugin-contracts/", "web/core/pi-api/", "web/core/auth/", "web/plugins/", "lib/", "@earendil-works/", "node:"],
     typeOnlyAllow: null,
     why: "the server hosts sessions, serves plugin descriptors and the built client; importing client source couples build to runtime",
   },
@@ -140,7 +140,7 @@ const ZONES: readonly ZoneRules[] = [
     // vocabulary (web/core/plugin-contracts) plus lib/vendor — never the
     // client, server, wire or descriptor source.
     dir: "extensions",
-    runtimeAllow: ["extensions/", "lib/", "vendor/", "web/core/plugin-contracts/", "@earendil-works/", "node:"],
+    runtimeAllow: ["extensions/", "lib/", "vendor/", "web/core/plugin-contracts/", "web/core/auth/", "@earendil-works/", "node:"],
     typeOnlyAllow: ["lib/", "vendor/", "web/core/plugin-contracts/"],
     why: "extensions own behavior; the web is reached only through the bridge vocabulary and lib/vendor contracts",
   },
@@ -169,6 +169,14 @@ const ZONES: readonly ZoneRules[] = [
     runtimeAllow: ["web/core/pi-api/", "web/core/shared/", "@earendil-works/", "node:"],
     typeOnlyAllow: null,
     why: "the facade calls pi built-ins and implements the wire contract — the web runtime stays out",
+  },
+  {
+    // Web auth: password/JWT issuance and verification for the web server.
+    // Self-contained + node; the HTTP mapping lives in web/core/server.
+    dir: "web/core/auth",
+    runtimeAllow: ["web/core/auth/", "node:"],
+    typeOnlyAllow: null,
+    why: "web auth is server-side infrastructure — it never depends on the client or pi runtimes",
   },
 ];
 

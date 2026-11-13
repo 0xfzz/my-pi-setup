@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startWebServer } from "./main.ts";
 import { clearSessionsForTests, registerSession, type SessionCore } from "./sessions.ts";
-import { writeWebPassword } from "../../../lib/web-auth/config.ts";
-import { WebAuthService } from "../../../lib/web-auth/service.ts";
+import { writeWebPassword } from "../auth/config.ts";
+import { WebAuthService } from "../auth/service.ts";
 import type { AuthHttpOptions } from "./auth.ts";
 
 const PASSWORD = "correct horse battery";

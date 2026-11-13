@@ -11,8 +11,8 @@ import { registerSession } from "./sessions.ts";
 import { handleApi } from "./routes.ts";
 import { sendJson } from "./http.ts";
 import { createAuthHttp, type AuthHttp, type AuthHttpOptions } from "./auth.ts";
-import { webAuthConfigPath } from "../../../lib/web-auth/config.ts";
-import { WebAuthService } from "../../../lib/web-auth/service.ts";
+import { webAuthConfigPath } from "../auth/config.ts";
+import { WebAuthService } from "../auth/service.ts";
 
 // Mark this process as the web server. It resumes sessions in-process, which
 // loads the project extensions (including `web`) into THIS process; the `web`

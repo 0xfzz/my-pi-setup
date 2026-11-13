@@ -48,8 +48,8 @@ import { sseFrameData, takeSseFrames } from "../lib/web-sse.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
 import { defaultServerDir, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiDeps } from "../lib/web-ui.ts";
 import { repoRootFromServerDir, sourceWatchRoots, watchSources, type SourceWatcher } from "../lib/web-ui-reload.ts";
-import { WebAuthConfigCache, loadWebAuthConfig, removeWebPassword, webAuthConfigPath, writeWebPassword } from "../lib/web-auth/config.ts";
-import { MIN_PASSWORD_LENGTH, passwordProblem } from "../lib/web-auth/password.ts";
+import { WebAuthConfigCache, loadWebAuthConfig, removeWebPassword, webAuthConfigPath, writeWebPassword } from "../web/core/auth/config.ts";
+import { MIN_PASSWORD_LENGTH, passwordProblem } from "../web/core/auth/password.ts";
 import { providerKeyInput } from "../lib/provider/provider-key-input.ts";
 
 export interface WebExtensionOptions {

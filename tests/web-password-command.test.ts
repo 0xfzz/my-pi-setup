@@ -4,8 +4,8 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import webExtension, { bridgeHeaders } from "../extensions/web.ts";
-import { loadWebAuthConfig, writeWebPassword } from "../lib/web-auth/config.ts";
-import { verifyPassword } from "../lib/web-auth/password.ts";
+import { loadWebAuthConfig, writeWebPassword } from "../web/core/auth/config.ts";
+import { verifyPassword } from "../web/core/auth/password.ts";
 
 const PASSWORD = "correct horse battery";
 

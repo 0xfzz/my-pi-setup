@@ -9,11 +9,11 @@ import {
   loadWebAuthConfig,
   removeWebPassword,
   writeWebPassword,
-} from "../lib/web-auth/config.ts";
-import { deriveKey, signJwt, verifyJwt, type JwtClaims } from "../lib/web-auth/jwt.ts";
-import { hashPassword, passwordProblem, verifyPassword } from "../lib/web-auth/password.ts";
-import { WebAuthService, type IssuedTokens } from "../lib/web-auth/service.ts";
-import { LoginThrottle } from "../lib/web-auth/throttle.ts";
+} from "../web/core/auth/config.ts";
+import { deriveKey, signJwt, verifyJwt, type JwtClaims } from "../web/core/auth/jwt.ts";
+import { hashPassword, passwordProblem, verifyPassword } from "../web/core/auth/password.ts";
+import { WebAuthService, type IssuedTokens } from "../web/core/auth/service.ts";
+import { LoginThrottle } from "../web/core/auth/throttle.ts";
 
 const PASSWORD = "correct horse battery";
 
