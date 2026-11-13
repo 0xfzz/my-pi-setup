@@ -523,6 +523,14 @@ has a 44px-high touch target; the menu is constrained to the viewport and
 scrolls vertically when the available height is short (including landscape
 and keyboard-sized viewports). Desktop panels keep their submenus.
 
+On touch keyboards, Return inserts a newline and the Send button submits the
+whole draft; desktop Enter-to-send and Shift+Enter remain unchanged. The
+composer grows with multiline drafts up to a viewport-relative height cap.
+Touch inputs use 16px text to avoid iOS focus zoom without disabling pinch
+zoom. The app follows `visualViewport` resize and pan events so the composer
+stays above the software keyboard, and restores its height when the keyboard
+closes. Pinch zoom does not trigger a layout resize.
+
 On the performance side, message bodies and markdown are memoized: stream
 deltas, plugin_state frames and status changes re-render only the live
 message, not the transcript's history. Before that, every frame re-parsed

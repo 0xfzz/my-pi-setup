@@ -75,15 +75,20 @@ body {
 }
 
 #root {
-  height: 100%;
+  position: fixed;
+  top: var(--app-viewport-top, 0px);
+  left: 0;
+  right: 0;
+  height: 100dvh;
+  height: var(--app-viewport-height, 100dvh);
+  overflow: hidden;
 }
 
 .app-shell {
   display: flex;
   flex-direction: column;
   height: 100%;
-  /* Mobile browsers: the dynamic viewport excludes the address bar. */
-  height: 100dvh;
+  min-height: 0;
 }
 
 /* The body row: session sidebar + the main column. */
@@ -2085,6 +2090,9 @@ a:focus-visible {
   background: transparent;
   border-radius: 8px;
   font-size: 13px;
+  min-width: 0;
+  max-height: min(208px, calc(var(--app-viewport-height, 100dvh) * 0.35));
+  overflow-y: auto;
 }
 
 .app-composer-input:focus-visible {
@@ -2097,6 +2105,28 @@ a:focus-visible {
   color: var(--fg-faint);
   text-align: center;
   font-size: 10px;
+}
+
+.app-composer-touch-hint {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .app-composer-desktop-hint {
+    display: none;
+  }
+
+  .app-composer-touch-hint {
+    display: inline;
+  }
+
+}
+
+/* iOS zooms focused text fields smaller than 16px. Keep pinch zoom enabled. */
+@media (pointer: coarse), (max-width: 720px) {
+  .app-composer-input {
+    font-size: 16px;
+  }
 }
 
 @media (max-width: 720px) {

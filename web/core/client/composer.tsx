@@ -1,5 +1,6 @@
-// Composer: the message input with Enter-to-send (Shift+Enter for a newline)
-// and a Stop button while the session is busy (streaming, thinking, tools).
+// Composer: desktop Enter sends (Shift+Enter inserts a newline); on touch
+// keyboards Return inserts a newline and the send button submits. A Stop
+// button interrupts the session while it is busy (streaming, thinking, tools).
 // Typing "/" opens the slash-command palette: the live session's dispatchable
 // commands first, then pi's built-ins (marked TUI); ArrowUp/Down move, Tab or
 // Enter completes, Esc dismisses.
@@ -159,6 +160,13 @@ export function Composer({
   const [notice, setNotice] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (input === null) return;
+    input.style.height = "auto";
+    input.style.height = `${input.scrollHeight}px`;
+  }, [text]);
 
   // Session commands first (they dispatch), built-ins after, deduped by name.
   const commands = useMemo(() => {
@@ -343,6 +351,11 @@ export function Composer({
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (event.nativeEvent.isComposing) return;
+    // Software keyboards lack Shift+Enter. Leave Return native, even while a
+    // suggestion menu is open; touch users select suggestions by tapping them.
+    if (event.key === "Enter" && window.matchMedia("(pointer: coarse)").matches
+      && !event.ctrlKey && !event.metaKey) return;
     if (paletteOpen) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -512,6 +525,7 @@ export function Composer({
         onPaste={handlePaste}
         onKeyDown={handleKeyDown}
         aria-label="Message pi"
+        enterKeyHint="enter"
       />
       <input
         ref={fileInputRef}
@@ -563,7 +577,9 @@ export function Composer({
         </Button>
       )}
       </div>
-      <div className="app-composer-hint">/ commands · @ files · Shift+Enter for a new line</div>
+      <div className="app-composer-hint">
+        / commands · @ files · <span className="app-composer-desktop-hint">Shift+Enter</span><span className="app-composer-touch-hint">Return</span> for a new line
+      </div>
       {notice ? <div className="app-composer-error" role="alert">{notice}</div> : null}
       {error ? <div className="app-composer-error" role="alert">{error}</div> : null}
     </div>

@@ -103,6 +103,72 @@ async function assertMobilePanelLauncher(page, viewport) {
   assert.equal(await page.locator(".app-side-panel-scrim").count(), 0, "closing Files restores the chat");
 }
 
+async function assertPhoneComposer(browser, sessionId, commands) {
+  const phone = await browser.newPage({ viewport: { width: 390, height: 780 }, isMobile: true, hasTouch: true });
+  try {
+    await phone.goto(BASE);
+    await phone.getByRole("button", { name: "Toggle session list", exact: true }).click();
+    await phone.locator(`.app-session-item[data-id="${sessionId}"]`).click();
+    const input = phone.getByRole("textbox", { name: "Message pi", exact: true });
+    await phone.waitForFunction(() => document.querySelector(".app-composer-input")?.disabled === false);
+    await input.fill("first line");
+    await input.press("Enter");
+    await input.pressSequentially("second line");
+    assert.equal(await input.inputValue(), "first line\nsecond line", "phone Return inserts a newline instead of submitting");
+    assert.ok(await input.evaluate(el => parseFloat(getComputedStyle(el).fontSize) >= 16), "phone input avoids Safari focus zoom with 16px text");
+    assert.ok(!(await phone.locator('meta[name="viewport"]').getAttribute("content")).includes("user-scalable=no"), "pinch zoom stays enabled");
+    const before = await input.boundingBox();
+    await input.fill(Array.from({ length: 8 }, (_, i) => `line ${i}`).join("\n"));
+    const after = await input.boundingBox();
+    assert.ok(after.height > before.height, "multiline phone drafts grow instead of staying one line tall");
+    await assertKeyboardViewport(phone);
+    await input.fill("first line\nsecond line");
+    await phone.getByRole("button", { name: "Send message", exact: true }).click();
+    await waitForBridgeCommand(commands, command => command.type === "prompt" && command.message === "first line\nsecond line");
+    assert.equal(await input.inputValue(), "", "the phone send button submits the complete multiline draft");
+  } finally {
+    await phone.close();
+  }
+}
+
+async function assertKeyboardViewport(page) {
+  // Headless browsers have no software keyboard: reproduce Safari's independent
+  // visual viewport resize/pan without changing the layout viewport.
+  await page.evaluate(() => {
+    Object.defineProperties(window.visualViewport, {
+      height: { configurable: true, value: 350 },
+      offsetTop: { configurable: true, value: 50 },
+    });
+    window.visualViewport.dispatchEvent(new Event("resize"));
+    window.visualViewport.dispatchEvent(new Event("scroll"));
+  });
+  await page.waitForFunction(() => {
+    const input = document.querySelector(".app-composer").getBoundingClientRect();
+    const shell = document.querySelector(".app-shell").getBoundingClientRect();
+    return Math.abs(shell.top - 50) < 1 && Math.abs(shell.height - 350) < 1 && input.bottom <= 400;
+  });
+  assert.ok(await page.locator(".app-transcript-frame").evaluate(el => el.clientHeight > 0), "chat retains space above the keyboard");
+  await page.evaluate(() => {
+    delete window.visualViewport.height;
+    delete window.visualViewport.offsetTop;
+    window.visualViewport.dispatchEvent(new Event("resize"));
+  });
+  await page.waitForFunction(() => Math.abs(document.querySelector(".app-shell").getBoundingClientRect().height - 780) < 1);
+  await page.evaluate(() => {
+    Object.defineProperties(window.visualViewport, {
+      scale: { configurable: true, value: 2 },
+      height: { configurable: true, value: 390 },
+    });
+    window.visualViewport.dispatchEvent(new Event("resize"));
+  });
+  assert.equal(await page.locator(".app-shell").evaluate(el => el.clientHeight), 780, "pinch zoom does not reflow the app to half its height");
+  await page.evaluate(() => {
+    delete window.visualViewport.scale;
+    delete window.visualViewport.height;
+    window.visualViewport.dispatchEvent(new Event("resize"));
+  });
+}
+
 async function run() {
   // Detached: the server runs in its own process group so the teardown can
   // kill the whole tree (npx → tsx → node). A SIGTERM to the npx wrapper
@@ -605,6 +671,8 @@ async function run() {
       (await contextMeter.textContent())?.includes("42%") && (await contextMeter.textContent())?.includes("84k / 200k"),
       "the context meter shows the posted context usage",
     );
+    step("8b-phone: Return, focus zoom and independent keyboard viewport");
+    await assertPhoneComposer(browser, bridgeId, bridgeCommands);
     await composerInput.fill("/");
     await page.waitForSelector(".app-command-palette", { timeout: 5_000 });
     assert.ok(

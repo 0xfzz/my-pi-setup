@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { SidebarSimple } from "@phosphor-icons/react";
 import { usePiSession } from "./use-session.ts";
+import { useVisualViewport } from "./use-visual-viewport.ts";
 import { Transcript } from "./transcript.tsx";
 import { Composer } from "./composer.tsx";
 import { SessionSidebar } from "./sidebar.tsx";
@@ -54,6 +55,7 @@ function RegionOverrideView({
 }
 
 export function AppShell() {
+  useVisualViewport();
   const session = usePiSession();
   const route = useRoute();
   const [newSessionOpen, setNewSessionOpen] = useState(false);
@@ -301,8 +303,8 @@ export function AppShell() {
   // The web frontend's keymap — /hotkeys for the web, mirroring the TUI's
   // own reference for its keys. Web-side data, like /session and /copy.
   const WEB_HOTKEYS = [
-    "Enter — send the prompt",
-    "Shift+Enter — newline",
+    "Enter — send the prompt (desktop); tap Send on touch screens",
+    "Shift+Enter — newline (desktop); Return on touch screens",
     "Escape — abort the running turn (like the TUI)",
     "Up / Down — browse palette and history",
     "Tab — complete palette selection",
