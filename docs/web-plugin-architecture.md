@@ -208,3 +208,13 @@ applies the table above. Violations fail `npm test` naming the file, the
 import and the reason. When you legitimately need a new crossing, change
 the zone rules in that test first — a reviewed boundary change, not a
 silent reach.
+
+## Scaffold
+
+`templates/web-plugin/` is the copy-paste starting point: a shared
+constants file, a bridge-shaped extension, a declarative descriptor, and a
+per-plugin `package.json`, with a README that walks the rename/register
+steps and the two typed channels (`publishWebView` out, the action-request
+event in, and the `lib/web-pi-apis/` facade for built-ins). It lives
+outside the guarded zones on purpose — copy each piece into place, never an
+entire template into a zone.
