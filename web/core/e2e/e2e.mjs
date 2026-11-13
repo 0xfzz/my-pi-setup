@@ -79,7 +79,7 @@ async function run() {
   // kill the whole tree (npx → tsx → node). A SIGTERM to the npx wrapper
   // alone leaves the node grandchild alive holding the stdio pipes, and the
   // runner then never exits.
-  const server = spawn("npx", ["tsx", "core/server/main.ts"], {
+  const server = spawn("npx", ["tsx", "server.ts"], {
     cwd: new URL("../..", import.meta.url).pathname,
     env: {
       ...process.env,

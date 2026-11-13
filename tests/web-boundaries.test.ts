@@ -118,7 +118,7 @@ const ZONES: readonly ZoneRules[] = [
     // The browser bundle: interface only. React, the wire/plugin contracts
     // and the plugin UI are its world; pi behavior never enters it.
     dir: "web/core/client",
-    runtimeAllow: ["web/core/client/", "web/core/shared/", "web/plugins/"],
+    runtimeAllow: ["web/core/client/", "web/core/shared/"],
     typeOnlyAllow: CONTRACT_LAYERS,
     why: "the client is interface only: it renders wire/plugin contracts and plugin UI, and never runs pi behavior",
   },
@@ -135,7 +135,7 @@ const ZONES: readonly ZoneRules[] = [
     // the plugin descriptors; it serves the BUILT client and never imports
     // its source.
     dir: "web/core/server",
-    runtimeAllow: ["web/core/server/", "web/core/shared/", "web/core/plugin-contracts/", "web/core/pi-api/", "web/core/auth/", "web/plugins/", "lib/", "@earendil-works/", "node:"],
+    runtimeAllow: ["web/core/server/", "web/core/shared/", "web/core/plugin-contracts/", "web/core/pi-api/", "web/core/auth/", "lib/", "@earendil-works/", "node:"],
     typeOnlyAllow: null,
     why: "the server hosts sessions, serves plugin descriptors and the built client; importing client source couples build to runtime",
   },

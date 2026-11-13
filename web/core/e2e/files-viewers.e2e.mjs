@@ -106,7 +106,7 @@ async function assertDocumentRenders(page) {
 }
 
 async function run() {
-  const server = spawn("npx", ["tsx", "core/server/main.ts"], {
+  const server = spawn("npx", ["tsx", "server.ts"], {
     cwd: new URL("../..", import.meta.url).pathname,
     env: {
       ...process.env,

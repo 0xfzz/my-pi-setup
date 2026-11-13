@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { artifactBodyKind, parseArtifactDetail } from "../../plugins/artifacts/artifact-detail.ts";
+import { artifactBodyKind, parseArtifactDetail } from "./artifact-detail.ts";
 
 const metaLine = 'id:auth-spec · type:plan · version:3 · size:1.2 KB · author:subagent:worker:run1 · updated:2026-11-12T19:15:44.123Z · tags:["a","b"]';
 

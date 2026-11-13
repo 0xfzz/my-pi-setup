@@ -2,11 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { startWebServer } from "./main.ts";
 import { getBridge, healBridgeRegistration } from "./bridge.ts";
-import { getPluginDescriptor } from "./plugin-host.ts";
+import { getPluginDescriptor, registerWebPlugins } from "./plugin-host.ts";
 import { clearWebPluginStateForTests } from "./plugin-host.ts";
 import { clearSessionsForTests, getSession, registerSession } from "./sessions.ts";
 import { piBuiltinCommands } from "../pi-api/index.ts";
 import { annotateBuiltinCommands } from "../shared/commands.ts";
+import { WEB_PLUGINS } from "../../plugins/index.ts";
+
+registerWebPlugins(WEB_PLUGINS);
 
 test.afterEach(() => {
   clearSessionsForTests();

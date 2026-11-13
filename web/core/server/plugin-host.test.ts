@@ -10,6 +10,7 @@ import {
   isKnownSession,
   recordActionAudit,
   recordExtensionUi,
+  registerWebPlugins,
   relayActionRequest,
   webPluginsStore,
   webUiStore,
@@ -19,6 +20,9 @@ import { WEB_PLUGIN_VIEW_EVENT } from "../plugin-contracts/view.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../plugin-contracts/actions.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT } from "../plugin-contracts/ui-event-models.ts";
 import { publishWebView } from "../plugin-contracts/publisher.ts";
+import { WEB_PLUGINS } from "../../plugins/index.ts";
+
+registerWebPlugins(WEB_PLUGINS);
 
 test.afterEach(() => {
   clearWebPluginStateForTests();

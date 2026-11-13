@@ -6,10 +6,14 @@ import {
   clearWebPluginStateForTests,
   getActionAuditLog,
   getPluginDescriptor,
+  registerWebPlugins,
   webPluginsStore,
   type MinimalEventBus,
 } from "./plugin-host.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../plugin-contracts/actions.ts";
+import { WEB_PLUGINS } from "../../plugins/index.ts";
+
+registerWebPlugins(WEB_PLUGINS);
 
 test.afterEach(() => {
   clearWebPluginStateForTests();

@@ -211,7 +211,7 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
   });
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   // A stable process title: the /web command's unmanaged-instance cleanup
   // matches it with pkill -f "pi-web-minimal" and nothing else. main() only
   // runs when the server is started directly, so test processes keep theirs.
@@ -383,10 +383,4 @@ function registerFixtureSession(): void {
     process.env.PI_WEB_TEST_FILES_ROOT ?? process.cwd(),
     "",
   );
-}
-
-const invokedDirectly =
-  process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
-if (invokedDirectly) {
-  void main();
 }

@@ -27,7 +27,7 @@ npm run dev        # build + serve on http://127.0.0.1:30142
 | Command | What it does |
 |---|---|
 | `npm run build` | esbuild bundle + Tailwind/shadcn CSS compile into `client/dist` |
-| `npm start` | serve the built client (`tsx server/main.ts`) |
+| `npm start` | serve the built client (`tsx server.ts`) |
 | `npm run check` | tsc over server, client and shared |
 | `npm test` | unit tests (server routes, wire, reducer, regions) |
 | `npm run test:e2e` | Playwright e2e with the fixture session (needs a browser) |

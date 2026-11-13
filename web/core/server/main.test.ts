@@ -2,12 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { startWebServer, resolveStaticPath } from "./main.ts";
+import { registerWebPlugins } from "./plugin-host.ts";
+import { WEB_PLUGINS } from "../../plugins/index.ts";
 import {
   clearSessionsForTests,
   registerSession,
   type SessionCore,
   type SessionStateLite,
 } from "./sessions.ts";
+
+registerWebPlugins(WEB_PLUGINS);
 
 test.afterEach(() => {
   clearSessionsForTests();

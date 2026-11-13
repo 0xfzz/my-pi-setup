@@ -287,7 +287,7 @@ export function defaultKillProcess(pid: number): void {
 
 /** Arguments for serving the built client: the minimal server, run directly. */
 export function serverSpawnArgs(): string[] {
-  return ["--experimental-strip-types", "core/server/main.ts"];
+  return ["--experimental-strip-types", "server.ts"];
 }
 
 /** True when the built client output exists to serve. */

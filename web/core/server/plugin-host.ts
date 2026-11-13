@@ -9,7 +9,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createJiti } from "jiti";
-import { WEB_PLUGINS } from "../../plugins/index.ts";
 import {
   WEB_PLUGIN_VIEW_EVENT,
   validateView,
@@ -139,36 +138,61 @@ interface DiscoveredPluginLike {
 }
 
 const pluginHostKey = Symbol.for("pi-web:plugin-host:v1");
-export const pluginHost: PluginHost<WebPluginDescriptor> = (uiGlobal[pluginHostKey] ??= createPluginHost<WebPluginDescriptor>({
-  descriptors: WEB_PLUGINS,
-  descriptorDir: webPluginsDir,
-  statePath: process.env.PI_WEB_PLUGIN_STATE ?? defaultPluginStatePath(),
-  roots: {
-    user: join(homedir(), ".pi", "agent", "web-plugins"),
-    project: join(process.cwd(), ".pi", "web-plugins"),
-  },
-  env: process.env,
-  // Only plugins with a server entry reach the loader; descriptors are declarative.
-  loader: (plugin: DiscoveredPluginLike) => {
-    const entry = plugin.manifest.main?.server;
-    if (!entry) return {};
-    const mod = jiti(join(plugin.dir, entry)) as { default?: object };
-    return (mod.default ?? mod) as object;
-  },
-})) as PluginHost<WebPluginDescriptor>;
 
-pluginHost.ready.catch((error: unknown) => {
-  console.error("[pi-web-minimal] web plugin host failed to boot:", error);
-});
+let registry: PluginHost<WebPluginDescriptor> | null = null;
+
+/**
+ * Register the built-in descriptor list so the host can serve `/api/plugins`
+ * and gate actions. Called from the server composition root (web/server.ts),
+ * never from `web/plugins/` — the host module itself does not import any
+ * plugin, preserving the one-way dependency (plugins → core, core ↛ plugins).
+ * Idempotent, and Symbol.for-guarded against double evaluation.
+ */
+export function registerWebPlugins(
+  descriptors: readonly WebPluginDescriptor[],
+): PluginHost<WebPluginDescriptor> {
+  const existing = uiGlobal[pluginHostKey] as PluginHost<WebPluginDescriptor> | undefined;
+  if (existing !== undefined) {
+    registry = existing;
+    return existing;
+  }
+
+  const host = createPluginHost<WebPluginDescriptor>({
+    descriptors,
+    descriptorDir: webPluginsDir,
+    statePath: process.env.PI_WEB_PLUGIN_STATE ?? defaultPluginStatePath(),
+    roots: {
+      user: join(homedir(), ".pi", "agent", "web-plugins"),
+      project: join(process.cwd(), ".pi", "web-plugins"),
+    },
+    env: process.env,
+    // Only plugins with a server entry reach the loader; descriptors are declarative.
+    loader: (plugin: DiscoveredPluginLike) => {
+      const entry = plugin.manifest.main?.server;
+      if (!entry) return {};
+      const mod = jiti(join(plugin.dir, entry)) as { default?: object };
+      return (mod.default ?? mod) as object;
+    },
+  });
+
+  uiGlobal[pluginHostKey] = host;
+  registry = host;
+
+  host.ready.catch((error: unknown) => {
+    console.error("[pi-web-minimal] web plugin host failed to boot:", error);
+  });
+
+  return host;
+}
 
 /** Read registered descriptors (enabled, unquarantined). */
 export function getRegisteredPlugins(): readonly WebPluginDescriptor[] {
-  return pluginHost.visible();
+  return registry?.visible() ?? [];
 }
 
 /** Undefined while the plugin is switched off, quarantined, or hidden. */
 export function getPluginDescriptor(id: string): WebPluginDescriptor | undefined {
-  return pluginHost.descriptor(id);
+  return registry?.descriptor(id);
 }
 
 export const WEB_PLUGINS_VISIBLE_EVENT_BUS = WEB_UI_EVENT;
