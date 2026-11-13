@@ -35,7 +35,7 @@ interface TrustStore {
 async function loadTrust(cwd: string): Promise<{ store: TrustStore; options: TrustOption[] }> {
   const [{ getAgentDir }, trustManager] = await Promise.all([
     import("@earendil-works/pi-coding-agent"),
-    import("../../node_modules/@earendil-works/pi-coding-agent/dist/core/trust-manager.js"),
+    import("../../../node_modules/@earendil-works/pi-coding-agent/dist/core/trust-manager.js"),
   ]);
   const store = new (trustManager as { ProjectTrustStore: new (agentDir: string) => TrustStore }).ProjectTrustStore(
     getAgentDir(),

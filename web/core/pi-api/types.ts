@@ -10,7 +10,7 @@
  * Adding an api:
  *   1. extend PiApiName/PiApiParams/PiApiResult in web/shared/pi-api.ts,
  *   2. implement a PiApiModule (one file per api family),
- *   3. register it in lib/web-pi-apis/index.ts.
+ *   3. register it in web/core/pi-api/index.ts.
  * See docs/pi-web.md — "The pi_api interface map".
  */
 

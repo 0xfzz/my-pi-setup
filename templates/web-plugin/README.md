@@ -63,7 +63,7 @@ enforced by the host before the event is emitted.
 
 **Web → pi built-ins.** Anything the web UI itself needs from pi (autocomplete,
 settings, trust, auth, built-in commands) goes through the one facade
-`lib/web-pi-apis/` — not through a plugin descriptor. Register a module there
+`web/core/pi-api/` — not through a plugin descriptor. Register a module there
 when a new web surface must call into a pi built-in.
 
 ## 4. Plugin dependencies

@@ -33,7 +33,7 @@ import {
   startSession,
 } from "./sessions.ts";
 import { handlePiApiRequest } from "./pi-api.ts";
-import { piBuiltinCommands } from "../../../lib/web-pi-apis/index.ts";
+import { piBuiltinCommands } from "../pi-api/index.ts";
 import { annotateBuiltinCommands } from "../shared/commands.ts";
 import { attachAgentEventStream, attachSessionsEventStream } from "./event-stream.ts";
 import { listDirectory, readText, searchPaths, statusForCode, streamFile, type FileFailure } from "./files.ts";

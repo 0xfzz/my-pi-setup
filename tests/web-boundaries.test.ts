@@ -131,7 +131,7 @@ const ZONES: readonly ZoneRules[] = [
     // the plugin descriptors; it serves the BUILT client and never imports
     // its source.
     dir: "web/core/server",
-    runtimeAllow: ["web/core/server/", "web/core/shared/", "web/core/plugin-contracts/", "web/plugins/", "lib/", "@earendil-works/", "node:"],
+    runtimeAllow: ["web/core/server/", "web/core/shared/", "web/core/plugin-contracts/", "web/core/pi-api/", "web/plugins/", "lib/", "@earendil-works/", "node:"],
     typeOnlyAllow: null,
     why: "the server hosts sessions, serves plugin descriptors and the built client; importing client source couples build to runtime",
   },
@@ -165,8 +165,8 @@ const ZONES: readonly ZoneRules[] = [
   {
     // The pi_api facade: the one place that imports pi's built-in modules
     // for the web. It implements the wire contract; never the web runtime.
-    dir: "lib/web-pi-apis",
-    runtimeAllow: ["lib/", "web/core/shared/", "@earendil-works/", "node:"],
+    dir: "web/core/pi-api",
+    runtimeAllow: ["web/core/pi-api/", "web/core/shared/", "@earendil-works/", "node:"],
     typeOnlyAllow: null,
     why: "the facade calls pi built-ins and implements the wire contract — the web runtime stays out",
   },

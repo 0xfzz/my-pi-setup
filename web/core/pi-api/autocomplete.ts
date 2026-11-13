@@ -10,7 +10,7 @@
  * The provider is bound to the session cwd; it is rebuilt when the cwd
  * changes (clone/fork into another directory) and dropped on dispose.
  */
-import type { PiAutocompleteSuggestions } from "../../web/core/shared/pi-api.ts";
+import type { PiAutocompleteSuggestions } from "../shared/pi-api.ts";
 import type { PiApiContext, PiApiModule } from "./types.ts";
 
 /** pi's public editor/autocomplete package. */
@@ -43,7 +43,7 @@ async function loadEnsureTool(): Promise<EnsureTool> {
   // pi's package "exports" map only opens the main entry; the tool manager
   // is a deep module, so it loads by file path (pi's own code, no reimpl).
   const module = await import(
-    "../../node_modules/@earendil-works/pi-coding-agent/dist/utils/tools-manager.js"
+    "../../../node_modules/@earendil-works/pi-coding-agent/dist/utils/tools-manager.js"
   );
   return module.ensureTool as EnsureTool;
 }

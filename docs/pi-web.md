@@ -261,7 +261,7 @@ POST /api/agent/:id/pi_api   { "api": "<name>", "params": { … } }
 ```
 
 The contract lives in `web/core/shared/pi-api.ts` (names, params, results);
-`lib/web-pi-apis/` implements it as pluggable modules over pi's own code:
+`web/core/pi-api/` implements it as pluggable modules over pi's own code:
 
 | api | pi implementation | web surface |
 |---|---|---|
@@ -305,11 +305,11 @@ generic:
 
 1. Add the name + params + result to `web/core/shared/pi-api.ts`
    (`PiApiName` / `PiApiParams` / `PiApiResult`).
-2. Implement a `PiApiModule` (`lib/web-pi-apis/types.ts`) — one file per
+2. Implement a `PiApiModule` (`web/core/pi-api/types.ts`) — one file per
    api family; its `handle` calls pi's code, `init`/`dispose` own
    lifecycle (the registry lazily initializes on first use and tears down
    on host detach).
-3. Register it in `PI_API_MODULES` (`lib/web-pi-apis/index.ts`).
+3. Register it in `PI_API_MODULES` (`web/core/pi-api/index.ts`).
 
 Deep pi imports that the package `exports` map does not open load by file
 path — e.g. `../../node_modules/@earendil-works/pi-coding-agent/dist/core/slash-commands.js`.

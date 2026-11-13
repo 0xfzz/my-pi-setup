@@ -69,7 +69,7 @@ decides anything; it declares.
 │                        actions, UI events, validation           │
 │  lib/<x>-web-view.ts   per-plugin shared constants (neutral     │
 │                        home both sides import)                  │
-│  lib/web-pi-apis/      the pi_api facade: the ONE place that    │
+│  web/core/pi-api/      the pi_api facade: the ONE place that    │
 │                        imports pi's built-in modules for the    │
 │  web/core/shared/           wire contracts (client↔server):          │
 │                        commands, mentions, pi-api shapes        │
@@ -102,7 +102,7 @@ Three contract surfaces exist, and each has exactly one home:
 | Plugin contract (descriptor/view/action shapes) | `web/core/plugin-contracts/` | extension ↔ web plugin ↔ client renderer |
 | Per-plugin constants (ids, action names) | `lib/<plugin>-web-view.ts` | the extension and the descriptor |
 | Wire contract (commands, pi_api, mentions) | `web/core/shared/` | client ↔ server |
-| pi built-in calls | `lib/web-pi-apis/` (the facade) | server ↔ pi's own modules |
+| pi built-in calls | `web/core/pi-api/` (the facade) | server ↔ pi's own modules |
 
 **Shared constants are the neutral ground.** The reference pattern is
 modes: `lib/modes-web-view.ts` defines `MODES_PLUGIN_ID` and the action
@@ -154,7 +154,7 @@ guard fails any extension that imports `web/plugins/` directly.
 
 When the web needs a pi built-in *capability* (not behavior change), it
 calls it through `POST /api/agent/:id/pi_api` — the facade in
-`lib/web-pi-apis/` runs pi's own implementation. Today:
+`web/core/pi-api/` runs pi's own implementation. Today:
 `autocomplete.suggestions` (pi's editor completion for the `@` picker)
 and `commands.builtin` (pi's built-in command list). The facade is
 read-only by design; anything that *changes* pi state goes through the
@@ -215,6 +215,6 @@ silent reach.
 constants file, a bridge-shaped extension, a declarative descriptor, and a
 per-plugin `package.json`, with a README that walks the rename/register
 steps and the two typed channels (`publishWebView` out, the action-request
-event in, and the `lib/web-pi-apis/` facade for built-ins). It lives
+event in, and the `web/core/pi-api/` facade for built-ins). It lives
 outside the guarded zones on purpose — copy each piece into place, never an
 entire template into a zone.

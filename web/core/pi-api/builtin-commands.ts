@@ -18,7 +18,7 @@ let builtins: readonly PiBuiltinCommand[] | null = null;
 
 async function loadBuiltins(): Promise<readonly PiBuiltinCommand[]> {
   const { BUILTIN_SLASH_COMMANDS } = await import(
-    "../../node_modules/@earendil-works/pi-coding-agent/dist/core/slash-commands.js"
+    "../../../node_modules/@earendil-works/pi-coding-agent/dist/core/slash-commands.js"
   );
   return BUILTIN_SLASH_COMMANDS as readonly PiBuiltinCommand[];
 }

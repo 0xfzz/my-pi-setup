@@ -5,7 +5,7 @@ import { getBridge, healBridgeRegistration } from "./bridge.ts";
 import { getPluginDescriptor } from "./plugin-host.ts";
 import { clearWebPluginStateForTests } from "./plugin-host.ts";
 import { clearSessionsForTests, getSession, registerSession } from "./sessions.ts";
-import { piBuiltinCommands } from "../../../lib/web-pi-apis/index.ts";
+import { piBuiltinCommands } from "../pi-api/index.ts";
 import { annotateBuiltinCommands } from "../shared/commands.ts";
 
 test.afterEach(() => {
