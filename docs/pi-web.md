@@ -517,7 +517,11 @@ Below 720px the session sidebar collapses off-canvas behind the hamburger
 selecting a session closes it, and crossing from wide to narrow closes it
 automatically.
 Nothing renders wider than the viewport — the transcript, composer and
-plugin views wrap.
+plugin views wrap. The panel overflow menu uses direct Open and adjacent
+Pin/Unpin actions on phones, rather than a sideways submenu. Each action
+has a 44px-high touch target; the menu is constrained to the viewport and
+scrolls vertically when the available height is short (including landscape
+and keyboard-sized viewports). Desktop panels keep their submenus.
 
 On the performance side, message bodies and markdown are memoized: stream
 deltas, plugin_state frames and status changes re-render only the live

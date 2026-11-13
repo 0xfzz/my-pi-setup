@@ -82,6 +82,14 @@ async function assertMobilePanelLauncher(page, viewport) {
   assert.ok(box.x >= 0 && box.x + box.width <= viewport.width, "panel menu fits the phone width");
   assert.ok(box.y >= 0 && box.y + box.height <= viewport.height, "panel menu fits the phone height");
   assert.equal(await menu.locator('[aria-haspopup="menu"]').count(), 0, "phone actions never open sideways submenus");
+  const filesOpen = menu.getByRole("menuitem", { name: "Files", exact: true });
+  await filesOpen.scrollIntoViewIfNeeded();
+  const filesBox = await filesOpen.boundingBox();
+  const pinBox = await menu.getByRole("menuitem", { name: "Pin Files", exact: true }).boundingBox();
+  assert.equal(filesBox.y, pinBox.y, "phone Open and Pin actions stay on the same row, not stacked");
+  assert.ok(filesBox.height >= 44 && pinBox.height >= 44 && pinBox.width >= 44, "phone actions have touch-sized targets");
+  assert.ok(pinBox.x >= filesBox.x + filesBox.width, "the pin action sits beside Open");
+  assert.ok(pinBox.x + pinBox.width <= viewport.width - 8, "the pin action stays inside the phone viewport");
   await menu.getByRole("menuitem", { name: "Unpin Cache health", exact: true }).click();
   await page.getByRole("button", { name: "More panels", exact: true }).click();
   await menu.getByRole("menuitem", { name: "Pin Cache health", exact: true }).click();
@@ -434,10 +442,15 @@ async function run() {
     assert.equal(await page.locator(".app-side-panel-scrim").count(), 0);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
     step("4g: phone panel actions — no clipped sideways submenus");
-    for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 420, height: 800 }]) {
+    for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 420, height: 800 }, { width: 390, height: 360 }]) {
       await assertMobilePanelLauncher(page, viewport);
     }
     await page.setViewportSize({ width: 1280, height: 800 });
+    await page.getByRole("button", { name: "More panels", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Files", exact: true }).press("ArrowRight");
+    await page.getByRole("menuitem", { name: "Open panel", exact: true }).press("Enter");
+    await page.getByRole("complementary", { name: "Files panel" }).waitFor();
+    await page.getByRole("button", { name: "Close panel", exact: true }).click();
     await page.locator(".app-sidebar-toggle").click();
 
     step("5: Alt+M shortcut");

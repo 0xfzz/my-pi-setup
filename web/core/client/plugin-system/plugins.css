@@ -1145,6 +1145,49 @@
   background: var(--border);
 }
 
+/* The phone layout has no flyouts: Open and Pin share one touch-sized row.
+ * Keep rows unshrunk so a short viewport scrolls instead of clipping actions. */
+.app-panel-menu-inline-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  flex-shrink: 0;
+}
+
+.app-panel-menu-open,
+.app-panel-menu-pin-action {
+  min-width: 0;
+  min-height: 44px;
+}
+
+.app-panel-menu-pin-action {
+  justify-content: center;
+  padding: 0;
+}
+
+@media (max-width: 720px) {
+  .app-panel-menu {
+    width: min(360px, calc(100vw - 16px));
+    min-width: 0;
+    max-height: var(--radix-dropdown-menu-content-available-height, calc(100dvh - 16px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .app-panel-menu > * {
+    flex-shrink: 0;
+  }
+
+  .app-panel-menu-item-unavailable {
+    min-height: 44px;
+  }
+
+  .app-panel-menu-reason {
+    max-width: 45%;
+    white-space: normal;
+    text-align: right;
+  }
+}
+
 /* ── Files panel ────────────────────────────────────────────────────────── */
 .app-files-panel-body {
   padding: 0;
