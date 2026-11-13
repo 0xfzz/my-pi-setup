@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const target = join(root, "docs", "web-plugin-catalog.md");
-const catalog = await import(pathToFileURL(join(root, "lib", "web-plugins", "kernel", "catalog.ts")).href);
+const catalog = await import(pathToFileURL(join(root, "web", "core", "plugin-contracts", "kernel", "catalog.ts")).href);
 const next = catalog.catalogMarkdown();
 
 if (process.argv.includes("--check")) {

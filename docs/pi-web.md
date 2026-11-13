@@ -63,7 +63,7 @@ web/
 ```
 
 The plugin contract itself lives in the root repo and is shared with the
-TUI: `lib/web/plugins/` (view vocabulary, descriptors, actions, kernel,
+TUI: `web/core/plugin-contracts/` (view vocabulary, descriptors, actions, kernel,
 publisher) and `web/plugins/` (the descriptors). Extensions publish views
 from `extensions/*.ts` — unchanged from the vendored era.
 
@@ -366,14 +366,14 @@ closed vocabulary, never plugin-supplied SVG, HTML, or URLs. The navbar is a
 single scrollable row on narrow screens; panels retain their mobile overlay.
 
 Extensions publish views with `publishWebView(pi, pluginId, view)` from
-`lib/web/plugins/publisher.ts`. Views are **declarative and validated
+`web/core/plugin-contracts/publisher.ts`. Views are **declarative and validated
 server-side** — `kv`, `list` (status icons + markdown detail), `status`,
 `graph` (nodes, edges, markdown detail) — so a plugin never ships client
-code. The vocabulary: `lib/web/plugins/view.ts`.
+code. The vocabulary: `web/core/plugin-contracts/view.ts`.
 
 **User plugins**: drop a descriptor with a server entry into
 `~/.pi/agent/web-plugins` (or `.pi/web-plugins` in a project); the kernel
-(`lib/web/plugins/kernel/`) discovers them, tracks enable state, and
+(`web/core/plugin-contracts/kernel/`) discovers them, tracks enable state, and
 quarantines misbehaving ones — the same kernel the TUI-era host used.
 
 **Actions** are descriptor-declared and relayed over the session event bus:
@@ -408,7 +408,7 @@ working line animates them while the session reports itself running.
 The web core ports pi's TUI interaction primitives, so any extension can
 bridge its TUI UI to the web without web-specific code. Extensions publish
 the same `ui.*` events in both hosts (`publishWebUi` in
-`lib/web/plugins/publisher.ts`); the unified store keeps per-session state
+`web/core/plugin-contracts/publisher.ts`); the unified store keeps per-session state
 and the event stream ships it in every `plugin_state` frame. The client
 renders them in the same slots the TUI uses:
 
@@ -424,7 +424,7 @@ This is the "TUI design system" surface: a new dialog-ish primitive lands
 in the event model + store + client once, and every extension can use it
 from either host. The TUI's own `ctx.ui.notify`/`setStatus`/`setWidget`
 calls do not emit events, so bridging them means also calling `publishWebUi`
-from the extension — the contract lives in `lib/web/plugins/ui-contracts.ts`.
+from the extension — the contract lives in `web/core/plugin-contracts/ui-contracts.ts`.
 
 ## Dialogs — the TUI command port and the model picker
 

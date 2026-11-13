@@ -12,19 +12,19 @@ import {
   VIEW_MAX_DETAIL_CHARS,
   STATUS_TONES,
   validateView,
-} from "../lib/web-plugins/view.ts";
+} from "../web/core/plugin-contracts/view.ts";
 
 import {
   validatePlugin,
   type WebPluginDescriptor,
-} from "../lib/web-plugins/descriptor.ts";
+} from "../web/core/plugin-contracts/descriptor.ts";
 
 import {
   validateRegistry,
   WEB_PLUGIN_VIEW_EVENT as REGISTRY_VIEW_EVENT,
   type WebPluginSurface,
-} from "../lib/web-plugins/registry.ts";
-import { publishWebView } from "../lib/web-plugins/publisher.ts";
+} from "../web/core/plugin-contracts/registry.ts";
+import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 import { cacheStatsPlugin } from "../web/plugins/cache-stats/descriptor.ts";
 import { todoPlugin } from "../web/plugins/todo/descriptor.ts";
 import { artifactsPlugin } from "../web/plugins/artifacts/descriptor.ts";

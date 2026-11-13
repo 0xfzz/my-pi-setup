@@ -12,10 +12,10 @@ export type {
   ListStatus,
   DialogWebView,
   DialogAction,
-} from "../../../../lib/web-plugins/view.ts";
-export type { ActionDescriptor } from "../../../../lib/web-plugins/actions.ts";
-export type { WebPluginDescriptor, WebPluginIcon } from "../../../../lib/web-plugins/descriptor.ts";
-export type { WebPluginUiContribution } from "../../../../lib/web-plugins/ui-contracts.ts";
+} from "../../plugin-contracts/view.ts";
+export type { ActionDescriptor } from "../../plugin-contracts/actions.ts";
+export type { WebPluginDescriptor, WebPluginIcon } from "../../plugin-contracts/descriptor.ts";
+export type { WebPluginUiContribution } from "../../plugin-contracts/ui-contracts.ts";
 
 /** The working-indicator model streamed per session (ui.working.changed). */
 export interface WorkingSegmentLike {

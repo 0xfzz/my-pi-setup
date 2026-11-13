@@ -8,7 +8,7 @@ import {
   clearWebPluginStateForTests,
   type MinimalEventBus,
 } from "./plugin-host.ts";
-import { WEB_PLUGIN_VIEW_EVENT } from "../../../lib/web-plugins/view.ts";
+import { WEB_PLUGIN_VIEW_EVENT } from "../plugin-contracts/view.ts";
 
 const state: SessionStateLite = {
   sessionId: "sse-live",

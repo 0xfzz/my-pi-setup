@@ -23,7 +23,7 @@ import {
 } from "./sessions.ts";
 import { getRegisteredPlugins, recordExtensionUi, webPluginsStore, webUiStore } from "./plugin-host.ts";
 import { resolveRegionOverrides } from "../shared/regions.ts";
-import { WEB_PLUGIN_UI_SYNC_EVENT } from "../../../lib/web-plugins/ui-event-models.ts";
+import { WEB_PLUGIN_UI_SYNC_EVENT } from "../plugin-contracts/ui-event-models.ts";
 
 const TOOL_UPDATE_COALESCE_MS = 150;
 const STREAM_HIGH_WATER_MARK_BYTES = 512 * 1024;

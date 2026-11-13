@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { delegationToGraphView } from "../lib/dashboard/graph-view.ts";
-import { validateView } from "../lib/web-plugins/view.ts";
+import { validateView } from "../web/core/plugin-contracts/view.ts";
 import type { DashboardSnapshot } from "../lib/dashboard/protocol.ts";
 
 const snapshot = (over: Partial<DashboardSnapshot["delegation"]> = {}, session = { id: "s1", name: "Dashboard polish", mode: "normal", project: "/repo" }): DashboardSnapshot => ({

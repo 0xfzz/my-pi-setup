@@ -40,12 +40,12 @@ import { readCrashLog } from "../node_modules/@earendil-works/pi-coding-agent/di
 import { getRadiusGatewayUrl, RADIUS_PROVIDER_ID } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/radius.js";
 import { getShareViewerUrl } from "../node_modules/@earendil-works/pi-coding-agent/dist/config.js";
 import { getAuthCredential } from "../node_modules/@earendil-works/pi-coding-agent/dist/cli/auth-command.js";
-import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../lib/web-plugins/actions.ts";
-import { WEB_PLUGIN_VIEW_EVENT, type DialogWebView, type WebView } from "../lib/web-plugins/view.ts";
-import { publishWebView } from "../lib/web-plugins/publisher.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
+import { WEB_PLUGIN_VIEW_EVENT, type DialogWebView, type WebView } from "../web/core/plugin-contracts/view.ts";
+import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 import { buildWebTree, type PiTreeNodeLike } from "../lib/web-tree.ts";
 import { sseFrameData, takeSseFrames } from "../lib/web-sse.ts";
-import { WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT } from "../lib/web-plugins/ui-event-models.ts";
+import { WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
 import { defaultServerDir, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiDeps } from "../lib/web-ui.ts";
 import { repoRootFromServerDir, sourceWatchRoots, watchSources, type SourceWatcher } from "../lib/web-ui-reload.ts";
 import { WebAuthConfigCache, loadWebAuthConfig, removeWebPassword, webAuthConfigPath, writeWebPassword } from "../lib/web-auth/config.ts";

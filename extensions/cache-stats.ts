@@ -9,7 +9,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { lastCachePlan, resetCachePlan } from "../lib/cache-anchor.ts";
 import { addSample, cacheRows, cacheWebView, emptyTotals, sampleOf, type CacheSample } from "../lib/cache-stats.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
-import { publishWebView } from "../lib/web-plugins/publisher.ts";
+import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 
 export default function cacheStatsExtension(pi: ExtensionAPI): void {
   let totals = emptyTotals();

@@ -10,7 +10,7 @@ import {
   createAgentSession,
   type CreateAgentSessionOptions,
 } from "@earendil-works/pi-coding-agent";
-import { publishWebView } from "../../../lib/web-plugins/publisher.ts";
+import { publishWebView } from "../plugin-contracts/publisher.ts";
 import { createHeadlessWebUiContext } from "./web-ui-context.ts";
 import { attachSessionPlugins, clearWebPluginStateForTests, webPluginsStore } from "./plugin-host.ts";
 

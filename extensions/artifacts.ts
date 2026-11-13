@@ -10,8 +10,8 @@ import {
 } from "../lib/popup/frame.ts";
 import { PopupList } from "../lib/ui/shell.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
-import { publishWebView } from "../lib/web-plugins/publisher.ts";
-import type { ListItem } from "../lib/web-plugins/view.ts";
+import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
+import type { ListItem } from "../web/core/plugin-contracts/view.ts";
 import { markVolatileTail } from "../lib/cache-anchor.ts";
 import { createArtifactAutocompleteProvider, expandArtifactMentions } from "../lib/artifact-mentions.ts";
 import {

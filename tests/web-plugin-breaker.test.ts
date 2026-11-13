@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { CircuitBreaker } from "../lib/web-plugins/kernel/breaker.ts";
-import { runWithBudget } from "../lib/web-plugins/kernel/budget.ts";
-import { AuditLog } from "../lib/web-plugins/kernel/audit.ts";
+import { CircuitBreaker } from "../web/core/plugin-contracts/kernel/breaker.ts";
+import { runWithBudget } from "../web/core/plugin-contracts/kernel/budget.ts";
+import { AuditLog } from "../web/core/plugin-contracts/kernel/audit.ts";
 
 test("the breaker trips exactly once, on the failure that reaches the threshold", () => {
   let now = 0;

@@ -1,4 +1,4 @@
-import type { WebPluginDescriptor } from "../../../lib/web-plugins/descriptor.ts";
+import type { WebPluginDescriptor } from "../../core/plugin-contracts/descriptor.ts";
 
 export const cacheStatsPlugin: WebPluginDescriptor = {
   id: "cache-stats",

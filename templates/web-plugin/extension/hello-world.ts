@@ -4,8 +4,8 @@ import {
   HELLO_WORLD_PLUGIN_ID,
   helloWorldWebView,
 } from "../lib/hello-world-web-view.ts";
-import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../lib/web-plugins/actions.ts";
-import { publishWebView } from "../lib/web-plugins/publisher.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
+import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 
 /**
  * Reference bridge in both directions. Copy this file to `extensions/hello-world.ts`

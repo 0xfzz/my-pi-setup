@@ -1,4 +1,4 @@
-import type { WebPluginDescriptor } from "../../../lib/web-plugins/descriptor.ts";
+import type { WebPluginDescriptor } from "../../core/plugin-contracts/descriptor.ts";
 import {
   AUTO_TITLE_PLUGIN_ID,
   AUTO_TITLE_REGENERATE_ACTION,

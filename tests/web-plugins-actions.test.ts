@@ -7,12 +7,12 @@ import {
   validateActions,
   type ActionDescriptor,
   type ActionRequestPayload,
-} from "../lib/web-plugins/actions.ts";
+} from "../web/core/plugin-contracts/actions.ts";
 
 import {
   validatePlugin,
   type WebPluginDescriptor,
-} from "../lib/web-plugins/descriptor.ts";
+} from "../web/core/plugin-contracts/descriptor.ts";
 
 import {
   validateRegistry,
@@ -20,7 +20,7 @@ import {
   validateActions as registryValidateActions,
   type ActionDescriptor as RegistryActionDescriptor,
   type ActionRequestPayload as RegistryActionPayload,
-} from "../lib/web-plugins/registry.ts";
+} from "../web/core/plugin-contracts/registry.ts";
 import { WEB_PLUGINS } from "../web/plugins/index.ts";
 import { subagentMonitorPlugin } from "../web/plugins/subagent-monitor/descriptor.ts";
 import dashboardExtension from "../extensions/dashboard.ts";

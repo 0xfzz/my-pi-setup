@@ -4,9 +4,9 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createPluginHost } from "../lib/web-plugins/kernel/host.ts";
-import { compatCandidates, manifestForDescriptor } from "../lib/web-plugins/kernel/compat.ts";
-import type { PluginLoader } from "../lib/web-plugins/kernel/manager.ts";
+import { createPluginHost } from "../web/core/plugin-contracts/kernel/host.ts";
+import { compatCandidates, manifestForDescriptor } from "../web/core/plugin-contracts/kernel/compat.ts";
+import type { PluginLoader } from "../web/core/plugin-contracts/kernel/manager.ts";
 
 const descriptors = [
   { id: "todo", title: "Todo" },

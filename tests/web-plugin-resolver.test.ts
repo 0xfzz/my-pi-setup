@@ -6,7 +6,7 @@ import {
   requiredDependents,
   resolvePlugins,
   type ResolverInput,
-} from "../lib/web-plugins/kernel/resolver.ts";
+} from "../web/core/plugin-contracts/kernel/resolver.ts";
 
 const p = (
   id: string,

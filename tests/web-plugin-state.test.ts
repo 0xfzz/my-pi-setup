@@ -14,7 +14,7 @@ import {
   saveState,
   setPluginState,
   SAFE_MODE_WINDOW_MS,
-} from "../lib/web-plugins/kernel/state.ts";
+} from "../web/core/plugin-contracts/kernel/state.ts";
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), "web-plugin-state-"));

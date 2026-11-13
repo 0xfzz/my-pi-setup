@@ -12,7 +12,7 @@ import {
   transition,
   type PluginEvent,
   type PluginState,
-} from "../lib/web-plugins/kernel/lifecycle.ts";
+} from "../web/core/plugin-contracts/kernel/lifecycle.ts";
 
 test("the happy path runs discovered to active and back to disposed", () => {
   const life = new PluginLifecycle("acme.zen");

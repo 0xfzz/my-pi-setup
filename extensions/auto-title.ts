@@ -43,8 +43,8 @@ import {
   type AutoTitlePhase,
 } from "../lib/auto-title-web-view.ts";
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";
-import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../lib/web-plugins/actions.ts";
-import { publishWebView } from "../lib/web-plugins/publisher.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
+import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 
 export const AUTO_TITLE_TIMEOUT_MS = 20_000;
 

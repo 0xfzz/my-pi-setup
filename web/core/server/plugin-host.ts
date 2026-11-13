@@ -18,13 +18,13 @@ import {
   type StatusWebView,
   type ValidateViewResult,
   type WebView,
-} from "../../../lib/web-plugins/view.ts";
-import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionDescriptor } from "../../../lib/web-plugins/actions.ts";
-import type { WebPluginDescriptor } from "../../../lib/web-plugins/descriptor.ts";
-import { WebUiStore, type WebUiSnapshot, type WebUiSessionState } from "../../../lib/web-plugins/ui-state-store.ts";
-import { WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT, extensionUiUpdate, type WebUiType } from "../../../lib/web-plugins/ui-event-models.ts";
-import { normalizeContributions } from "../../../lib/web-plugins/ui-contracts.ts";
-import { createPluginHost, type PluginHost } from "../../../lib/web-plugins/kernel/host.ts";
+} from "../plugin-contracts/view.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionDescriptor } from "../plugin-contracts/actions.ts";
+import type { WebPluginDescriptor } from "../plugin-contracts/descriptor.ts";
+import { WebUiStore, type WebUiSnapshot, type WebUiSessionState } from "../plugin-contracts/ui-state-store.ts";
+import { WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT, extensionUiUpdate, type WebUiType } from "../plugin-contracts/ui-event-models.ts";
+import { normalizeContributions } from "../plugin-contracts/ui-contracts.ts";
+import { createPluginHost, type PluginHost } from "../plugin-contracts/kernel/host.ts";
 
 const uiGlobal = globalThis as Record<PropertyKey, unknown>;
 const uiStoreKey = Symbol.for("pi-web:unified-ui:v1");

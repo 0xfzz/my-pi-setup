@@ -1,13 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { HookBus } from "../lib/web-plugins/kernel/hooks.ts";
-import { ServiceRegistry } from "../lib/web-plugins/kernel/services.ts";
-import { PluginStorage } from "../lib/web-plugins/kernel/storage.ts";
-import type { DiscoveredPlugin } from "../lib/web-plugins/kernel/discovery.ts";
-import { validateManifest } from "../lib/web-plugins/kernel/manifest.ts";
-import { PluginManager, type PluginLoader, type PluginRuntime } from "../lib/web-plugins/kernel/manager.ts";
-import { defaultState, setPluginState, type WebPluginsState } from "../lib/web-plugins/kernel/state.ts";
+import { HookBus } from "../web/core/plugin-contracts/kernel/hooks.ts";
+import { ServiceRegistry } from "../web/core/plugin-contracts/kernel/services.ts";
+import { PluginStorage } from "../web/core/plugin-contracts/kernel/storage.ts";
+import type { DiscoveredPlugin } from "../web/core/plugin-contracts/kernel/discovery.ts";
+import { validateManifest } from "../web/core/plugin-contracts/kernel/manifest.ts";
+import { PluginManager, type PluginLoader, type PluginRuntime } from "../web/core/plugin-contracts/kernel/manager.ts";
+import { defaultState, setPluginState, type WebPluginsState } from "../web/core/plugin-contracts/kernel/state.ts";
 
 function candidate(id: string, capabilities: string[]): DiscoveredPlugin {
   const result = validateManifest({

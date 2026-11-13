@@ -15,10 +15,10 @@ import {
   webUiStore,
   type MinimalEventBus,
 } from "./plugin-host.ts";
-import { WEB_PLUGIN_VIEW_EVENT } from "../../../lib/web-plugins/view.ts";
-import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../../../lib/web-plugins/actions.ts";
-import { WEB_PLUGIN_UI_SYNC_EVENT } from "../../../lib/web-plugins/ui-event-models.ts";
-import { publishWebView } from "../../../lib/web-plugins/publisher.ts";
+import { WEB_PLUGIN_VIEW_EVENT } from "../plugin-contracts/view.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../plugin-contracts/actions.ts";
+import { WEB_PLUGIN_UI_SYNC_EVENT } from "../plugin-contracts/ui-event-models.ts";
+import { publishWebView } from "../plugin-contracts/publisher.ts";
 
 test.afterEach(() => {
   clearWebPluginStateForTests();

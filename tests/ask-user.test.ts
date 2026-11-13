@@ -4,8 +4,8 @@ import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../lib/web-plugins/actions.ts";
-import { WEB_PLUGIN_VIEW_EVENT } from "../lib/web-plugins/view.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../web/core/plugin-contracts/actions.ts";
+import { WEB_PLUGIN_VIEW_EVENT } from "../web/core/plugin-contracts/view.ts";
 
 // Use Pi's existing loader/dependencies; no package installation is necessary.
 // Run: node --experimental-strip-types --test tests/ask-user.test.ts

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { addSample, cacheRows, cacheWebView, emptyTotals, isCostlyMiss, sampleOf, tokens } from "../lib/cache-stats.ts";
 import cacheStats from "../extensions/cache-stats.ts";
 import { SECTION_EVENT, type SectionOffer } from "../lib/sidebar/sidebar-channel.ts";
-import { WEB_PLUGIN_VIEW_EVENT } from "../lib/web-plugins/view.ts";
+import { WEB_PLUGIN_VIEW_EVENT } from "../web/core/plugin-contracts/view.ts";
 
 test("a sample is the cached share of the whole prompt", () => {
   const sample = sampleOf({ input: 200, cacheRead: 17_800, cacheWrite: 0 })!;

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { compareVersions, isValidRange, parseVersion, satisfies } from "../lib/web-plugins/kernel/semver.ts";
+import { compareVersions, isValidRange, parseVersion, satisfies } from "../web/core/plugin-contracts/kernel/semver.ts";
 
 test("parseVersion accepts strict x.y.z with optional prerelease only", () => {
   assert.deepEqual(parseVersion("1.2.3"), { major: 1, minor: 2, patch: 3, prerelease: [] });

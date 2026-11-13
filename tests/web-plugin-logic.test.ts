@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { CapabilityError, type Capability } from "../lib/web-plugins/kernel/capabilities.ts";
-import { HookBus } from "../lib/web-plugins/kernel/hooks.ts";
-import { PluginStorage } from "../lib/web-plugins/kernel/storage.ts";
-import { ServiceRegistry } from "../lib/web-plugins/kernel/services.ts";
+import { CapabilityError, type Capability } from "../web/core/plugin-contracts/kernel/capabilities.ts";
+import { HookBus } from "../web/core/plugin-contracts/kernel/hooks.ts";
+import { PluginStorage } from "../web/core/plugin-contracts/kernel/storage.ts";
+import { ServiceRegistry } from "../web/core/plugin-contracts/kernel/services.ts";
 
 const grants = (...caps: string[]): Capability[] => caps.map((c) => {
   const i = c.indexOf(":");

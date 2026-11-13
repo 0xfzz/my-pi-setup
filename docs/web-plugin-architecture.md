@@ -65,7 +65,7 @@ decides anything; it declares.
 │    │ imports: pi, lib/, vendor/          NOT web/core/*, web/plugins/* │
 │    │ publishes: publishWebView(pi, id, view)                   │
 ├──────────────────────────── contracts ─────────────────────────┤
-│  lib/web/plugins/      plugin contract: descriptors, views,     │
+│  web/core/plugin-contracts/      plugin contract: descriptors, views,     │
 │                        actions, UI events, validation           │
 │  lib/<x>-web-view.ts   per-plugin shared constants (neutral     │
 │                        home both sides import)                  │
@@ -78,7 +78,7 @@ decides anything; it declares.
 │    │ imports: shared, lib/, web/plugins/, pi      NOT web/core/client│
 ├────────────────────────── browser ─────────────────────────────┤
 │  web/core/client/           interface: renders state, forwards       │
-│    │ imports: shared (+ type-only lib/web-plugins)             │
+│    │ imports: shared (+ type-only web/core/plugin-contracts)             │
 │    │            NOT pi, node, server, extensions, lib runtime   │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -89,7 +89,7 @@ Two import classes with different rules (the guard checks both):
   per the table above.
 - **Type-only imports** (`import type` / `export type … from`) — erased at
   build. Allowed from contract layers only (`web/core/shared`,
-  `lib/web-plugins`): the wire legitimately composes the plugin
+  `web/core/plugin-contracts`): the wire legitimately composes the plugin
   contract's types. Never from behavior code (pi packages in the client
   are denied even as types).
 
@@ -99,7 +99,7 @@ Three contract surfaces exist, and each has exactly one home:
 
 | Contract | Home | Speaks between |
 |---|---|---|
-| Plugin contract (descriptor/view/action shapes) | `lib/web/plugins/` | extension ↔ web plugin ↔ client renderer |
+| Plugin contract (descriptor/view/action shapes) | `web/core/plugin-contracts/` | extension ↔ web plugin ↔ client renderer |
 | Per-plugin constants (ids, action names) | `lib/<plugin>-web-view.ts` | the extension and the descriptor |
 | Wire contract (commands, pi_api, mentions) | `web/core/shared/` | client ↔ server |
 | pi built-in calls | `lib/web-pi-apis/` (the facade) | server ↔ pi's own modules |
@@ -193,7 +193,7 @@ Worked examples from this repo:
 - An extension importing `web/core/shared/` or `web/plugins/` — the bridge
   and lib contracts are its only web surface.
 - The client importing pi packages, even types — pi's shapes cross as
-  wire contracts, defined in `web/core/shared` or `lib/web-plugins`.
+  wire contracts, defined in `web/core/shared` or `web/core/plugin-contracts`.
 - Copying pi data into web source (command lists, changelogs) — call it
   at runtime (pi_api, routes) so upgrades cannot drift.
 - A "plugin" with logic in `web/plugins/` — descriptors are data; the

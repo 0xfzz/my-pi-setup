@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { parseManifestText, validateManifest } from "../lib/web-plugins/kernel/manifest.ts";
+import { parseManifestText, validateManifest } from "../web/core/plugin-contracts/kernel/manifest.ts";
 
 const base = () => ({
   id: "acme.zen-chat",

@@ -13,8 +13,8 @@ import { waitCommandProblem } from "../lib/delegation/wait-guard.ts";
 import { hasLiveDelegation } from "../lib/delegation/live.ts";
 import { DASHBOARD_SYNC_EVENT, publishDashboardMode } from "../lib/dashboard/integration.ts";
 import { MODES_LEAVE_PLAN_ACTION, MODES_PLUGIN_ID, MODES_TOGGLE_MODE_ACTION, modeWebView } from "../lib/modes-web-view.ts";
-import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../lib/web-plugins/actions.ts";
-import { publishWebView } from "../lib/web-plugins/publisher.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
+import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 
 /** Derive from the UI contract so this does not depend on a re-exported alias. */
 type EditorFactory = NonNullable<ReturnType<ExtensionContext["ui"]["getEditorComponent"]>>;

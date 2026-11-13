@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 
 import modes from "../extensions/modes.ts";
 import { PLAN_MODE_TYPE } from "../lib/plan/plan-mode.ts";
-import { WEB_PLUGIN_VIEW_EVENT } from "../lib/web-plugins/view.ts";
-import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../lib/web-plugins/actions.ts";
+import { WEB_PLUGIN_VIEW_EVENT } from "../web/core/plugin-contracts/view.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../web/core/plugin-contracts/actions.ts";
 
 type Handler = (event: unknown, ctx?: unknown) => unknown;
 

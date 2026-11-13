@@ -11,8 +11,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createStreamTracker, type StreamSnapshot } from "./stream-tracker.ts";
 import type { WebTreeNode } from "../../../lib/web-tree.ts";
-import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../../../lib/web-plugins/actions.ts";
-import { WEB_PLUGIN_UI_SYNC_EVENT, type WebUiType } from "../../../lib/web-plugins/ui-event-models.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../plugin-contracts/actions.ts";
+import { WEB_PLUGIN_UI_SYNC_EVENT, type WebUiType } from "../plugin-contracts/ui-event-models.ts";
 import {
   recordExtensionUi,
   webPluginsStore,

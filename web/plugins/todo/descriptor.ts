@@ -1,4 +1,4 @@
-import type { WebPluginDescriptor } from "../../../lib/web-plugins/descriptor.ts";
+import type { WebPluginDescriptor } from "../../core/plugin-contracts/descriptor.ts";
 
 export const todoPlugin: WebPluginDescriptor = {
   id: "todo",

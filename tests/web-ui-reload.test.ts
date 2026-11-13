@@ -75,12 +75,12 @@ test("build and runtime inputs are fingerprinted separately, so a plugin edit do
   try {
     const serverDir = join(repo, "web");
     await mkdir(join(serverDir, "core", "client"), { recursive: true });
-    await mkdir(join(repo, "lib", "web-plugins"), { recursive: true });
+    await mkdir(join(repo, "web", "core", "plugin-contracts"), { recursive: true });
     await writeFile(join(serverDir, "core", "client", "shell.tsx"), "ui");
-    await writeFile(join(repo, "lib", "web-plugins", "host.ts"), "logic");
+    await writeFile(join(repo, "web", "core", "plugin-contracts", "host.ts"), "logic");
     const first = sourceFingerprints(serverDir, repo);
 
-    await writeFile(join(repo, "lib", "web-plugins", "host.ts"), "logic v2");
+    await writeFile(join(repo, "web", "core", "plugin-contracts", "host.ts"), "logic v2");
     const second = sourceFingerprints(serverDir, repo);
     assert.equal(second.build, first.build, "runtime edit leaves the build fingerprint alone");
     assert.notEqual(second.runtime, first.runtime);
@@ -139,7 +139,7 @@ test("source roots name only the build inputs and our runtime directories", () =
   const roots = sourceWatchRoots("/repo/web", "/repo");
   assert.ok(roots.includes("/repo/web/core/client"));
   assert.ok(roots.includes("/repo/web/plugins"));
-  assert.ok(roots.includes("/repo/lib/web-plugins"));
+  assert.ok(roots.includes("/repo/web/core/plugin-contracts"));
   assert.equal(roots.some((r) => r.includes("node_modules") || r.endsWith("/web")), false);
 });
 

@@ -1,4 +1,4 @@
-import type { WebPluginDescriptor } from "../../../lib/web-plugins/descriptor.ts";
+import type { WebPluginDescriptor } from "../../../web/core/plugin-contracts/descriptor.ts";
 import {
   HELLO_WORLD_GREET_ACTION,
   HELLO_WORLD_PLUGIN_ID,

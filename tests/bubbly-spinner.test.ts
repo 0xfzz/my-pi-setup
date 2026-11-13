@@ -17,7 +17,7 @@ import {
   javaneseSpinnerVerbs,
   memeAndMagicSpinners,
 } from "../lib/bubbly-spinner.ts";
-import { WEB_UI_EVENT } from "../lib/web-plugins/ui-event-models.ts";
+import { WEB_UI_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
 
 function stripAnsi(text: string): string {
   // oxlint-disable-next-line no-control-regex

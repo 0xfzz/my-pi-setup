@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { AuditLog } from "../lib/web-plugins/kernel/audit.ts";
-import { CapabilityError } from "../lib/web-plugins/kernel/capabilities.ts";
-import type { DiscoveredPlugin } from "../lib/web-plugins/kernel/discovery.ts";
-import { validateManifest } from "../lib/web-plugins/kernel/manifest.ts";
-import { PluginManager, type PluginContext, type PluginLoader, type PluginRuntime } from "../lib/web-plugins/kernel/manager.ts";
-import { defaultState, type WebPluginsState } from "../lib/web-plugins/kernel/state.ts";
+import { AuditLog } from "../web/core/plugin-contracts/kernel/audit.ts";
+import { CapabilityError } from "../web/core/plugin-contracts/kernel/capabilities.ts";
+import type { DiscoveredPlugin } from "../web/core/plugin-contracts/kernel/discovery.ts";
+import { validateManifest } from "../web/core/plugin-contracts/kernel/manifest.ts";
+import { PluginManager, type PluginContext, type PluginLoader, type PluginRuntime } from "../web/core/plugin-contracts/kernel/manager.ts";
+import { defaultState, type WebPluginsState } from "../web/core/plugin-contracts/kernel/state.ts";
 
 type Behaviour = Partial<PluginRuntime> & { loadError?: string };
 

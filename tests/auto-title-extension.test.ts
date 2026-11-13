@@ -12,10 +12,10 @@ import {
   autoTitleWebView,
 } from "../lib/auto-title-web-view.ts";
 import { TITLE_ATTEMPT_ENTRY, TITLE_RECORD_ENTRY } from "../lib/title/provenance.ts";
-import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../lib/web-plugins/actions.ts";
-import { validatePlugin } from "../lib/web-plugins/descriptor.ts";
-import { validateRegistry } from "../lib/web-plugins/registry.ts";
-import { WEB_PLUGIN_VIEW_EVENT, validateView } from "../lib/web-plugins/view.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../web/core/plugin-contracts/actions.ts";
+import { validatePlugin } from "../web/core/plugin-contracts/descriptor.ts";
+import { validateRegistry } from "../web/core/plugin-contracts/registry.ts";
+import { WEB_PLUGIN_VIEW_EVENT, validateView } from "../web/core/plugin-contracts/view.ts";
 import { WEB_PLUGINS } from "../web/plugins/index.ts";
 import { autoTitlePlugin } from "../web/plugins/auto-title/descriptor.ts";
 

@@ -7,7 +7,7 @@ import { modesPlugin } from "./modes/descriptor.ts";
 import { subagentCheckpointsPlugin } from "./subagent-checkpoints/descriptor.ts";
 import { subagentMonitorPlugin } from "./subagent-monitor/descriptor.ts";
 import { todoPlugin } from "./todo/descriptor.ts";
-import type { WebPluginDescriptor } from "../../lib/web-plugins/descriptor.ts";
+import type { WebPluginDescriptor } from "../core/plugin-contracts/descriptor.ts";
 
 export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [
   cacheStatsPlugin,

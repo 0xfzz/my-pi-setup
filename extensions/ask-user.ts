@@ -3,9 +3,9 @@ import { Type } from "typebox";
 import { isSubagentChildSession } from "../lib/subagent-context.ts";
 import { AskUserPopup, type AskAnswer } from "../lib/ui/ask.ts";
 import { overlayRows, popupOverlayOptions } from "../lib/popup/frame.ts";
-import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../lib/web-plugins/actions.ts";
-import { publishWebView } from "../lib/web-plugins/publisher.ts";
-import type { DialogAction } from "../lib/web-plugins/view.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
+import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
+import type { DialogAction } from "../web/core/plugin-contracts/view.ts";
 
 type AskResult = {
   status: "answered" | "cancelled" | "forwarded" | "unavailable";

@@ -32,9 +32,9 @@ import {
   type PopupRow,
 } from "../lib/popup/frame.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
-import { publishWebView } from "../lib/web-plugins/publisher.ts";
-import type { ListItem } from "../lib/web-plugins/view.ts";
-import { WEB_PLUGIN_UI_SYNC_EVENT } from "../lib/web-plugins/ui-event-models.ts";
+import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
+import type { ListItem } from "../web/core/plugin-contracts/view.ts";
+import { WEB_PLUGIN_UI_SYNC_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
 import { markVolatileTail } from "../lib/cache-anchor.ts";
 import { TODO_DETAILS_HINT } from "../lib/workflow-actions.ts";
 import { planModeFromBranch } from "../lib/plan/plan-mode.ts";

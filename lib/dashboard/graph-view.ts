@@ -1,5 +1,5 @@
 import type { DashboardChild, DashboardEscalation, DashboardHandoff, DashboardReview, DashboardSnapshot, DashboardSpecReview } from "./protocol.ts";
-import { validateView, type GraphEdge, type GraphNode, type GraphWebView, type ListStatus, type WebView } from "../web-plugins/view.ts";
+import { validateView, type GraphEdge, type GraphNode, type GraphWebView, type ListStatus, type WebView } from "../../web/core/plugin-contracts/view.ts";
 
 /** Web plugin id and the read-only sync action it declares. Shared by the extension and its descriptor. */
 export const SUBAGENT_MONITOR_PLUGIN_ID = "subagent-monitor";

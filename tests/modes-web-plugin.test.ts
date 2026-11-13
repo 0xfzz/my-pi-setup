@@ -2,10 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { MODES_LEAVE_PLAN_ACTION, MODES_PLUGIN_ID, MODES_TOGGLE_MODE_ACTION, modeWebView } from "../lib/modes-web-view.ts";
-import { WEB_PLUGIN_VIEW_EVENT, validateView } from "../lib/web-plugins/view.ts";
-import { publishWebView } from "../lib/web-plugins/publisher.ts";
-import { validatePlugin, type WebPluginDescriptor } from "../lib/web-plugins/descriptor.ts";
-import { validateRegistry } from "../lib/web-plugins/registry.ts";
+import { WEB_PLUGIN_VIEW_EVENT, validateView } from "../web/core/plugin-contracts/view.ts";
+import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
+import { validatePlugin, type WebPluginDescriptor } from "../web/core/plugin-contracts/descriptor.ts";
+import { validateRegistry } from "../web/core/plugin-contracts/registry.ts";
 import { WEB_PLUGINS, WEB_PLUGIN_OPT_OUT } from "../web/plugins/index.ts";
 import { modesPlugin } from "../web/plugins/modes/descriptor.ts";
 

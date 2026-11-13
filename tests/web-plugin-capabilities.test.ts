@@ -12,7 +12,7 @@ import {
   parseCapability,
   validateCapabilities,
   type Capability,
-} from "../lib/web-plugins/kernel/capabilities.ts";
+} from "../web/core/plugin-contracts/kernel/capabilities.ts";
 
 const cap = (text: string): Capability => {
   const parsed = parseCapability(text);

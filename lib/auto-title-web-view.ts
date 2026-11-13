@@ -1,4 +1,4 @@
-import type { WebView } from "./web-plugins/view.ts";
+import type { WebView } from "../web/core/plugin-contracts/view.ts";
 
 /** Web plugin id and the actions it declares. Shared by the extension and its descriptor. */
 export const AUTO_TITLE_PLUGIN_ID = "auto-title";

@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { discoverPlugins, MANIFEST_FILE, packageWebPluginDirs, scanRoot } from "../lib/web-plugins/kernel/discovery.ts";
+import { discoverPlugins, MANIFEST_FILE, packageWebPluginDirs, scanRoot } from "../web/core/plugin-contracts/kernel/discovery.ts";
 
 const manifest = (id: string, extra: Record<string, unknown> = {}) => JSON.stringify({
   id,

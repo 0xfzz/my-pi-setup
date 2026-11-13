@@ -7,8 +7,8 @@
 // several candidates, the last plugin in registry order wins, and every
 // candidate is reported as a conflict.
 
-import type { WebPluginDescriptor, WebPluginRegion } from "../../../lib/web-plugins/descriptor.ts";
-import type { WebView } from "../../../lib/web-plugins/view.ts";
+import type { WebPluginDescriptor, WebPluginRegion } from "../plugin-contracts/descriptor.ts";
+import type { WebView } from "../plugin-contracts/view.ts";
 
 export type { WebPluginRegion };
 

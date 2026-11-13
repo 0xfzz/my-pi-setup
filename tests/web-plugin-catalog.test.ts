@@ -8,7 +8,7 @@ import {
   isProtectedPoint,
   lookupPoint,
   stablePoints,
-} from "../lib/web-plugins/kernel/catalog.ts";
+} from "../web/core/plugin-contracts/kernel/catalog.ts";
 
 test("every catalogued id is unique and uses a known kind", () => {
   const ids = EXTENSION_POINTS.map((p) => p.id);

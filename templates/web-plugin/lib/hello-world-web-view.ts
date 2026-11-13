@@ -4,7 +4,7 @@ import type { WebView } from "./web-plugins/view.ts";
  * Shared constants and the pure view factory for the `hello-world` plugin.
  *
  * This file is the neutral ground both halves import (see the plugin contract
- * in `lib/web-plugins/`): the extension publishes the view, the web descriptor
+ * in `web/core/plugin-contracts/`): the extension publishes the view, the web descriptor
  * declares it, and the client renders it. No pi API, no web runtime, no I/O —
  * only data, so it is the part a unit test pins directly.
  */

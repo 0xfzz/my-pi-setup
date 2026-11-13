@@ -6,8 +6,8 @@
 // built-in region returns on its own.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../lib/web-plugins/actions.ts";
-import { publishWebView } from "../lib/web-plugins/publisher.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../web/core/plugin-contracts/actions.ts";
+import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 import {
   EXAMPLE_OVERRIDE_PLUGIN_ID,
   EXAMPLE_OVERRIDE_SHOW_ACTION,

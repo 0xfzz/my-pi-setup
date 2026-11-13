@@ -7,7 +7,7 @@ import {
   bubblyMessageSegments,
   BubblyWordAnimator,
 } from "../lib/bubbly-spinner.ts";
-import { publishWebUi } from "../lib/web-plugins/publisher.ts";
+import { publishWebUi } from "../web/core/plugin-contracts/publisher.ts";
 
 export default function bubblySpinnerExtension(pi: ExtensionAPI) {
   const animator = new BubblyWordAnimator();

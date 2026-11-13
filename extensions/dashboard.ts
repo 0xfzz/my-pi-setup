@@ -39,8 +39,8 @@ import {
 } from "../lib/dashboard/integration.ts";
 import { projectSession } from "../lib/dashboard/projection.ts";
 import { childContextState, isSubagentChildSession } from "../lib/subagent-context.ts";
-import { publishWebView } from "../lib/web-plugins/publisher.ts";
-import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../lib/web-plugins/actions.ts";
+import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../web/core/plugin-contracts/actions.ts";
 import { delegationToGraphView, SUBAGENT_MONITOR_PLUGIN_ID, SUBAGENT_MONITOR_SYNC_ACTION } from "../lib/dashboard/graph-view.ts";
 import type { DashboardSnapshot } from "../lib/dashboard/protocol.ts";
 

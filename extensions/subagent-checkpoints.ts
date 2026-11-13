@@ -22,7 +22,7 @@ import {
 } from "../lib/subagent-state.ts";
 import { contextModeLabel } from "../lib/subagent-context.ts";
 import { offerSection } from "../lib/sidebar/sidebar-channel.ts";
-import { publishWebView } from "../lib/web-plugins/publisher.ts";
+import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 import { markVolatileTail } from "../lib/cache-anchor.ts";
 import { isTodoTool } from "../lib/todo-tools.ts";
 import { SUBAGENT_DETAILS_HINT } from "../lib/workflow-actions.ts";

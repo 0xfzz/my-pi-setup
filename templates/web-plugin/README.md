@@ -52,7 +52,7 @@ The two halves never import each other; they talk through two typed channels.
 **Extension → web.** `publishWebView(pi, PLUGIN_ID, view)` pushes a validated
 declarative view (`status`, `kv`, `list`, `graph`, `dialog`) over the event
 bus; the web client renders it where the descriptor places it. The view shape
-comes from `lib/web-plugins/view.ts`; per-plugin constants belong in
+comes from `web/core/plugin-contracts/view.ts`; per-plugin constants belong in
 `lib/<id>-web-view.ts` so both halves import the same ids and factory.
 
 **Web → extension.** The descriptor declares `actions`; when the user runs one,

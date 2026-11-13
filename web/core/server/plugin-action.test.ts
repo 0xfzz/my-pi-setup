@@ -9,7 +9,7 @@ import {
   webPluginsStore,
   type MinimalEventBus,
 } from "./plugin-host.ts";
-import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../../../lib/web-plugins/actions.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../plugin-contracts/actions.ts";
 
 test.afterEach(() => {
   clearWebPluginStateForTests();

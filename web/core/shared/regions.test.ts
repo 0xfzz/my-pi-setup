@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resolveRegionOverrides } from "./regions.ts";
-import type { WebPluginDescriptor, WebPluginRegion } from "../../../lib/web-plugins/descriptor.ts";
-import type { WebView } from "../../../lib/web-plugins/view.ts";
+import type { WebPluginDescriptor, WebPluginRegion } from "../plugin-contracts/descriptor.ts";
+import type { WebView } from "../plugin-contracts/view.ts";
 
 function overridePlugin(id: string, region: WebPluginRegion): WebPluginDescriptor {
   return {
