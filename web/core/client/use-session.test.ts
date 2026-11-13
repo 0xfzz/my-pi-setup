@@ -17,3 +17,21 @@ test("use-session holds a directory EventSource, not a /api/sessions poll", () =
   // must never return is a timer wired to the session-list refresh.
   assert.doesNotMatch(source, /setTimeout\([^)]*refreshSessions/, "no timeout timer drives the session list refresh");
 });
+
+// Regression: the model picker kept the previous session's model list —
+// switching sessions showed another session's models until that session
+// happened to push its own web_models event.
+test("switching sessions resets the model list and refetches it", () => {
+  assert.match(source, /setModels\(\{ models: \[\] \}\)/, "the selection effect clears the previous session's models");
+  assert.match(source, /void fetchModels\(selectedId\)/, "the selection effect fetches the new session's models");
+});
+
+// Regression: a slow /models response for a session the user had already
+// left overwrote the now-selected session's list.
+test("fetchModels drops a response for a session the user left", () => {
+  assert.match(
+    source,
+    /selectedIdRef\.current !== id/,
+    "a stale fetch response is discarded before it reaches state",
+  );
+});

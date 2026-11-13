@@ -240,6 +240,10 @@ export function usePiSession() {
   const [historyEpoch, setHistoryEpoch] = useState(0);
 
   const streamingRef = useRef<StreamingState>(INITIAL_STREAMING_STATE);
+  // Latest selection, read by async callbacks (fetchModels) that must not
+  // apply a response belonging to a session the user already left.
+  const selectedIdRef = useRef<string | null>(selectedId);
+  selectedIdRef.current = selectedId;
   const applyStream = useCallback((action: StreamAction) => {
     const next = streamReducer(streamingRef.current, action);
     if (next !== streamingRef.current) {
@@ -364,6 +368,26 @@ export function usePiSession() {
     }
   }, []);
 
+  // The web picker's model list. The SSE `web_models` push keeps it live;
+  // this fetch is the initial read so a session switch never shows the
+  // previous session's list.
+  const fetchModels = useCallback(async (id: string) => {
+    try {
+      const response = await fetch(`/api/agent/${encodeURIComponent(id)}/models`);
+      if (!response.ok) return;
+      const data = (await response.json()) as ModelsState;
+      // A slow response for a session the user already left must not
+      // overwrite the now-selected session's list.
+      if (selectedIdRef.current !== id) return;
+      setModels((prev) => ({
+        models: Array.isArray(data.models) ? data.models : prev.models,
+        current: data.current ?? prev.current,
+      }));
+    } catch {
+      // The picker falls back to what the SSE already delivered.
+    }
+  }, []);
+
   // The plugin registry is static per page load; the surfaces it declares
   // drive slots, pages and shortcut bindings.
   useEffect(() => {
@@ -399,6 +423,9 @@ export function usePiSession() {
     setUiPrompt(null);
     setToolResults({});
     setSessionCommands([]);
+    // The picker must not carry the previous session's models across the
+    // switch; the fetch below (or the session's web_models push) refills it.
+    setModels({ models: [] });
     streamingRef.current = INITIAL_STREAMING_STATE;
     setStreaming(INITIAL_STREAMING_STATE);
 
@@ -420,6 +447,10 @@ export function usePiSession() {
       .catch(() => {
         // The palette falls back to the built-ins.
       });
+
+    // The picker's initial read for this session, so the chip and the
+    // selector are correct without opening the picker first.
+    void fetchModels(selectedId);
 
     // The history fetch and the event stream race: an assistant reply that
     // ends while history is still loading must survive the load. Appends are
@@ -868,7 +899,7 @@ export function usePiSession() {
       source.close();
       setConnection("idle");
     };
-  }, [selectedId, historyEpoch, applyStream, fetchState]);
+  }, [selectedId, historyEpoch, applyStream, fetchState, fetchModels]);
 
   const newSession = useCallback(async (cwd?: string) => {
     try {
@@ -963,23 +994,6 @@ export function usePiSession() {
       // Same as above: the stream reports the true state.
     }
   }, [selectedId]);
-
-  // The web picker's model list. The SSE already streams web_models; the
-  // fetch is for sessions that attach without one (in-process) and for a
-  // fresh read on open.
-  const fetchModels = useCallback(async (id: string) => {
-    try {
-      const response = await fetch(`/api/agent/${encodeURIComponent(id)}/models`);
-      if (!response.ok) return;
-      const data = (await response.json()) as ModelsState;
-      setModels((prev) => ({
-        models: Array.isArray(data.models) ? data.models : prev.models,
-        current: data.current ?? prev.current,
-      }));
-    } catch {
-      // The picker falls back to what the SSE already delivered.
-    }
-  }, []);
 
   // Apply a model from the web picker. The session acknowledges via the
   // session_state push; the optimistic update keeps the chip instant.
