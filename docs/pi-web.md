@@ -585,7 +585,11 @@ for future built-ins).
 the extension posts `web_models` (the picker's list: scoped or available
 models) and `session_state` (current model/thinking) at attach, at every
 turn start and after any change; picking a model POSTs to the session and
-the TUI applies it (`pi.setModel`) — footer included. A model changed in
+the TUI applies it (`pi.setModel`) — footer included. The picker offers the
+scope as one tab and every available model as "All models", and a pick from
+either tab resolves: the bridge looks the `provider/id` up in the whole
+catalogue it posted, not only in the scope, so a model outside the scope is
+selectable exactly as it is in the TUI's selector. A model changed in
 the terminal (its own `/model`, Ctrl+P) reaches the web at the next turn's
 `session_state` push, and the state the fetch-on-settle reads carries the
 same model so nothing resurrects a stale one.

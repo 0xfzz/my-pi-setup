@@ -44,6 +44,7 @@ import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../w
 import { WEB_PLUGIN_VIEW_EVENT, type DialogWebView, type WebView } from "../web/core/plugin-contracts/view.ts";
 import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 import { buildWebTree, type PiTreeNodeLike } from "../lib/web-tree.ts";
+import { findModelRef, uniqueModelRefs, type ModelRef } from "../lib/model-ref.ts";
 import { sseFrameData, takeSseFrames } from "../lib/web-sse.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
 import { defaultIsPidAlive, defaultReadState, defaultServerDir, defaultWebUiStatePath, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiCommandResult, type WebUiDeps } from "../lib/web-ui.ts";
@@ -190,12 +191,6 @@ function bridgeStateOf(ctx: ExtensionContext): Record<string, unknown> {
   };
 }
 
-/** A minimal model reference: enough for the web picker and setModel. */
-interface ModelRef {
-  provider: string;
-  id: string;
-}
-
 /**
  * The models the web picker offers — the same set the TUI's selector and
  * Ctrl+P cycling use: the session's scoped models when scoping is active,
@@ -212,15 +207,13 @@ function allModelRefs(ctx: ExtensionContext): ModelRef[] {
   return ctx.modelRegistry.getAvailable().map((model) => ({ provider: model.provider, id: model.id }));
 }
 
-/** Resolve a model reference the way the TUI does: exact `provider/id`, or a
- * unique bare `id` across providers. */
-function findModelRef(ctx: ExtensionContext, term: string): ModelRef | undefined {
-  const refs = modelRefs(ctx);
-  const trimmed = term.trim();
-  const exact = refs.find((ref) => `${ref.provider}/${ref.id}` === trimmed);
-  if (exact !== undefined) return exact;
-  const bare = refs.filter((ref) => ref.id === trimmed);
-  return bare.length === 1 ? bare[0] : undefined;
+/**
+ * Every model the picker can offer, scoped ones first. A pick must resolve
+ * against this whole pool: the picker's "All models" tab lists the full
+ * catalogue, so a pick outside the scope is legal (the TUI allows it too).
+ */
+function pickableModelRefs(ctx: ExtensionContext): ModelRef[] {
+  return uniqueModelRefs([...modelRefs(ctx), ...allModelRefs(ctx)]);
 }
 
 /** pi's thinking levels, in cycle order. */
@@ -656,7 +649,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     ) {
       const ctx = lastCtxForCommands;
       if (ctx === null) return;
-      const ref = findModelRef(ctx, `${command.provider}/${command.id}`);
+      const ref = findModelRef(pickableModelRefs(ctx), `${command.provider}/${command.id}`);
       if (ref === undefined) {
         ctxNotify(`model not found: ${command.provider}/${command.id}`);
         return;
