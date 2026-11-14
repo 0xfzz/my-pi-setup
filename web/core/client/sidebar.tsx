@@ -2,9 +2,10 @@
 // replacing the header dropdown. One row per session — the project name,
 // the state dot (pulsing while a turn runs), and how long ago it was active.
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { MagnifyingGlass, Moon, Plus, Sun, Terminal } from "@phosphor-icons/react";
 import type { SessionSummary } from "./use-session.ts";
+import { visibleSessions } from "./session-search.ts";
 import { useAuth } from "./auth-gate.tsx";
 import { toggleTheme, type Theme } from "./theme.ts";
 import { LoadingSpinner } from "./plugin-system/LoadingSpinner.tsx";
@@ -25,12 +26,21 @@ function relativeTime(modifiedAt: number, now: number): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
+/** Search debounce: one server round trip per pause, not per keystroke. */
+export const SEARCH_DEBOUNCE_MS = 200;
+
 export interface SessionSidebarProps {
   sessions: SessionSummary[];
   loading?: boolean;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   onNewSession: () => void;
+  /**
+   * Search the whole directory, past the loaded window. The list the sidebar
+   * holds is recent work only, so a session that fell out of it — one whose
+   * only memorable text is a generated title — is reachable only this way.
+   */
+  onSearch?: (query: string) => Promise<SessionSummary[]>;
   /** The selected session is mid-turn right now (known instantly from the stream). */
   selectedRunning?: boolean;
   /** Plugin content mounted at the `session.sidebar` anchor, under the list. */
@@ -43,6 +53,7 @@ export function SessionSidebar({
   selectedId,
   onSelect,
   onNewSession,
+  onSearch,
   selectedRunning,
   anchorSlot,
 }: SessionSidebarProps) {
@@ -52,11 +63,27 @@ export function SessionSidebar({
   );
   const auth = useAuth();
   const [search, setSearch] = useState("");
-  const query = search.trim().toLowerCase();
+  // Rows the server found beyond the loaded window, for the current query.
+  const [remoteMatches, setRemoteMatches] = useState<SessionSummary[]>([]);
+  const query = search.trim();
+
+  useEffect(() => {
+    if (query === "" || onSearch === undefined) {
+      // Same reference when there is nothing to clear: an unconditional []
+      // would spend a render on every mount and every cleared query.
+      setRemoteMatches((previous) => (previous.length === 0 ? previous : []));
+      return;
+    }
+    // A late answer for an abandoned query is dropped by the caller's own
+    // guard, so this only has to avoid the extra round trip.
+    const timer = setTimeout(() => {
+      void onSearch(query).then(setRemoteMatches);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [query, onSearch]);
+
   const now = Date.now();
-  const ordered = sessions.filter((session) =>
-    `${session.name ?? ""} ${session.cwd} ${session.id}`.toLowerCase().includes(query),
-  ).sort((a, b) => {
+  const ordered = visibleSessions(sessions, query, remoteMatches).sort((a, b) => {
     // Live sessions first, then most recently active.
     if (a.live !== b.live) return a.live ? -1 : 1;
     return b.modifiedAt - a.modifiedAt;

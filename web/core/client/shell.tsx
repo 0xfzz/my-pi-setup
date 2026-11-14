@@ -477,6 +477,7 @@ export function AppShell() {
         setNewSessionOpen(true);
         if (window.innerWidth <= 720) setSidebarOpen(false);
       }}
+      onSearch={session.searchSessions}
       anchorSlot={<AnchorHost anchor="session.sidebar" {...anchorHostProps} />}
     />
   );

@@ -541,10 +541,11 @@ async function run() {
     //     a horizontal scrollbar.
     await page.setViewportSize({ width: 420, height: 800 });
     await page.locator(".app-sidebar-toggle").waitFor({ state: "visible", timeout: 10_000 });
-    assert.ok(
-      await page.evaluate(() => document.querySelector(".app-sidebar-wrap") !== null),
-      "the sidebar wrapper exists",
-    );
+    // The wrapper appears when the resize handler flips the shell out of its
+    // wide layout, which is a re-render — so wait for it rather than sampling
+    // the DOM in the same tick as setViewportSize (the toggle above is in the
+    // header and is visible at every width, so it proves nothing).
+    await page.locator(".app-sidebar-wrap").waitFor({ state: "attached", timeout: 10_000 });
     // Off-canvas, then the ☰ opens the overlay with a scrim.
     await page.waitForFunction(
       () => {

@@ -275,6 +275,28 @@ export function usePiSession() {
     }
   }, []);
 
+  // The latest search the user typed. A slower earlier response must not
+  // replace the results for a query the box has already moved past.
+  const searchQueryRef = useRef("");
+  /**
+   * Search the whole session directory, not just the loaded window. The
+   * sidebar filters what it holds instantly; this is what lets a generated
+   * title on an older session still be found.
+   */
+  const searchSessions = useCallback(async (query: string): Promise<SessionSummary[]> => {
+    const trimmed = query.trim();
+    searchQueryRef.current = trimmed;
+    if (trimmed === "") return [];
+    try {
+      const res = await fetch(`/api/sessions?q=${encodeURIComponent(trimmed)}`);
+      const body = (await res.json()) as { sessions?: SessionSummary[] };
+      if (searchQueryRef.current !== trimmed) return [];
+      return body.sessions ?? [];
+    } catch {
+      return [];
+    }
+  }, []);
+
   // The session list is push-driven: one directory EventSource carries the
   // full snapshot on connect, then only running/idle and add/remove
   // transitions — no polling. A failed stream (server restart) reconnects
@@ -1093,6 +1115,7 @@ export function usePiSession() {
     models,
     fetchModels,
     setModel,
+    searchSessions,
     setThinking,
     dialogRequest,
     clearDialogRequest,
