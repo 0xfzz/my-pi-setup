@@ -81,7 +81,50 @@ A plugin's npm dependencies belong to its own `package.json` and install via
 the web root's npm workspaces (`web/package.json` → `"workspaces": ["plugins/*"]`).
 Keep plugin-internal dependencies out of `web/package.json`.
 
-## 4. When you need a panel (rare)
+## 4. When you need a backend endpoint
+
+A plugin may ship a **server half** (`main.server`) that mounts its own HTTP
+routes under `/api/p/<id>/` — no core edit, no route table entry:
+
+```ts
+// web/plugins/<id>/server/index.ts
+import type { PluginRuntime } from "../../../core/plugin-contracts/kernel/manager.ts";
+
+const runtime: PluginRuntime = {
+  setup(ctx) {
+    ctx.routes.get("summary", async (request) => ({
+      status: 200,
+      body: { session: request.sessionId, root: request.sessionRoot },
+    }));
+  },
+};
+
+export default runtime;
+```
+
+Declare it in a `pi-web-plugin.json` beside the descriptor:
+
+```jsonc
+{
+  "id": "hello-world",
+  "name": "Hello world",
+  "version": "1.0.0",
+  "engines": { "piWeb": "^1.0.0", "sdk": "^1.0.0" },
+  "main": { "server": "./server/index.ts" },
+  "trust": "trusted",
+  "capabilities": ["routes"],
+  "activation": ["onStartup"],
+  "contributes": { "surfaces": [{ "kind": "sidebar" }], "title": "Hello world" }
+}
+```
+
+The dispatcher owns authentication, the `routes` capability check, the
+`sessionId` → `sessionRoot` resolution and a 10 s budget (a throw or timeout is
+a 502, never a crash). The route exists only while the plugin is active. See
+`web/plugins/files/server/index.ts` for a streaming example that owns the
+response via `request.transport` and returns `{ handled: true }`.
+
+## 5. When you need a panel (rare)
 
 Most plugins are declarative only — no React. A bespoke panel (Files, Artifacts)
 keeps its components in `web/plugins/<id>/`, registers them in

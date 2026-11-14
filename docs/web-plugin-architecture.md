@@ -64,6 +64,22 @@ When a TUI extension grows a web surface, the web plugin is the *bridge
 for that surface*: it maps the TUI shape to a web placement. It never
 decides anything; it declares.
 
+**Two ways to install one.** A first-party plugin is listed in
+`web/plugins/index.ts` and registered by the composition root. A plugin from
+anywhere else ships a directory with `pi-web-plugin.json` under
+`~/.pi/agent/web-plugins`, `<project>/.pi/web-plugins`, or a pi package's
+`pi.webPlugins`; the kernel discovers it, validates the manifest without
+running code, and compiles its `contributes` block through the same
+descriptor validator. The repo tree is a discovery root too, which is how
+`web/plugins/files` ships a manifest **and** a server half.
+
+**A server half is code, and lives behind its own rule.** A plugin may declare
+`main.server`; that entry point runs in the web server process (native dynamic
+import, so it shares the host's module graph). Its directory gets the only
+allowance to reach `web/core/server/` — `web/plugins/files/server` is the
+single example — because reusing the audited fs policy beats duplicating
+traversal rules. Everything else under `web/plugins/` stays declarative.
+
 ## The layers and what may import what
 
 ```
@@ -124,13 +140,36 @@ The `extension` field on a descriptor is an id, not a file path: a plugin may
 bridge an extension installed as an external pi package, so
 `validatePlugin` no longer requires `extensions/<id>.ts` to exist.
 
+## Logic extension points (server half)
+
+The kernel exposes four seams a server-half plugin can use, each behind a
+capability and each removed on deactivate:
+
+| Seam | API | Wired at |
+|---|---|---|
+| Hooks — observe | `ctx.hooks.event(point, fn)` | `session.created`, `session.settled`, `message.appended`, `tool.finished`, `plugin.enabled` |
+| Hooks — transform | `ctx.hooks.waterfall(point, fn)` | `prompt.before-send`, `attachment.before-upload`, `message.before-render-model`, `session.list.sort` |
+| Hooks — veto | `ctx.hooks.bail(point, fn)` | `session.before-delete`, `file.before-read` |
+| Services | `ctx.services.provide/replace/decorate` | `service:session.search`, `service:model.pick`, `service:notifier`, `service:title-generator` |
+| Routes | `ctx.routes.get/post/put/patch/delete` | `/api/p/<pluginId>/…` |
+
+Every call site is a named point in `web/core/server/` — `sessions.ts` (prompt
+send, session lifecycle, session list sort, delete), `routes.ts` (history
+render, model pick) and `web/plugins/files/server/index.ts` (file read). A
+veto is recorded in the bounded audit log and surfaced to the caller (403 with
+the plugin's own reason); a throwing or slow handler is isolated and counted
+toward the breaker, never propagated into the host.
+
 ## The lifecycle
 
 ### A web surface, end to end
 
 1. **Descriptor** — `web/plugins/foo/descriptor.ts` declares the view, placement
    (`region`/`slot`/`anchor`), surfaces and actions. Registered in
-   `web/plugins/index.ts` (`WEB_PLUGINS`).
+   `web/plugins/index.ts` (`WEB_PLUGINS`). A plugin installed from a directory
+   instead ships `pi-web-plugin.json` whose `contributes` block carries the same
+   fields; the kernel compiles it through the same validator, so both kinds of
+   plugin reach the client identically.
 2. **Serving** — the composition root `web/server.ts` registers `WEB_PLUGINS`
    into the server plugin host (`web/core/server/plugin-host.ts`), which
    validates descriptors and serves them at `/api/plugins`; disabled or
@@ -145,7 +184,12 @@ bridge an extension installed as an external pi package, so
    arrived, and it applies the declared placement under the host's own
    ceilings (see *Placement and host ceilings* below). It computes no
    plugin data.
-5. **Actions back** — the user triggers a declared action →
+5. **Backend** — a plugin with a server half mounts its own routes with
+   `ctx.routes` under `/api/p/foo/…`; the dispatcher owns authentication,
+   the `routes` capability check, teardown on deactivate and the call budget.
+   The Files plugin's `/api/p/files/*` is the reference (see *A plugin's own
+   backend* below).
+6. **Actions back** — the user triggers a declared action →
    `POST /api/plugins/action` → `WEB_PLUGIN_ACTION_REQUEST_EVENT` → the
    pi extension handles it (behavior). A declared `confirm` string is
    enforced byte-identically before submission; keybindings are
@@ -165,7 +209,52 @@ bridge an extension installed as an external pi package, so
   opens a web dialog (interface) or forwards through the bridge
   (behavior executes in pi).
 
-### The pi_api facade (read-only built-ins)
+### A plugin's own backend
+
+The interface half declares what the browser shows; the server half declares
+what the browser can ask for. Both are declarations, so neither needs a core
+edit:
+
+```ts
+// web/plugins/acme/server/index.ts — loaded by the kernel from
+// pi-web-plugin.json → main.server
+import type { PluginRuntime } from "../../../core/plugin-contracts/kernel/manager.ts";
+
+const runtime: PluginRuntime = {
+  setup(ctx) {
+    ctx.routes.get("summary/:id", async (request) => ({
+      status: 200,
+      body: { id: request.params.id, root: request.sessionRoot },
+    }));
+  },
+};
+
+export default runtime;
+```
+
+`GET /api/p/acme/summary/42?sessionId=…` reaches it. The split of
+responsibilities is deliberate:
+
+| Concern | Owner |
+|---|---|
+| Which routes exist, and for how long | the kernel (registered in `setup`, removed on deactivate/rollback/quarantine) |
+| Path shape inside `/api/p/<pluginId>/` | the plugin (validated: no `..`, no `*`, `:param` segments only) |
+| Authentication, CSRF, body limits | the core server (`web/core/server/http.ts`, `auth.ts`) |
+| Session resolution (`sessionId` → `sessionRoot`) | the dispatcher, before the handler runs |
+| Time budget, error isolation, 502 mapping | the dispatcher (`runWithBudget`, 10 s default) |
+| The bytes/JSON of the answer | the plugin |
+
+A handler that must own the response — streaming a file, holding a long-lived
+write — reads `request.transport` (the real `IncomingMessage`/`ServerResponse`)
+and returns `{ handled: true }`. That is the one escape hatch, and it exists
+because the Files plugin streams with Range support.
+
+**Capabilities still apply.** `ctx.routes` throws without the `routes`
+capability, exactly like `ctx.hooks` and `ctx.services`, so a manifest that
+forgot it fails activation with a named error instead of silently exposing an
+endpoint.
+
+## The pi_api facade (read-only built-ins)
 
 When the web needs a pi built-in *capability* (not behavior change), it
 calls it through `POST /api/agent/:id/pi_api` — the facade in
@@ -212,8 +301,15 @@ Worked examples from this repo:
 - Copying pi data into web source (command lists, changelogs) — call it
   at runtime (pi_api, routes) so upgrades cannot drift.
 - A "plugin" with logic in `web/plugins/` — descriptors are data; the
-  moment they need code, the code belongs in `lib/` (contract) or the
-  extension (behavior).
+  moment they need code, the code belongs in `lib/` (contract), the
+  extension (behavior), or the plugin's own `server/` entry (its declared
+  backend).
+- A plugin route that re-implements authentication, session resolution or
+  path policy — the dispatcher owns those; the handler owns the answer.
+- A descriptor field nothing mounts. Anchors, overrides and `sessionPanel`
+  are mounted by the client (`AnchorHost`, `ComponentOverrideHost`,
+  `panel-policy.ts`); a new placement must come with its host, or it is
+  dead metadata.
 
 ## Enforcement
 

@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | in progress: Phases 0–2 (server) and the modes re-port landed; Phases 3–7 not started. See [§16](#16-implementation-status). |
+| **Status** | in progress: Phases 0–2 (server), the modes re-port, external manifest descriptors, plugin routes, the operator plugin manager and client anchors/overrides landed; the browser runtime, sandbox tier and DX CLI are open. See [§16](#16-implementation-status). |
 | **Owner** | Faiz |
 | **Scope** | `lib/web-plugins/` (contracts + SDK), `web-plugins/` (first-party plugins), `vendor/pi-web/` (kernel only), `docs/` |
 | **Related** | [pi-web-pluggable-ui](./pi-web-pluggable-ui.md), [plugin-actions](./plugin-actions.md), [fork-pi-web-integration](./fork-pi-web-integration.md) |
@@ -466,9 +466,9 @@ What is done, what is not, and what was verified. "Done" means the kernel code a
 | Phase | Status | What landed (commit subjects) |
 | --- | --- | --- |
 | 0. Contracts | **Done (server)** | Manifest validation, extension-point catalog with stability and protected flags, capability grammar and grants, lifecycle state machine. Generated catalog doc `docs/web-plugin-catalog.md` with `--check`. Not done: browser-side contracts are still the vendored `web-ui-*.ts` copies (F9). |
-| 1. Lifecycle manager | **Done (server)** | Semver ranges, dependency resolver with named cycles, breaker and budgets, bounded audit log, `web-plugins.json` with atomic writes, crash-loop and safe mode, discovery over repo/user/project/package roots, manager (enable, disable, reload with rollback, quarantine, clear), `core.compat` adapter for `WEB_PLUGINS`, host facade wired into the vendored host. Not done: the Plugin manager UI, the `pi-web plugin` CLI, a loader for `main.browser`. |
-| 2. Logic extension points | **Partly done** | Hook bus (event, waterfall, bail) with budgets and isolation, failure counted toward the breaker; service registry (provide, replace, decorate) with conflict detection; scoped quota-limited storage. Call sites wired: `prompt.before-send` (waterfall) and `session.before-delete` (bail). Not done: `session.list.sort`, `session.title.generate`, the `/api/p/<id>/…` routes, the bridge, jobs, and the pi-event tap. |
-| 3. Browser runtime | Not started | The existing `UiComponent`/`PluginLayout` replace/wrap/hide path is unchanged. No slot/component registry, `PluginRoot`, loader, or theme engine. |
+| 1. Lifecycle manager | **Done (server + UI)** | Semver ranges, dependency resolver with named cycles, breaker and budgets, bounded audit log, `web-plugins.json` with atomic writes, crash-loop and safe mode, discovery over repo/user/project/package roots, manager (enable, disable, reload with rollback, quarantine, clear), `core.compat` adapter for `WEB_PLUGINS`, host facade wired into the minimal host. A discovered manifest's `contributes` block compiles into a served descriptor, so a third-party plugin reaches `/api/plugins` without a core edit. The operator Plugin manager page (`/plugins/core.plugin-manager`, a `core.*` plugin so safe mode keeps it reachable) drives `/api/plugin-manager`. Not done: the `pi-web plugin` CLI, a loader for `main.browser`. |
+| 2. Logic extension points | **Mostly done** | Hook bus (event, waterfall, bail) with budgets and isolation, failure counted toward the breaker; service registry (provide, replace, decorate) with conflict detection; scoped quota-limited storage; plugin route registry. Call sites wired in `web/core/server/`: `prompt.before-send`, `attachment.before-upload`, `session.before-delete`, `file.before-read`, `message.before-render-model`, `session.list.sort`, `session.search`/`model.pick` services, and the `session.created` / `session.settled` / `message.appended` / `tool.finished` / `plugin.enabled` events. Plugin routes mount at `/api/p/<pluginId>/…` with capability gating, budget, teardown and a raw-transport escape hatch; the Files plugin's backend is the reference. Not done: `session.title.generate`, the browser↔server bridge, jobs, and the pi-event tap. |
+| 3. Browser runtime | **Partly done** | Anchor placements mount through `AnchorHost` (policy in `anchor-policy.ts`: order, priority, `visibleWhen`, one-home-per-view precedence region → panel → anchor), and component overrides resolve through `ComponentOverrideHost` (`replace`/`hide` suppress the built-in, `wrap` renders beside it because a declarative view cannot receive it). Descriptors with `sessionPanel` (Files) are first-class panels. Not done: a browser module loader, `PluginRoot`, a theme engine. |
 | 4. Dogfood the core | Not started | Upstream components are not wrapped. |
 | 5. Sandboxed tier | Not started | |
 | 6. DX | Not started | No SDK package, scaffold, inspector overlay, or test harness. |
@@ -484,9 +484,9 @@ What is done, what is not, and what was verified. "Done" means the kernel code a
 | AC3 fallback | Not met | Browser runtime. |
 | AC4 quarantine | Met (kernel) | Three activate failures quarantine; others stay up; clear re-enables. |
 | AC5 logic hooks | Partly | Prompt transform and session veto work through the real delete route (`vendor/pi-web/app/api/sessions/delete-route.test.mjs`, untracked, see below). The sort decorator is kernel-level only. |
-| AC6 routes, storage, bridge | Partly | Storage works. Routes and bridge are not built. |
+| AC6 routes, storage, bridge | Mostly | Storage works; plugin routes are built (`tests/web-plugin-routes.test.ts`, `/api/p/<id>/*`, capability-gated, budgeted, torn down on disable). The browser↔server `bridge.call` channel is not built. |
 | AC7 live reload | Not met | `plugin dev` not built. |
-| AC8 insert-between and conflict | Partly | Exclusive-replacement conflict is rejected at registration; slot `before`/`after` ordering is not built. |
+| AC8 insert-between and conflict | Partly | Exclusive-replacement conflict is rejected at registration; anchor ordering is `order` → `priority` → plugin id (`tests/web-plugin-anchors.test.ts`); slot `before`/`after` insertion is not built. |
 | AC9 capabilities | Met (kernel) | `CapabilityError` names plugin and capability; denials are audited. The confirmation UI is not built. |
 | AC10 protected core | Met (kernel) | Hooks and services refuse protected points. |
 | AC11 no leaks across 50 cycles | Not met | No leak-check test yet. |

@@ -240,6 +240,9 @@ live session.
 | `/api/auth/logout` | POST | revoke the session, clear cookies |
 | `/api/plugins` | GET | visible descriptors (kernel: enabled, unquarantined) |
 | `/api/plugins/action` | POST | the plugin action route (below) |
+| `/api/plugin-manager` | GET | plugin kernel state for the manager page |
+| `/api/plugin-manager/:id/:action` | POST | enable / disable / reload / clear-quarantine |
+| `/api/p/<pluginId>/…` | * | a plugin's own backend routes |
 | `/api/sessions` | GET | live + disk sessions, newest first |
 | `/api/agent/new` | POST | spawn a pi session (`createAgentSession`) |
 | `/api/agent/:id` | GET / POST | state read / prompt, abort, get_state |
@@ -247,6 +250,7 @@ live session.
 | `/api/agent/:id/history` | GET | transcript entries |
 | `/api/agent/:id/commands` | GET | pi's runtime built-ins + the session's live commands |
 | `/api/agent/:id/pi_api` | POST | call a pi built-in api (below) |
+| `/api/sessions/:id` | DELETE | delete a session (`session.before-delete` may veto) |
 
 Every non-GET API request to a wrong method gets 405; unknown sessions 404. With a web password set, every route except `/api/health` and `/api/auth/*` answers 401 without a valid access token (see [Password protection](#password-protection-publishing-the-web)).
 
@@ -355,9 +359,29 @@ Sidebar, centre, and floating views are hosted in the right panel, opened only
 from the plugin's navbar icon. They never occupy chat height or float over its
 content. Sidebar placement also suppresses any duplicate top/bottom slot for
 that plugin. Plugins declaring only a top/bottom slot keep their inline strip;
-region overrides and dialogs are unchanged. Anchors (`chat.composer`,
-`chat.working`, `session.sidebar`) remain validated; a sidebar surface makes
-that plugin's published view available in the panel.
+region overrides and dialogs are unchanged.
+
+**Anchors** are the named host spots a plugin may add to instead of replacing:
+`app.header`, `session.header`, `session.sidebar`, `chat.before`, `chat.after`,
+`chat.composer`, `chat.working`, `file-panel.header`, `viewport.overlay`. A
+`ui[]` contribution with `placement: { kind: "anchor" }` mounts there, ordered
+by `order`, then `priority`, then plugin id, and gated by `visibleWhen`
+(`always` / `running` / `idle` / `has-view`). `AnchorHost`
+(`web/core/client/plugin-system/AnchorHost.tsx`) mounts them at each spot and
+`anchor-policy.ts` decides what goes where — pure functions, unit-tested
+without a browser.
+
+One published view renders once. The precedence is **region override → panel →
+anchor**: a plugin whose view already replaced a base region, or that the
+navbar opens in the right panel, is not mounted again at an anchor.
+
+**Component overrides** replace or hide a host component by key
+(`ui.working-indicator.v1`, `ui.extension-status.v1`, …) through
+`ComponentOverrideHost`. A declarative view has no way to receive and re-render
+the built-in, so `mode: "wrap"` renders the plugin's view *beside* the built-in
+(which always survives) while `replace` and `hide` suppress it. Resolution is
+the shared contract's (`resolveOverrides`), so the client and
+`validateRegistry` cannot disagree.
 
 Descriptors may declare an optional host-rendered `icon`: `files`, `list-checks`,
 `tree-structure`, `users`, `chart-bar`, `sliders`, `spinner`, or `puzzle-piece`.
@@ -371,10 +395,70 @@ server-side** — `kv`, `list` (status icons + markdown detail), `status`,
 `graph` (nodes, edges, markdown detail) — so a plugin never ships client
 code. The vocabulary: `web/core/plugin-contracts/view.ts`.
 
-**User plugins**: drop a descriptor with a server entry into
+**User plugins**: drop a directory with a `pi-web-plugin.json` into
 `~/.pi/agent/web-plugins` (or `.pi/web-plugins` in a project); the kernel
-(`web/core/plugin-contracts/kernel/`) discovers them, tracks enable state, and
-quarantines misbehaving ones — the same kernel the TUI-era host used.
+(`web/core/plugin-contracts/kernel/`) discovers it, validates the manifest
+before running any code, tracks enable state, and quarantines misbehaving
+ones. The manifest's `contributes` block carries the same descriptor fields
+(`title`, `icon`, `description`, `surfaces`, `ui`, `actions`, `sessionPanel`),
+so a discovered plugin's view appears at `/api/plugins` exactly like a
+first-party one. Precedence for a duplicate id is project > user > package >
+repo; the losers are listed as `shadowed` in the manager.
+
+First-party plugins may use the same mechanism: `web/plugins/files` ships a
+real manifest with a server half, so the repo tree is a discovery root too.
+
+### A plugin's own backend endpoints
+
+A plugin extends the HTTP API the same way it extends the UI — by declaring,
+not by editing core. `ctx.routes` mounts handlers under
+`/api/p/<pluginId>/`:
+
+```ts
+export default {
+  setup(ctx: PluginContext) {
+    ctx.routes.get("summary/:id", async (request) => ({
+      status: 200,
+      body: { id: request.params.id, sessions: await countSessions(request.sessionRoot) },
+    }));
+  },
+} satisfies PluginRuntime;
+```
+
+`GET /api/p/acme.metrics/summary/42` then reaches it. The dispatcher
+(`web/core/server/plugin-routes.ts`) owns everything the plugin must not
+re-implement: the route exists only while the plugin is active (routes are
+removed on deactivate), registration needs the `routes` capability, the path
+stays inside the plugin's own namespace, `sessionId` is resolved to
+`sessionRoot` before dispatch, and every call runs under a 10 s budget — a
+handler that throws or hangs answers 502 with `plugin_route_failed` /
+`plugin_route_timeout` instead of crashing the host. A handler that must own
+the response (streaming bytes) uses `request.transport` and returns
+`{ handled: true }`.
+
+The Files plugin is the reference: `web/plugins/files/server/index.ts` mounts
+`/api/p/files`, `/read`, `/search` and `/download`, reusing the audited
+traversal/symlink policy in `web/core/server/files.ts` rather than duplicating
+it. Its client (`web/plugins/files/lib/files-api.ts`) calls those routes.
+
+### The plugin manager
+
+`/plugins/core.plugin-manager` is a first-party **core** plugin, so safe mode
+(which starts only `core.*`) can never lock the operator out of the surface
+that fixes a broken plugin. It lists every installed plugin with its lifecycle
+state, granted/pending capabilities, mounted routes and quarantine reason, and
+drives four operator actions through `/api/plugin-manager`:
+
+| Request | Effect |
+|---|---|
+| `GET /api/plugin-manager` | status, safe mode, warnings, shadowed ids, routes, audit tail |
+| `POST /api/plugin-manager/:id/enable` | activate (retry a failed plugin) |
+| `POST /api/plugin-manager/:id/disable` | deactivate, dependents first |
+| `POST /api/plugin-manager/:id/reload` | re-import and roll back on failure |
+| `POST /api/plugin-manager/:id/clear-quarantine` | clear the breaker and retry |
+
+An unknown plugin is 404, a refused action (quarantined, unresolved) is 409
+with the kernel's own message.
 
 **Actions** are descriptor-declared and relayed over the session event bus:
 
