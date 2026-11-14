@@ -12,6 +12,7 @@ import type { DiscoveredPlugin } from "./discovery.ts";
 import { PluginLifecycle, isLive, type PluginEvent, type PluginState } from "./lifecycle.ts";
 import { HookBus } from "./hooks.ts";
 import { deactivationOrder, requiredDependents, resolvePlugins, type ResolverInput } from "./resolver.ts";
+import { PluginRouteRegistry, type PluginRouteHandler } from "./routes.ts";
 import { ServiceRegistry } from "./services.ts";
 import { PluginStorage, type ScopedStorage } from "./storage.ts";
 import { markActivating, markCleanShutdown, recordBoot, recoverInterruptedActivation, setPluginState, type WebPluginsState } from "./state.ts";
@@ -30,6 +31,17 @@ export interface PluginServices {
   decorate(name: string, wrap: (next: (...args: never[]) => unknown) => (...args: never[]) => unknown, priority?: number): () => void;
 }
 
+/** HTTP route registration for this plugin's own backend surface. */
+export interface PluginRoutes {
+  /** `ctx.routes.register("GET", "summary/:id", handler)` mounts /api/p/<pluginId>/summary/<id>. */
+  register(method: string, path: string, handler: PluginRouteHandler): () => void;
+  get(path: string, handler: PluginRouteHandler): () => void;
+  post(path: string, handler: PluginRouteHandler): () => void;
+  put(path: string, handler: PluginRouteHandler): () => void;
+  patch(path: string, handler: PluginRouteHandler): () => void;
+  delete(path: string, handler: PluginRouteHandler): () => void;
+}
+
 export interface PluginContext {
   readonly id: string;
   readonly signal: AbortSignal;
@@ -37,6 +49,11 @@ export interface PluginContext {
   register(dispose: () => void): void;
   readonly hooks: PluginHooks;
   readonly services: PluginServices;
+  /**
+   * Mount HTTP routes under `/api/p/<pluginId>/`. Needs the `routes` capability;
+   * every route is removed on deactivate and runs under a time budget.
+   */
+  readonly routes: PluginRoutes;
   /** Scoped storage; each scope needs its `storage:<scope>` grant. Survives deactivation. */
   readonly storage: ScopedStorage;
   /** Throws CapabilityError (and audits the denial) unless the capability is granted. */
@@ -78,6 +95,7 @@ export interface ManagerOptions {
   audit?: AuditLog;
   hooks?: HookBus;
   services?: ServiceRegistry;
+  routes?: PluginRouteRegistry;
   storage?: PluginStorage;
 }
 
@@ -132,6 +150,7 @@ export class PluginManager {
   private readonly audit: AuditLog;
   private readonly hooks: HookBus;
   private readonly services: ServiceRegistry;
+  private readonly routes: PluginRouteRegistry;
   private readonly storage: PluginStorage;
   private state: WebPluginsState;
   private safeMode = false;
@@ -149,6 +168,7 @@ export class PluginManager {
     this.audit = options.audit ?? new AuditLog({ clock: this.now });
     this.hooks = options.hooks ?? new HookBus();
     this.services = options.services ?? new ServiceRegistry();
+    this.routes = options.routes ?? new PluginRouteRegistry();
     this.storage = options.storage ?? new PluginStorage();
     this.hooks.setFailureHandler((failure) => {
       void this.reportFailure(failure.pluginId, `${failure.point} ${failure.reason}: ${failure.message}`);
@@ -263,7 +283,8 @@ export class PluginManager {
     else if (slot.life.state !== "enabled") slot.life.dispatch("enable");
     this.setOperator(id, { enabled: true });
     this.audit.append("enabled", id, "operator enabled");
-    await this.activateSlot(slot);
+    const activated = await this.activateSlot(slot);
+    if (activated) await this.hooks.event("plugin.enabled", { id, version: slot.plugin.manifest.version });
     return this.result(slot);
   }
 
@@ -353,6 +374,11 @@ export class PluginManager {
     return this.safeMode;
   }
 
+  /** Record a hook bail veto in the bounded audit log (PRD R24). */
+  recordVeto(pluginId: string, point: string, reason: string): void {
+    this.audit.append("veto", pluginId, `${point}: ${reason}`);
+  }
+
   /** Shut everything down: deactivate in reverse dependency order, then flush state. */
   async shutdown(): Promise<void> {
     const live = this.activeIds();
@@ -433,6 +459,14 @@ export class PluginManager {
         replace: (name, impl, priority) => this.services.register(owner, name, "replace", impl, priority),
         decorate: (name, wrap, priority) => this.services.register(owner, name, "decorate", wrap, priority),
       },
+      routes: {
+        register: (method, path, handler) => this.routes.register(owner, method, path, handler),
+        get: (path, handler) => this.routes.register(owner, "GET", path, handler),
+        post: (path, handler) => this.routes.register(owner, "POST", path, handler),
+        put: (path, handler) => this.routes.register(owner, "PUT", path, handler),
+        patch: (path, handler) => this.routes.register(owner, "PATCH", path, handler),
+        delete: (path, handler) => this.routes.register(owner, "DELETE", path, handler),
+      },
       storage: scoped,
       assert: (capability) => {
         const parsed = parseCapability(capability);
@@ -469,6 +503,7 @@ export class PluginManager {
   private disposeAll(slot: Slot): void {
     this.hooks.removeOwner(slot.plugin.id);
     this.services.removeOwner(slot.plugin.id);
+    this.routes.removeOwner(slot.plugin.id);
     while (slot.disposers.length) {
       const dispose = slot.disposers.pop()!;
       try {

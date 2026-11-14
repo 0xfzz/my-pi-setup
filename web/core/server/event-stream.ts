@@ -16,8 +16,7 @@ import type { SessionCore } from "./sessions.ts";
 import { onSessionReplaced } from "./sessions.ts";
 import {
   getServerBootId,
-  listDiskSessions,
-  listLiveSessions,
+  listAllSessions,
   subscribeSessionDirectory,
   type SessionDirectoryEvent,
   type SessionInfo,
@@ -272,23 +271,7 @@ export function attachAgentEventStream(
 }
 
 async function buildSessionsSnapshot(): Promise<SessionInfo[]> {
-  const live = listLiveSessions();
-  const liveIds = new Set(live.map((session) => session.id));
-  const disk = await listDiskSessions();
-  return [
-    ...live,
-    ...disk
-      .filter((session) => !liveIds.has(session.id))
-      .map((session) => ({
-        id: session.id,
-        cwd: session.cwd,
-        sessionFile: session.file,
-        live: false,
-        running: false,
-        modifiedAt: session.modifiedAt,
-        ...(session.name !== undefined ? { name: session.name } : {}),
-      })),
-  ];
+  return listAllSessions();
 }
 
 /**

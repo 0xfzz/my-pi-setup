@@ -1,6 +1,7 @@
-// Typed fetch layer for the Files panel. Every request carries the session id;
-// the server resolves the root and re-validates the path. Returns a
-// discriminated result so the UI can tell a real failure from a partial page.
+// Typed fetch layer for the Files panel. Every request carries the session id
+// and goes to the plugin's own backend surface, /api/p/files/* — registered by
+// this plugin's server half, not a core route. Returns a discriminated result
+// so the UI can tell a real failure from a partial page.
 
 import type { FileKind } from "../../../core/shared/file-kind.ts";
 
@@ -51,12 +52,20 @@ export interface FileRef {
   mtimeMs?: number;
 }
 
-function encode(sessionId: string, path: string): string {
+/** The plugin's route mount point: everything under it is this plugin's own. */
+const FILES_API = "/api/p/files";
+
+function encode(path: string): string {
   return encodeURIComponent(path);
 }
 
+/** `?sessionId=…` — the plugin route contract's session scope. */
+function scope(sessionId: string): string {
+  return `sessionId=${encodeURIComponent(sessionId)}`;
+}
+
 export function downloadUrl(sessionId: string, path: string, attach: boolean): string {
-  const base = `/api/agent/${encodeURIComponent(sessionId)}/files/download?path=${encode(sessionId, path)}`;
+  const base = `${FILES_API}/download?${scope(sessionId)}&path=${encode(path)}`;
   return attach ? `${base}&download=1` : base;
 }
 
@@ -84,16 +93,16 @@ function failure(code: string, message: string): FilesFailure {
 }
 
 export function fetchDirectory(sessionId: string, path: string, hidden: boolean): Promise<FilesResult<FilesListData>> {
-  const url = `/api/agent/${encodeURIComponent(sessionId)}/files?path=${encode(sessionId, path)}${hidden ? "&hidden=1" : ""}`;
+  const url = `${FILES_API}?${scope(sessionId)}&path=${encode(path)}${hidden ? "&hidden=1" : ""}`;
   return request<FilesListData>(url);
 }
 
 export function fetchText(sessionId: string, path: string): Promise<FilesResult<FilesTextData>> {
-  return request<FilesTextData>(`/api/agent/${encodeURIComponent(sessionId)}/files/read?path=${encode(sessionId, path)}`);
+  return request<FilesTextData>(`${FILES_API}/read?${scope(sessionId)}&path=${encode(path)}`);
 }
 
 export function fetchSearch(sessionId: string, query: string): Promise<FilesResult<FilesSearchData>> {
-  return request<FilesSearchData>(`/api/agent/${encodeURIComponent(sessionId)}/files/search?q=${encodeURIComponent(query)}`);
+  return request<FilesSearchData>(`${FILES_API}/search?${scope(sessionId)}&q=${encodeURIComponent(query)}`);
 }
 
 /**

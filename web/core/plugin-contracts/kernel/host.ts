@@ -10,6 +10,7 @@ import { discoverPlugins, type DiscoveredPlugin, type DiscoveryRoots, type Shado
 import { PluginManager, type BootReport, type PluginLoader, type PluginRuntime } from "./manager.ts";
 import type { PluginState } from "./lifecycle.ts";
 import { HookBus } from "./hooks.ts";
+import { PluginRouteRegistry } from "./routes.ts";
 import { ServiceRegistry } from "./services.ts";
 import { PluginStorage } from "./storage.ts";
 import { loadState, saveState, type WebPluginsState } from "./state.ts";
@@ -22,7 +23,7 @@ export interface PluginHostOptions<D extends DescriptorLike> {
   descriptors: readonly D[];
   /** Directory the descriptors live in; reported as their source location. */
   descriptorDir: string;
-  roots?: Pick<DiscoveryRoots, "user" | "project" | "packages">;
+  roots?: Pick<DiscoveryRoots, "repo" | "user" | "project" | "packages">;
   statePath: string;
   env?: Record<string, string | undefined>;
   /** False when this evaluation is not a server start (see ManagerOptions.countStarts). */
@@ -38,6 +39,7 @@ export interface PluginHost<D extends DescriptorLike> {
   /** Logic hooks shared by every plugin; the host calls `waterfall`/`bail` at its call sites. */
   readonly hooks: HookBus;
   readonly services: ServiceRegistry;
+  readonly routes: PluginRouteRegistry;
   readonly storage: PluginStorage;
   /** Resolves once the manager has booted (activation done or failed for each plugin). */
   readonly ready: Promise<BootReport>;
@@ -105,6 +107,7 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
   const audit = new AuditLog({ clock: options.now });
   const hooks = new HookBus();
   const services = new ServiceRegistry();
+  const routes = new PluginRouteRegistry();
   const storage = new PluginStorage();
   const manager = new PluginManager({
     plugins: discovered.selected,
@@ -116,6 +119,7 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     audit,
     hooks,
     services,
+    routes,
     storage,
     persist: (state: WebPluginsState) => {
       try {
@@ -156,6 +160,7 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     shadowed: discovered.shadowed,
     hooks,
     services,
+    routes,
     storage,
     ready: manager.start(),
     warnings,

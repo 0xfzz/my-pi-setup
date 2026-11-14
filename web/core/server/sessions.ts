@@ -15,9 +15,9 @@ import {
 import { buildWebTree, type WebTreeNode } from "../../../lib/web-tree.ts";
 import { createStreamTracker, type StreamSnapshot } from "./stream-tracker.ts";
 import { createReadStream, existsSync } from "node:fs";
-import { open, readFile, readdir, stat } from "node:fs/promises";
+import { open, readFile, readdir, stat, unlink } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { attachSessionPlugins } from "./plugin-host.ts";
+import { attachSessionPlugins, getPluginHost } from "./plugin-host.ts";
 import { createHeadlessWebUiContext } from "./web-ui-context.ts";
 
 export interface SessionStateLite {
@@ -326,20 +326,35 @@ function toCore(inner: AgentSession): SessionCore {
   };
 }
 
-/** One permanent tap per live session: detect running/idle flips from lifecycle events. */
-function trackSessionDirectory(core: SessionCore): void {
+/** One permanent tap per live session: detect running/idle flips and emit kernel hooks. */
+function trackSessionDirectory(core: SessionCore, cwd: string): void {
   const id = core.sessionId;
   directoryTaps.get(id)?.();
   directoryTaps.delete(id);
   directoryRunning.set(id, core.getState().isStreaming);
   const unsubscribe = core.subscribe((event: unknown) => {
-    const type = (event as { type?: unknown } | null)?.type;
+    const typed = event as { type?: unknown; name?: string; message?: unknown; toolCallId?: string; toolName?: string; isError?: boolean } | null;
+    const type = typed?.type;
+    const host = getPluginHost();
     if (type === "agent_start") {
       setSessionRunning(id, true);
-    } else if (type === "agent_settled" || type === "session_shutdown") {
+    } else if (type === "agent_settled") {
+      setSessionRunning(id, false);
+      if (host !== null) void host.hooks.event("session.settled", { sessionId: id, project: cwd });
+    } else if (type === "session_shutdown") {
       setSessionRunning(id, false);
     } else if (type === "session_info_changed") {
-      recordSessionName(id, (event as { name?: string }).name);
+      recordSessionName(id, typed?.name);
+    } else if (type === "message_end" && host !== null) {
+      void host.hooks.event("message.appended", { sessionId: id, project: cwd, message: typed?.message });
+    } else if (type === "tool_execution_end" && host !== null) {
+      void host.hooks.event("tool.finished", {
+        sessionId: id,
+        project: cwd,
+        toolCallId: typed?.toolCallId,
+        toolName: typed?.toolName,
+        isError: typed?.isError === true,
+      });
     }
   });
   directoryTaps.set(id, unsubscribe);
@@ -397,10 +412,14 @@ function register(core: SessionCore, cwd: string, sessionFile: string, inner?: u
   // takeover or an in-process resume both refresh the listing).
   const seeded = core.getSessionName?.()?.trim();
   if (seeded) sessionNames.set(core.sessionId, seeded);
-  trackSessionDirectory(core);
+  trackSessionDirectory(core, cwd);
   const registered = liveSessions.get(core.sessionId);
   if (registered !== undefined) {
     emitDirectory({ type: "session_added", session: sessionInfoOf(registered) });
+    if (replaced === undefined) {
+      const host = getPluginHost();
+      if (host !== null) void host.hooks.event("session.created", { sessionId: core.sessionId, project: cwd });
+    }
   }
   return core;
 }
@@ -531,6 +550,95 @@ function sessionInfoOf(handle: SessionHandle): SessionInfo {
 
 export function listLiveSessions(): SessionInfo[] {
   return [...liveSessions.values()].map(sessionInfoOf);
+}
+
+/**
+ * Combined live + disk session snapshot, transformed through `session.list.sort`
+ * waterfall hooks and filtered by `service:session.search` when `query` is set.
+ */
+export async function listAllSessions(options?: { agentDir?: string; query?: string }): Promise<SessionInfo[]> {
+  const live = listLiveSessions();
+  const liveIds = new Set(live.map((session) => session.id));
+  const disk = await listDiskSessions({ agentDir: options?.agentDir });
+  let sessions: SessionInfo[] = [
+    ...live,
+    ...disk
+      .filter((session) => !liveIds.has(session.id))
+      .map((session) => ({
+        id: session.id,
+        cwd: session.cwd,
+        sessionFile: session.file,
+        live: false,
+        running: false,
+        modifiedAt: session.modifiedAt,
+        ...(session.name !== undefined ? { name: session.name } : {}),
+      })),
+  ];
+  const host = getPluginHost();
+  if (host !== null) {
+    const sorted = await host.hooks.waterfall("session.list.sort", sessions, {});
+    if (Array.isArray(sorted)) sessions = sorted;
+    const trimmed = options?.query?.trim();
+    if (trimmed !== undefined && trimmed !== "") {
+      const searchService = host.services.resolve<(rows: SessionInfo[], q: string) => SessionInfo[] | Promise<SessionInfo[]>>("session.search");
+      if (searchService !== undefined) {
+        const matched = await searchService(sessions, trimmed);
+        if (Array.isArray(matched)) sessions = matched;
+      } else {
+        const needle = trimmed.toLowerCase();
+        sessions = sessions.filter((row) =>
+          row.id.toLowerCase().includes(needle)
+          || row.cwd.toLowerCase().includes(needle)
+          || (row.name?.toLowerCase().includes(needle) ?? false));
+      }
+    }
+  }
+  return sessions;
+}
+
+export type DeleteSessionResult =
+  | { status: "ok" }
+  | { status: "not_found" }
+  | { status: "vetoed"; reason: string; pluginId: string };
+
+/**
+ * Delete a session after consulting `session.before-delete` bail hooks. A veto
+ * stops deletion, records the veto in the kernel audit log, and surfaces the
+ * plugin's reason to the caller.
+ */
+export async function deleteSession(id: string, options?: { agentDir?: string }): Promise<DeleteSessionResult> {
+  const live = liveSessions.get(id);
+  const file = live?.sessionFile || (await resolveSessionFile(id, options?.agentDir));
+  if (live === undefined && file === null) {
+    return { status: "not_found" };
+  }
+  const cwd = live?.cwd ?? (file !== null ? ((await readSessionHeader(file))?.cwd ?? "") : "");
+  const name = sessionNames.get(id);
+  const host = getPluginHost();
+  if (host !== null) {
+    const veto = await host.hooks.bail("session.before-delete", {
+      session: {
+        id,
+        cwd,
+        live: live !== undefined,
+        ...(name !== undefined ? { name } : {}),
+      },
+    });
+    if (veto.denied) {
+      host.manager.recordVeto(veto.pluginId, "session.before-delete", veto.reason);
+      return { status: "vetoed", reason: veto.reason, pluginId: veto.pluginId };
+    }
+  }
+  if (live !== undefined) {
+    live.core.dispose?.();
+    unregisterSession(id);
+  }
+  sessionNames.delete(id);
+  if (file !== null && file !== "") {
+    diskNameCache.delete(file);
+    await unlink(file).catch(() => undefined);
+  }
+  return { status: "ok" };
 }
 
 export interface SessionInfo {
@@ -1002,25 +1110,50 @@ export function parseSessionCommand(body: unknown): SessionCommand | { error: st
 }
 
 /** Route a command to a live session (no implicit spawn: the routes ensure liveness). */
-export function sendCommand(id: string, command: SessionCommand): Promise<CommandResult> {
+export async function sendCommand(id: string, command: SessionCommand): Promise<CommandResult> {
   const handle = liveSessions.get(id);
-  if (handle === undefined) return Promise.resolve({ status: "not_found" });
+  if (handle === undefined) return { status: "not_found" };
   handle.lastActivityAt = Date.now();
   const { core } = handle;
   switch (command.type) {
     case "prompt": {
       const state = core.getState();
       if (state.isBashRunning) {
-        return Promise.resolve({
+        return {
           status: "error",
           error: "Cannot send a prompt while a shell command is running",
-        });
+        };
+      }
+      let message = command.message;
+      let images = command.images;
+      const host = getPluginHost();
+      if (host !== null) {
+        const sessionCtx = { session: { id, project: handle.cwd, cwd: handle.cwd } };
+        const transformed = await host.hooks.waterfall("prompt.before-send", message, sessionCtx);
+        if (typeof transformed === "string") message = transformed;
+        if (images !== undefined && images.length > 0) {
+          const transformedImages: PromptImage[] = [];
+          for (const img of images) {
+            const nextImg = await host.hooks.waterfall("attachment.before-upload", img, sessionCtx);
+            if (
+              typeof nextImg === "object"
+              && nextImg !== null
+              && typeof (nextImg as PromptImage).data === "string"
+              && typeof (nextImg as PromptImage).mimeType === "string"
+            ) {
+              transformedImages.push(nextImg as PromptImage);
+            } else {
+              transformedImages.push(img);
+            }
+          }
+          images = transformedImages;
+        }
       }
       // The prompt rides as typed — `@file` mentions included. The model
       // reads them with pi's read tool, which natively strips the `@`
       // prefix (resolveReadPath); the server never inlines file content.
       return core
-        .prompt(command.message, command.images)
+        .prompt(message, images)
         .then((): CommandResult => ({ status: "ok", data: { accepted: true } }))
         .catch((error: unknown): CommandResult => ({
           status: "error",

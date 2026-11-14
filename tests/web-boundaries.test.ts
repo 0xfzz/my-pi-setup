@@ -156,8 +156,19 @@ const ZONES: readonly ZoneRules[] = [
     dir: "web/plugins",
     runtimeAllow: ["web/plugins/", "web/core/client/plugin-system/", "web/core/shared/", "lib/"],
     typeOnlyAllow: ["lib/", "web/core/plugin-contracts/"],
-    skip: ["web/plugins/dashboard"],
+    skip: ["web/plugins/dashboard", "web/plugins/files/server"],
     why: "plugin descriptors are declarative and plugin UI reuses core renderers; they never import pi behavior",
+  },
+  {
+    // A first-party plugin's SERVER half (Files). It mounts its own backend
+    // routes and reuses the audited fs policy in web/core/server/files.ts
+    // instead of duplicating traversal rules — the one place a plugin may
+    // reach core server code, kept to its own directory so the client half of
+    // the same plugin stays under the stricter rule above.
+    dir: "web/plugins/files/server",
+    runtimeAllow: ["web/plugins/files/server/", "web/core/server/", "web/core/plugin-contracts/", "web/core/shared/", "lib/", "node:"],
+    typeOnlyAllow: null,
+    why: "a plugin's server half mounts its own /api/p/<id> routes and reuses the core fs policy; it still never imports client or pi behavior",
   },
   {
     // The plugin contract/vocabulary: shared by pi-side publishers and web

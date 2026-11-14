@@ -2,11 +2,20 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { WebPluginDescriptor } from "./plugin-system/contract.ts";
 import { buildPanelEntries } from "./plugin-system/panel-entry.ts";
-import { filesPlugin } from "../../plugins/files/descriptor.ts";
 
 function plugin(id: string, title: string, surfaces: WebPluginDescriptor["surfaces"]): WebPluginDescriptor {
   return { id, title, extension: id, icon: "puzzle-piece", surfaces };
 }
+
+/** The Files plugin ships as a manifest (pi-web-plugin.json), not a descriptor module. */
+const filesPlugin: WebPluginDescriptor = {
+  id: "files",
+  extension: "web-core.files",
+  title: "Files",
+  icon: "files",
+  surfaces: [{ kind: "sidebar" }],
+  sessionPanel: true,
+};
 
 test("buildPanelEntries lists sidebar-eligible plugins including sessionPanel plugins in registry order", () => {
   const entries = buildPanelEntries(

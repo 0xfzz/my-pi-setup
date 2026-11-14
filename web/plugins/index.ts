@@ -4,7 +4,6 @@ import { autoTitlePlugin } from "./auto-title/descriptor.ts";
 import { bubblySpinnerPlugin } from "./bubbly-spinner/descriptor.ts";
 import { cacheStatsPlugin } from "./cache-stats/descriptor.ts";
 import { exampleOverridePlugin } from "./example-override/descriptor.ts";
-import { filesPlugin } from "./files/descriptor.ts";
 import { mcpManagerPlugin } from "./mcp-manager/descriptor.ts";
 import { modesPlugin } from "./modes/descriptor.ts";
 import { subagentCheckpointsPlugin } from "./subagent-checkpoints/descriptor.ts";
@@ -24,7 +23,6 @@ export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [
   askUserPlugin,
   mcpManagerPlugin,
   exampleOverridePlugin,
-  filesPlugin,
 ];
 
 export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {

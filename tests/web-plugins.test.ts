@@ -758,10 +758,13 @@ test("phase 6 placements: WEB_PLUGINS declared with exact slot and page placemen
   const diskSet = new Set(diskFiles.map(normalizeExtName));
   const localBridged = WEB_PLUGINS.filter((p) => diskSet.has(normalizeExtName(p.extension)));
   assert.equal(localBridged.length + Object.keys(WEB_PLUGIN_OPT_OUT).length, diskFiles.length);
-  for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "subagent-monitor", "bubbly-spinner", "files"]) {
+  for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "subagent-monitor", "bubbly-spinner"]) {
     assert.ok(WEB_PLUGINS.some((plugin) => plugin.id === id), `${id} must be a registered plugin`);
     assert.equal(id in WEB_PLUGIN_OPT_OUT, false, `${id} must not also be opted out`);
   }
+  // The Files plugin ships as a manifest with a server half (it mounts
+  // /api/p/files/*), so the kernel discovers it instead of WEB_PLUGINS listing it.
+  assert.equal(WEB_PLUGINS.some((plugin) => plugin.id === "files"), false);
 
   // Exact Phase 6 placement assertions (R2 amended in 23b66e5)
   assert.deepEqual(cacheStatsPlugin.surfaces, [

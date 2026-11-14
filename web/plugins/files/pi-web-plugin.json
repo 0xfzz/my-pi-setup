@@ -1,0 +1,18 @@
+{
+  "id": "files",
+  "name": "Files",
+  "version": "1.0.0",
+  "engines": { "piWeb": "^1.0.0", "sdk": "^1.0.0" },
+  "main": { "server": "./server/index.ts" },
+  "trust": "trusted",
+  "capabilities": ["routes", "fs.read:*"],
+  "activation": ["onStartup"],
+  "contributes": {
+    "title": "Files",
+    "extension": "web-core.files",
+    "icon": "files",
+    "description": "Session-scoped file browser, preview, and document viewer.",
+    "sessionPanel": true,
+    "surfaces": [{ "kind": "sidebar" }]
+  }
+}

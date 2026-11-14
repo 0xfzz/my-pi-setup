@@ -5,10 +5,10 @@
 // kernel) live in the root repo and are shared, not copied.
 
 import { homedir, tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { createJiti } from "jiti";
 import {
   WEB_PLUGIN_VIEW_EVENT,
   validateView,
@@ -137,8 +137,6 @@ function defaultPluginStatePath(): string {
     : join(homedir(), ".pi", "agent", "web-plugins.json");
 }
 
-const jiti = createJiti(import.meta.url);
-
 interface DiscoveredPluginLike {
   dir: string;
   manifest: { main?: { server?: string } };
@@ -169,15 +167,25 @@ export function registerWebPlugins(
     descriptorDir: webPluginsDir,
     statePath: process.env.PI_WEB_PLUGIN_STATE ?? defaultPluginStatePath(),
     roots: {
+      // First-party plugins may ship a real manifest (pi-web-plugin.json) with a
+      // server half — the Files plugin does — so the repo tree is a discovery
+      // root exactly like a user or project directory.
+      repo: webPluginsDir,
       user: join(homedir(), ".pi", "agent", "web-plugins"),
       project: join(process.cwd(), ".pi", "web-plugins"),
     },
     env: process.env,
     // Only plugins with a server entry reach the loader; descriptors are declarative.
-    loader: (plugin: DiscoveredPluginLike) => {
+    //
+    // Native dynamic import, not a separate module loader: a plugin's server half
+    // imports core modules (the fs policy, this host), and those imports MUST
+    // resolve to the same module instances the host already holds. A bundling or
+    // isolated loader would give the plugin a second copy of the kernel's state.
+    loader: async (plugin: DiscoveredPluginLike) => {
       const entry = plugin.manifest.main?.server;
       if (!entry) return {};
-      const mod = jiti(join(plugin.dir, entry)) as { default?: object };
+      const url = pathToFileURL(join(plugin.dir, entry)).href;
+      const mod = (await import(url)) as { default?: object };
       return (mod.default ?? mod) as object;
     },
   });
@@ -190,6 +198,20 @@ export function registerWebPlugins(
   });
 
   return host;
+}
+
+/** Active kernel host instance, or null when registerWebPlugins has not run yet. */
+export function getPluginHost(): PluginHost<WebPluginDescriptor> | null {
+  return registry;
+}
+
+/** Swap the active kernel host in unit tests and return a restore callback. */
+export function setPluginHostForTests(host: PluginHost<WebPluginDescriptor> | null): () => void {
+  const previous = registry;
+  registry = host;
+  return () => {
+    registry = previous;
+  };
 }
 
 /** Read registered descriptors (enabled, unquarantined). */

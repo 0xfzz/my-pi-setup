@@ -10,11 +10,18 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startWebServer } from "./main.ts";
+import { registerWebPlugins } from "./plugin-host.ts";
+import { WEB_PLUGINS } from "../../plugins/index.ts";
 import {
   registerSession,
   type SessionCore,
   type SessionStateLite,
 } from "./sessions.ts";
+
+// File browsing is the Files plugin's own backend surface (/api/p/files/*), so
+// the kernel host must be booted for these routes to exist at all.
+const host = registerWebPlugins(WEB_PLUGINS);
+await host.ready;
 
 const SESSION_ID = "files-stream-session";
 /** Big enough that one chunk is never the whole body: aborts land mid-stream. */
@@ -71,7 +78,7 @@ async function withServer(fixtureRoot: string, fn: (baseUrl: string) => Promise<
 }
 
 async function downloadUrl(baseUrl: string): Promise<string> {
-  return `${baseUrl}/api/agent/${SESSION_ID}/files/download?path=big.pdf`;
+  return `${baseUrl}/api/p/files/download?sessionId=${SESSION_ID}&path=big.pdf`;
 }
 
 test("a full download streams the exact bytes inline", async () => {

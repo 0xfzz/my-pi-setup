@@ -14,6 +14,7 @@ import { attachBridge, getBridge, type BridgeState } from "./bridge.ts";
 import {
   checkAndSetInFlightAction,
   getPluginDescriptor,
+  getPluginHost,
   getRegisteredPlugins,
   isKnownSession,
   recordActionAudit,
@@ -22,15 +23,14 @@ import {
 } from "./plugin-host.ts";
 import {
   announceCodeChanges,
+  deleteSession,
   ensureSession,
   getServerBootId,
   getSession,
-  listDiskSessions,
-  listLiveSessions,
+  listAllSessions,
   parseSessionCommand,
   readHistory,
   resolveSessionFile,
-  resolveSessionRoot,
   sendCommand,
   startSession,
 } from "./sessions.ts";
@@ -38,10 +38,10 @@ import { handlePiApiRequest } from "./pi-api.ts";
 import { piBuiltinCommands } from "../pi-api/index.ts";
 import { annotateBuiltinCommands } from "../shared/commands.ts";
 import { attachAgentEventStream, attachSessionsEventStream } from "./event-stream.ts";
-import { listDirectory, readText, searchPaths, statusForCode, streamFile, type FileFailure } from "./files.ts";
+import { handlePluginRoute } from "./plugin-routes.ts";
 import { readJsonBody, sendJson } from "./http.ts";
 
-type HttpMethod = "GET" | "POST";
+type HttpMethod = "GET" | "POST" | "DELETE";
 
 interface RouteMatch {
   /** The session id captured from the path's id segment, decoded. */
@@ -303,24 +303,22 @@ async function handleSessionsEvents(ctx: ApiRouteContext): Promise<void> {
 }
 
 async function handleSessionsList(ctx: ApiRouteContext): Promise<void> {
-  const live = listLiveSessions();
-  const liveIds = new Set(live.map((session) => session.id));
-  const disk = await listDiskSessions();
-  const sessions = [
-    ...live,
-    ...disk
-      .filter((session) => !liveIds.has(session.id))
-      .map((session) => ({
-        id: session.id,
-        cwd: session.cwd,
-        sessionFile: session.file,
-        live: false,
-        running: false,
-        modifiedAt: session.modifiedAt,
-        ...(session.name !== undefined ? { name: session.name } : {}),
-      })),
-  ];
+  const query = ctx.url.searchParams.get("q") ?? undefined;
+  const sessions = await listAllSessions({ query });
   sendJson(ctx.res, 200, { sessions });
+}
+
+async function handleSessionDelete(ctx: ApiRouteContext): Promise<void> {
+  const outcome = await deleteSession(ctx.param);
+  if (outcome.status === "not_found") {
+    sendJson(ctx.res, 404, { error: "Session not found" });
+    return;
+  }
+  if (outcome.status === "vetoed") {
+    sendJson(ctx.res, 403, { error: outcome.reason, vetoedBy: outcome.pluginId });
+    return;
+  }
+  sendJson(ctx.res, 200, { ok: true });
 }
 
 async function handleAgentNew(ctx: ApiRouteContext): Promise<void> {
@@ -358,7 +356,21 @@ async function handleAgentHistory(ctx: ApiRouteContext): Promise<void> {
     return;
   }
   const history = await readHistory(file);
-  sendJson(res, 200, { sessionId, entries: history.entries, toolResults: history.toolResults });
+  const host = getPluginHost();
+  let entries = history.entries;
+  if (host !== null && host.hooks.handlersFor("message.before-render-model").length > 0) {
+    const transformed: typeof entries = [];
+    for (const entry of entries) {
+      const next = await host.hooks.waterfall("message.before-render-model", entry, { sessionId });
+      transformed.push(
+        typeof next === "object" && next !== null && "role" in next && Array.isArray((next as { blocks?: unknown }).blocks)
+          ? (next as (typeof entries)[number])
+          : entry,
+      );
+    }
+    entries = transformed;
+  }
+  sendJson(res, 200, { sessionId, entries, toolResults: history.toolResults });
 }
 
 async function handleAgentCommands(ctx: ApiRouteContext): Promise<void> {
@@ -396,12 +408,20 @@ async function handleAgentTree(ctx: ApiRouteContext): Promise<void> {
 
 async function handleAgentModels(ctx: ApiRouteContext): Promise<void> {
   const { res, param: sessionId } = ctx;
-  const core = getSession(sessionId)?.core;
+  const handle = getSession(sessionId);
+  const core = handle?.core;
   if (core === undefined) {
     sendJson(res, 404, { error: "Session not found" });
     return;
   }
-  sendJson(res, 200, { sessionId, ...(core.getModels?.() ?? { models: [] }) });
+  let catalog = core.getModels?.() ?? { models: [] };
+  const host = getPluginHost();
+  const pickerService = host?.services.resolve<(base: typeof catalog, info: { sessionId: string; cwd: string }) => typeof catalog | Promise<typeof catalog>>("model.pick");
+  if (pickerService !== undefined) {
+    const overridden = await pickerService(catalog, { sessionId, cwd: handle?.cwd ?? "" });
+    if (overridden && Array.isArray(overridden.models)) catalog = overridden;
+  }
+  sendJson(res, 200, { sessionId, ...catalog });
 }
 
 async function handleAgentSetModel(ctx: ApiRouteContext): Promise<void> {
@@ -518,56 +538,10 @@ async function handleAgent(ctx: ApiRouteContext): Promise<void> {
   }
 }
 
-// ── Files routes: session-scoped, read-only file browsing and preview ──────
-// Each handler resolves the root from the session id and re-validates the path
-// server-side (see files.ts); the client never supplies an absolute root.
-
-async function rootForFiles(sessionId: string, res: ServerResponse): Promise<string | null> {
-  const root = await resolveSessionRoot(sessionId);
-  if (root === null) {
-    sendJson(res, 404, { error: "Session not found", code: "unknown_session" });
-    return null;
-  }
-  return root;
-}
-
-function sendFileFailure(res: ServerResponse, failure: FileFailure): void {
-  sendJson(res, statusForCode(failure.code), { error: failure.message, code: failure.code });
-}
-
-async function handleFilesList(ctx: ApiRouteContext): Promise<void> {
-  const { res, url, param: sessionId } = ctx;
-  const root = await rootForFiles(sessionId, res);
-  if (root === null) return;
-  const result = await listDirectory(root, url.searchParams.get("path") ?? "", url.searchParams.get("hidden") === "1");
-  if (!result.ok) sendFileFailure(res, result);
-  else sendJson(res, 200, result);
-}
-
-async function handleFilesRead(ctx: ApiRouteContext): Promise<void> {
-  const { res, url, param: sessionId } = ctx;
-  const root = await rootForFiles(sessionId, res);
-  if (root === null) return;
-  const result = await readText(root, url.searchParams.get("path") ?? "");
-  if (!result.ok) sendFileFailure(res, result);
-  else sendJson(res, 200, result);
-}
-
-async function handleFilesSearch(ctx: ApiRouteContext): Promise<void> {
-  const { res, url, param: sessionId } = ctx;
-  const root = await rootForFiles(sessionId, res);
-  if (root === null) return;
-  const result = await searchPaths(root, url.searchParams.get("q") ?? "");
-  if (!result.ok) sendFileFailure(res, result);
-  else sendJson(res, 200, result);
-}
-
-async function handleFilesDownload(ctx: ApiRouteContext): Promise<void> {
-  const { req, res, url, param: sessionId } = ctx;
-  const root = await rootForFiles(sessionId, res);
-  if (root === null) return;
-  await streamFile(req, res, root, url.searchParams.get("path") ?? "", url.searchParams.get("download") === "1");
-}
+// ── Files routes ───────────────────────────────────────────────────────────
+// File browsing lives in the Files plugin's own backend surface,
+// /api/p/files/* (web/plugins/files/server/). The core keeps the audited
+// traversal/symlink policy in files.ts, so there is exactly one implementation.
 
 // ── The route table ────────────────────────────────────────────────────────
 // Ordered: more specific paths precede the generic `/api/agent/:id`.
@@ -584,6 +558,7 @@ const API_ROUTES: readonly ApiRoute[] = [
   { match: "/api/directories", methods: ["GET"], handle: handleDirectories },
   { match: "/api/sessions/events", methods: ["GET"], handle: handleSessionsEvents },
   { match: "/api/sessions", methods: ["GET"], handle: handleSessionsList },
+  { match: new RegExp(`^/api/sessions/(${id})$`), methods: ["DELETE"], handle: handleSessionDelete },
   { match: "/api/agent/new", methods: ["POST"], handle: handleAgentNew },
   { match: new RegExp(`^/api/agent/(${id})/events$`), methods: ["GET"], handle: handleAgentEvents },
   { match: new RegExp(`^/api/agent/(${id})/history$`), methods: ["GET"], handle: handleAgentHistory },
@@ -592,10 +567,6 @@ const API_ROUTES: readonly ApiRoute[] = [
   { match: new RegExp(`^/api/agent/(${id})/models$`), methods: ["GET"], handle: handleAgentModels },
   { match: new RegExp(`^/api/agent/(${id})/model$`), methods: ["POST"], handle: handleAgentSetModel },
   { match: new RegExp(`^/api/agent/(${id})/thinking$`), methods: ["POST"], handle: handleAgentSetThinking },
-  { match: new RegExp(`^/api/agent/(${id})/files$`), methods: ["GET"], handle: handleFilesList },
-  { match: new RegExp(`^/api/agent/(${id})/files/read$`), methods: ["GET"], handle: handleFilesRead },
-  { match: new RegExp(`^/api/agent/(${id})/files/search$`), methods: ["GET"], handle: handleFilesSearch },
-  { match: new RegExp(`^/api/agent/(${id})/files/download$`), methods: ["GET"], handle: handleFilesDownload },
   { match: "/api/changelog", methods: ["GET"], handle: handleChangelog },
   { match: new RegExp(`^/api/agent/(${id})$`), methods: ["GET", "POST"], handle: handleAgent },
 ];
@@ -610,6 +581,9 @@ export async function handleApi(
   res: ServerResponse,
   url: URL,
 ): Promise<boolean> {
+  // Plugin-owned backend routes first: /api/p/<pluginId>/* dispatches into the
+  // kernel's route registry, so a plugin extends the API without a core edit.
+  if (await handlePluginRoute(req, res, url)) return true;
   for (const route of API_ROUTES) {
     const match = matchRoute(route.match, url.pathname);
     if (match === null) continue;
