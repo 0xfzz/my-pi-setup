@@ -26,8 +26,8 @@ import {
 import { recordsFromBranch as childRecordsFromBranch } from "../lib/subagent-state.ts";
 import { isSubagentChildProcess } from "../lib/subagent-context.ts";
 import { isChildReadOnlyArtifact } from "../lib/delegation/handoff-artifact.ts";
-import { DASHBOARD_SYNC_EVENT, publishDashboardArtifacts } from "../web/plugins/dashboard/lib/integration.ts";
-import { toArtifactRecord, type DashboardArtifactRecord } from "../web/plugins/dashboard/lib/projection.ts";
+import { SUBAGENT_GRAPH_SYNC_EVENT, publishSubagentGraphArtifacts } from "../web/plugins/subagent-graph/lib/integration.ts";
+import { toArtifactRecord, type SubagentGraphArtifactRecord } from "../web/plugins/subagent-graph/lib/projection.ts";
 import { stringEnum } from "../lib/schema.ts";
 
 export async function readSidecarArtifact(filePath: string): Promise<Artifact | undefined> {
@@ -460,11 +460,11 @@ export default function artifactsExtension(pi: ExtensionAPI) {
   const launchedChildFiles = new Set<string>();
   const REMOVALS_SUFFIX = ".artifact-removals.json";
   /**
-   * Last catalog signature published to the dashboard. Artifact content changes
+   * Last catalog signature published to the graph. Artifact content changes
    * always change id/version/updatedAt, so this bounds duplicate snapshots without
    * dropping a real edit or removal.
    */
-  let dashboardSignature = "";
+  let subagentGraphSignature = "";
 
   /**
    * The web row's opened body: a metadata line, then the artifact's content as
@@ -558,7 +558,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
   /**
    * The effective catalog for this session.
    *
-   * This is the single source of truth for dashboard publication as well as the
+   * This is the single source of truth for graph publication as well as the
    * read/edit tools. A child sees its own staged sidecars plus the scope-filtered
    * parent snapshot. A parent sees the selected branch plus sidecar-only scoped
    * specs — those are deliberately kept off the branch so a child fork cannot
@@ -587,7 +587,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
     return map;
   }
 
-  /** Tools ask for the same view the dashboard publishes; keep one name for it. */
+  /** Tools ask for the same view the graph publishes; keep one name for it. */
   function resolveCatalog(context: ExtensionContext): Map<string, Artifact> {
     return effectiveCatalog(context);
   }
@@ -628,7 +628,7 @@ export default function artifactsExtension(pi: ExtensionAPI) {
   }
 
   /**
-   * Publish the effective catalog to the dashboard bridge.
+   * Publish the effective catalog to the graph bridge.
    *
    * Observer-only: every failure is swallowed, and an unchanged catalog is not
    * republished unless the caller is answering a sync handshake.
@@ -639,16 +639,16 @@ export default function artifactsExtension(pi: ExtensionAPI) {
       const catalog = effectiveCatalog(context);
       const records = [...catalog.values()]
         .map(toArtifactRecord)
-        .filter((record): record is DashboardArtifactRecord => Boolean(record));
+        .filter((record): record is SubagentGraphArtifactRecord => Boolean(record));
       const signature = records
         .map(record => `${record.id}:${record.version}:${record.updatedAt}:${record.scope ?? ""}`)
         .sort()
         .join("|");
-      if (!force && signature === dashboardSignature) return;
-      dashboardSignature = signature;
-      publishDashboardArtifacts(pi, records);
+      if (!force && signature === subagentGraphSignature) return;
+      subagentGraphSignature = signature;
+      publishSubagentGraphArtifacts(pi, records);
     } catch {
-      // Dashboard visibility must never interfere with the artifact tools.
+      // SubagentGraph visibility must never interfere with the artifact tools.
     }
   }
 
@@ -872,9 +872,9 @@ export default function artifactsExtension(pi: ExtensionAPI) {
 
   // ── Lifecycle Hooks ──
   pi.events?.on(REFRESH_EVENT, widget);
-  // Dashboard handshake: republish the effective catalog even if unchanged, so a
+  // SubagentGraph handshake: republish the effective catalog even if unchanged, so a
   // publisher loaded after the last mutation still contributes its initial state.
-  pi.events?.on(DASHBOARD_SYNC_EVENT, () => publishCatalog(ctx, true));
+  pi.events?.on(SUBAGENT_GRAPH_SYNC_EVENT, () => publishCatalog(ctx, true));
 
   pi.on("session_start", (_event, context) => {
     restore(context);

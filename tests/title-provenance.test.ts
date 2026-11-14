@@ -28,7 +28,7 @@ test("malformed or foreign entries are not provenance", () => {
     record({ title: "Wrong version", v: 2 }),
     record({ title: "Bad source", source: "rename" }),
     record({ title: "Missing generation", generation: undefined }),
-    record({ title: "Other kind" }, "workflow-dashboard-goal:v1"),
+    record({ title: "Other kind" }, "workflow-subagent-graph-goal:v1"),
   ];
   assert.equal(latestTitleRecord(branch, "s1"), undefined);
 });

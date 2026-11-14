@@ -22,8 +22,8 @@ import {
   type ActionRequestPayload as RegistryActionPayload,
 } from "../web/core/plugin-contracts/registry.ts";
 import { WEB_PLUGINS } from "../web/plugins/index.ts";
-import { subagentMonitorPlugin } from "../web/plugins/subagent-monitor/descriptor.ts";
-import dashboardExtension from "../extensions/dashboard.ts";
+import { subagentGraphPlugin } from "../web/plugins/subagent-graph/descriptor.ts";
+import subagentGraphExtension from "../extensions/subagent-graph.ts";
 
 test("registry re-exports action constants and types", () => {
   assert.equal(REGISTRY_ACTION_EVENT, WEB_PLUGIN_ACTION_REQUEST_EVENT);
@@ -37,7 +37,7 @@ test("registry re-exports action constants and types", () => {
   const samplePayload: RegistryActionPayload = {
     requestId: "req-1",
     sessionId: "sess-1",
-    pluginId: "subagent-monitor",
+    pluginId: "subagent-graph",
     actionId: "request-sync",
   };
   assert.equal(samplePayload.requestId, "req-1");
@@ -135,9 +135,9 @@ test("validateActions: an omitted confirm marks an instant action, and a keybind
 test("validatePlugin: accepts valid actions and rejects malformed actions", () => {
 
   const validDescriptor: WebPluginDescriptor = {
-    id: "dashboard",
-    extension: "dashboard",
-    title: "Dashboard",
+    id: "subagent-graph",
+    extension: "subagent-graph",
+    title: "SubagentGraph",
     surfaces: [{ kind: "sidebar" }],
     actions: [
       { id: "request-sync", title: "Request fresh snapshot", confirm: "request sync" },
@@ -174,9 +174,9 @@ test("validatePlugin: accepts valid actions and rejects malformed actions", () =
 
 test("validateRegistry: rejects duplicate action ids within a plugin", () => {
   const pluginWithDups: WebPluginDescriptor = {
-    id: "dashboard",
-    extension: "dashboard",
-    title: "Dashboard",
+    id: "subagent-graph",
+    extension: "subagent-graph",
+    title: "SubagentGraph",
     surfaces: [{ kind: "sidebar" }],
     actions: [
       { id: "duplicate-id", title: "First", confirm: "first" },
@@ -187,22 +187,22 @@ test("validateRegistry: rejects duplicate action ids within a plugin", () => {
   const errors = validateRegistry([pluginWithDups]);
   assert.ok(errors.length > 0, "must report duplicate action id error");
   assert.ok(
-    errors.some((err) => err.includes('Plugin "dashboard": duplicate action id "duplicate-id"')),
+    errors.some((err) => err.includes('Plugin "subagent-graph": duplicate action id "duplicate-id"')),
     `Expected duplicate action id error, got: ${errors.join("; ")}`,
   );
 });
 
 test("WEB_PLUGINS contains the subagent monitor plugin with exactly the declared reference action", () => {
-  assert.equal(subagentMonitorPlugin.id, "subagent-monitor");
-  assert.ok(subagentMonitorPlugin.actions, "the monitor plugin must declare actions");
-  assert.equal(subagentMonitorPlugin.actions.length, 1);
-  assert.deepEqual(subagentMonitorPlugin.actions[0], {
+  assert.equal(subagentGraphPlugin.id, "subagent-graph");
+  assert.ok(subagentGraphPlugin.actions, "the monitor plugin must declare actions");
+  assert.equal(subagentGraphPlugin.actions.length, 1);
+  assert.deepEqual(subagentGraphPlugin.actions[0], {
     id: "request-sync",
     title: "Request fresh snapshot",
     confirm: "request sync",
   });
 
-  const registeredMonitor = WEB_PLUGINS.find((p) => p.id === "subagent-monitor");
+  const registeredMonitor = WEB_PLUGINS.find((p) => p.id === "subagent-graph");
   assert.ok(registeredMonitor, "the subagent monitor plugin must be present in WEB_PLUGINS");
   assert.deepEqual(registeredMonitor.actions, [
     {
@@ -213,7 +213,7 @@ test("WEB_PLUGINS contains the subagent monitor plugin with exactly the declared
   ]);
 });
 
-test("AC4: dashboard extension ignores unrecognised action requests and guards payload content", () => {
+test("AC4: subagent-graph extension ignores unrecognised action requests and guards payload content", () => {
   const eventHandlers = new Map<string, (data: unknown) => void>();
   let syncEmitted = false;
   let sessionStartListener: ((event: unknown, ctx: unknown) => void) | undefined;
@@ -227,7 +227,7 @@ test("AC4: dashboard extension ignores unrecognised action requests and guards p
         };
       },
       emit(channel: string) {
-        if (channel === "dashboard:sync") {
+        if (channel === "subagent-graph:sync") {
           syncEmitted = true;
         }
       },
@@ -241,7 +241,7 @@ test("AC4: dashboard extension ignores unrecognised action requests and guards p
     appendEntry: () => {},
   };
 
-  dashboardExtension(mockPi as any, {
+  subagentGraphExtension(mockPi as any, {
     producerFactory: async () => ({
       publish: () => {},
       close: () => {},
@@ -249,7 +249,7 @@ test("AC4: dashboard extension ignores unrecognised action requests and guards p
   });
 
   const actionHandler = eventHandlers.get(WEB_PLUGIN_ACTION_REQUEST_EVENT);
-  assert.ok(actionHandler, "dashboardExtension must register listener for WEB_PLUGIN_ACTION_REQUEST_EVENT");
+  assert.ok(actionHandler, "subagentGraphExtension must register listener for WEB_PLUGIN_ACTION_REQUEST_EVENT");
 
   // Simulate context binding as verified parent session
   const mockContext = {
@@ -265,12 +265,12 @@ test("AC4: dashboard extension ignores unrecognised action requests and guards p
 
   // 1. Unknown pluginId -> ignored
   syncEmitted = false;
-  actionHandler({ pluginId: "not-subagent-monitor", actionId: "request-sync" });
+  actionHandler({ pluginId: "not-subagent-graph", actionId: "request-sync" });
   assert.equal(syncEmitted, false, "Must ignore unknown pluginId");
 
   // 2. Unknown actionId -> ignored
   syncEmitted = false;
-  actionHandler({ pluginId: "subagent-monitor", actionId: "unknown-action" });
+  actionHandler({ pluginId: "subagent-graph", actionId: "unknown-action" });
   assert.equal(syncEmitted, false, "Must ignore unknown actionId");
 
   // 3. Garbage / null payload -> ignored
@@ -285,14 +285,14 @@ test("AC4: dashboard extension ignores unrecognised action requests and guards p
   const validPayload: ActionRequestPayload = {
     requestId: "uuid-123",
     sessionId: "sess-1",
-    pluginId: "subagent-monitor",
+    pluginId: "subagent-graph",
     actionId: "request-sync",
   };
   actionHandler({
     ...validPayload,
     extraUntrustedContent: "should-be-ignored",
   });
-  assert.equal(syncEmitted, true, "Must trigger requestDashboardSync on valid match");
+  assert.equal(syncEmitted, true, "Must trigger requestSubagentGraphSync on valid match");
 });
 
 test("phase 6 placements: a slot is declared in ui, never as a surface", () => {
@@ -335,11 +335,11 @@ test("phase 6 placements: a slot is declared in ui, never as a surface", () => {
   }
 
   // The subagent monitor keeps its page surface
-  const monitor = WEB_PLUGINS.find((p) => p.id === "subagent-monitor");
+  const monitor = WEB_PLUGINS.find((p) => p.id === "subagent-graph");
   assert.ok(monitor, "the subagent monitor must exist in WEB_PLUGINS");
   const pageSurface = monitor.surfaces.find((s) => s.kind === "page");
   assert.ok(pageSurface && pageSurface.kind === "page", "the monitor must keep its page surface");
-  assert.equal(pageSurface.path, "/plugins/subagent-monitor");
+  assert.equal(pageSurface.path, "/plugins/subagent-graph");
 });
 
 test("override surfaces validate against the region vocabulary", () => {

@@ -47,7 +47,7 @@ function fixtureBus(): MinimalEventBus {
     emit: (channel: string, data: unknown) => {
       if (channel !== WEB_PLUGIN_ACTION_REQUEST_EVENT) return;
       const request = data as { requestId?: string };
-      recordPluginView(FIXTURE_SESSION_ID, "subagent-monitor", monitorFixtureGraph(request?.requestId || "synced"));
+      recordPluginView(FIXTURE_SESSION_ID, "subagent-graph", monitorFixtureGraph(request?.requestId || "synced"));
       releaseInFlightActions(FIXTURE_SESSION_ID);
     },
   };
@@ -96,7 +96,7 @@ const FIXTURE_VIEWS: readonly FixtureView[] = [
       ],
     },
   },
-  { pluginId: "subagent-monitor", view: monitorFixtureGraph("seeded") },
+  { pluginId: "subagent-graph", view: monitorFixtureGraph("seeded") },
   // The reference override plugin: proves the composer region renders a plugin
   // view instead of the built-in input.
   { pluginId: "example-override", view: { type: "status", tone: "accent", text: "Composer replaced (fixture)" } },

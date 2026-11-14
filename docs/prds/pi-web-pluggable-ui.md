@@ -26,7 +26,7 @@ The fixed-slot model also prevents a plugin from choosing a freeform position, a
 - **G1. One event-driven UI contract.** Every extension UI change, including standard `ctx.ui` calls, enters a typed event stream. The web host derives its state from those events.
 - **G2. Freeform placement.** A plugin can place a view in a named host anchor, a layout region, an overlay layer, or an absolute/anchored position within an explicitly permitted container. Position is descriptor data, not a hard-coded plugin branch.
 - **G3. Component override.** Every pi-web component that is exposed through the plugin contract has a stable component key and can be replaced, wrapped, hidden, or configured by a plugin. Most-specific active override wins deterministically.
-- **G4. No special cases.** Bubbly Spinner, dashboard, cache, todos, and future plugins use the same descriptor, event, placement, and rendering contracts. The host must not test plugin IDs to decide how to render.
+- **G4. No special cases.** Bubbly Spinner, subagent-graph, cache, todos, and future plugins use the same descriptor, event, placement, and rendering contracts. The host must not test plugin IDs to decide how to render.
 - **G5. Preserve pi compatibility.** Existing extensions continue to work through standard `ctx.ui` APIs. No pi-web-only API is required for a plugin to display a working message.
 - **G6. Safe extensibility.** Plugins receive data and declared capabilities, not arbitrary browser execution or unrestricted DOM access. HTML, scripts, CSS injection, and event spoofing remain prohibited by default.
 - **G7. Upstream-friendly fork.** The implementation remains a small host layer around pi-web and does not fork every page or duplicate the session protocol.
@@ -188,7 +188,7 @@ pi extension / ctx.ui API
 | 4 | Layout coordinator | Existing top/center/bottom/floating surfaces are compatibility adapters over anchors/regions; freeform bounded overlays work. |
 | 5 | Component overrides | At least working indicator, plugin view, extension status, and one sidebar/chat anchor support replace/wrap/hide with fallback. |
 | 6 | Bubbly migration | Bubbly Spinner uses only standard `ctx.ui` events for its web working UI; remove the Bubbly-specific top-slot branch and duplicate status publication. |
-| 7 | Plugin adoption | Dashboard, todo, artifacts, cache, and checkpoints migrate descriptors; e2e covers multiple sessions, placement changes, and an override. |
+| 7 | Plugin adoption | SubagentGraph, todo, artifacts, cache, and checkpoints migrate descriptors; e2e covers multiple sessions, placement changes, and an override. |
 
 ## 9. Acceptance criteria
 

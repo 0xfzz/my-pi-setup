@@ -594,10 +594,10 @@ async function run() {
     );
 
     step("6: plugin page");
-    // 6. Plugin page: the subagent monitor graph renders with expandable nodes.
-    await page.goto(`${BASE}/plugins/subagent-monitor`);
+    // 6. Plugin page: the subagent graph renders with expandable nodes.
+    await page.goto(`${BASE}/plugins/subagent-graph`);
     await page.waitForSelector(".plugin-view-graph", { timeout: 20_000 });
-    assert.equal(await page.locator(".app-header .app-title").textContent(), "Subagent monitor");
+    assert.equal(await page.locator(".app-header .app-title").textContent(), "Subagent graph");
     assert.ok(
       await page.locator(".plugin-graph-node-label", { hasText: "Fixture parent" }).first().isVisible(),
       "the graph shows the fixture parent node",

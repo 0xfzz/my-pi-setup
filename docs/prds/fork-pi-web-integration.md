@@ -1,4 +1,4 @@
-# PRD: Fork pi-web as the workflow web dashboard
+# PRD: Fork pi-web as the workflow web subagent-graph
 
 > Part of [pi-workflow-extensions](../../README.md). Product requirements for a browser front end built on a fork of [agegr/pi-web](https://github.com/agegr/pi-web), with a plugin system so every workflow extension can contribute to it.
 
@@ -7,14 +7,14 @@
 | **Status** | implemented: Phases 0–8 complete on `feat/pi-web-integration` (Phase 5 shipped the read-only `request-sync` reference action per [plugin-actions](plugin-actions.md); Phase 6 added slot surfaces, Phase 7 the realtime SSE channel and status markers, Phase 8 the sidebar running markers and the bubbly status chip) |
 | **Owner** | Faiz |
 | **Upstream** | `agegr/pi-web` @ `main` (v0.15.0 at time of writing) |
-| **Scope** | `lib/web-plugins/`, `web-plugins/`, the pi-web fork (new repo), reusing the existing `web/dashboard/`, `lib/dashboard/` and `extensions/dashboard.ts` as its base |
+| **Scope** | `lib/web-plugins/`, `web-plugins/`, the pi-web fork (new repo), reusing the existing `web/subagent-graph/`, `lib/subagent-graph/` and `extensions/subagent-graph.ts` as its base |
 | **Acceptance** | pi-web's own Playwright suite (`e2e/`) must stay green on the fork, plus the new plugin contract tests |
 
 ## 1. Problem
 
 The workflow in this repo (todo graph, delegation and checkpoints, artifacts, modes, cache stats, VCC, Antigravity routing) is operated almost entirely from the pi TUI. Two gaps follow:
 
-1. **No full browser surface.** The existing `dashboard` extension is a read-only graph of delegated children and artifacts. It cannot browse sessions, resume a conversation from a browser, manage models and providers, or inspect files. pi-web already does all of that well.
+1. **No full browser surface.** The existing `subagent-graph` extension is a read-only graph of delegated children and artifacts. It cannot browse sessions, resume a conversation from a browser, manage models and providers, or inspect files. pi-web already does all of that well.
 2. **No general plugin seam for the web.** Each new workflow extension would need bespoke browser code. pi-web has no way for a pi extension to add a panel: its only browser hooks are a session-row context-menu event and a liveness registry. Without a seam, each extension author has to edit the web app.
 
 The goal is a single browser UI, based on pi-web, in which every workflow extension appears by declaring itself to one plugin system, and nothing else needs to change.
@@ -25,7 +25,7 @@ The goal is a single browser UI, based on pi-web, in which every workflow extens
 - G2. **Stay compatible with the current workflow.** Sessions, `~/.pi/agent` config, extensions, delegation and the TUI keep working unchanged. Running the web UI must not change what the TUI does, and the TUI must not depend on the web UI being present.
 - G3. **Pluggable by contract.** Adding a workflow extension means adding one descriptor file and one line in `web-plugins/index.ts`. The host renders it without any change to pi-web. A repository test fails if an extension is neither registered nor explicitly opted out.
 - G4. **Safe by default.** Plugin output is data, never HTML or script. The browser never receives transcripts, terminal tails, or producer credentials beyond what pi-web already exposes.
-- G5. **Reuse the existing dashboard as the base.** The fork builds on `web/dashboard/` and `lib/dashboard/` (wire contract, server, producer, lifecycle, browser shell, icons, build) instead of writing a second host. The dashboard keeps working throughout, and its graph becomes a plugin page.
+- G5. **Reuse the existing subagent-graph as the base.** The fork builds on `web/subagent-graph/` and `lib/subagent-graph/` (wire contract, server, producer, lifecycle, browser shell, icons, build) instead of writing a second host. The subagent-graph keeps working throughout, and its graph becomes a plugin page.
 
 ## 3. Non-goals
 
@@ -41,16 +41,16 @@ The goal is a single browser UI, based on pi-web, in which every workflow extens
 | --- | --- | --- |
 | Runtime | pi extensions, loaded by pi through `package.json` → `pi.extensions` (21 files in `extensions/`) | Next.js 16 app that hosts pi `AgentSession`s in-process (`lib/rpc-manager.ts`) |
 | Extension loading | Explicit list in `package.json`, pinned by `tests/extension-loader.test.ts` | Loads the same pi packages, so pi extensions already run inside the web server |
-| Existing browser UI | `extensions/dashboard.ts` + `web/dashboard/` + `lib/dashboard/`: read-only graph, artifacts, loopback, separate producer and browser tokens | Full workspace: sessions, files, Git, models, MCP, skills, terminals |
-| Existing event seam | `pi.events` channels `workflow-ui:section`, `workflow-ui:refresh`, `dashboard:*` | `window` event `pi-web:session-row-contextmenu`; `globalThis[Symbol.for("@agegr/pi-web/session-liveness/v1")]` |
+| Existing browser UI | `extensions/subagent-graph.ts` + `web/subagent-graph/` + `lib/subagent-graph/`: read-only graph, artifacts, loopback, separate producer and browser tokens | Full workspace: sessions, files, Git, models, MCP, skills, terminals |
+| Existing event seam | `pi.events` channels `workflow-ui:section`, `workflow-ui:refresh`, `subagent-graph:*` | `window` event `pi-web:session-row-contextmenu`; `globalThis[Symbol.for("@agegr/pi-web/session-liveness/v1")]` |
 | Sidebar sections | `offerSection()` in `lib/sidebar/sidebar-channel.ts` offers `todo`, `artifacts`, `mode`, `subagents`, `account`, `cache` to the TUI | Has its own sidebar; no section API |
-| Trust model | Dashboard artifact HTML is not executable; no mutation endpoints | Password auth optional; Basic auth for API clients; loopback default |
+| Trust model | SubagentGraph artifact HTML is not executable; no mutation endpoints | Password auth optional; Basic auth for API clients; loopback default |
 | Tests | `npm run tidy` = typecheck + oxlint + `node --test` tiers (~87 suites) | `npm test` (node test over `lib/**`) + Playwright `e2e/run.mjs` (5,000-message fixtures, sidebar, models, themes, terminal) |
 
 Consequences:
 
 - pi-web already runs pi extensions. The plugin system does not need a second process; it needs a host that reads what extensions publish.
-- The dashboard already has the hard parts of a host: a versioned wire protocol (`lib/dashboard/protocol.ts`), validation, a loopback server with separate producer and browser credentials, lifecycle and projection, and a built browser bundle. The fork reuses these rather than rebuilding them.
+- The subagent-graph already has the hard parts of a host: a versioned wire protocol (`lib/subagent-graph/protocol.ts`), validation, a loopback server with separate producer and browser credentials, lifecycle and projection, and a built browser bundle. The fork reuses these rather than rebuilding them.
 - The `workflow-ui:section` channel shows the pattern this repo already uses: extensions emit on `pi.events`, and a host decides how to show it. The web plugin system follows the same pattern, so extensions do not import pi-web code.
 
 ## 5. Users and stories
@@ -93,9 +93,9 @@ This is the "whenever I add an extension it calls the plugin system" guarantee. 
 
 ### 6.3 pi-web fork
 
-R9. The fork is vendored inside this repository under `vendor/pi-web/` (decided), taken from upstream `main` (v0.15.0), with upstream kept as the reference remote for future syncs. It reuses the dashboard foundation (`lib/dashboard/`, `web/dashboard/`) and adds nothing parallel to it. Its diff against upstream is limited to:
-- a plugin host built on `lib/dashboard/` (protocol, validation, producer): a loader that imports `WEB_PLUGINS` from this package, a subscription to `web-plugin:view` on each hosted session, and a store for last views;
-- a sidebar section renderer and a generic `/plugins/[id]` page, built from `kv`, `list` and `status` only, using the dashboard's shell and renderers in `web/dashboard/src`;
+R9. The fork is vendored inside this repository under `vendor/pi-web/` (decided), taken from upstream `main` (v0.15.0), with upstream kept as the reference remote for future syncs. It reuses the subagent-graph foundation (`lib/subagent-graph/`, `web/subagent-graph/`) and adds nothing parallel to it. Its diff against upstream is limited to:
+- a plugin host built on `lib/subagent-graph/` (protocol, validation, producer): a loader that imports `WEB_PLUGINS` from this package, a subscription to `web-plugin:view` on each hosted session, and a store for last views;
+- a sidebar section renderer and a generic `/plugins/[id]` page, built from `kv`, `list` and `status` only, using the subagent-graph's shell and renderers in `web/subagent-graph/src`;
 - a navigation entry for each plugin page.
 
 R10. The fork does not change pi-web's existing behaviour, routes, storage or settings. Its Playwright suite (`e2e/run.mjs`) must pass unchanged, plus one new e2e check for a plugin page.
@@ -104,9 +104,9 @@ R11. The fork keeps upstream's CLI (`pi-web`, `npx @agegr/pi-web`) working. Pack
 
 ### 6.4 Compatibility with the current workflow
 
-R12. The TUI is unaffected. `workflow-ui:section` and the existing `dashboard:*` events keep their shapes. `web-plugin:view` is a new channel and nothing listens to it in the TUI.
+R12. The TUI is unaffected. `workflow-ui:section` and the existing `subagent-graph:*` events keep their shapes. `web-plugin:view` is a new channel and nothing listens to it in the TUI.
 
-R13. The existing dashboard (`extensions/dashboard.ts`, `lib/dashboard/`, `web/dashboard/`) is the base of the fork, not a separate app to retire. Its delegation graph and artifact views become a `dashboard` plugin page. A parity test pins that the page shows the same children, handoffs, reviews and artifacts before the standalone route is removed.
+R13. The existing subagent-graph (`extensions/subagent-graph.ts`, `lib/subagent-graph/`, `web/subagent-graph/`) is the base of the fork, not a separate app to retire. Its delegation graph and artifact views become a `subagent-graph` plugin page. A parity test pins that the page shows the same children, handoffs, reviews and artifacts before the standalone route is removed.
 
 R14. The web host does not start a second copy of any extension. It reads what the sessions it already hosts publish. A session that pi-web does not host (for example, a TUI session) is visible only through its persisted state, as upstream does now.
 
@@ -118,7 +118,7 @@ R16. A view publish is at most 64 KB and must not block the agent turn. Publishi
 R17. The plugin layer adds no runtime dependency to this package. The contract module is pure TypeScript with no pi or Next.js import, so it is loadable by both.
 R18. Every new file passes `npm run tidy` (typecheck, oxlint with the smell gate, the tiered test runner).
 
-R19. The dashboard's wire contract is not forked. Plugin views travel over the dashboard protocol in `lib/dashboard/protocol.ts`. `DASHBOARD_PROTOCOL` is bumped only when a shape the browser depends on changes, so an open tab from the previous version is rejected loudly rather than rendering stale data.
+R19. The subagent-graph's wire contract is not forked. Plugin views travel over the subagent-graph protocol in `lib/subagent-graph/protocol.ts`. `SUBAGENT_GRAPH_PROTOCOL` is bumped only when a shape the browser depends on changes, so an open tab from the previous version is rejected loudly rather than rendering stale data.
 
 ## 7. Architecture
 
@@ -136,7 +136,7 @@ R19. The dashboard's wire contract is not forked. Plugin views travel over the d
 - **Contract** (`lib/web-plugins/`): types, validation, registry, the publisher and the view limits. Pure TypeScript.
 - **Descriptors** (`web-plugins/*.ts`): one per extension; declares surfaces only.
 - **Index** (`web-plugins/index.ts`): the list the host imports and the list the enforcement test reads.
-- **Host** (fork): reuses the dashboard foundation: `lib/dashboard/` for the wire contract, validation, producer and lifecycle, and `web/dashboard/` for the browser shell, renderers, icons and bundle. It loads the index, owns the store, and renders the three view types.
+- **Host** (fork): reuses the subagent-graph foundation: `lib/subagent-graph/` for the wire contract, validation, producer and lifecycle, and `web/subagent-graph/` for the browser shell, renderers, icons and bundle. It loads the index, owns the store, and renders the three view types.
 
 Why events and not direct calls: pi extensions run inside pi-web's process today, but a TUI session runs in a different process with no web host. An event on `pi.events` works in both, and it is the channel this repo already uses for the sidebar.
 
@@ -146,8 +146,8 @@ Why events and not direct calls: pi extensions run inside pi-web's process today
 | --- | --- | --- |
 | **0. PRD** | This document, branch `feat/pi-web-integration` | Committed; reviewed |
 | **1. Contract** | `lib/web-plugins/`, `web-plugins/index.ts`, enforcement test, one reference descriptor (`cache-stats`), opt-outs for every other extension with a reason | `npm run tidy` green; the test fails when an extension is added without an entry |
-| **2. Fork + host** | `vendor/pi-web/`: plugin host built on the reused `lib/dashboard/` and `web/dashboard/` foundation, sidebar section, `/plugins/[id]` page, one e2e check | Upstream e2e green; the cache section and page render from a real `publishWebView` call; no second copy of the dashboard protocol |
-| **3. Port surfaces** | Descriptors for `todo`, `artifacts`, `subagent-checkpoints`; the dashboard graph becomes the `dashboard` plugin page | Dashboard parity test green; the graph and artifacts render from the plugin page with the same data |
+| **2. Fork + host** | `vendor/pi-web/`: plugin host built on the reused `lib/subagent-graph/` and `web/subagent-graph/` foundation, sidebar section, `/plugins/[id]` page, one e2e check | Upstream e2e green; the cache section and page render from a real `publishWebView` call; no second copy of the subagent-graph protocol |
+| **3. Port surfaces** | Descriptors for `todo`, `artifacts`, `subagent-checkpoints`; the subagent-graph graph becomes the `subagent-graph` plugin page | SubagentGraph parity test green; the graph and artifacts render from the plugin page with the same data |
 | **4. Packaging** | Install docs, `pi-web-workflow` CLI or documented upstream install, update flow | A fresh machine can follow `docs/` and see the plugins |
 | **5. Actions (optional)** | Trusted plugin actions with explicit confirmation | Shipped: `request-sync` reference action, threat-reviewed (see [plugin-actions](plugin-actions.md)) |
 | **6. Frontend slots** | Slot surfaces (top/center/bottom/floating) with host-side slot adapters; page surface reserved for settings-type plugins | Every slot region renders declared plugin views; placements changed by editing one descriptor line; e2e proves slot content on the home view |
@@ -164,15 +164,15 @@ Phases 0–8 are complete on `feat/pi-web-integration`. Phase 5 shipped as the o
 - AC4. An invalid view (unknown type, non-string cell) is rejected with a warning and does not throw inside the publisher.
 - AC5. Once the fork exists: upstream `e2e/run.mjs` passes unchanged, and a plugin page renders a published view.
 - AC6. No plugin output reaches the browser as HTML or script. Verified by a test that a `<script>` cell renders as text.
-- AC7. The fork imports the dashboard's protocol and producer from `lib/dashboard/`. A search finds no second definition of `DASHBOARD_PROTOCOL` or of the wire types in the fork.
+- AC7. The fork imports the subagent-graph's protocol and producer from `lib/subagent-graph/`. A search finds no second definition of `SUBAGENT_GRAPH_PROTOCOL` or of the wire types in the fork.
 
 ## 10. Open questions and decisions
 
 1. **Fork location (decided: vendored).** The fork lives at `vendor/pi-web/`, following the `vendor/antigravity/` precedent (`VENDORED.md` records provenance and how to resync). Builds stay out of git (`node_modules/`, `.next/`). Syncing a new upstream release means re-applying the fork diff, kept small per R9.
-2. **Dashboard base (decided: reuse; Phase 2 spike result).** The fork reuses `web/dashboard/` and `lib/dashboard/`. The spike resolved the open route question: the fork does NOT mount the dashboard's Graphviz browser bundle. Phase 2 established a generic data renderer in the fork (kv/list/status text views), and mounting the WASM graph bundle would break R10's minimal-diff rule and duplicate rendering paths. Instead the dashboard extension publishes a compact delegation snapshot (children, handoffs, reviews, escalations, artifact catalog) as plugin views, reusing `lib/dashboard/projection.ts`. R13 parity is therefore **data parity**: the plugin page's rows must equal the dashboard projection's children, handoffs, reviews and artifacts for the same session, pinned by a test.
+2. **SubagentGraph base (decided: reuse; Phase 2 spike result).** The fork reuses `web/subagent-graph/` and `lib/subagent-graph/`. The spike resolved the open route question: the fork does NOT mount the subagent-graph's Graphviz browser bundle. Phase 2 established a generic data renderer in the fork (kv/list/status text views), and mounting the WASM graph bundle would break R10's minimal-diff rule and duplicate rendering paths. Instead the subagent-graph extension publishes a compact delegation snapshot (children, handoffs, reviews, escalations, artifact catalog) as plugin views, reusing `lib/subagent-graph/projection.ts`. R13 parity is therefore **data parity**: the plugin page's rows must equal the subagent-graph projection's children, handoffs, reviews and artifacts for the same session, pinned by a test.
 3. **Actions in Phase 5 (decided: shipped, read-only only).** The `request-sync` reference action shipped with the threat review in [plugin-actions](plugin-actions.md). Mutating actions stay out of scope pending a follow-up PRD.
 4. **Upstream contribution.** Whether the `web-plugin` host should be proposed upstream. Not needed for the first version.
-5. **Single-UI decision (decided: pi-web is THE web UI).** The vendored `pi-web` fork (`vendor/pi-web`) is the unified web interface for workflow extensions. The standalone dashboard HTTP server is opt-in via `PI_DASHBOARD_SERVER=1` (by default no standalone server starts, but delegation snapshots still publish as web plugin views). The `/web` command (`/web start`, `/web stop`, `/web status`) serves as the operator interface, enforcing single-instance execution, refusal when already healthy, and automatic takeover of stale state.
+5. **Single-UI decision (decided: pi-web is THE web UI).** The vendored `pi-web` fork (`vendor/pi-web`) is the unified web interface for workflow extensions. The standalone subagent-graph HTTP server is opt-in via `PI_SUBAGENT_GRAPH_SERVER=1` (by default no standalone server starts, but delegation snapshots still publish as web plugin views). The `/web` command (`/web start`, `/web stop`, `/web status`) serves as the operator interface, enforcing single-instance execution, refusal when already healthy, and automatic takeover of stale state.
 
 ## 11. Risks
 
@@ -182,18 +182,18 @@ Phases 0–8 are complete on `feat/pi-web-integration`. Phase 5 shipped as the o
 | Event delivery differs between TUI and web sessions | Plugins publish the same view either way; the web host only reads what its own sessions emit (R14) |
 | Plugin views become a back door for untrusted content | Views are data with fixed types and limits; no HTML rendering path exists (AC6) |
 | An extension is added and nobody registers it | Enforcement test (R8, AC2) fails the build |
-| Two dashboards disagree during the transition | Parity test before retirement (R13) |
-| The dashboard server (`lib/dashboard/server.ts`, ~1,400 lines) is inherited with its loopback and token model | Reuse its auth and projection unchanged; any change must keep `tests/dashboard-*.test.ts` green; never widen its allow-list silently |
+| Two subagent-graphs disagree during the transition | Parity test before retirement (R13) |
+| The subagent-graph server (`lib/subagent-graph/server.ts`, ~1,400 lines) is inherited with its loopback and token model | Reuse its auth and projection unchanged; any change must keep `tests/subagent-graph-*.test.ts` green; never widen its allow-list silently |
 | Next.js build interferes with dev server (upstream AGENTS.md warns) | Phase 2 work happens in its own checkout; never run `next build` in the dev checkout |
 
 ## 12. Out of scope for this branch
 
 - Re-applying the fork diff to newer upstream releases (Phase 4 maintenance).
-- Any change to the TUI sidebar. `extensions/dashboard.ts`, `lib/dashboard/` and `web/dashboard/` are the fork's base, but are not modified in Phase 1.
+- Any change to the TUI sidebar. `extensions/subagent-graph.ts`, `lib/subagent-graph/` and `web/subagent-graph/` are the fork's base, but are not modified in Phase 1.
 - Descriptors for extensions other than the reference one (Phase 3). They are opted out with reasons until then.
 
 ## Related
 
-- [Dashboard](../dashboard.md): the current read-only graph this plugin system will eventually subsume.
+- [SubagentGraph](../subagent-graph.md): the current read-only graph this plugin system will eventually subsume.
 - [Sidebar](../sidebar.md): the TUI section channel that the web sidebar mirrors.
 - [Verification](../verification.md): the suites the gate runs.

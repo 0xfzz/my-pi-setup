@@ -10,7 +10,7 @@
 | **Branch** | `feat/generate-title-plugin` |
 | **Parent** | [pi-web-plugin-platform](pi-web-plugin-platform.md) (hook catalog), [plugin-actions](plugin-actions.md) (instant actions), [realtime-session-directory](realtime-session-directory.md) (sidebar stream) |
 | **Supersedes** | Phase 0 of the unmerged `feat/cloud-and-generate-title-plugin` PRD (`e9fae6c`) |
-| **Scope** | `extensions/auto-title.ts`, `lib/title/*`, `web-plugins/auto-title.ts`, `web/server/{sessions,bridge,event-stream}.ts`, `web/client/{sidebar,shell}.tsx`, `extensions/dashboard.ts` (one guard), `docs/auto-title.md`, tests |
+| **Scope** | `extensions/auto-title.ts`, `lib/title/*`, `web-plugins/auto-title.ts`, `web/server/{sessions,bridge,event-stream}.ts`, `web/client/{sidebar,shell}.tsx`, `extensions/subagent-graph.ts` (one guard), `docs/auto-title.md`, tests |
 
 ## 1. State of the world (what exists today)
 
@@ -22,7 +22,7 @@ The plugin does not exist on this branch, but it was built once. Findings from t
 | F2 | `~/.pi/agent/web-plugins.json` still lists `auto-title` as enabled with nothing to bind to. | stale entry; harmless but confusing |
 | F3 | v0 context is only the **first user message (1,200 chars) + first assistant reply (800 chars)**. No plan, goal, tool footprint, or later turns. It titles once and never improves. | `lib/auto-title.ts` @ `9eb5b13` |
 | F4 | v0 decides "may I title?" with **`name is empty`** only. It cannot tell an auto title from a user title, so it can never safely refine its own work. | `extensions/auto-title.ts` `onTurnEnd` |
-| F5 | `extensions/dashboard.ts` handles `session_info_changed` by recording **every** `setSessionName` as a `source: "rename"` goal. An auto title is therefore mis-recorded as a user rename. | `extensions/dashboard.ts:203-207`, `lib/dashboard/goal-title.ts` |
+| F5 | `extensions/subagent-graph.ts` handles `session_info_changed` by recording **every** `setSessionName` as a `source: "rename"` goal. An auto title is therefore mis-recorded as a user rename. | `extensions/subagent-graph.ts:203-207`, `lib/subagent-graph/goal-title.ts` |
 | F6 | v0 sends `maxTokens: 200` with reasoning omitted. A model that cannot turn thinking off burns the budget and ends `stopReason: "length"`; pi's own summarizer treats that as a failure. | v0 `generate()`; `getSummarizationFailure` in `compaction.js` |
 | F7 | **The web never shows a session name.** The sidebar renders `shortCwd(cwd)` + `id.slice(0, 8)`; `SessionInfo` has no `name`; the disk scan reads only the header line, but names are appended later as `session_info` entries; no code in `web/server`, `extensions/web.ts` or `lib/pi-bridge.cjs` forwards `session_info_changed`. A generated title is invisible outside a key/value card. | `web/client/sidebar.tsx:101-110`, `web/server/sessions.ts:473-481, 494-580` |
 | F8 | The TUI gets the name for free: pi puts it in the terminal title (`π - <name> - <cwd>`) and in session listings (`SessionInfo.name` / `firstMessage`). It has no progress or provenance feedback. | `interactive-mode.js:816`, `session-manager.d.ts:169-176` |
@@ -142,7 +142,7 @@ States: `none → provisional → refined → locked`.
 - **Provenance record:** before calling `pi.setSessionName(title)` append a custom entry `workflow-title:v1`:
   `{ v: 1, ownerSessionId, title, source: "auto" | "manual", generation, briefHash, model: "provider/id", usage: { input, output } }`.
   The name is **auto-owned** iff the current session name equals the latest record's title. Anything else is user-owned.
-- **Dashboard guard (fixes F5).** `extensions/dashboard.ts` `session_info_changed` must ignore a rename whose name equals the pending/latest auto record, so auto titles are never stored as `source: "rename"`. Precedence for display: explicit `session_goal` > user name > auto title > plan seed > project.
+- **SubagentGraph guard (fixes F5).** `extensions/subagent-graph.ts` `session_info_changed` must ignore a rename whose name equals the pending/latest auto record, so auto titles are never stored as `source: "rename"`. Precedence for display: explicit `session_goal` > user name > auto title > plan seed > project.
 - **In-flight race:** a name set while a request is in flight wins; the result is discarded and logged as `superseded`.
 - **Forks (`/fork`, `/clone`):** inherit the parent name as user-owned. Children created by delegation are skipped (existing `isChild`).
 
@@ -215,7 +215,7 @@ web/server/sessions.ts     # + name/nameSource on SessionInfo (tail read, mtime 
 web/server/bridge.ts       # + forward session_info_changed
 web/server/event-stream.ts # + session_renamed
 web/client/sidebar.tsx     # name-first rows;  shell.tsx: header title + regenerate
-extensions/dashboard.ts    # + ignore renames that match the auto-title record
+extensions/subagent-graph.ts    # + ignore renames that match the auto-title record
 docs/auto-title.md         # operator guide per docs/TEMPLATE.md
 ```
 
@@ -230,7 +230,7 @@ docs/auto-title.md         # operator guide per docs/TEMPLATE.md
 | `claude-bridge` rejects custom system prompts | `cacheRetention: "none"` one-off routing (proven in `1a998c2`) |
 | Large-model cost per title | ~750-token input cap, tiny output, 3-generation cap, usage recorded and shown |
 | Virtual model routing consumes account quota | Same as any session request; surfaced via recorded `model` and `usage` |
-| User and auto path fight over the name | Provenance record + dashboard guard (§D3) |
+| User and auto path fight over the name | Provenance record + subagent-graph guard (§D3) |
 | Two surfaces (TUI + web) attached to one session | Single extension instance owns generation; web actions relay through it; one in-flight request |
 | Secrets in the first prompt | Redaction pass; paths/names only from tools; send nothing the session did not already send to the same provider |
 | Silent failure | Per-reason warning once, `Last error` row, `/title status` |
@@ -240,7 +240,7 @@ docs/auto-title.md         # operator guide per docs/TEMPLATE.md
 
 **Unit (pure modules):** brief signal selection and caps; code-block collapse; redaction; substance filter; `clean` accept/reject table; policy transitions and the cap; provenance ownership; `titleRequestOptions` for reasoning, non-reasoning and `thinkingLevelMap` null cases.
 
-**Extension (fake `pi` + registry, as v0 did):** provisional title; refine; `KEEP` no-op; user name never replaced; name set in flight wins; failure retry cap; toggle persisted; `/title now [hint]`; `/auto-title` alias; fork and child skipped; a request is always `cacheRetention: "none"`; the dashboard does not record an auto title as `rename`.
+**Extension (fake `pi` + registry, as v0 did):** provisional title; refine; `KEEP` no-op; user name never replaced; name set in flight wins; failure retry cap; toggle persisted; `/title now [hint]`; `/auto-title` alias; fork and child skipped; a request is always `cacheRetention: "none"`; the subagent-graph does not record an auto title as `rename`.
 
 **Web:** `SessionInfo.name` for live and disk sessions (tail read, never a full-file load); `session_renamed` on the stream; sidebar renders name → snippet → cwd; descriptor validates; both actions relay and re-validate.
 
@@ -252,7 +252,7 @@ docs/auto-title.md         # operator guide per docs/TEMPLATE.md
 - AC2. A user name (`/name`, `session_goal`, web rename) is never replaced by the automatic path, including after reload.
 - AC3. At most 3 automatic generations per session, and at most one refinement.
 - AC4. The web sidebar and header show the session name for live **and** disk sessions, and update on rename without a poll.
-- AC5. The dashboard never stores an auto title as a user rename.
+- AC5. The subagent-graph never stores an auto title as a user rename.
 - AC6. A failure never writes a name and is visible (TUI warning once, web card row, `/title`).
 - AC7. Reasoning-only models produce a title or a visible failure, never partial text.
 - AC8. `npm run tidy` is green (the two documented clipping failures remain the only baseline failures).
@@ -261,7 +261,7 @@ docs/auto-title.md         # operator guide per docs/TEMPLATE.md
 
 Each phase is a separate commit (or commits) per [AGENTS.md](../../AGENTS.md); refactors stay separate from behaviour.
 
-1. **P0 — Port the baseline.** Bring `auto-title` over from the three commits, restructure into `lib/title/*`, add the dashboard guard and provenance. No behaviour change beyond F4/F5.
+1. **P0 — Port the baseline.** Bring `auto-title` over from the three commits, restructure into `lib/title/*`, add the subagent-graph guard and provenance. No behaviour change beyond F4/F5.
 2. **P1 — Brief, policy, model options.** D1–D4: new context, state machine, thinking/budget handling, usage recording.
 3. **P2 — Web visibility.** W1 (server name, bridge, stream, sidebar, header). Depends on the directory-stream PRD landing; if it does not, W1 ships with a refresh on `session_settled` instead of `session_renamed`.
 4. **P3 — Controls and docs.** `/title` command set, web card, `docs/auto-title.md`, README row, `scripts/eval-titles.mjs`.
@@ -275,7 +275,7 @@ Each phase is a separate commit (or commits) per [AGENTS.md](../../AGENTS.md); r
 
 ## Sources
 
-- Repo: `9eb5b13`, `5786951`, `1a998c2` (v0), `e9fae6c` (earlier PRD), `extensions/dashboard.ts`, `lib/dashboard/goal-title.ts`, `lib/naming.ts`, `lib/web-plugins/kernel/catalog.ts`, `web/server/sessions.ts`, `web/client/sidebar.tsx`; pi 1.4.0 (`compaction.js`, `session-manager.d.ts`, `interactive-mode.js`, `pi-ai/types.d.ts`).
+- Repo: `9eb5b13`, `5786951`, `1a998c2` (v0), `e9fae6c` (earlier PRD), `extensions/subagent-graph.ts`, `lib/subagent-graph/goal-title.ts`, `lib/naming.ts`, `lib/web-plugins/kernel/catalog.ts`, `web/server/sessions.ts`, `web/client/sidebar.tsx`; pi 1.4.0 (`compaction.js`, `session-manager.d.ts`, `interactive-mode.js`, `pi-ai/types.d.ts`).
 - [Claude Code: Manage sessions](https://code.claude.com/docs/en/sessions) (read directly).
 - opencode issues [#4133](https://github.com/anomalyco/opencode/issues/4133), [#7175](https://github.com/anomalyco/opencode/issues/7175), [#9460](https://github.com/anomalyco/opencode/issues/9460), [#11988](https://github.com/anomalyco/opencode/issues/11988) (issues read directly for #9460 and #11988; title prompt text via search summary only).
 - Open WebUI [#29533](https://github.com/open-webui/open-webui/issues/29533), [#30345](https://github.com/open-webui/open-webui/issues/30345); Codex [#24491](https://github.com/openai/codex/issues/24491) (titles and symptoms from search results; not opened individually).

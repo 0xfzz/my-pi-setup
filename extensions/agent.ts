@@ -155,8 +155,8 @@ import {
   spawnRefusal,
 } from "../lib/spawn-policy.ts";
 import type { SpawnPurpose } from "../lib/delegation-tools.ts";
-import { DASHBOARD_SYNC_EVENT, publishDashboardState } from "../web/plugins/dashboard/lib/integration.ts";
-import { projectChildProvenance, projectDelegation } from "../web/plugins/dashboard/lib/projection.ts";
+import { SUBAGENT_GRAPH_SYNC_EVENT, publishSubagentGraphState } from "../web/plugins/subagent-graph/lib/integration.ts";
+import { projectChildProvenance, projectDelegation } from "../web/plugins/subagent-graph/lib/projection.ts";
 import { displayName as namingDisplayName, givenNameFor, givenNamePart, isHumanName } from "../lib/naming.ts";
 import { stringEnum } from "../lib/schema.ts";
 
@@ -467,9 +467,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
   }
 
   function persistState(): void {
-    // Publish first: dashboard state is authoritative in memory and must not be
+    // Publish first: graph state is authoritative in memory and must not be
     // lost when the sidecar write fails or the directory is read-only.
-    publishDashboard();
+    publishSubagentGraph();
     const path = registryPath();
     if (!path) return;
     const state: PersistedState = {
@@ -483,18 +483,18 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
   }
 
   /**
-   * Publish the current delegation view for the dashboard.
+   * Publish the current delegation view for the graph.
    *
    * Children own no top-level session, so a delegated child never publishes. The
    * projection is allowlisted there; this function only decides when and what to
-   * hand it. Every failure is swallowed: a dashboard observer must not be able to
+   * hand it. Every failure is swallowed: a graph observer must not be able to
    * change an orchestration decision.
    */
-  function publishDashboard(): void {
+  function publishSubagentGraph(): void {
     if (isChildSession) return;
     try {
       const children = registry.getAllChildren();
-      publishDashboardState(pi, {
+      publishSubagentGraphState(pi, {
         delegation: projectDelegation({
           children,
           handoffs: [],
@@ -510,9 +510,9 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     }
   }
 
-  // Handshake: the dashboard may load after this extension, so it asks for a
+  // Handshake: the graph producer may load after this extension, so it asks for a
   // fresh statement of current state instead of relying on a missed event.
-  pi.events?.on(DASHBOARD_SYNC_EVENT, () => publishDashboard());
+  pi.events?.on(SUBAGENT_GRAPH_SYNC_EVENT, () => publishSubagentGraph());
 
   /** Drop everything that belongs to the session that just ended. */
   function resetSessionState(): void {
@@ -1387,7 +1387,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
     if (lastOwnerSessionId !== null && lastOwnerSessionId !== ownerSessionId) resetSessionState();
     lastOwnerSessionId = ownerSessionId;
     restorePersistedState();
-    publishDashboard();
+    publishSubagentGraph();
     const restored = await reconcileRestoredChildren();
     const swept = await sweepOrphanPanes();
     // A recovery that was pending when the last process ended is armed again.
@@ -1717,8 +1717,8 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
         sessionFile: running.sessionFile,
         question: outcome.message,
       });
-      // The blocked transition and the new escalation are both dashboard state.
-      publishDashboard();
+      // The blocked transition and the new escalation are both graph state.
+      publishSubagentGraph();
       pi.appendEntry(ESCALATION_TYPE, { id: escalation.id, childId: running.id, stage: escalation.stage });
       pi.sendMessage(
         {
@@ -3390,7 +3390,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
             ? { defects: params.defects.map((defect) => String(defect).trim()).filter(Boolean) }
             : {}),
         });
-        publishDashboard();
+        publishSubagentGraph();
         persistState();
         const occupied = registry.getOccupiedChildren(owner);
         const batch = registry.getBatch(owner);
@@ -3574,7 +3574,7 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
           const answer = await askUserFor(ctx, escalation, params.reason ?? "");
           if (answer === undefined) {
             escalations.cancel(params.id, "User dialog closed without an answer.");
-            publishDashboard();
+            publishSubagentGraph();
             return text(
               `Escalation ${params.id} handed to the user, but they did not answer. It is CANCELLED, which is not consent. ` +
                 `Resume the child with action "cancel" so it reports the blocker instead of guessing.`,
@@ -3616,8 +3616,8 @@ export default function agentExtension(pi: ExtensionAPI, deps?: DelegationDeps):
    * on one session file and a fresh registry row per answer — the ghost factory.
    */
   async function deliverAnswer(ctx: ExtensionContext, id: string) {
-    // The escalation stage (answered/cancelled) is dashboard-visible state.
-    publishDashboard();
+    // The escalation stage (answered/cancelled) is graph-visible state.
+    publishSubagentGraph();
     const escalation = escalations.get(id)!;
     const message = escalations.resumeMessage(id);
     const child = registry.getChildById(escalation.childId);

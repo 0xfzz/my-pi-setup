@@ -7,7 +7,7 @@
 | **Status** | approved for implementation (threat review below is part of this approval) |
 | **Owner** | Faiz |
 | **Parent PRD** | [fork-pi-web-integration](fork-pi-web-integration.md) §8 Phase 5 |
-| **Scope** | `lib/web-plugins/` (contract), `web-plugins/subagent-monitor.ts` (previously `web-plugins/dashboard.ts`, replaced by the monitor), `extensions/dashboard.ts`, the fork host/API/UI (`vendor/pi-web/`), one reference action |
+| **Scope** | `lib/web-plugins/` (contract), `web-plugins/subagent-graph.ts` (previously `web-plugins/subagent-graph.ts`, replaced by the monitor), `extensions/subagent-graph.ts`, the fork host/API/UI (`vendor/pi-web/`), one reference action |
 
 ## 1. What an action is
 
@@ -42,15 +42,15 @@ This deliberately matches the repo's trust stance: the browser stays a viewer th
 
 ## 4. Reference action
 
-The reference action ships on the `subagent-monitor` plugin (it was declared on the `dashboard` plugin before that descriptor was replaced by the monitor; the owning extension and handler are unchanged): id `request-sync`, title `Request fresh snapshot`, confirm string `request sync`. Extension handler: on `web-plugin:action-request` where `pluginId === "subagent-monitor"` and `actionId === "request-sync"`, call the existing `requestDashboardSync` path (already in `lib/dashboard/integration.ts`) so publishers re-emit current state, then the normal view publish follows. This action is read-only, idempotent, and exercises every contract piece (registry, confirm, relay, extension guard, republish) without introducing a mutation.
+The reference action ships on the `subagent-graph` plugin (it was declared on the `subagent-graph` plugin before that descriptor was replaced by the monitor; the owning extension and handler are unchanged): id `request-sync`, title `Request fresh snapshot`, confirm string `request sync`. Extension handler: on `web-plugin:action-request` where `pluginId === "subagent-graph"` and `actionId === "request-sync"`, call the existing `requestSubagentGraphSync` path (already in `lib/subagent-graph/integration.ts`) so publishers re-emit current state, then the normal view publish follows. This action is read-only, idempotent, and exercises every contract piece (registry, confirm, relay, extension guard, republish) without introducing a mutation.
 
 ## 5. Acceptance criteria
 
 - AC1. POST with wrong/missing `confirm` → 403, and nothing is emitted on the bus.
 - AC2. Unknown plugin or action id → 404 before any relay.
 - AC3. Valid request → exactly one `web-plugin:action-request` on the session bus with a fresh single-use `requestId`; second concurrent request → 409.
-- AC4. Extension guard: the dashboard extension ignores requests it does not recognise and re-checks plugin/action id; the handler never acts on payload content beyond the id pair.
-- AC5. e2e: dashboard page renders the action button, typing the confirm string submits, the API responds 200 with a `requestId`, and no dialog fires.
+- AC4. Extension guard: the subagent-graph extension ignores requests it does not recognise and re-checks plugin/action id; the handler never acts on payload content beyond the id pair.
+- AC5. e2e: subagent-graph page renders the action button, typing the confirm string submits, the API responds 200 with a `requestId`, and no dialog fires.
 - AC6. Gates: root `npm run tidy`, fork `tsc --noEmit`, fork `npm test`, fork `e2e/web-plugins.mjs` all green; known MCP flake per `VENDORED.md` exempt.
 
 ## 6. Out of scope

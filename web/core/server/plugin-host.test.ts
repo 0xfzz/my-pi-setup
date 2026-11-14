@@ -145,7 +145,7 @@ test("attachSessionPlugins cleanup detaches the session bus", () => {
 
 test("relayActionRequest emits the request on the session bus", () => {
   const { emissions } = attach("relay-session");
-  const result = relayActionRequest("relay-session", "subagent-monitor", "request-sync", "req-42");
+  const result = relayActionRequest("relay-session", "subagent-graph", "request-sync", "req-42");
   assert.deepEqual(result, { relayed: true });
 
   const request = emissions.find((e) => e.ch === WEB_PLUGIN_ACTION_REQUEST_EVENT);
@@ -153,7 +153,7 @@ test("relayActionRequest emits the request on the session bus", () => {
   assert.deepEqual(request.data, {
     requestId: "req-42",
     sessionId: "relay-session",
-    pluginId: "subagent-monitor",
+    pluginId: "subagent-graph",
     actionId: "request-sync",
   });
 
@@ -252,7 +252,7 @@ test("checkAndSeedFixtures seeds the test session when enabled", () => {
   const session = "__test_session__";
   assert.ok(pluginView(session, "cache-stats"), "cache-stats kv view seeded");
   assert.ok(pluginView(session, "todo"), "todo list view seeded");
-  const graph = pluginView(session, "subagent-monitor");
+  const graph = pluginView(session, "subagent-graph");
   assert.ok(graph && graph.type === "graph", "monitor graph seeded");
   assert.equal(isKnownSession(session), true);
 
@@ -260,7 +260,7 @@ test("checkAndSeedFixtures seeds the test session when enabled", () => {
   const bus = sessionBus(session);
   assert.ok(bus && typeof bus.emit === "function", "fixture bus present");
   bus.emit?.(WEB_PLUGIN_ACTION_REQUEST_EVENT, { requestId: "custom-req" });
-  const updated = pluginView(session, "subagent-monitor");
+  const updated = pluginView(session, "subagent-graph");
   assert.ok(updated && updated.type === "graph");
   const labeled = updated.nodes.find((node) => node.id === "child:worker-slots");
   assert.ok(labeled?.label.includes("custom-req"), "request id flows into the graph label");

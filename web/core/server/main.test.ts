@@ -79,7 +79,7 @@ test("plugins registry endpoint serves the descriptor list", async () => {
       "todo",
       "artifacts",
       "subagent-checkpoints",
-      "subagent-monitor",
+      "subagent-graph",
       "modes",
       "bubbly-spinner",
     ]) {

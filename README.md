@@ -24,7 +24,7 @@ back a result the parent must check before it counts.
 | **Checkpoints and compaction** | Durable records of every child, milestone reports, and model-aware VCC auto-compaction. |
 | **Providers and routing** | `/providers` editor, multi-account pools, `/router` virtual models with ordering, triggers and per-target failure cooldowns, and linked Google (Antigravity) accounts. |
 | **Interface** | Right sidebar (`Alt+W` menu), shared popup frame, `ask_user` dialogs, Linux clipboard paste, cache stats. |
-| **Dashboard** | A local, read-only browser view of the delegation graph and artifacts. |
+| **SubagentGraph** | A local, read-only browser view of the delegation graph and artifacts. |
 | **Tools** | `web_read`, `google_search` and `generate_image` (vendored Antigravity), smart timeouts for `bash`. |
 
 Every extension is listed in [Repository layout](#repository-layout) and in
@@ -37,7 +37,7 @@ Every extension is listed in [Repository layout](#repository-layout) and in
 | **Node.js 22.6+** | Everything | Uses `--experimental-strip-types`; `engines` enforces it. |
 | **[Pi](https://github.com/earendil-works/pi)** | Everything | Built and tested on 1.5.0. The manifest declares peer `@earendil-works/pi-coding-agent ~1.4.0`; install the Pi you actually run and tell `npm` to ignore the peer range if it complains. |
 | **[Herdr](https://github.com/modem-dev/pi-herdr-subagents)** (terminal multiplexer) | Child agents | `agent_spawn` and friends start each child in a Herdr pane, so **run Pi inside Herdr**. Delegation needs it; I have not tested which other extensions still load without it. Developed on Herdr 0.9. |
-| **npm** | The dashboard and development | Only `npm run build:dashboard` is needed to use the dashboard. |
+| **npm** | The subagent graph and development | Only `npm run build:subagent-graph` is needed to use the subagent graph. |
 | Rust + `wasm32-unknown-unknown` | Optional | Only to rebuild the sidebar animation (`npm run build:wasm`; the built `.wasm` is committed) or the no-write guard binary (`npm run build:nowrite`; the binary is not committed). |
 
 ## Setup
@@ -48,8 +48,8 @@ git clone <this repository> ~/projects/pi-workflow-extensions
 cd ~/projects/pi-workflow-extensions
 npm install --ignore-scripts --legacy-peer-deps
 
-# 2. Build the dashboard bundle (it is generated, not committed).
-npm run build:dashboard
+# 2. Build the subagent graph bundle (it is generated, not committed).
+npm run build:subagent-graph
 
 # 3. Install the companion package this workflow depends on (see below).
 pi install npm:pi-vcc
@@ -132,7 +132,7 @@ diff record, not documentation.
 | [VCC compaction](docs/vcc.md) | The compaction policy, its calibration, telemetry and rollback. |
 | [Token efficiency](docs/token-efficiency.md) | Prompt-cache stability, compact schemas and per-model prompt profiles. |
 | [Artifacts](docs/artifacts.md) | Storing, recalling and editing plans, specs and scratchpads outside the chat turn, plus `@artifact` mentions. |
-| [Dashboard](docs/dashboard.md) | The local read-only graph, artifact views, and the server's bounds and trust model. |
+| [Subagent graph](docs/subagent-graph.md) | The delegated-work graph in the web client, the standalone graph app, and the server's bounds and trust model. |
 | [Pi Web](docs/pi-web.md) | Operator guide for the first-party web client: setup, build/dev server, shadcn/Tailwind/Phosphor design system, plugin views, trust bounds, and resyncing. |
 | [Smart timeout](docs/smart-timeout.md) | Wall-clock and idle limits for `bash`, explicit budgets, and timeout diagnostics. |
 | [Stream recovery](docs/stream-recovery.md) | Save interrupted write/command prefixes and continue with only the missing suffix, without replaying executed tools. |
@@ -159,8 +159,8 @@ directory below answers "what lives here?" without needing an explanation.
 | `extensions/` | The installable extensions listed in `package.json` → `pi.extensions`. Nothing else: helpers belong in `lib/`. |
 | `lib/` | Shared implementation, not loaded as extensions. Subdivided by concept — see below. |
 | `tests/` | `node:test` suites, mirroring the source tree: `tests/*.test.ts`, `tests/provider/`, `tests/sidebar/`, `tests/delegation/`. Add a group to `package.json` → `test` when you add a directory. |
-| `scripts/` | Repo tooling: the dashboard build, the WASM build, the VCC mirror, and the dashboard dev preview server. |
-| `web/` | The browser dashboard's static sources and build output (see its `README.md`). |
+| `scripts/` | Repo tooling: the subagent graph build, the WASM build, the VCC mirror, and the subagent graph dev preview server. |
+| `web/` | The first-party web client: the shell, the server, the plugin contracts, and the first-party plugins under `web/plugins/`. See [web plugin architecture](docs/web-plugin-architecture.md). |
 | `vendor/` | Third-party code kept in-tree: `pi-herdr-subagents` (see its `VENDORED.md`) and `antigravity`. A source snapshot — read `VENDORED.md` before touching it. |
 | `docs/` | One document per part of the surface, indexed above, each following [`docs/TEMPLATE.md`](docs/TEMPLATE.md); `docs/patches/` holds the diffs applied to installed packages. |
 | `crates/` | Optional Rust/WASM helpers (`npm run build:wasm`, `npm run build:nowrite`). |
@@ -177,7 +177,7 @@ truly cut across all of them (tool policy, naming, clipboard, the intent graph):
 | `ui/` | The specific dialogs built on that frame (ask, provider settings, router settings). |
 | `delegation/` | Delegated-work machinery: admission, handoff, review policy, escalation, the registry. |
 | `vcc/` | Compaction policy, budget, telemetry, and the deployed entry point. |
-| `dashboard/` | Dashboard protocol, projection, server and lifecycle. |
+| `title/` | Session-title policy and the brief that seeds it. |
 | `selection/` | Terminal text selection and OSC 8 hyperlink handling. |
 
 ## Verification
@@ -199,14 +199,14 @@ the local changes are in each `VENDORED.md`; licences are kept next to the code.
 | --- | --- | --- | --- |
 | [pi-herdr-subagents](https://github.com/modem-dev/pi-herdr-subagents) | Justin (modem-dev) | MIT | Vendored in [`vendor/pi-herdr-subagents/`](vendor/pi-herdr-subagents/VENDORED.md): the Herdr launch planner, socket client, watcher and the `agent_done` / `agent_ping` handshake that delegation runs on. Locally patched. |
 | [pi-antigravity](https://github.com/Rahularya01/pi-antigravity) | Rahul Arya | MIT | Vendored in [`vendor/antigravity/`](vendor/antigravity/VENDORED.md) ([licence](vendor/antigravity/LICENSE)): the Antigravity / Cloud Code Assist provider. The multi-account layer on top is this package's own. |
-| [Phosphor Icons](https://github.com/phosphor-icons/core) | Phosphor Icons | MIT | Dashboard icon sprite, unmodified ([provenance](web/plugins/dashboard/app/ICONS.md), [licence](web/plugins/dashboard/app/licenses/phosphor-icons-MIT.txt)). |
+| [Phosphor Icons](https://github.com/phosphor-icons/core) | Phosphor Icons | MIT | Subagent graph icon sprite, unmodified ([provenance](web/plugins/subagent-graph/app/ICONS.md), [licence](web/plugins/subagent-graph/app/licenses/phosphor-icons-MIT.txt)). |
 | [ascii.rest/aquarium](https://ascii.rest/aquarium/) | @bas3line | MIT | Aquarium art and swimming equations, adapted for the sidebar animation. |
 | [pi-vcc](https://www.npmjs.com/package/pi-vcc) | its authors | see package | Not bundled; the compaction engine this package's VCC controller wraps. |
 | [pi-model-router](https://github.com/yeliu84/pi-model-router/) | yeliu84 | see repo | Prior art for virtual-model routing; no code copied. |
 
 Runtime libraries: [`@viz-js/viz`](https://github.com/mdaines/viz-js) (graph layout),
 [`marked`](https://github.com/markedjs/marked), [`DOMPurify`](https://github.com/cure53/DOMPurify)
-and [`highlight.js`](https://highlightjs.org/) for the dashboard. See
+and [`highlight.js`](https://highlightjs.org/) for the subagent graph. See
 [References](docs/references.md) for the design material behind the rest.
 
 Pi itself is by [earendil-works](https://github.com/earendil-works/pi).

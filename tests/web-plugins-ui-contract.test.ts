@@ -78,7 +78,7 @@ test("adopted plugins declare their placement once, in ui", () => {
       `${plugin.id} must not declare a slot surface`,
     );
   }
-  const monitor = WEB_PLUGINS.find(plugin => plugin.id === "subagent-monitor");
+  const monitor = WEB_PLUGINS.find(plugin => plugin.id === "subagent-graph");
   assert.deepEqual(monitor?.ui?.[0]?.placement, { kind: "anchor", anchor: "session.sidebar", collision: "shrink" });
 });
 test("UI registry: conflicting exclusive replacements name both owners", () => {

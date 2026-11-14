@@ -8,7 +8,7 @@ import { mcpManagerPlugin } from "./mcp-manager/descriptor.ts";
 import { modesPlugin } from "./modes/descriptor.ts";
 import { pluginManagerPlugin } from "./plugin-manager/descriptor.ts";
 import { subagentCheckpointsPlugin } from "./subagent-checkpoints/descriptor.ts";
-import { subagentMonitorPlugin } from "./subagent-monitor/descriptor.ts";
+import { subagentGraphPlugin } from "./subagent-graph/descriptor.ts";
 import { todoPlugin } from "./todo/descriptor.ts";
 import type { WebPluginDescriptor } from "../core/plugin-contracts/descriptor.ts";
 
@@ -17,7 +17,7 @@ export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [
   todoPlugin,
   artifactsPlugin,
   subagentCheckpointsPlugin,
-  subagentMonitorPlugin,
+  subagentGraphPlugin,
   bubblySpinnerPlugin,
   modesPlugin,
   autoTitlePlugin,

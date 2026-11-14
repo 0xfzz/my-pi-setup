@@ -475,7 +475,7 @@ export default function subagentCheckpoints(pi: ExtensionAPI) {
 
   if (childSession && childRun) pi.registerTool({
     name: "agent_progress", label: "Report Milestone", executionMode: "sequential",
-    description: "Publish one meaningful milestone to the parent dashboard without ending the child or waking the parent model. Progress is not completion; use agent_ping for questions requiring an answer.",
+    description: "Publish one meaningful milestone to the parent's graph view without ending the child or waking the parent model. Progress is not completion; use agent_ping for questions requiring an answer.",
     parameters: Type.Object({
       summary: Type.String({ minLength: 1, maxLength: 1200 }),
       files: Type.Optional(Type.Array(Type.String({ maxLength: 300 }), { maxItems: 20 })),

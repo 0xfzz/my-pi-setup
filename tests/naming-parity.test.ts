@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import * as node from "../lib/naming.ts";
-import * as web from "../web/plugins/dashboard/app/src/naming.mjs";
+import * as web from "../web/plugins/subagent-graph/app/src/naming.mjs";
 
 /**
  * The Node/TS authority and the browser authority are two copies of the same

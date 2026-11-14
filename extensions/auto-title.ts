@@ -6,7 +6,7 @@
  * (once a plan or several turns of file work exist), or nothing. The request is
  * built from `lib/title/brief.ts`, one completion on the session's own model, and
  * the answer is cleaned by `lib/title/clean.ts`. A title is recorded on the
- * branch before it is applied, so the dashboard and the web can tell it apart
+ * branch before it is applied, so the graph and the web can tell it apart
  * from a name a person chose.
  *
  * It never replaces a name a person chose. `/auto-title now [hint]`, and the web
@@ -281,7 +281,7 @@ export default function autoTitleExtension(pi: ExtensionAPI, options: { stateFil
         return false;
       }
       // Provenance first: the rename event fires inside setSessionName, and the
-      // dashboard must find this record on the branch to skip it.
+      // the graph must find this record on the branch to skip it.
       pi.appendEntry(TITLE_RECORD_ENTRY, {
         v: 1,
         ownerSessionId: sessionId,

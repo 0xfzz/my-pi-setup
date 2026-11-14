@@ -74,14 +74,14 @@ test("action route 404s before validation for unknown session, plugin or action"
 
 test("action route requires the exact confirm string (403, nothing emitted)", async () => {
   const emissions = attachActionBus("confirm-session");
-  const monitor = getPluginDescriptor("subagent-monitor");
+  const monitor = getPluginDescriptor("subagent-graph");
   const action = monitor?.actions?.find((a) => a.confirm !== undefined);
-  assert.ok(action, "subagent-monitor must declare a confirmed action");
+  assert.ok(action, "subagent-graph must declare a confirmed action");
 
   await withActionServer(async (baseUrl) => {
     const wrong = await postAction(baseUrl, {
       sessionId: "confirm-session",
-      pluginId: "subagent-monitor",
+      pluginId: "subagent-graph",
       actionId: action.id,
       confirm: "totally wrong",
     });
@@ -101,14 +101,14 @@ test("action route requires the exact confirm string (403, nothing emitted)", as
 
 test("action route relays confirmed actions with audit", async () => {
   const emissions = attachActionBus("relay-session");
-  const monitor = getPluginDescriptor("subagent-monitor");
+  const monitor = getPluginDescriptor("subagent-graph");
   const action = monitor?.actions?.find((a) => a.confirm !== undefined);
   assert.ok(action && action.confirm !== undefined);
 
   await withActionServer(async (baseUrl) => {
     const res = await postAction(baseUrl, {
       sessionId: "relay-session",
-      pluginId: "subagent-monitor",
+      pluginId: "subagent-graph",
       actionId: action.id,
       confirm: action.confirm,
     });
@@ -127,7 +127,7 @@ test("action route relays confirmed actions with audit", async () => {
     const audit = getActionAuditLog();
     assert.equal(audit.length, 1);
     assert.equal(audit[0].requestId, body.requestId);
-    assert.equal(audit[0].pluginId, "subagent-monitor");
+    assert.equal(audit[0].pluginId, "subagent-graph");
   });
 });
 
@@ -177,7 +177,7 @@ test("instant actions do not hold the in-flight lock (rapid mode toggling)", asy
 });
 
 test("action route enforces one in-flight CONFIRMED action per session (409)", async () => {
-  const monitor = getPluginDescriptor("subagent-monitor");
+  const monitor = getPluginDescriptor("subagent-graph");
   const action = monitor?.actions?.find((a) => a.confirm !== undefined);
   assert.ok(action && action.confirm !== undefined);
   attachActionBus("busy-session");
@@ -185,7 +185,7 @@ test("action route enforces one in-flight CONFIRMED action per session (409)", a
   await withActionServer(async (baseUrl) => {
     const first = await postAction(baseUrl, {
       sessionId: "busy-session",
-      pluginId: "subagent-monitor",
+      pluginId: "subagent-graph",
       actionId: action.id,
       confirm: action.confirm,
     });
@@ -193,7 +193,7 @@ test("action route enforces one in-flight CONFIRMED action per session (409)", a
 
     const second = await postAction(baseUrl, {
       sessionId: "busy-session",
-      pluginId: "subagent-monitor",
+      pluginId: "subagent-graph",
       actionId: action.id,
       confirm: action.confirm,
     });
@@ -206,14 +206,14 @@ test("action route reports relayed false when the session has no bus", async () 
   // Known to the session bridge, but with no bus attached: the action has
   // nowhere to go, so the route reports relayed false instead of 404.
   registerSessionBusForTests("views-only-session", { on: () => () => {} });
-  const monitor = getPluginDescriptor("subagent-monitor");
+  const monitor = getPluginDescriptor("subagent-graph");
   const action = monitor?.actions?.find((a) => a.confirm !== undefined);
   assert.ok(action && action.confirm !== undefined);
 
   await withActionServer(async (baseUrl) => {
     const res = await postAction(baseUrl, {
       sessionId: "views-only-session",
-      pluginId: "subagent-monitor",
+      pluginId: "subagent-graph",
       actionId: action.id,
       confirm: action.confirm,
     });

@@ -11,7 +11,7 @@ import type { WebPluginDescriptor } from "../web/core/plugin-contracts/descripto
 
 const descriptors = [
   { id: "todo", title: "Todo" },
-  { id: "dashboard", title: "Delegated work graph" },
+  { id: "subagent-graph", title: "Delegated work graph" },
 ];
 
 function withState(fn: (statePath: string) => Promise<void>) {
@@ -21,7 +21,7 @@ function withState(fn: (statePath: string) => Promise<void>) {
 
 test("every descriptor becomes a declarative repo candidate with no entry points", () => {
   const candidates = compatCandidates(descriptors, "/repo/web-plugins");
-  assert.deepEqual(candidates.map((c) => [c.id, c.source]), [["todo", "repo"], ["dashboard", "repo"]]);
+  assert.deepEqual(candidates.map((c) => [c.id, c.source]), [["todo", "repo"], ["subagent-graph", "repo"]]);
   assert.equal(candidates[0].manifest.trust, "declarative");
   assert.deepEqual(candidates[0].manifest.main, {});
   assert.equal(manifestForDescriptor({ id: "bubbly-spinner", title: "Bubbly spinner" }).name, "Bubbly spinner");
@@ -31,11 +31,11 @@ test("descriptors are visible by default and hidden once their plugin is disable
   await withState(async (statePath) => {
     const host = createPluginHost({ descriptors, descriptorDir: "/repo/web-plugins", statePath });
     await host.ready;
-    assert.deepEqual(host.visible().map((d) => d.id).sort(), ["dashboard", "todo"]);
+    assert.deepEqual(host.visible().map((d) => d.id).sort(), ["subagent-graph", "todo"]);
     assert.equal(host.descriptor("todo")?.title, "Todo");
 
     await host.manager.disable("todo");
-    assert.deepEqual(host.visible().map((d) => d.id), ["dashboard"]);
+    assert.deepEqual(host.visible().map((d) => d.id), ["subagent-graph"]);
     assert.equal(host.descriptor("todo"), undefined, "a disabled plugin cannot be acted on");
     await host.shutdown();
   });
@@ -45,10 +45,10 @@ test("the operator's disable survives a restart through web-plugins.json", async
   await withState(async (statePath) => {
     const first = createPluginHost({ descriptors, descriptorDir: "/repo/web-plugins", statePath });
     await first.ready;
-    await first.manager.disable("dashboard");
+    await first.manager.disable("subagent-graph");
     await first.shutdown();
     const persisted = JSON.parse(readFileSync(statePath, "utf8"));
-    assert.equal(persisted.plugins.dashboard.enabled, false);
+    assert.equal(persisted.plugins["subagent-graph"].enabled, false);
 
     const second = createPluginHost({ descriptors, descriptorDir: "/repo/web-plugins", statePath, now: () => Date.now() + 120_000 });
     await second.ready;

@@ -60,6 +60,15 @@ its own folder and registers the panel in `web/plugins/panels.tsx`, reusing
 only the core renderers (`web/core/client/plugin-system/`). Descriptors stay
 declarative; the UI is still presentation, never behavior.
 
+A plugin whose surface needs more than a declarative view owns the rest of
+its own folder too. **Subagent graph** is the worked example: its
+`descriptor.ts` declares the sidebar panel and the page, `lib/` holds the
+snapshot producer and the projection from delegation state, and `app/` is a
+standalone browser app the producer serves on its own loopback port for a
+full-window look. Both surfaces read the same snapshot, so the panel and the
+standalone window cannot disagree — and the plugin still declares rather
+than decides: nothing in `web/` computes what pi does.
+
 When a TUI extension grows a web surface, the web plugin is the *bridge
 for that surface*: it maps the TUI shape to a web placement. It never
 decides anything; it declares.
@@ -134,7 +143,7 @@ ids; `extensions/modes.ts` (behavior) and `web/plugins/modes/descriptor.ts`
 (interface) both import from there. Neither side imports the other: the
 extension never imports the descriptor, and the web never imports the
 extension. The guard allows an extension to reach a plugin *only* through
-`web/plugins/<id>/contract.ts` (or the dashboard plugin's shared library).
+`web/plugins/<id>/contract.ts` (or the subagent graph plugin's shared library).
 
 The `extension` field on a descriptor is an id, not a file path: a plugin may
 bridge an extension installed as an external pi package, so

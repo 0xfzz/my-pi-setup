@@ -319,7 +319,7 @@ Kept non-replaceable and non-vetoable by any plugin: signed-session authenticati
 
 ## 8. Developer experience
 
-**D1. Scaffold.** `pi-web plugin new <id> [--ui|--logic|--both]` generates a manifest, typed entries, a test, and a README. Templates: `working-indicator`, `message-renderer`, `composer-button`, `theme`, `prompt-middleware`, `api-route`, `dashboard-card`.
+**D1. Scaffold.** `pi-web plugin new <id> [--ui|--logic|--both]` generates a manifest, typed entries, a test, and a README. Templates: `working-indicator`, `message-renderer`, `composer-button`, `theme`, `prompt-middleware`, `api-route`, `subagent-graph-card`.
 
 **D2. Dev loop.** `pi-web plugin dev <dir>` links the plugin, enables it, and watches files. Server half reloads in-process and the browser half hot-swaps with state preserved where the plugin opts in. Target: save → visible in < 1 s. A reload failure keeps the last good version and prints the error with source mapping.
 
@@ -370,7 +370,7 @@ Kept non-replaceable and non-vetoable by any plugin: signed-session authenticati
 - **R12.** Services can be provided, decorated and replaced; core features resolve through services so they are replaceable.
 - **R13.** Plugin routes, bridge, storage (global/project/session) and jobs exist with quotas, authentication and schema validation.
 - **R14.** `pi-event tap` exposes a validated, bounded, read-only projection of session events to plugins with the `tap.pi-events` capability.
-- **R15.** Parameterized, confirmed actions (the existing `actions` field) are re-expressed as bridge calls with a declared schema; the dashboard action keeps working.
+- **R15.** Parameterized, confirmed actions (the existing `actions` field) are re-expressed as bridge calls with a declared schema; the subagent-graph action keeps working.
 
 ### 10.4 Lifecycle
 
@@ -427,7 +427,7 @@ Each is verifiable by a test or a scripted e2e; none relies on reading code.
 - **AC14 (sandbox).** A `sandboxed` plugin renders through `ctx.ui`, cannot read `document.cookie`, `localStorage` or the parent DOM, cannot call routes it was not granted, and its oversized/flooded messages are rejected.
 - **AC15 (DX).** From an empty directory, `pi-web plugin new` then `plugin dev` yields a working working-indicator plugin in under 5 minutes by following the tutorial (checked by a scripted run); `plugin check` flags an undeclared capability use and an unknown extension-point id with fix-its.
 - **AC16 (inspector).** The overlay lists every slot/component with owner and resolution order; its "disable this plugin" button works live.
-- **AC17 (migration).** The six existing plugins run on the SDK; Bubbly has no `strategy`-only override; the dashboard action works through `bridge`; `grep` finds no plugin id in host code.
+- **AC17 (migration).** The six existing plugins run on the SDK; Bubbly has no `strategy`-only override; the subagent-graph action works through `bridge`; `grep` finds no plugin id in host code.
 - **AC18 (compat).** A pre-existing CLI extension using `ctx.ui.setHeader`, `setFooter`, `setEditorComponent` or `addAutocompleteProvider` renders or behaves in the web without modification.
 - **AC19 (skew).** A server/browser plugin version mismatch reloads the browser half before any bridge call is accepted; stale bridge calls are rejected.
 - **AC20 (docs).** `docs/pi-web.md`, `VENDORED.md`, the generated catalog, the tutorial and the security model are updated and committed; working tree clean.

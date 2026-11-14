@@ -200,7 +200,7 @@ test("parent ingests child milestone on next context and persists it for reload"
   } finally { await h.emit("session_shutdown"); await rm(dir, { recursive: true, force: true }); }
 });
 
-test("dashboard previews are read-only and an active milestone cannot trigger resume", async () => {
+test("subagent-graph previews are read-only and an active milestone cannot trigger resume", async () => {
   const h = harness();
   try {
     h.entries.push({ type: "custom", customType: CHECKPOINT_TYPE, data: { ...launch(), status: "blocked", ended: false, next: "Need a file" } });
@@ -220,7 +220,7 @@ test("dashboard previews are read-only and an active milestone cannot trigger re
   } finally { await h.emit("session_shutdown"); }
 });
 
-test("dashboard resumes require an explicit answer and revalidate the ended run", async () => {
+test("subagent-graph resumes require an explicit answer and revalidate the ended run", async () => {
   const h = harness();
   const ended = outcome({ customType: "subagent_result", details: { sessionFile: "/tmp/child.jsonl", disposition: "completed" } }, launch())!;
   h.entries.push({ type: "custom", customType: CHECKPOINT_TYPE, data: ended });

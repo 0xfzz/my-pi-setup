@@ -8,11 +8,11 @@
 | **Detail for** | [README § Documentation](../README.md) |
 | **Scope** | `extensions/auto-title.ts`, `lib/title/*`, `web/plugins/auto-title/contract.ts`, `web/plugins/auto-title/descriptor.ts`, `web/core/server/sessions.ts` (names), `web/core/client/sidebar.tsx` and `shell.tsx` (display) |
 | **Verified against** | `tests/auto-title-extension.test.ts`, `tests/title-brief.test.ts`, `tests/title-clean.test.ts`, `tests/title-provenance.test.ts`, `tests/title-flag-store.test.ts`, `web/core/server/session-names.test.ts`. Not verified against a real model or in a browser: the sidebar and header are covered by the data-path tests only |
-| **Related** | [Dashboard](dashboard.md) (`session_goal` and `/name` set the same name), [pi-web](pi-web.md), [PRD](prds/session-title-generation.md) |
+| **Related** | [Subagent graph](subagent-graph.md) (`session_goal` and `/name` set the same name), [pi-web](pi-web.md), [PRD](prds/session-title-generation.md) |
 
 - **What it is** — a pi extension that names a session after its first exchange and refines it once more when the work grows, plus the web sidebar and header that show the name in place of the folder.
 - **Why it exists** — a folder name tells you nothing about the work; the picker and the sidebar need a topic. Titles were invisible on the web and could not be refined.
-- **How it is enforced** — `lib/title/policy.ts` decides every attempt; each generated title is recorded on the branch (`workflow-title:v1`) before it is applied, so the dashboard never mistakes it for a person's rename.
+- **How it is enforced** — `lib/title/policy.ts` decides every attempt; each generated title is recorded on the branch (`workflow-title:v1`) before it is applied, so the subagent graph never mistakes it for a person's rename.
 - **What it refuses** — replacing a name you set; titling child sessions; a third automatic try; a title that echoes your message, contains a path, URL or identifier, or is generic.
 - **What it cannot do** — judge title quality. Nothing measures whether a title is good; the failure cases are checked by property tests, not by a model.
 

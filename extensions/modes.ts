@@ -11,7 +11,7 @@ import { reconcileLoadout, switchStateFromBranch } from "../lib/delegation-switc
 import { isRetiredDelegationTool, stripRetiredTools } from "../lib/delegation-tools.ts";
 import { waitCommandProblem } from "../lib/delegation/wait-guard.ts";
 import { hasLiveDelegation } from "../lib/delegation/live.ts";
-import { DASHBOARD_SYNC_EVENT, publishDashboardMode } from "../web/plugins/dashboard/lib/integration.ts";
+import { SUBAGENT_GRAPH_SYNC_EVENT, publishSubagentGraphMode } from "../web/plugins/subagent-graph/lib/integration.ts";
 import { MODES_LEAVE_PLAN_ACTION, MODES_PLUGIN_ID, MODES_TOGGLE_MODE_ACTION, modeWebView } from "../web/plugins/modes/contract.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
 import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
@@ -71,9 +71,9 @@ export default function modesExtension(pi: ExtensionAPI) {
    * instruments the loop may need.
    */
   pi.events?.on(REFRESH_EVENT, () => draw?.());
-  // Dashboard handshake: re-emit the branch-derived mode so an extension loaded
+  // SubagentGraph handshake: re-emit the branch-derived mode so an extension loaded
   // after the original transition still receives the initial state.
-  pi.events?.on(DASHBOARD_SYNC_EVENT, () => publishDashboardMode(pi, registry.current.id));
+  pi.events?.on(SUBAGENT_GRAPH_SYNC_EVENT, () => publishSubagentGraphMode(pi, registry.current.id));
 
   /**
    * Branch entries that define THIS session's own mode policy.
@@ -219,7 +219,7 @@ export default function modesExtension(pi: ExtensionAPI) {
     refresh?.();
     // Notification only, after the transition actually applied. A refused switch
     // returned above and therefore publishes nothing.
-    publishDashboardMode(pi, id);
+    publishSubagentGraphMode(pi, id);
     publishWebView(pi, MODES_PLUGIN_ID, modeWebView(registry.current));
     return true;
   }
@@ -259,7 +259,7 @@ export default function modesExtension(pi: ExtensionAPI) {
     refresh?.();
     // Restore is also the resume/reload path: publish the mode the transcript
     // actually resolved to, so a resumed session reconnects.
-    publishDashboardMode(pi, registry.current.id);
+    publishSubagentGraphMode(pi, registry.current.id);
     publishWebView(pi, MODES_PLUGIN_ID, modeWebView(registry.current));
   }
 

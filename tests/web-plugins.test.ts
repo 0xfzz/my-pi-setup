@@ -30,7 +30,7 @@ import { todoPlugin } from "../web/plugins/todo/descriptor.ts";
 import { artifactsPlugin } from "../web/plugins/artifacts/descriptor.ts";
 import { bubblySpinnerPlugin } from "../web/plugins/bubbly-spinner/descriptor.ts";
 import { subagentCheckpointsPlugin } from "../web/plugins/subagent-checkpoints/descriptor.ts";
-import { subagentMonitorPlugin } from "../web/plugins/subagent-monitor/descriptor.ts";
+import { subagentGraphPlugin } from "../web/plugins/subagent-graph/descriptor.ts";
 import { WEB_PLUGINS, WEB_PLUGIN_OPT_OUT } from "../web/plugins/index.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -758,7 +758,7 @@ test("phase 6 placements: WEB_PLUGINS declared with exact slot and page placemen
   const diskSet = new Set(diskFiles.map(normalizeExtName));
   const localBridged = WEB_PLUGINS.filter((p) => diskSet.has(normalizeExtName(p.extension)));
   assert.equal(localBridged.length + Object.keys(WEB_PLUGIN_OPT_OUT).length, diskFiles.length);
-  for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "subagent-monitor", "bubbly-spinner"]) {
+  for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "subagent-graph", "bubbly-spinner"]) {
     assert.ok(WEB_PLUGINS.some((plugin) => plugin.id === id), `${id} must be a registered plugin`);
     assert.equal(id in WEB_PLUGIN_OPT_OUT, false, `${id} must not also be opted out`);
   }
@@ -782,11 +782,11 @@ test("phase 6 placements: WEB_PLUGINS declared with exact slot and page placemen
   assert.deepEqual(artifactsPlugin.ui?.map((c) => c.placement), [{ kind: "region", region: "floating", maxWidth: 400, maxHeight: 360 }]);
   assert.deepEqual(subagentCheckpointsPlugin.surfaces, [{ kind: "sidebar" }]);
   assert.deepEqual(subagentCheckpointsPlugin.ui?.map((c) => c.placement), [{ kind: "region", region: "center", collision: "shrink" }]);
-  assert.deepEqual(subagentMonitorPlugin.surfaces, [
+  assert.deepEqual(subagentGraphPlugin.surfaces, [
     { kind: "sidebar" },
-    { kind: "page", path: "/plugins/subagent-monitor" },
+    { kind: "page", path: "/plugins/subagent-graph" },
   ]);
-  assert.ok(subagentMonitorPlugin.actions && subagentMonitorPlugin.actions.length > 0, "the subagent monitor keeps its sync action");
+  assert.ok(subagentGraphPlugin.actions && subagentGraphPlugin.actions.length > 0, "the subagent monitor keeps its sync action");
 
   for (const descriptor of WEB_PLUGINS) {
     const result = validatePlugin(descriptor);

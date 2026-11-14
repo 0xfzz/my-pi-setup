@@ -39,7 +39,7 @@ export function engineMismatch(manifest: PluginManifest): string | undefined {
 
 /**
  * Build a manifest for a descriptor. Descriptor ids are already dotless
- * (`todo`, `dashboard`), which the manifest grammar accepts, so no id is rewritten.
+ * (`todo`, `subagent-graph`), which the manifest grammar accepts, so no id is rewritten.
  */
 export function manifestForDescriptor(descriptor: DescriptorLike): PluginManifest {
   const result = validateManifest({

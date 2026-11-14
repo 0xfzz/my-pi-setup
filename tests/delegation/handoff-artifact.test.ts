@@ -149,8 +149,8 @@ test("criteria that name files are detected, negative ones are not", async () =>
   assert.deepEqual(
     criteriaRequireFileWrites([
       "docs/console-contract.md covers every message",
-      "no changes under web/plugins/dashboard/app/src, web/plugins/dashboard/lib, or package.json",
-      "git status shows no changes under web/plugins/dashboard/lib",
+      "no changes under web/plugins/subagent-graph/app/src, web/plugins/subagent-graph/lib, or package.json",
+      "git status shows no changes under web/plugins/subagent-graph/lib",
       "npm run typecheck passes",
     ]),
     ["docs/console-contract.md covers every message"],

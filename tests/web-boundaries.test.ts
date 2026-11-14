@@ -167,7 +167,7 @@ const ZONES: readonly ZoneRules[] = [
     dir: "web/plugins",
     runtimeAllow: ["web/plugins/", "web/core/client/plugin-system/", "web/core/shared/", "lib/"],
     typeOnlyAllow: ["lib/", "web/core/plugin-contracts/"],
-    skip: ["web/plugins/dashboard", "web/plugins/files/server"],
+    skip: ["web/plugins/subagent-graph", "web/plugins/files/server"],
     why: "plugin descriptors are declarative and plugin UI reuses core renderers; they never import pi behavior",
   },
   {
@@ -206,14 +206,15 @@ const ZONES: readonly ZoneRules[] = [
     why: "web auth is server-side infrastructure — it never depends on the client or pi runtimes",
   },
   {
-    // The first-party dashboard plugin: a server-side library (HTTP server,
-    // graph build, projection, lifecycle) plus the standalone browser app.
-    // It is behavior + a page, not a declarative descriptor — hence its own
-    // zone rather than the descriptor `web/plugins` rules.
-    dir: "web/plugins/dashboard",
-    runtimeAllow: ["web/plugins/dashboard/", "web/core/plugin-contracts/", "lib/", "node:"],
+    // The Subagent graph plugin. Its descriptor is declarative like any other
+    // plugin's, but it also owns the snapshot producer, the projection from
+    // delegation state, a detached loopback server and a standalone browser
+    // app — so it needs node and the view contract, which the descriptor rule
+    // above does not allow. It still never imports the web server or client.
+    dir: "web/plugins/subagent-graph",
+    runtimeAllow: ["web/plugins/subagent-graph/", "web/core/plugin-contracts/", "lib/", "node:"],
     typeOnlyAllow: null,
-    why: "the dashboard plugin runs server-side and integrates with shared lib; its browser app is bundled separately",
+    why: "the Subagent graph plugin produces plugin views and runs its own producer; it never imports the web server or client runtime",
   },
 ];
 
@@ -244,11 +245,14 @@ function allowed(zone: ZoneRules, edge: ImportEdge): boolean {
   // its client UI. Everything else under web/ stays off-limits to
   // extensions.
   if (zone.dir === "extensions" && edge.target.startsWith("web/plugins/")) {
-    // A plugin's bridge contract, or the dashboard plugin's shared
+    // A plugin's bridge contract, or the subagent-graph plugin's shared
     // publisher/projection library (the one feature several behavior
     // extensions integrate with, not a single declarative bridge).
+    // A plugin's bridge contract, or the Subagent graph plugin's shared
+    // projection/publisher library — the one feature several behavior
+    // extensions integrate with, not a single declarative bridge.
     return edge.target.endsWith("/contract.ts")
-      || edge.target.startsWith("web/plugins/dashboard/lib/");
+      || edge.target.startsWith("web/plugins/subagent-graph/lib/");
   }
   return allow.some((prefix) => edge.target.startsWith(prefix));
 }
