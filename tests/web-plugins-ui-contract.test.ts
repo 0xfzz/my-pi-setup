@@ -44,7 +44,14 @@ test("UI contract: deterministic override priority/user preference, wrap/hide an
 });
 test("adopted plugins declare session-scoped UI without duplicating legacy slots", () => {
   for (const plugin of WEB_PLUGINS) {
-    assert.ok(plugin.ui?.length, `${plugin.id} must explicitly declare its UI`);
+    // A page-only plugin (the plugin manager, the MCP manager) has no slot to
+    // place, so it declares no ui contribution at all rather than an inert one
+    // that exists only to satisfy the registry.
+    if (plugin.ui === undefined) {
+      assert.deepEqual(plugin.surfaces.filter(surface => surface.kind === "slot"), [], `${plugin.id} is page-only`);
+      continue;
+    }
+    assert.ok(plugin.ui.length > 0, `${plugin.id} must explicitly declare its UI`);
     assert.equal(validateContributions(plugin.ui, plugin.id).ok, true);
     assert.equal(normalizeContributions(plugin), plugin.ui);
     assert.ok(plugin.ui.every(c => c.scope === "session"), plugin.id);

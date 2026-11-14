@@ -1,0 +1,7 @@
+{
+  "name": "@pi-web-plugin/plugin-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Operator view of the plugin kernel: state, capabilities, routes and enable/disable/reload."
+}

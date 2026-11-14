@@ -5,5 +5,7 @@
 
 import { registerPluginPage } from "../core/client/plugin-system/page-registry.ts";
 import { McpManagerPage } from "./mcp-manager/McpManagerPage.tsx";
+import { PluginManagerPage } from "./plugin-manager/PluginManagerPage.tsx";
 
 registerPluginPage("mcp-manager", McpManagerPage);
+registerPluginPage("core.plugin-manager", PluginManagerPage);

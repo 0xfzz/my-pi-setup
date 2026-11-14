@@ -38,14 +38,17 @@ import { handlePiApiRequest } from "./pi-api.ts";
 import { piBuiltinCommands } from "../pi-api/index.ts";
 import { annotateBuiltinCommands } from "../shared/commands.ts";
 import { attachAgentEventStream, attachSessionsEventStream } from "./event-stream.ts";
+import { handlePluginManagerCommand, handlePluginManagerReport } from "./plugin-admin.ts";
 import { handlePluginRoute } from "./plugin-routes.ts";
 import { readJsonBody, sendJson } from "./http.ts";
 
 type HttpMethod = "GET" | "POST" | "DELETE";
 
 interface RouteMatch {
-  /** The session id captured from the path's id segment, decoded. */
+  /** The first capture group (the session/plugin id segment), decoded. */
   param: string;
+  /** Every capture group in order, decoded — routes needing a second segment read these. */
+  captures: string[];
 }
 
 interface ApiRouteContext {
@@ -54,6 +57,8 @@ interface ApiRouteContext {
   url: URL;
   /** Empty for exact-path routes; the decoded session id for id-capturing routes. */
   param: string;
+  /** Every capture group, decoded; empty for exact-path routes. */
+  captures: string[];
 }
 
 interface ApiRoute {
@@ -64,10 +69,11 @@ interface ApiRoute {
 }
 
 function matchRoute(match: string | RegExp, pathname: string): RouteMatch | null {
-  if (typeof match === "string") return match === pathname ? { param: "" } : null;
+  if (typeof match === "string") return match === pathname ? { param: "", captures: [] } : null;
   const captured = match.exec(pathname);
   if (captured === null) return null;
-  return { param: decodeURIComponent(captured[1] ?? "") };
+  const captures = captured.slice(1).map((value) => decodeURIComponent(value ?? ""));
+  return { param: captures[0] ?? "", captures };
 }
 
 /**
@@ -550,6 +556,13 @@ const API_ROUTES: readonly ApiRoute[] = [
   { match: "/api/health", methods: ["GET"], handle: handleHealth },
   { match: "/api/reload-notice", methods: ["POST"], handle: handleReloadNotice },
   { match: "/api/plugins", methods: ["GET"], handle: handlePluginsList },
+  { match: "/api/plugin-manager", methods: ["GET"], handle: ({ res }) => { handlePluginManagerReport(res); return Promise.resolve(); } },
+  {
+    match: new RegExp(`^/api/plugin-manager/(${id})/([a-z-]+)$`),
+    methods: ["POST"],
+    handle: ({ req, res, captures }) =>
+      handlePluginManagerCommand(req, res, captures[0] ?? "", captures[1] ?? ""),
+  },
   { match: "/api/plugins/action", methods: ["POST"], handle: ({ req, res }) => handlePluginAction(req, res) },
   { match: /^\/api\/bridge\/([^/]+)\/attach$/, methods: ["GET"], handle: handleBridgeAttach },
   { match: /^\/api\/bridge\/([^/]+)\/events$/, methods: ["POST"], handle: handleBridgeEvents },
@@ -591,7 +604,7 @@ export async function handleApi(
       sendJson(res, 405, { error: "method not allowed" });
       return true;
     }
-    await route.handle({ req, res, url, param: match.param });
+    await route.handle({ req, res, url, param: match.param, captures: match.captures });
     return true;
   }
   return false;

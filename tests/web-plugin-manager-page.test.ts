@@ -1,0 +1,138 @@
+// The plugin manager surface: the operator can see every plugin's kernel state
+// and control it over HTTP. The failure mode being pinned: a quarantined or
+// broken plugin had no reachable surface at all, so the only fix was editing
+// ~/.pi/agent/web-plugins.json by hand.
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { startWebServer } from "../web/core/server/main.ts";
+import { registerWebPlugins } from "../web/core/server/plugin-host.ts";
+import { WEB_PLUGINS } from "../web/plugins/index.ts";
+import { availableActions, groupBySource, type PluginManagerRow } from "../web/plugins/plugin-manager/lib/plugin-manager-api.ts";
+import { PLUGIN_MANAGER_PLUGIN_ID } from "../web/plugins/plugin-manager/contract.ts";
+
+const stateDir = mkdtempSync(join(tmpdir(), "pi-plugin-manager-"));
+process.env.PI_WEB_PLUGIN_STATE = join(stateDir, "plugins.json");
+const host = registerWebPlugins(WEB_PLUGINS);
+await host.ready;
+
+test.after(() => {
+  rmSync(stateDir, { recursive: true, force: true });
+});
+
+async function withServer(fn: (baseUrl: string) => Promise<void>): Promise<void> {
+  const server = await startWebServer({ port: 0, host: "127.0.0.1" });
+  try {
+    await fn(`http://127.0.0.1:${server.port}`);
+  } finally {
+    await server.close();
+  }
+}
+
+test("the manager is a core plugin so safe mode can always reach it", () => {
+  assert.equal(PLUGIN_MANAGER_PLUGIN_ID.startsWith("core."), true);
+  assert.ok(WEB_PLUGINS.some((plugin) => plugin.id === PLUGIN_MANAGER_PLUGIN_ID));
+});
+
+test("GET /api/plugin-manager reports every plugin with state, grants and routes", async () => {
+  await withServer(async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/plugin-manager`);
+    assert.equal(res.status, 200);
+    const report = (await res.json()) as {
+      safeMode: boolean;
+      warnings: string[];
+      plugins: Array<{ id: string; title: string; state: string; routes: Array<{ method: string; path: string }> }>;
+    };
+    assert.equal(report.safeMode, false);
+    assert.ok(Array.isArray(report.warnings));
+    const ids = report.plugins.map((plugin) => plugin.id);
+    for (const expected of ["todo", "modes", "files", PLUGIN_MANAGER_PLUGIN_ID]) {
+      assert.ok(ids.includes(expected), `${expected} must be listed`);
+    }
+    const files = report.plugins.find((plugin) => plugin.id === "files");
+    assert.equal(files?.state, "active");
+    assert.ok(
+      files?.routes.some((route) => route.method === "GET" && route.path === "download"),
+      "the Files plugin's own backend routes are visible in the manager",
+    );
+    const todo = report.plugins.find((plugin) => plugin.id === "todo");
+    assert.equal(todo?.title, "Todo");
+  });
+});
+
+test("a disable/enable round trip over HTTP hides and restores the plugin", async () => {
+  await withServer(async (baseUrl) => {
+    const disabled = await fetch(`${baseUrl}/api/plugin-manager/todo/disable`, { method: "POST" });
+    assert.equal(disabled.status, 200);
+    assert.equal((await disabled.json()).state, "disabled");
+
+    const list = (await (await fetch(`${baseUrl}/api/plugins`)).json()) as { plugins: Array<{ id: string }> };
+    assert.equal(list.plugins.some((plugin) => plugin.id === "todo"), false, "a disabled plugin is not served");
+
+    const enabled = await fetch(`${baseUrl}/api/plugin-manager/todo/enable`, { method: "POST" });
+    assert.equal(enabled.status, 200);
+    const after = (await (await fetch(`${baseUrl}/api/plugins`)).json()) as { plugins: Array<{ id: string }> };
+    assert.ok(after.plugins.some((plugin) => plugin.id === "todo"));
+  });
+});
+
+test("unknown plugins are 404 and unknown actions are 400", async () => {
+  await withServer(async (baseUrl) => {
+    const unknownPlugin = await fetch(`${baseUrl}/api/plugin-manager/never-heard/enable`, { method: "POST" });
+    assert.equal(unknownPlugin.status, 404);
+
+    const unknownAction = await fetch(`${baseUrl}/api/plugin-manager/todo/explode`, { method: "POST" });
+    assert.equal(unknownAction.status, 400);
+    assert.match((await unknownAction.json()).error, /unknown action/);
+
+    const wrongMethod = await fetch(`${baseUrl}/api/plugin-manager/todo/enable`);
+    assert.equal(wrongMethod.status, 405);
+  });
+});
+
+test("clearing a quarantine on a healthy plugin is refused, not silently accepted", async () => {
+  await withServer(async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/plugin-manager/modes/clear-quarantine`, { method: "POST" });
+    assert.equal(res.status, 409);
+    const body = (await res.json()) as { ok: boolean; error?: string };
+    assert.equal(body.ok, false);
+    assert.match(body.error ?? "", /not quarantined/);
+  });
+});
+
+function row(id: string, state: string, source = "repo"): PluginManagerRow {
+  return {
+    id,
+    title: id,
+    source,
+    version: "1.0.0",
+    state,
+    grants: [],
+    pending: [],
+    routes: [],
+  };
+}
+
+test("availableActions follows the lifecycle state", () => {
+  assert.deepEqual(availableActions("active"), ["disable", "reload"]);
+  assert.deepEqual(availableActions("disabled"), ["enable"]);
+  assert.deepEqual(availableActions("quarantined"), ["clear-quarantine", "disable"]);
+  assert.deepEqual(availableActions("failed"), ["enable"]);
+  assert.deepEqual(availableActions("unresolved"), []);
+  assert.deepEqual(availableActions("rejected"), []);
+  assert.deepEqual(availableActions("enabled"), ["enable"]);
+});
+
+test("groupBySource orders installed plugins before third-party ones", () => {
+  const groups = groupBySource([
+    row("acme.x", "active", "user"),
+    row("todo", "active", "repo"),
+    row("acme.y", "disabled", "user"),
+  ]);
+  assert.deepEqual(groups.map((group) => group.source), ["repo", "user"]);
+  assert.deepEqual(groups[1].rows.map((entry) => entry.id), ["acme.x", "acme.y"]);
+});
