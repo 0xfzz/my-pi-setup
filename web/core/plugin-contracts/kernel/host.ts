@@ -13,8 +13,12 @@ import { HookBus } from "./hooks.ts";
 import { PluginRouteRegistry } from "./routes.ts";
 import { ServiceRegistry } from "./services.ts";
 import { PluginStorage } from "./storage.ts";
+import { loadStorageSnapshot, saveStorageSnapshot } from "./storage-file.ts";
 import { loadState, saveState, type WebPluginsState } from "./state.ts";
 import { validatePlugin } from "../descriptor.ts";
+
+/** Coalesce a burst of storage writes into one file write. */
+const STORAGE_SAVE_DEBOUNCE_MS = 250;
 
 /** States whose descriptor must not be shown or acted on. */
 export const HIDDEN_STATES: ReadonlySet<PluginState> = new Set<PluginState>(["disabled", "quarantined", "rejected", "unresolved", "ignored"]);
@@ -25,6 +29,8 @@ export interface PluginHostOptions<D extends DescriptorLike> {
   descriptorDir: string;
   roots?: Pick<DiscoveryRoots, "repo" | "user" | "project" | "packages">;
   statePath: string;
+  /** Where plugin storage is persisted; defaults to `<statePath>.storage.json`. */
+  storagePath?: string;
   env?: Record<string, string | undefined>;
   /** False when this evaluation is not a server start (see ManagerOptions.countStarts). */
   countStarts?: boolean;
@@ -108,7 +114,33 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
   const hooks = new HookBus();
   const services = new ServiceRegistry();
   const routes = new PluginRouteRegistry();
-  const storage = new PluginStorage();
+  const storage = new PluginStorage({ onChange: () => scheduleStorageSave() });
+
+  // Plugin storage is durable: the snapshot a previous process wrote is loaded
+  // before any plugin runs, and every mutation is written back (coalesced).
+  const storagePath = options.storagePath ?? `${options.statePath}.storage.json`;
+  const persistedStorage = loadStorageSnapshot(storagePath);
+  if (persistedStorage.warning) warnings.push(persistedStorage.warning);
+  if (persistedStorage.snapshot) storage.restore(persistedStorage.snapshot);
+
+  let storageSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function writeStorageNow(): void {
+    if (storageSaveTimer !== null) {
+      clearTimeout(storageSaveTimer);
+      storageSaveTimer = null;
+    }
+    try {
+      saveStorageSnapshot(storagePath, storage.snapshot());
+    } catch (error) {
+      warnings.push(`could not write ${storagePath}: ${String(error)}`);
+    }
+  }
+
+  function scheduleStorageSave(): void {
+    if (storageSaveTimer !== null) return;
+    storageSaveTimer = setTimeout(writeStorageNow, STORAGE_SAVE_DEBOUNCE_MS);
+  }
   const manager = new PluginManager({
     plugins: discovered.selected,
     state: loaded.state,
@@ -169,6 +201,11 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
       const descriptor = byId.get(id);
       return descriptor && !hidden(id) ? descriptor : undefined;
     },
-    shutdown: () => manager.shutdown(),
+    // A pending storage write is data a plugin already considers saved, so the
+    // debounce is flushed rather than dropped.
+    shutdown: async () => {
+      await manager.shutdown();
+      writeStorageNow();
+    },
   };
 }

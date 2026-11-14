@@ -30,6 +30,10 @@ function defaultPluginStatePath(): string {
     : join(homedir(), ".pi", "agent", "web-plugins.json");
 }
 
+function pluginStatePath(): string {
+  return process.env.PI_WEB_PLUGIN_STATE ?? defaultPluginStatePath();
+}
+
 /** The manifest fields the loader reads from a discovered plugin. */
 interface DiscoveredPluginLike {
   dir: string;
@@ -76,7 +80,10 @@ export function registerWebPlugins(
   const host = createPluginHost<WebPluginDescriptor>({
     descriptors,
     descriptorDir: webPluginsDir,
-    statePath: process.env.PI_WEB_PLUGIN_STATE ?? defaultPluginStatePath(),
+    statePath: pluginStatePath(),
+    // Plugin storage sits beside the operator state, so a suite that points
+    // PI_WEB_PLUGIN_STATE at a temp dir also redirects the storage file.
+    storagePath: process.env.PI_WEB_PLUGIN_STORAGE ?? `${pluginStatePath()}.storage.json`,
     roots: {
       // First-party plugins may ship a real manifest (pi-web-plugin.json) with a
       // server half — the Files plugin does — so the repo tree is a discovery

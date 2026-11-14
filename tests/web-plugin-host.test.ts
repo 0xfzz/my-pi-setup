@@ -175,3 +175,52 @@ test("a plugin whose loader throws is failed in the manager and its descriptor i
     await host.shutdown();
   });
 });
+
+test("plugin storage written by one host is read back by the next", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "web-plugin-storage-host-"));
+  const repo = join(dir, "plugins");
+  const statePath = join(dir, "web-plugins.json");
+  mkdirSync(join(repo, "acme.counter"), { recursive: true });
+  writeFileSync(
+    join(repo, "acme.counter", "pi-web-plugin.json"),
+    JSON.stringify({
+      id: "acme.counter",
+      name: "Counter",
+      version: "1.0.0",
+      engines: { piWeb: "^1.0.0", sdk: "^1.0.0" },
+      trust: "trusted",
+      main: { server: "./server.ts" },
+      capabilities: ["storage:project"],
+    }),
+  );
+
+  const seen: number[] = [];
+  const loader: PluginLoader = () => ({
+    activate: (ctx) => {
+      const stored = ctx.storage.get<{ runs: number }>("project", "counter");
+      seen.push(stored?.runs ?? 0);
+      ctx.storage.set("project", "counter", { runs: (stored?.runs ?? 0) + 1 });
+    },
+  });
+
+  try {
+    const boot = (): ReturnType<typeof createPluginHost> =>
+      createPluginHost({ descriptors: [], descriptorDir: repo, roots: { repo }, statePath, loader });
+
+    const first = boot();
+    await first.ready;
+    await first.shutdown();
+
+    const second = boot();
+    await second.ready;
+    await second.shutdown();
+
+    assert.deepEqual(seen, [0, 1], "the second host read what the first wrote");
+    assert.equal(
+      JSON.parse(readFileSync(`${statePath}.storage.json`, "utf8")).entries["acme.counter"].project.counter,
+      JSON.stringify({ runs: 2 }),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

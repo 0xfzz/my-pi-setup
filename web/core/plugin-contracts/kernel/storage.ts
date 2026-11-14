@@ -31,12 +31,23 @@ export interface ScopedStorage {
   bytesUsed(): number;
 }
 
+export interface PluginStorageOptions {
+  quotaBytes?: number;
+  /**
+   * Called after every mutation, so the host can persist `snapshot()` at its
+   * own pace. The store itself still never touches the disk.
+   */
+  onChange?: () => void;
+}
+
 export class PluginStorage {
   private readonly data = new Map<string, Map<string, string>>();
   private readonly quota: number;
+  private readonly onChange: () => void;
 
-  constructor(options: { quotaBytes?: number } = {}) {
+  constructor(options: PluginStorageOptions = {}) {
     this.quota = options.quotaBytes ?? DEFAULT_QUOTA_BYTES;
+    this.onChange = options.onChange ?? (() => undefined);
   }
 
   /** Storage for one plugin. Each scope needs the matching `storage:<scope>` grant. */
@@ -86,11 +97,14 @@ export class PluginStorage {
           throw new Error(`Plugin "${owner.pluginId}" storage quota of ${this.quota} bytes would be exceeded`);
         }
         map.set(key, raw);
+        this.onChange();
       },
       delete: (scope, key) => {
         check(scope);
         checkKey(key);
-        return slot(scope).delete(key);
+        const removed = slot(scope).delete(key);
+        if (removed) this.onChange();
+        return removed;
       },
       update: <T,>(scope: StorageScope, key: string, fn: (current: T | undefined) => T) => {
         check(scope);
@@ -105,6 +119,7 @@ export class PluginStorage {
           throw new Error(`Plugin "${owner.pluginId}" storage quota of ${this.quota} bytes would be exceeded`);
         }
         slot(scope).set(key, serialised);
+        this.onChange();
         return next;
       },
       bytesUsed: () => bytesFor(owner.pluginId),
@@ -116,6 +131,7 @@ export class PluginStorage {
     for (const k of this.data.keys()) {
       if (k.startsWith(`${pluginId}\u0000`)) this.data.delete(k);
     }
+    this.onChange();
   }
 
   snapshot(): StorageSnapshot {

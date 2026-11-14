@@ -160,3 +160,54 @@ test("storage: keys are validated, and snapshot/restore keeps data across a host
   store.purge("acme.zen");
   assert.equal(zen.get("project", "layout"), undefined);
 });
+
+test("storage: the snapshot file survives a host restart and rejects a bad file", async () => {
+  const { loadStorageSnapshot, saveStorageSnapshot } = await import("../web/core/plugin-contracts/kernel/storage-file.ts");
+  const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "pi-plugin-storage-"));
+  try {
+    const path = join(dir, "web-plugins.json.storage.json");
+    assert.deepEqual(loadStorageSnapshot(path), {}, "a missing file is not a warning");
+
+    const store = new PluginStorage();
+    store.forPlugin({ pluginId: "acme.zen", grants: grants("storage:project") }).set("project", "layout", { zen: true });
+    saveStorageSnapshot(path, store.snapshot());
+
+    const loaded = loadStorageSnapshot(path);
+    assert.equal(loaded.warning, undefined);
+    const restored = new PluginStorage();
+    if (loaded.snapshot) restored.restore(loaded.snapshot);
+    assert.deepEqual(
+      restored.forPlugin({ pluginId: "acme.zen", grants: grants("storage:project") }).get("project", "layout"),
+      { zen: true },
+    );
+
+    // A corrupt or foreign snapshot is a named warning, never a crash.
+    writeFileSync(path, "{ not json");
+    assert.match(loadStorageSnapshot(path).warning ?? "", /not valid JSON/);
+    writeFileSync(path, JSON.stringify({ version: 99, entries: {} }));
+    assert.match(loadStorageSnapshot(path).warning ?? "", /unsupported storage snapshot version/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("storage: a mutation notifies the host so it can persist", () => {
+  let changes = 0;
+  const store = new PluginStorage({ onChange: () => { changes++; } });
+  const zen = store.forPlugin({ pluginId: "acme.zen", grants: grants("storage:project") });
+  zen.set("project", "a", 1);
+  assert.equal(changes, 1);
+  zen.update<number>("project", "a", (n = 0) => n + 1);
+  assert.equal(changes, 2);
+  zen.delete("project", "a");
+  assert.equal(changes, 3);
+  // A delete that removes nothing is not a change.
+  zen.delete("project", "missing");
+  assert.equal(changes, 3);
+  // A rejected write is not a change either.
+  assert.throws(() => zen.set("project", "big", "x".repeat(1024 * 1024)));
+  assert.equal(changes, 3);
+});
