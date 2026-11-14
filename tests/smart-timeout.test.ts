@@ -92,9 +92,15 @@ test("cancellation remains an abort, not a timeout", async () => {
 });
 
 test("parallel calls have independent silence clocks", async () => {
+  // The idle budget has to be comfortably longer than one tick of the busy
+  // loop: with the default 150 ms budget, a 40 ms tick starved by a loaded
+  // machine (the whole suite runs in parallel) read as silence and killed the
+  // healthy call. The margin is the test's, not the tool's — the idle call is
+  // still killed while the busy one is provably still ticking.
+  const timing = { idleSeconds: 0.5, defaultSeconds: 3 };
   const [idle, busy] = await Promise.all([
-    run("sleep 10"),
-    run("for i in 1 2 3 4 5 6; do echo tick; sleep 0.04; done"),
+    run("sleep 10", undefined, undefined, timing),
+    run("for i in $(seq 1 20); do echo tick; sleep 0.03; done", undefined, undefined, timing),
   ]);
   assert.equal(idle.report?.reason, "idle");
   assert.equal(busy.report, undefined);
@@ -104,12 +110,27 @@ test("timeout kills ordinary descendant processes (Linux)", { skip: process.plat
   const value = await run("sleep 10 & echo CHILD:$!; wait");
   const pid = Number(value.text.match(/CHILD:(\d+)/)?.[1]);
   assert.ok(pid > 0);
-  try {
-    const status = readFileSync(`/proc/${pid}/status`, "utf8");
-    assert.match(status, /State:\s+Z/, "descendant must be gone or a terminated zombie awaiting reaping");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  // The descendant is reaped by init after its parent is killed, which is not
+  // synchronous with the tool call returning: poll for "gone or zombie"
+  // instead of demanding it on the first read.
+  const stateOf = (): string | null => {
+    try {
+      return readFileSync(`/proc/${pid}/status`, "utf8").match(/State:\s+(\S)/)?.[1] ?? null;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+  };
+  const deadline = Date.now() + 5_000;
+  let state = stateOf();
+  while (state !== null && state !== "Z" && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    state = stateOf();
   }
+  assert.ok(
+    state === null || state === "Z",
+    `descendant must be gone or a terminated zombie awaiting reaping (saw ${String(state)})`,
+  );
 });
 
 test("formatTimeoutStamp and formatBashCallWithTimeout format explicit and default timeouts", () => {
