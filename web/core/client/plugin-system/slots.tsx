@@ -10,7 +10,7 @@ import React, { useState, type CSSProperties } from "react";
 import { CaretDown, CaretRight, SidebarSimple, X } from "@phosphor-icons/react";
 import type { WebPluginDescriptor, WebView } from "./contract.ts";
 import { PluginViewRenderer } from "./PluginViewRenderer.tsx";
-import { compactSummary, slotPolicy, startsCollapsed, type SlotCollision, type SlotPolicy, type SlotPosition } from "./slot-policy.ts";
+import { compactSummary, hasSlotPlacement, slotPolicy, startsCollapsed, type SlotCollision, type SlotPolicy, type SlotPosition } from "./slot-policy.ts";
 
 export type { SlotPosition } from "./slot-policy.ts";
 
@@ -235,10 +235,7 @@ export function SlotHost({
 }: SlotHostProps) {
   const withViews: PluginWithView[] = [];
   for (const plugin of plugins) {
-    const hasSlot = plugin.surfaces.some(
-      (surface) => surface.kind === "slot" && surface.slot === slot,
-    );
-    if (!hasSlot) continue;
+    if (!hasSlotPlacement(plugin, slot)) continue;
     const view = views?.[plugin.id];
     if (view !== undefined && view !== null) {
       withViews.push({ plugin, view });

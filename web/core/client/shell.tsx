@@ -545,7 +545,12 @@ export function AppShell() {
           ))}
         </div>
       ) : null}
+      {/* Every slot the contract declares has a host: top and center above
+          the transcript, floating over it, bottom under the composer. A
+          plugin with a sidebar panel is not mounted here (the panel owns its
+          view), so a sidebar plugin never duplicates into the chat. */}
       <SlotHost slot="top" plugins={inlinePlugins} views={session.pluginViews} />
+      <SlotHost slot="center" plugins={inlinePlugins} views={session.pluginViews} onOpenSidePanel={handleOpenSidePanel} sidePanelOpen={sidePanelOpen} activeSidePluginId={openPanelPluginId} />
       <AnchorHost anchor="chat.before" {...anchorHostProps} />
       {/* Keep transcript controls positioned over the scroller. Plugin
           panels live beside the chat, not inside its reading area. */}
@@ -572,6 +577,7 @@ export function AppShell() {
         )}
       </div>
       <AnchorHost anchor="chat.after" {...anchorHostProps} />
+      <SlotHost slot="floating" plugins={inlinePlugins} views={session.pluginViews} onOpenSidePanel={handleOpenSidePanel} sidePanelOpen={sidePanelOpen} activeSidePluginId={openPanelPluginId} />
       <EditorWidgets widgets={session.widgets} placement="aboveEditor" />
       <AnchorHost anchor="chat.composer" {...anchorHostProps} />
       {regions.composer !== undefined ? (

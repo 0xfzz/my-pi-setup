@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resolveRegionOverrides } from "./regions.ts";
-import type { WebPluginDescriptor, WebPluginRegion } from "../plugin-contracts/descriptor.ts";
+import type { HostRegion, WebPluginDescriptor } from "../plugin-contracts/descriptor.ts";
 import type { WebView } from "../plugin-contracts/view.ts";
 
-function overridePlugin(id: string, region: WebPluginRegion): WebPluginDescriptor {
+function overridePlugin(id: string, region: HostRegion): WebPluginDescriptor {
   return {
     id,
     extension: id,
@@ -56,7 +56,7 @@ test("plugins without override surfaces are ignored", () => {
     id: "slotly",
     extension: "slotly",
     title: "Slotly",
-    surfaces: [{ kind: "slot", slot: "top" }],
+    surfaces: [{ kind: "page", path: "/plugins/slotly" }],
   };
   const result = resolveRegionOverrides([plugin], { slotly: statusView("s") });
   assert.deepEqual(result.regions, {});

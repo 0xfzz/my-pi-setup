@@ -28,13 +28,23 @@ export interface SlotPolicy {
   cardMaxWidth: number;
 }
 
-function findRegionContribution(
+/**
+ * The contribution that places this plugin in `slot`, if it declares one.
+ * Slot membership and slot policy read the same contribution, so they cannot
+ * disagree about where a view mounts or how big it may get.
+ */
+export function slotContribution(
   plugin: WebPluginDescriptor,
   slot: SlotPosition,
 ): WebPluginUiContribution | undefined {
   return plugin.ui?.find(
     (contribution) => contribution.placement.kind === "region" && contribution.placement.region === slot,
   );
+}
+
+/** Whether the plugin asked for this slot at all. */
+export function hasSlotPlacement(plugin: WebPluginDescriptor, slot: SlotPosition): boolean {
+  return slotContribution(plugin, slot) !== undefined;
 }
 
 function clampBound(hint: number | undefined, fallback: number, ceiling: number): number {
@@ -53,7 +63,7 @@ function defaultBodyHeight(slot: SlotPosition): number {
 }
 
 export function slotPolicy(plugin: WebPluginDescriptor, slot: SlotPosition): SlotPolicy {
-  const contribution = findRegionContribution(plugin, slot);
+  const contribution = slotContribution(plugin, slot);
   const placement = contribution?.placement;
   return {
     compact: contribution?.strategy === "compact",

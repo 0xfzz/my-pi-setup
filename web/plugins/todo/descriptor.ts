@@ -16,7 +16,6 @@ export const todoPlugin: WebPluginDescriptor = {
   }],
   surfaces: [
     { kind: "sidebar" },
-    { kind: "slot", slot: "top" },
   ],
 };
 

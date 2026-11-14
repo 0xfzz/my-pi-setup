@@ -16,7 +16,6 @@ export const cacheStatsPlugin: WebPluginDescriptor = {
   }],
   surfaces: [
     { kind: "sidebar" },
-    { kind: "slot", slot: "bottom" },
   ],
 };
 

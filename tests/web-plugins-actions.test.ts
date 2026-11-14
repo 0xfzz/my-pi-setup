@@ -295,45 +295,43 @@ test("AC4: dashboard extension ignores unrecognised action requests and guards p
   assert.equal(syncEmitted, true, "Must trigger requestDashboardSync on valid match");
 });
 
-test("phase 6 slot surfaces: validation and placement mapping", () => {
+test("phase 6 placements: a slot is declared in ui, never as a surface", () => {
 
-  // Valid slot surfaces
-  for (const slot of ["top", "center", "bottom", "floating"] as const) {
-    const res = validatePlugin(
-      {
-        id: "test-plugin",
-        extension: "cache-stats",
-        title: "Test",
-        surfaces: [{ kind: "slot", slot }],
-      });
-    assert.equal(res.ok, true);
-  }
-
-  // Invalid slot value rejected
-  const badSlotRes = validatePlugin(
-    {
+  // Every slot region a plugin may place a view in.
+  for (const region of ["top", "center", "bottom", "floating", "sidebar"] as const) {
+    const res = validatePlugin({
       id: "test-plugin",
       extension: "cache-stats",
       title: "Test",
-      surfaces: [{ kind: "slot", slot: "sidebar" as never }],
+      surfaces: [],
+      ui: [{ id: "strip", component: "ui.plugin-view.v1", scope: "session", placement: { kind: "region", region } }],
     });
-  assert.equal(badSlotRes.ok, false);
-  assert.match(badSlotRes.error, /invalid slot/);
+    assert.equal(res.ok, true, `region ${region} must be placeable`);
+  }
 
-  // Placements match the intended Phase 6 mapping
-  const expectedPlacements: Record<string, string> = {
+  // `slot` is not a surface kind: placement has exactly one spelling.
+  const slotSurfaceRes = validatePlugin({
+    id: "test-plugin",
+    extension: "cache-stats",
+    title: "Test",
+    surfaces: [{ kind: "slot", slot: "top" }],
+  });
+  assert.equal(slotSurfaceRes.ok, false);
+  assert.match(slotSurfaceRes.error, /unknown surface kind/);
+
+  // Placement is declared once, in the ui contribution — never on a surface.
+  const expectedRegions: Record<string, string> = {
     "cache-stats": "bottom",
     todo: "top",
     artifacts: "floating",
     "subagent-checkpoints": "center",
   };
 
-  for (const [id, expectedSlot] of Object.entries(expectedPlacements)) {
+  for (const [id, expectedRegion] of Object.entries(expectedRegions)) {
     const plugin = WEB_PLUGINS.find((p) => p.id === id);
     assert.ok(plugin, `Plugin ${id} must exist in WEB_PLUGINS`);
-    const slotSurface = plugin.surfaces.find((s) => s.kind === "slot");
-    assert.ok(slotSurface && slotSurface.kind === "slot", `${id} must have a slot surface`);
-    assert.equal(slotSurface.slot, expectedSlot, `${id} must be in slot ${expectedSlot}`);
+    const regions = (plugin.ui ?? []).flatMap((c) => (c.placement.kind === "region" ? [c.placement.region] : []));
+    assert.deepEqual(regions, [expectedRegion], `${id} must be placed in region ${expectedRegion}`);
   }
 
   // The subagent monitor keeps its page surface

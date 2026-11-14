@@ -21,9 +21,9 @@ test("buildPanelEntries lists sidebar-eligible plugins including sessionPanel pl
   const entries = buildPanelEntries(
     [
       plugin("a", "Alpha", [{ kind: "sidebar" }]),
-      plugin("b", "Beta", [{ kind: "slot", slot: "top" }]), // inline only
+      plugin("b", "Beta", [{ kind: "page", path: "/plugins/b" }]), // page only
       plugin("c", "Gamma", [{ kind: "override", region: "composer" }]), // not a panel
-      plugin("d", "Delta", [{ kind: "slot", slot: "center" }]),
+      plugin("d", "Delta", [{ kind: "sidebar" }]),
       filesPlugin,
     ],
     new Set(["a", "d", "files"]),

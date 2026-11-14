@@ -9,26 +9,19 @@ function pluginWith(surfaces: WebPluginDescriptor["surfaces"]): WebPluginDescrip
 
 const status: WebView = { type: "status", tone: "neutral", text: "Ready" };
 
-test("sidebar, center and floating plugins belong to the panel rather than the transcript", () => {
-  for (const surfaces of [
-    [{ kind: "sidebar" }],
-    [{ kind: "slot", slot: "center" }],
-    [{ kind: "slot", slot: "floating" }],
-    [{ kind: "sidebar" }, { kind: "slot", slot: "top" }],
-  ] satisfies WebPluginDescriptor["surfaces"][]) {
-    assert.equal(isPanelPlugin(pluginWith(surfaces)), true);
-  }
+test("a sidebar surface makes a plugin a panel", () => {
+  assert.equal(isPanelPlugin(pluginWith([{ kind: "sidebar" }])), true);
+  assert.equal(isPanelPlugin(pluginWith([{ kind: "sidebar" }, { kind: "page", path: "/plugins/fixture" }])), true);
 });
 
-test("standalone strips, pages and overrides keep their inline placements", () => {
+test("strips, pages, dialogs and overrides are not panels", () => {
   for (const surfaces of [
     [],
-    [{ kind: "slot", slot: "top" }],
-    [{ kind: "slot", slot: "bottom" }],
     [{ kind: "page", path: "/plugins/fixture" }],
+    [{ kind: "dialog" }],
     [{ kind: "override", region: "composer" }],
   ] satisfies WebPluginDescriptor["surfaces"][]) {
-    assert.equal(isPanelPlugin(pluginWith(surfaces)), false);
+    assert.equal(isPanelPlugin(pluginWith(surfaces)), false, JSON.stringify(surfaces));
   }
 });
 
@@ -38,11 +31,11 @@ test("navbar buttons appear only for panel plugins with a published view", () =>
   assert.deepEqual(availablePanelPlugins([panel], null), []);
   assert.deepEqual(availablePanelPlugins([panel], {}), []);
   assert.deepEqual(availablePanelPlugins([panel], { fixture: status }), [panel]);
-  assert.deepEqual(availablePanelPlugins([pluginWith([{ kind: "slot", slot: "top" }])], { fixture: status }), []);
+  assert.deepEqual(availablePanelPlugins([pluginWith([{ kind: "page", path: "/plugins/fixture" }])], { fixture: status }), []);
 });
 
-test("a plugin with multiple sidebar placements gets exactly one navbar button", () => {
-  const panel = pluginWith([{ kind: "sidebar" }, { kind: "slot", slot: "floating" }]);
+test("a panel with several surfaces gets exactly one navbar button", () => {
+  const panel = pluginWith([{ kind: "sidebar" }, { kind: "page", path: "/plugins/fixture" }]);
   assert.deepEqual(availablePanelPlugins([panel], { fixture: status }), [panel]);
 });
 

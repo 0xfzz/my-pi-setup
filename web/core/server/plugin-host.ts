@@ -22,7 +22,7 @@ import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionDescriptor } from "../plugi
 import type { WebPluginDescriptor } from "../plugin-contracts/descriptor.ts";
 import { WebUiStore, type WebUiSnapshot, type WebUiSessionState } from "../plugin-contracts/ui-state-store.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT, extensionUiUpdate, type WebUiType } from "../plugin-contracts/ui-event-models.ts";
-import { normalizeContributions } from "../plugin-contracts/ui-contracts.ts";
+import { contributionsOf } from "../plugin-contracts/ui-contracts.ts";
 import { createPluginHost, type PluginHost } from "../plugin-contracts/kernel/host.ts";
 
 const uiGlobal = globalThis as Record<PropertyKey, unknown>;
@@ -418,7 +418,7 @@ export function attachSessionPlugins(wrapper: unknown): () => void {
     if (event.type === "ui.layout.changed") {
       const p = event.payload as { pluginId?: string; contributionId?: string } | undefined;
       const plugin = getPluginDescriptor(p?.pluginId ?? "");
-      if (!plugin || !normalizeContributions(plugin).some((c) => c.id === p?.contributionId)) {
+      if (!plugin || !contributionsOf(plugin).some((c) => c.id === p?.contributionId)) {
         webUiStore.reject(sessionId, sourceKey, "unknown plugin/contribution layout target");
         return;
       }

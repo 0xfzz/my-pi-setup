@@ -15,19 +15,6 @@ export const mcpManagerPlugin: WebPluginDescriptor = {
     // the plugin page nav on any plugin page.
     { kind: "page", path: "/plugins/mcp-manager" },
   ],
-  ui: [{
-    // Inert by design: the extension never publishes a session view — the
-    // manager is workspace state on a bespoke page. The contribution exists
-    // so the registry stays uniform; visibleWhen keeps it hidden until a
-    // view (never) is published.
-    id: "servers",
-    component: "ui.plugin-view.v1",
-    view: MCP_MANAGER_PLUGIN_ID,
-    strategy: "compact",
-    scope: "session",
-    visibleWhen: "has-view",
-    placement: { kind: "anchor", anchor: "session.sidebar", collision: "shrink" },
-  }],
 };
 
 export default mcpManagerPlugin;

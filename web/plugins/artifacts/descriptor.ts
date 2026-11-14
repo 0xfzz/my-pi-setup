@@ -16,7 +16,6 @@ export const artifactsPlugin: WebPluginDescriptor = {
   }],
   surfaces: [
     { kind: "sidebar" },
-    { kind: "slot", slot: "floating" },
   ],
 };
 

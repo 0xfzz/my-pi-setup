@@ -16,7 +16,6 @@ export const subagentCheckpointsPlugin: WebPluginDescriptor = {
   }],
   surfaces: [
     { kind: "sidebar" },
-    { kind: "slot", slot: "center" },
   ],
 };
 

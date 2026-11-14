@@ -20,15 +20,6 @@ export const exampleOverridePlugin: WebPluginDescriptor = {
     { kind: "override", region: "composer" },
     { kind: "page", path: "/plugins/example-override" },
   ],
-  ui: [{
-    id: "composer",
-    component: "ui.plugin-view.v1",
-    view: EXAMPLE_OVERRIDE_PLUGIN_ID,
-    strategy: "compact",
-    scope: "session",
-    visibleWhen: "has-view",
-    placement: { kind: "anchor", anchor: "chat.composer" },
-  }],
   actions: [
     {
       id: EXAMPLE_OVERRIDE_SHOW_ACTION,

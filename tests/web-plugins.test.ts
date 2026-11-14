@@ -205,21 +205,21 @@ test("descriptor validation: enforces id regex, title, extension check, surfaces
   assert.equal(badPathCharsResult.ok, false);
   assert.match(badPathCharsResult.error, /invalid page path/);
 
-  for (const slot of ["top", "center", "bottom", "floating"] as const) {
-    const validSlotResult = validatePlugin(
-      { ...cacheStatsPlugin, surfaces: [{ kind: "slot", slot }] });
-    assert.equal(validSlotResult.ok, true);
-  }
+  // A slot is a placement, not a surface: declaring one as a surface is a
+  // named rejection rather than a silently unmounted view.
+  const slotSurfaceResult = validatePlugin(
+    { ...cacheStatsPlugin, surfaces: [{ kind: "slot", slot: "top" }] });
+  assert.equal(slotSurfaceResult.ok, false);
+  assert.match(slotSurfaceResult.error, /unknown surface kind "slot"/);
 
-  const badSlotResult = validatePlugin(
-    { ...cacheStatsPlugin, surfaces: [{ kind: "slot", slot: "invalid-slot" }] });
-  assert.equal(badSlotResult.ok, false);
-  assert.match(badSlotResult.error, /invalid slot/);
+  const dialogSurfaceResult = validatePlugin(
+    { ...cacheStatsPlugin, surfaces: [{ kind: "dialog" }], ui: undefined });
+  assert.equal(dialogSurfaceResult.ok, true, "a dialog publisher needs no placement of its own");
 
-  const nonStringSlotResult = validatePlugin(
-    { ...cacheStatsPlugin, surfaces: [{ kind: "slot", slot: 123 }] });
-  assert.equal(nonStringSlotResult.ok, false);
-  assert.match(nonStringSlotResult.error, /invalid slot/);
+  const badOverrideRegionResult = validatePlugin(
+    { ...cacheStatsPlugin, surfaces: [{ kind: "override", region: "sidebar" }] });
+  assert.equal(badOverrideRegionResult.ok, false);
+  assert.match(badOverrideRegionResult.error, /invalid override region/);
 });
 
 test("registry validation: detects duplicate plugin ids and duplicate page paths", () => {
@@ -766,30 +766,22 @@ test("phase 6 placements: WEB_PLUGINS declared with exact slot and page placemen
   // /api/p/files/*), so the kernel discovers it instead of WEB_PLUGINS listing it.
   assert.equal(WEB_PLUGINS.some((plugin) => plugin.id === "files"), false);
 
-  // Exact Phase 6 placement assertions (R2 amended in 23b66e5)
-  assert.deepEqual(cacheStatsPlugin.surfaces, [
-    { kind: "sidebar" },
-    { kind: "slot", slot: "bottom" },
-  ]);
-  assert.deepEqual(todoPlugin.surfaces, [
-    { kind: "sidebar" },
-    { kind: "slot", slot: "top" },
-  ]);
-  assert.deepEqual(bubblySpinnerPlugin.surfaces, [
-    { kind: "sidebar" },
-  ]);
+  // Exact placement assertions: a surface states what a plugin *is* (a panel,
+  // a page, a dialog publisher, a region replacement); where its views mount
+  // is declared once, in the ui contribution.
+  assert.deepEqual(cacheStatsPlugin.surfaces, [{ kind: "sidebar" }]);
+  assert.deepEqual(cacheStatsPlugin.ui?.map((c) => c.placement), [{ kind: "region", region: "bottom", collision: "shrink" }]);
+  assert.deepEqual(todoPlugin.surfaces, [{ kind: "sidebar" }]);
+  assert.deepEqual(todoPlugin.ui?.map((c) => c.placement), [{ kind: "region", region: "top", collision: "shrink" }]);
+  assert.deepEqual(bubblySpinnerPlugin.surfaces, [{ kind: "sidebar" }]);
   // Reference migration (PRD phase 6/R19): the working UI flows through the
   // event contract; the descriptor declares the override instead of a slot view.
   assert.equal(bubblySpinnerPlugin.ui?.length, 1);
   assert.equal(bubblySpinnerPlugin.ui?.[0]?.override?.target, "ui.working-indicator.v1");
-  assert.deepEqual(artifactsPlugin.surfaces, [
-    { kind: "sidebar" },
-    { kind: "slot", slot: "floating" },
-  ]);
-  assert.deepEqual(subagentCheckpointsPlugin.surfaces, [
-    { kind: "sidebar" },
-    { kind: "slot", slot: "center" },
-  ]);
+  assert.deepEqual(artifactsPlugin.surfaces, [{ kind: "sidebar" }]);
+  assert.deepEqual(artifactsPlugin.ui?.map((c) => c.placement), [{ kind: "region", region: "floating", maxWidth: 400, maxHeight: 360 }]);
+  assert.deepEqual(subagentCheckpointsPlugin.surfaces, [{ kind: "sidebar" }]);
+  assert.deepEqual(subagentCheckpointsPlugin.ui?.map((c) => c.placement), [{ kind: "region", region: "center", collision: "shrink" }]);
   assert.deepEqual(subagentMonitorPlugin.surfaces, [
     { kind: "sidebar" },
     { kind: "page", path: "/plugins/subagent-monitor" },

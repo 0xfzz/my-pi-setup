@@ -12,15 +12,9 @@ export const askUserPlugin: WebPluginDescriptor = {
   title: "Ask user",
   description:
     "Interactive clarification dialog: presents a question with optional choices and a typed answer input, resolving through the plugin action pipeline.",
-  surfaces: [],
-  ui: [{
-    id: "dialog",
-    component: "ui.floating-layer.v1",
-    view: ASK_USER_PLUGIN_ID,
-    scope: "session",
-    visibleWhen: "has-view",
-    placement: { kind: "anchor", anchor: "viewport.overlay" },
-  }],
+  // The dialog surface: the host's one dialog layer renders `type: "dialog"`
+  // views, so this plugin needs no placement of its own.
+  surfaces: [{ kind: "dialog" }],
   actions: [
     { id: ASK_USER_OPTION_ACTION, title: "Select option" },
     { id: ASK_USER_TEXT_ACTION, title: "Submit typed answer" },

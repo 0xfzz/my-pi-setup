@@ -1,15 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { validateContributions, validatePlacement, normalizeContributions, resolveOverrides, type WebPluginUiContribution } from "../web/core/plugin-contracts/ui-contracts.ts";
+import { contributionsOf, validateContributions, validatePlacement, resolveOverrides, type WebPluginUiContribution } from "../web/core/plugin-contracts/ui-contracts.ts";
 import { validatePlugin } from "../web/core/plugin-contracts/descriptor.ts";
 import { validateRegistry } from "../web/core/plugin-contracts/registry.ts";
 import { WEB_PLUGINS } from "../web/plugins/index.ts";
 
-const contribution: WebPluginUiContribution = { id: "working", component: "ui.working-indicator.v1", scope: "session", placement: { kind: "anchor", anchor: "chat.working" }, override: { target: "ui.working-indicator.v1", mode: "replace", fallback: "builtin" } };
-test("UI contract: anchor catalog, bounded overlay, responsive constraints and legacy normalization", () => {
+const contribution = {
+  id: "working",
+  component: "ui.working-indicator.v1",
+  scope: "session",
+  placement: { kind: "anchor", anchor: "chat.working" },
+  override: { target: "ui.working-indicator.v1", mode: "replace", fallback: "builtin" },
+} satisfies WebPluginUiContribution;
+test("UI contract: anchor catalog, bounded overlay and responsive constraints", () => {
   assert.equal(validateContributions([contribution], "fixture").ok, true);
   assert.equal(validatePlacement({ kind: "overlay", maxWidth: 320, maxHeight: 240, mobileFallback: "chat.after", inset: { bottom: 12 } }).ok, true);
-  assert.deepEqual(normalizeContributions({ surfaces: [{ kind: "slot", slot: "top" }] })[0]?.placement, { kind: "region", region: "top" });
   assert.equal(validatePlugin({ id: "fixture", title: "Fixture", extension: "fixture", surfaces: [], ui: [contribution] }).ok, true);
 });
 test("UI contract: malformed/unsafe placements and contribution fields are named and rejected", () => {
@@ -23,9 +28,21 @@ test("UI contract: malformed/unsafe placements and contribution fields are named
     { kind: "anchor", anchor: "chat.before", mobileFallback: "auth" },
     { kind: "anchor", anchor: "chat.before", style: "position:fixed" },
   ]) assert.equal(validatePlacement(placement).ok, false, JSON.stringify(placement));
-  for (const bad of [{ ...contribution, component: "ui.auth.v1" }, { ...contribution, priority: Infinity }, { ...contribution, strategy: "javascript:alert(1)" }, { ...contribution, scope: undefined }, { ...contribution, override: { target: "ui.auth.v1", mode: "hide", fallback: "builtin" } }, { ...contribution, override: { target: contribution.component, mode: "replace" } }, { ...contribution, component: "ui.working-indicator.v2" }]) {
+  const malformed: unknown[] = [
+    { ...contribution, component: "ui.auth.v1" },
+    { ...contribution, priority: Infinity },
+    { ...contribution, strategy: "javascript:alert(1)" },
+    { ...contribution, scope: undefined },
+    { ...contribution, override: { target: "ui.auth.v1", mode: "hide", fallback: "builtin" } },
+    // An override target with no ComponentOverrideHost is a declaration
+    // nothing mounts, so the validator refuses it.
+    { ...contribution, override: { target: "ui.plugin-view.v1", mode: "replace", fallback: "builtin" } },
+    { ...contribution, override: { target: contribution.component, mode: "replace" } },
+    { ...contribution, component: "ui.working-indicator.v2" },
+  ];
+  for (const bad of malformed) {
     const result = validateContributions([bad], "fixture");
-    assert.equal(result.ok, false);
+    assert.equal(result.ok, false, JSON.stringify(bad));
     if (!result.ok) assert.match(result.error, /Plugin "fixture" contribution "working"/);
   }
   assert.equal(validateContributions([contribution, contribution], "fixture").ok, false);
@@ -42,24 +59,24 @@ test("UI contract: deterministic override priority/user preference, wrap/hide an
   assert.equal(resolveOverrides(contribution.component, entries, new Set(["high/working", "low/working"])).replacement, undefined);
   assert.equal(resolveOverrides(contribution.component, [{ pluginId: "hide", contribution: { ...contribution, override: { target: contribution.component, mode: "hide", fallback: "builtin" } } }]).hidden, true);
 });
-test("adopted plugins declare session-scoped UI without duplicating legacy slots", () => {
+test("adopted plugins declare their placement once, in ui", () => {
   for (const plugin of WEB_PLUGINS) {
-    // A page-only plugin (the plugin manager, the MCP manager) has no slot to
-    // place, so it declares no ui contribution at all rather than an inert one
-    // that exists only to satisfy the registry.
+    // A page-only or dialog-only plugin places no view of its own, so it
+    // declares no ui contribution rather than an inert one that exists only
+    // to satisfy the registry.
     if (plugin.ui === undefined) {
-      assert.deepEqual(plugin.surfaces.filter(surface => surface.kind === "slot"), [], `${plugin.id} is page-only`);
+      assert.deepEqual(contributionsOf(plugin), [], `${plugin.id} places no view`);
       continue;
     }
     assert.ok(plugin.ui.length > 0, `${plugin.id} must explicitly declare its UI`);
     assert.equal(validateContributions(plugin.ui, plugin.id).ok, true);
-    assert.equal(normalizeContributions(plugin), plugin.ui);
     assert.ok(plugin.ui.every(c => c.scope === "session"), plugin.id);
-    for (const surface of plugin.surfaces) {
-      if (surface.kind !== "slot") continue;
-      assert.equal(plugin.ui.filter(c => c.placement.kind === "region" && c.placement.region === surface.slot).length, 1,
-        `${plugin.id} preserves exactly one contribution in ${surface.slot}`);
-    }
+    // No surface repeats a placement: `slot` is not a surface kind any more.
+    assert.deepEqual(
+      plugin.surfaces.filter(surface => (surface as { kind: string }).kind === "slot"),
+      [],
+      `${plugin.id} must not declare a slot surface`,
+    );
   }
   const monitor = WEB_PLUGINS.find(plugin => plugin.id === "subagent-monitor");
   assert.deepEqual(monitor?.ui?.[0]?.placement, { kind: "anchor", anchor: "session.sidebar", collision: "shrink" });

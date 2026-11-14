@@ -7,10 +7,10 @@
 // several candidates, the last plugin in registry order wins, and every
 // candidate is reported as a conflict.
 
-import type { WebPluginDescriptor, WebPluginRegion } from "../plugin-contracts/descriptor.ts";
+import type { HostRegion, WebPluginDescriptor } from "../plugin-contracts/descriptor.ts";
 import type { WebView } from "../plugin-contracts/view.ts";
 
-export type { WebPluginRegion };
+export type { HostRegion };
 
 export interface RegionOverride {
   pluginId: string;
@@ -18,12 +18,12 @@ export interface RegionOverride {
 }
 
 export interface RegionConflict {
-  region: WebPluginRegion;
+  region: HostRegion;
   pluginIds: string[];
 }
 
 export interface RegionResolution {
-  regions: Partial<Record<WebPluginRegion, RegionOverride>>;
+  regions: Partial<Record<HostRegion, RegionOverride>>;
   conflicts: RegionConflict[];
 }
 
@@ -31,7 +31,7 @@ export function resolveRegionOverrides(
   plugins: readonly WebPluginDescriptor[],
   views: Record<string, WebView> | null | undefined,
 ): RegionResolution {
-  const regions: Partial<Record<WebPluginRegion, RegionOverride>> = {};
+  const regions: Partial<Record<HostRegion, RegionOverride>> = {};
   const conflicts: RegionConflict[] = [];
   if (views === null || views === undefined) {
     return { regions, conflicts };
