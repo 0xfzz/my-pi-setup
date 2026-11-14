@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { join } from "node:path";
 import type { WebPluginDescriptor } from "../plugin-contracts/descriptor.ts";
 import { createPluginHost, type PluginHost } from "../plugin-contracts/kernel/host.ts";
+import { createPluginUiSink } from "./plugin-ui-sink.ts";
 
 const GLOBAL_HOST_KEY = Symbol.for("pi-web:plugin-host:v1");
 
@@ -74,6 +75,7 @@ export function registerWebPlugins(
   const existing = global[GLOBAL_HOST_KEY] as PluginHost<WebPluginDescriptor> | undefined;
   if (existing !== undefined) {
     registry = existing;
+    existing.ui.attach(createPluginUiSink());
     return existing;
   }
 
@@ -98,6 +100,8 @@ export function registerWebPlugins(
 
   global[GLOBAL_HOST_KEY] = host;
   registry = host;
+  // The store is a server singleton; the kernel only knows the sink interface.
+  host.ui.attach(createPluginUiSink());
 
   host.ready.catch((error: unknown) => {
     console.error("[pi-web-minimal] web plugin host failed to boot:", error);

@@ -14,6 +14,7 @@ export const CAPABILITY_KINDS = {
   "ui.theme": { argument: "none" },
   "ui.css": { argument: "none" },
   "ui.route": { argument: "optional" },
+  "ui.publish": { argument: "none" },
   commands: { argument: "none" },
   keys: { argument: "none" },
   "hooks.observe": { argument: "required" },
@@ -55,6 +56,10 @@ export const AUTO_GRANTED: ReadonlySet<CapabilityKind> = new Set<CapabilityKind>
   "ui.theme",
   "ui.css",
   "ui.route",
+  // Publishing to the browser is interface-only and host-validated: every
+  // payload passes the same store validation an extension's does, and the
+  // plugin's own id is the source key, so it cannot write another's surface.
+  "ui.publish",
   "commands",
   "keys",
   "hooks.observe",

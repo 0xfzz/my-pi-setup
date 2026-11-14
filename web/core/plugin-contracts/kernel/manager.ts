@@ -14,11 +14,13 @@ import type { DiscoveredPlugin } from "./discovery.ts";
 import { EventTapRegistry, type TapHandler } from "./events.ts";
 import { PluginLifecycle, isLive, type PluginEvent, type PluginState } from "./lifecycle.ts";
 import { HookBus } from "./hooks.ts";
+import { PluginUiRegistry, type NotificationLevel } from "./plugin-ui.ts";
 import { deactivationOrder, requiredDependents, resolvePlugins, type ResolverInput } from "./resolver.ts";
 import { PluginRouteRegistry, type PluginRouteHandler } from "./routes.ts";
 import { ServiceRegistry } from "./services.ts";
 import { PluginStorage, type ScopedStorage } from "./storage.ts";
 import { markActivating, markCleanShutdown, recordBoot, recoverInterruptedActivation, setPluginState, type WebPluginsState } from "./state.ts";
+import type { WebView } from "../view.ts";
 
 /** Hook registration for this plugin. Each call returns an unregister function. */
 export interface PluginHooks {
@@ -41,6 +43,22 @@ export interface PluginServices {
  */
 export interface PluginEvents {
   on(channel: string, handler: TapHandler): () => void;
+}
+
+/**
+ * The plugin's own surface in the browser. Each call lands in the same
+ * per-session store a pi extension publishes into, so one screen has one
+ * source of truth; the payload is validated there. Needs `ui.publish`.
+ */
+export interface PluginUi {
+  /** Publish this plugin's declared view for a session. */
+  view(sessionId: string, view: WebView): boolean;
+  /** A transient toast. */
+  notify(sessionId: string, message: string, level?: NotificationLevel): boolean;
+  /** This plugin's line in the status area; `null` removes it. */
+  status(sessionId: string, text: string | null): boolean;
+  /** This plugin's widget lines; `null` removes them. */
+  widget(sessionId: string, lines: string[] | null, placement?: "aboveEditor" | "belowEditor"): boolean;
 }
 
 /** HTTP route registration for this plugin's own backend surface. */
@@ -66,6 +84,11 @@ export interface PluginContext {
    * ordered per subscriber; every subscription is removed on deactivate.
    */
   readonly events: PluginEvents;
+  /**
+   * This plugin's own browser surface, validated and stored by the host. Every
+   * entry is namespaced by the plugin's id and cleared on deactivate.
+   */
+  readonly ui: PluginUi;
   readonly services: PluginServices;
   /**
    * Mount HTTP routes under `/api/p/<pluginId>/`. Needs the `routes` capability;
@@ -115,6 +138,7 @@ export interface ManagerOptions {
   audit?: AuditLog;
   hooks?: HookBus;
   events?: EventTapRegistry;
+  ui?: PluginUiRegistry;
   services?: ServiceRegistry;
   routes?: PluginRouteRegistry;
   storage?: PluginStorage;
@@ -177,6 +201,7 @@ export class PluginManager {
   private readonly audit: AuditLog;
   private readonly hooks: HookBus;
   private readonly events: EventTapRegistry;
+  private readonly ui: PluginUiRegistry;
   private readonly services: ServiceRegistry;
   private readonly routes: PluginRouteRegistry;
   private readonly storage: PluginStorage;
@@ -196,6 +221,7 @@ export class PluginManager {
     this.audit = options.audit ?? new AuditLog({ clock: this.now });
     this.hooks = options.hooks ?? new HookBus();
     this.events = options.events ?? new EventTapRegistry();
+    this.ui = options.ui ?? new PluginUiRegistry();
     this.services = options.services ?? new ServiceRegistry();
     this.routes = options.routes ?? new PluginRouteRegistry();
     this.storage = options.storage ?? new PluginStorage();
@@ -574,6 +600,12 @@ export class PluginManager {
       events: {
         on: (channel, handler) => this.track(slot, () => this.events.subscribe(owner, channel, handler)),
       },
+      ui: {
+        view: (sessionId, view) => this.ui.publishView(owner, sessionId, view),
+        notify: (sessionId, message, level) => this.ui.notify(owner, sessionId, message, level),
+        status: (sessionId, text) => this.ui.setStatus(owner, sessionId, text),
+        widget: (sessionId, lines, placement) => this.ui.setWidget(owner, sessionId, lines, placement),
+      },
       services: {
         provide: (name, impl) => this.track(slot, () => this.services.register(owner, name, "provide", impl)),
         replace: (name, impl, priority) => this.track(slot, () => this.services.register(owner, name, "replace", impl, priority)),
@@ -625,6 +657,7 @@ export class PluginManager {
     slot.disposed = true;
     this.hooks.removeOwner(slot.plugin.id);
     this.events.removeOwner(slot.plugin.id);
+    this.ui.removeOwner(slot.plugin.id);
     this.services.removeOwner(slot.plugin.id);
     this.routes.removeOwner(slot.plugin.id);
     while (slot.disposers.length) {
