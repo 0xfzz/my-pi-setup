@@ -1,6 +1,7 @@
 // Typed client for the plugin manager endpoints. Pure shaping + fetch, no React,
 // so the page stays a view over the kernel's answers.
 
+import { getJson, postJson, type ApiFailure, type ApiResult } from "../../../core/client/plugin-system/api-client.ts";
 import {
   PLUGIN_MANAGER_API,
   PLUGIN_MANAGER_ACTIONS,
@@ -12,24 +13,19 @@ import {
 
 export type { PluginManagerAction, PluginManagerOutcome, PluginManagerReport, PluginManagerRow };
 
-export type ManagerResult<T> = { ok: true; data: T } | { ok: false; message: string };
+export type ManagerResult<T> = ApiResult<T>;
+export type ManagerFailure = ApiFailure;
 
 export const MANAGER_ACTIONS = PLUGIN_MANAGER_ACTIONS;
 
 /** Read the whole kernel state in one request. */
 export async function fetchPluginManagerReport(): Promise<ManagerResult<PluginManagerReport>> {
-  let response: Response;
-  try {
-    response = await fetch(PLUGIN_MANAGER_API, { headers: { Accept: "application/json" } });
-  } catch {
-    return { ok: false, message: "the web server did not answer" };
+  const outcome = await getJson<PluginManagerReport>(PLUGIN_MANAGER_API);
+  if (!outcome.ok) return outcome;
+  if (!Array.isArray(outcome.data.plugins)) {
+    return { ok: false, code: "unreadable", message: "the manager report was not understood", status: 200 };
   }
-  const body = (await response.json().catch(() => ({}))) as Partial<PluginManagerReport> & { error?: unknown };
-  if (!response.ok) {
-    return { ok: false, message: typeof body.error === "string" ? body.error : `request failed (HTTP ${response.status})` };
-  }
-  if (!Array.isArray(body.plugins)) return { ok: false, message: "the manager report was not understood" };
-  return { ok: true, data: body as PluginManagerReport };
+  return outcome;
 }
 
 /** Apply one operator action; the kernel's verdict comes back verbatim. */
@@ -37,17 +33,7 @@ export async function applyManagerAction(
   pluginId: string,
   action: PluginManagerAction,
 ): Promise<ManagerResult<PluginManagerOutcome>> {
-  let response: Response;
-  try {
-    response = await fetch(`${PLUGIN_MANAGER_API}/${encodeURIComponent(pluginId)}/${action}`, { method: "POST" });
-  } catch {
-    return { ok: false, message: "the web server did not answer" };
-  }
-  const body = (await response.json().catch(() => ({}))) as PluginManagerOutcome;
-  if (!response.ok) {
-    return { ok: false, message: body.error ?? `action ${action} failed (HTTP ${response.status})` };
-  }
-  return { ok: true, data: body };
+  return postJson<PluginManagerOutcome>(`${PLUGIN_MANAGER_API}/${encodeURIComponent(pluginId)}/${action}`);
 }
 
 /** Which actions make sense for a plugin in this state — a pure decision. */

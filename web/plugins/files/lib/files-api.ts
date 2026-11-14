@@ -4,9 +4,10 @@
 // so the UI can tell a real failure from a partial page.
 
 import type { FileKind } from "../../../core/shared/file-kind.ts";
+import { getJson, type ApiFailure, type ApiResult } from "../../../core/client/plugin-system/api-client.ts";
 
-export type FilesFailure = { ok: false; code: string; message: string; status: number };
-export type FilesResult<T> = { ok: true; data: T } | FilesFailure;
+export type FilesFailure = ApiFailure;
+export type FilesResult<T> = ApiResult<T>;
 
 export interface DirEntry {
   name: string;
@@ -69,40 +70,17 @@ export function downloadUrl(sessionId: string, path: string, attach: boolean): s
   return attach ? `${base}&download=1` : base;
 }
 
-async function request<T>(url: string): Promise<FilesResult<T>> {
-  let response: Response;
-  try {
-    response = await fetch(url, { headers: { Accept: "application/json" } });
-  } catch {
-    return failure("network", "could not reach the server");
-  }
-  const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!response.ok) {
-    return {
-      ok: false,
-      code: typeof body.code === "string" ? body.code : "error",
-      message: typeof body.error === "string" ? body.error : `request failed (HTTP ${response.status})`,
-      status: response.status,
-    };
-  }
-  return { ok: true, data: body as T };
-}
-
-function failure(code: string, message: string): FilesFailure {
-  return { ok: false, code, message, status: 0 };
-}
-
 export function fetchDirectory(sessionId: string, path: string, hidden: boolean): Promise<FilesResult<FilesListData>> {
   const url = `${FILES_API}?${scope(sessionId)}&path=${encode(path)}${hidden ? "&hidden=1" : ""}`;
-  return request<FilesListData>(url);
+  return getJson<FilesListData>(url);
 }
 
 export function fetchText(sessionId: string, path: string): Promise<FilesResult<FilesTextData>> {
-  return request<FilesTextData>(`${FILES_API}/read?${scope(sessionId)}&path=${encode(path)}`);
+  return getJson<FilesTextData>(`${FILES_API}/read?${scope(sessionId)}&path=${encode(path)}`);
 }
 
 export function fetchSearch(sessionId: string, query: string): Promise<FilesResult<FilesSearchData>> {
-  return request<FilesSearchData>(`${FILES_API}/search?${scope(sessionId)}&q=${encodeURIComponent(query)}`);
+  return getJson<FilesSearchData>(`${FILES_API}/search?${scope(sessionId)}&q=${encodeURIComponent(query)}`);
 }
 
 /**
