@@ -1,0 +1,31 @@
+{
+  "id": "activity",
+  "name": "Activity",
+  "version": "1.0.0",
+  "engines": { "piWeb": "^1.0.0", "sdk": "^1.0.0" },
+  "main": { "server": "./server/index.ts" },
+  "trust": "trusted",
+  "capabilities": [
+    "tap.pi-events:session.tool",
+    "tap.pi-events:session.message",
+    "tap.pi-events:session.lifecycle",
+    "ui.publish"
+  ],
+  "activation": ["onStartup"],
+  "contributes": {
+    "title": "Activity",
+    "extension": "web-core.activity",
+    "icon": "chart-bar",
+    "description": "Live tool activity for the running session, published by the plugin's own server half.",
+    "ui": [
+      {
+        "id": "recent-tools",
+        "component": "ui.plugin-view.v1",
+        "view": "activity",
+        "scope": "session",
+        "visibleWhen": "has-view",
+        "placement": { "kind": "region", "region": "bottom", "collision": "shrink" }
+      }
+    ]
+  }
+}
