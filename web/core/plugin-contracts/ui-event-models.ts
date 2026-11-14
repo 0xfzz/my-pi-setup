@@ -24,7 +24,7 @@ export interface WebUiPayloads {
   "ui.view.changed": { pluginId: string; view: WebView };
   "ui.layout.changed": { pluginId: string; contributionId: string; placement: WebPluginPlacement };
   "ui.session.lifecycle": { running: boolean; closed?: boolean; project?: string };
-  "ui.plugin.action-requested": { pluginId: string; actionId: string; requestId: string };
+  "ui.plugin.action-requested": { pluginId: string; actionId: string; requestId: string; confirm?: string };
   /** Transient toast; the host keeps a bounded per-session list. */
   "ui.notify": { message: string; level: "info" | "warning" | "error" };
 }
@@ -75,7 +75,7 @@ export function validateWebUiEvent(input: unknown): UiValidation {
       "ui.widget.changed": ["key", "lines", "placement"], "ui.custom.changed": ["id", "method", "lines"],
       "ui.title.changed": ["text"], "ui.editor.changed": ["text"], "ui.view.changed": ["pluginId", "view"],
       "ui.layout.changed": ["pluginId", "contributionId", "placement"], "ui.session.lifecycle": ["running", "closed", "project"],
-      "ui.plugin.action-requested": ["pluginId", "actionId", "requestId"],
+      "ui.plugin.action-requested": ["pluginId", "actionId", "requestId", "confirm"],
       "ui.notify": ["message", "level"],
     };
     const allowed = fields[e.type as WebUiType];
@@ -104,7 +104,7 @@ export function validateWebUiEvent(input: unknown): UiValidation {
         break;
       }
       case "ui.session.lifecycle": valid = typeof p.running === "boolean" && (p.closed === undefined || typeof p.closed === "boolean") && (p.project === undefined || text(p.project, 4096)); break;
-      case "ui.plugin.action-requested": valid = key(p.pluginId) && key(p.actionId) && key(p.requestId); break;
+      case "ui.plugin.action-requested": valid = key(p.pluginId) && key(p.actionId) && key(p.requestId) && (p.confirm === undefined || text(p.confirm, 2000)); break;
       case "ui.notify": valid = text(p.message, 2000) && ["info", "warning", "error"].includes(String(p.level)); break;
     }
     if (!valid) throw new Error(`invalid ${String(e.type)} payload`);

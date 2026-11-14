@@ -74,6 +74,9 @@ function matchRoute(match: string | RegExp, pathname: string): RouteMatch | null
  */
 const id = "[^/]+";
 
+/** Cap for the typed value an instant action may carry (a dialog answer). */
+const MAX_ACTION_VALUE_LENGTH = 2000;
+
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 async function handleHealth(ctx: ApiRouteContext): Promise<void> {
@@ -152,7 +155,17 @@ async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Pr
   }
 
   // 4. Audit, then relay to the owning extension over the session event bus.
+  //    An instant action (no declared confirm) may carry the dialog's typed
+  //    answer as its value — the ask-style dialogs' answer channel. A value
+  //    on a declared-confirm action is the byte-match check above and is
+  //    never relayed.
   recordActionAudit({ requestId, sessionId, pluginId, actionId, timestamp: Date.now() });
+  const relayedConfirm = action?.confirm === undefined
+    && typeof confirm === "string"
+    && confirm.length > 0
+    && confirm.length <= MAX_ACTION_VALUE_LENGTH
+    ? confirm
+    : undefined;
   if (isWebCore) {
     // The picker closes here, server-side: the picked action's side effect
     // (a fork, a tree navigation) can switch the pi's session and rebind
@@ -161,7 +174,7 @@ async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Pr
     // extension (the TUI-side dialog close).
     webPluginsStore.recordView(sessionId, "web-core", { type: "dialog", open: false });
   }
-  const { relayed } = relayActionRequest(sessionId, pluginId, actionId, requestId);
+  const { relayed } = relayActionRequest(sessionId, pluginId, actionId, requestId, relayedConfirm);
   sendJson(res, 200, { ok: true, requestId, relayed });
 }
 

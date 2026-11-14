@@ -6,6 +6,12 @@ import { overlayRows, popupOverlayOptions } from "../lib/popup/frame.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
 import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 import type { DialogAction } from "../web/core/plugin-contracts/view.ts";
+import {
+  ASK_USER_CANCEL_ACTION,
+  ASK_USER_OPTION_ACTION,
+  ASK_USER_PLUGIN_ID,
+  ASK_USER_TEXT_ACTION,
+} from "../web/plugins/ask-user/contract.ts";
 
 type AskResult = {
   status: "answered" | "cancelled" | "forwarded" | "unavailable";
@@ -59,13 +65,12 @@ export default function askUser(pi: ExtensionAPI) {
   });
 
   /**
-   * The web surface for ask_user: render the question as a plugin dialog whose
-   * option actions round-trip through the plugin action pipeline, then resolve
-   * the awaited answer. Free-text questions have no web input yet, so they
-   * report unavailable and let the model re-ask with options.
+   * The web surface for ask_user: render the question as a plugin dialog with
+   * an answer input and (up to 6) choice buttons, resolving through the
+   * plugin action pipeline. Action ids come from the static descriptor
+   * (`answer-option`, `answer-text`, `cancel`); the clicked option label or
+   * typed answer travels in the request's `confirm` field.
    */
-  const ASK_WEB_PLUGIN_ID = "ask-user";
-
   async function askInWeb(
     question: string,
     context: string | undefined,
@@ -73,30 +78,29 @@ export default function askUser(pi: ExtensionAPI) {
     recommended: number | undefined,
     signal: AbortSignal | undefined,
   ): Promise<AskToolResult> {
-    if (options === undefined || options.length === 0) {
-      return result({
-        status: "unavailable", question,
-        message: "Unanswered: the web client has no free-text input. Ask again with `options` so the choices render as dialog actions.",
-      });
-    }
-
     const cancelled = () => result({
       status: "cancelled", question,
       message: "Unanswered. No consent or approval was given.",
     });
 
-    const choices = options;
-
-    // Encode the choice plus a per-question nonce into each action id so a late
-    // or duplicated action request can only resolve its own question.
-    const nonce = Math.random().toString(36).slice(2, 10);
+    const choices = options ?? [];
+    // The dialog contract caps actions at 8: reserve two slots for Submit and
+    // Cancel so up to 6 choices fit as buttons; any overflow stays reachable
+    // by typing into the input.
+    const visibleChoices = choices.slice(0, 6);
     const actions: DialogAction[] = [
-      ...choices.map((option, index) => ({
-        id: `opt-${nonce}-${index}`,
+      ...visibleChoices.map((option, index) => ({
+        id: ASK_USER_OPTION_ACTION,
         label: option,
         ...(recommended === index + 1 ? { tone: "primary" as const } : {}),
       })),
-      { id: `cancel-${nonce}`, label: "Cancel" },
+      {
+        id: ASK_USER_TEXT_ACTION,
+        label: "Submit",
+        submitsInput: true,
+        ...(visibleChoices.length === 0 ? { tone: "primary" as const } : {}),
+      },
+      { id: ASK_USER_CANCEL_ACTION, label: "Cancel" },
     ];
 
     return new Promise<AskToolResult>((resolve) => {
@@ -107,7 +111,7 @@ export default function askUser(pi: ExtensionAPI) {
         settled = true;
         unsubscribe();
         signal?.removeEventListener("abort", onAbort);
-        void publishWebView(pi, ASK_WEB_PLUGIN_ID, { type: "dialog", open: false });
+        void publishWebView(pi, ASK_USER_PLUGIN_ID, { type: "dialog", open: false });
         resolve(value);
       }
       function onAbort() {
@@ -115,23 +119,36 @@ export default function askUser(pi: ExtensionAPI) {
       }
       function onAction(data: unknown) {
         const request = data as Partial<ActionRequestPayload> | undefined;
-        if (request?.pluginId !== ASK_WEB_PLUGIN_ID) return;
+        if (request?.pluginId !== ASK_USER_PLUGIN_ID) return;
         const actionId = typeof request.actionId === "string" ? request.actionId : "";
-        if (actionId === `cancel-${nonce}`) {
+        if (actionId === ASK_USER_CANCEL_ACTION) {
           finish(cancelled());
           return;
         }
-        const match = /^opt-([a-z0-9]+)-([0-9]+)$/.exec(actionId);
-        if (match?.[1] !== nonce) return;
-        const answer = choices[Number(match[2])];
-        if (answer === undefined) return;
-        finish(result({
-          status: "answered",
-          question,
-          answer: answer.trim(),
-          answeredWith: "option",
-          matchedOption: answer.trim(),
-        }));
+        const value = typeof request.confirm === "string" ? request.confirm.trim() : "";
+        if (actionId === ASK_USER_OPTION_ACTION) {
+          const matched = choices.find((choice) => choice.trim() === value);
+          if (matched === undefined) return;
+          finish(result({
+            status: "answered",
+            question,
+            answer: matched.trim(),
+            answeredWith: "option",
+            matchedOption: matched.trim(),
+          }));
+          return;
+        }
+        if (actionId === ASK_USER_TEXT_ACTION) {
+          if (value === "") return;
+          const matched = choices.find((choice) => choice.trim() === value);
+          finish(result({
+            status: "answered",
+            question,
+            answer: value,
+            answeredWith: matched !== undefined ? "option" : "text",
+            ...(matched !== undefined ? { matchedOption: matched.trim() } : {}),
+          }));
+        }
       }
       unsubscribe = pi.events?.on(WEB_PLUGIN_ACTION_REQUEST_EVENT, onAction) ?? (() => {});
       if (signal?.aborted) {
@@ -139,10 +156,13 @@ export default function askUser(pi: ExtensionAPI) {
         return;
       }
       signal?.addEventListener("abort", onAbort, { once: true });
-      publishWebView(pi, ASK_WEB_PLUGIN_ID, {
+      publishWebView(pi, ASK_USER_PLUGIN_ID, {
         type: "dialog",
         title: question,
         ...(context !== undefined ? { body: context } : {}),
+        input: {
+          placeholder: choices.length > 0 ? "Or type your own answer…" : "Type your answer…",
+        },
         actions,
         open: true,
       });

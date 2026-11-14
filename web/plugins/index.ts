@@ -1,4 +1,5 @@
 import { artifactsPlugin } from "./artifacts/descriptor.ts";
+import { askUserPlugin } from "./ask-user/descriptor.ts";
 import { autoTitlePlugin } from "./auto-title/descriptor.ts";
 import { bubblySpinnerPlugin } from "./bubbly-spinner/descriptor.ts";
 import { cacheStatsPlugin } from "./cache-stats/descriptor.ts";
@@ -18,6 +19,7 @@ export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [
   bubblySpinnerPlugin,
   modesPlugin,
   autoTitlePlugin,
+  askUserPlugin,
   exampleOverridePlugin,
 ];
 
@@ -28,8 +30,6 @@ export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {
     "Parent delegation engine, tool dispatch, and child lifecycle tracking; no persistent web view",
   "antigravity-accounts":
     "Multi-account provider registration for Google accounts; credential management without a web view",
-  "ask-user":
-    "Interactive clarification dialog; ephemeral interaction with no persistent view",
   "cache-breakpoints":
     "Prompt-cache breakpoint injection on volatile message tails; invisible background middleware",
   "cache-trace":

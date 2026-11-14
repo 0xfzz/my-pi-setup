@@ -553,6 +553,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
         requestId?: unknown;
         pluginId?: unknown;
         actionId?: unknown;
+        confirm?: unknown;
         images?: unknown;
         provider?: unknown;
         id?: unknown;
@@ -667,12 +668,14 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       typeof command.actionId === "string"
     ) {
       // Plugin actions from the web reach the TUI-side extensions exactly
-      // like in-process ones.
+      // like in-process ones. An instant action's typed dialog answer
+      // (confirm) travels with it.
       pi.events?.emit(WEB_PLUGIN_ACTION_REQUEST_EVENT, {
         requestId: typeof command.requestId === "string" ? command.requestId : "",
         sessionId,
         pluginId: command.pluginId,
         actionId: command.actionId,
+        ...(typeof command.confirm === "string" && command.confirm !== "" ? { confirm: command.confirm } : {}),
       });
       return;
     }

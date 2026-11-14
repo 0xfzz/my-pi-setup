@@ -27,6 +27,13 @@ export interface ActionRequestPayload {
   pluginId: string;
   actionId: string;
   sessionId: string;
+  /**
+   * The dialog's typed answer, carried only by instant actions (no declared
+   * confirm): an ask-style dialog submits the input text or the clicked
+   * option label as the value. A DECLARED confirm is the byte-match check
+   * and is never relayed.
+   */
+  confirm?: string;
 }
 
 export type ValidateActionsResult =

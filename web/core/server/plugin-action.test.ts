@@ -243,3 +243,37 @@ test("action route rejects non-POST and malformed bodies", async () => {
     assert.match((await malformed.json()).error, /Invalid JSON/);
   });
 });
+
+// Regression: ask-user was opted out of WEB_PLUGINS and used random nonce
+// action ids, so every web click on an ask_user dialog returned 404.
+test("ask-user plugin actions validate and relay the user's answer", async () => {
+  const emissions = attachActionBus("ask-session");
+  await withActionServer(async (baseUrl) => {
+    const optionRes = await postAction(baseUrl, {
+      sessionId: "ask-session",
+      pluginId: "ask-user",
+      actionId: "answer-option",
+      confirm: "Yes, deploy",
+    });
+    assert.equal(optionRes.status, 200);
+    const actions = emissions.filter((e) => e.ch === WEB_PLUGIN_ACTION_REQUEST_EVENT);
+    assert.equal(actions.length, 1);
+    assert.deepEqual(actions[0]?.data, {
+      requestId: (actions[0]?.data as { requestId?: string })?.requestId,
+      sessionId: "ask-session",
+      pluginId: "ask-user",
+      actionId: "answer-option",
+      confirm: "Yes, deploy",
+    });
+
+    const textRes = await postAction(baseUrl, {
+      sessionId: "ask-session",
+      pluginId: "ask-user",
+      actionId: "answer-text",
+      confirm: "us-east-1",
+    });
+    assert.equal(textRes.status, 200);
+    const after = emissions.filter((e) => e.ch === WEB_PLUGIN_ACTION_REQUEST_EVENT);
+    assert.equal((after[1]?.data as { confirm?: string })?.confirm, "us-east-1");
+  });
+});

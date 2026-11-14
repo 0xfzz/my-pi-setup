@@ -63,6 +63,12 @@ export interface DialogAction {
   label: string;
   /** Visual weight; "primary" is the suggested confirm. */
   tone?: "default" | "primary" | "danger";
+  /**
+   * Submits the dialog input's typed text as the action value. Only
+   * meaningful when the dialog declares `input`; the host disables the
+   * action while the input is empty.
+   */
+  submitsInput?: boolean;
 }
 
 /**
@@ -80,6 +86,13 @@ export interface DialogWebView {
   /** Plain-line body when markdown is overkill. */
   lines?: string[];
   actions?: DialogAction[];
+  /**
+   * A single-line typed answer. `submitsInput` actions carry the text as
+   * the action value; Enter submits the first (or primary) one.
+   */
+  input?: {
+    placeholder?: string;
+  };
   /** `true` (default) shows the dialog; `false` closes it. */
   open?: boolean;
 }
@@ -219,9 +232,21 @@ export function validateView(input: unknown): ValidateViewResult {
             || typeof action.id !== "string"
             || typeof action.label !== "string"
             || (action.tone !== undefined && !["default", "primary", "danger"].includes(action.tone))
+            || (action.submitsInput !== undefined && typeof action.submitsInput !== "boolean")
           ) {
-            return { ok: false, error: "dialog actions must be {id, label, tone?}" };
+            return { ok: false, error: "dialog actions must be {id, label, tone?, submitsInput?}" };
           }
+        }
+      }
+      if (raw.input !== undefined) {
+        if (
+          typeof raw.input !== "object"
+          || raw.input === null
+          || Array.isArray(raw.input)
+          || (raw.input as { placeholder?: unknown }).placeholder !== undefined
+          && typeof (raw.input as { placeholder?: unknown }).placeholder !== "string"
+        ) {
+          return { ok: false, error: "dialog input must be {placeholder?} with a string placeholder" };
         }
       }
       const view: DialogWebView = {
@@ -234,12 +259,20 @@ export function validateView(input: unknown): ValidateViewResult {
         ...(raw.actions !== undefined
           ? {
             actions: raw.actions.map(
-              (action: { id: string; label: string; tone?: string }) => ({
+              (action: { id: string; label: string; tone?: string; submitsInput?: boolean }) => ({
                 id: clampId(action.id, "Action id", warnings),
                 label: clampCell(action.label, "Action label", warnings),
                 ...(action.tone !== undefined ? { tone: action.tone as DialogAction["tone"] } : {}),
+                ...(action.submitsInput !== undefined ? { submitsInput: action.submitsInput } : {}),
               }),
             ),
+          }
+          : {}),
+        ...(raw.input !== undefined
+          ? {
+            input: (raw.input as { placeholder?: string }).placeholder !== undefined
+              ? { placeholder: clampCell((raw.input as { placeholder?: string }).placeholder!, "Dialog input placeholder", warnings) }
+              : {},
           }
           : {}),
         open: raw.open !== false,

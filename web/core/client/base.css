@@ -1206,7 +1206,7 @@ a:focus-visible {
 
 .app-dialog {
   width: min(560px, calc(100vw - 32px));
-  max-height: min(640px, calc(100vh - 48px));
+  max-height: min(640px, calc(var(--app-viewport-height, 100dvh) - 32px));
   display: flex;
   flex-direction: column;
   background: var(--bg-raised);
@@ -1371,8 +1371,26 @@ a:focus-visible {
   overflow-y: auto;
 }
 
+.app-dialog-input {
+  flex: none;
+  width: 100%;
+  background: var(--bg-input);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  margin-top: 10px;
+}
+
+.app-dialog-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .app-dialog-actions {
   justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .app-dialog-action {
@@ -2156,12 +2174,24 @@ a:focus-visible {
 
 /* iOS zooms focused text fields smaller than 16px. Keep pinch zoom enabled. */
 @media (pointer: coarse), (max-width: 720px) {
-  .app-composer-input {
+  .app-composer-input,
+  .app-dialog-input,
+  .app-dialog-search {
     font-size: 16px;
   }
 }
 
 @media (max-width: 720px) {
+  .app-dialog-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .app-dialog-action {
+    width: 100%;
+    text-align: center;
+  }
+
   .app-header {
     padding: 7px 10px;
   }

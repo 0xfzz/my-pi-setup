@@ -474,6 +474,7 @@ export function relayActionRequest(
   pluginId: string,
   actionId: string,
   requestId?: string,
+  confirm?: string,
 ): { relayed: boolean } {
   if (!sessionId || !pluginId || !actionId) {
     return { relayed: false };
@@ -484,8 +485,22 @@ export function relayActionRequest(
   }
   try {
     const rid = requestId || crypto.randomUUID();
-    webUiStore.publish(sessionId, "ui.plugin.action-requested", { pluginId, actionId, requestId: rid }, pluginId, "host");
-    bus.emit(WEB_PLUGIN_ACTION_REQUEST_EVENT, { requestId: rid, sessionId, pluginId, actionId });
+    // confirm travels only when present: the typed answer of an instant
+    // ask-style action. A declared confirm never reaches this point.
+    webUiStore.publish(
+      sessionId,
+      "ui.plugin.action-requested",
+      { pluginId, actionId, requestId: rid, ...(confirm !== undefined ? { confirm } : {}) },
+      pluginId,
+      "host",
+    );
+    bus.emit(WEB_PLUGIN_ACTION_REQUEST_EVENT, {
+      requestId: rid,
+      sessionId,
+      pluginId,
+      actionId,
+      ...(confirm !== undefined ? { confirm } : {}),
+    });
     return { relayed: true };
   } catch {
     return { relayed: false };

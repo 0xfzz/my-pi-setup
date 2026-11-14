@@ -53,7 +53,7 @@ export interface BridgeState {
 export type BridgeCommand =
   | { type: "prompt"; message: string; images?: Array<{ data: string; mimeType: string }> }
   | { type: "abort" }
-  | { type: "action"; requestId: string; pluginId: string; actionId: string }
+  | { type: "action"; requestId: string; pluginId: string; actionId: string; confirm?: string }
   | { type: "set_model"; provider: string; id: string }
   | { type: "set_thinking"; level: string }
   | { type: "web_command"; name: string; args?: string }
@@ -188,13 +188,14 @@ export function attachBridge(options: {
         connection.sendCommand({ type: "ui_sync" });
         return;
       }
-      const request = data as { requestId?: unknown; pluginId?: unknown; actionId?: unknown };
+      const request = data as { requestId?: unknown; pluginId?: unknown; actionId?: unknown; confirm?: unknown };
       if (typeof request?.pluginId === "string" && typeof request?.actionId === "string") {
         connection.sendCommand({
           type: "action",
           requestId: typeof request.requestId === "string" ? request.requestId : "",
           pluginId: request.pluginId,
           actionId: request.actionId,
+          ...(typeof request.confirm === "string" && request.confirm !== "" ? { confirm: request.confirm } : {}),
         });
       }
     },

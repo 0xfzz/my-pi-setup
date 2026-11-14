@@ -1162,6 +1162,8 @@ export function DialogLayer({
   onDismiss?: (dialogId: string, view: unknown) => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
+  // Typed answers per dialog, keyed so two dialogs never share text.
+  const [inputs, setInputs] = useState<Record<string, string>>({});
   const entries = Object.entries(pluginViews).filter(([, view]) => {
     if (typeof view !== "object" || view === null) return false;
     if ((view as { type?: unknown }).type !== "dialog") return false;
@@ -1173,13 +1175,25 @@ export function DialogLayer({
 
   if (entries.length === 0 || sessionId === null) return null;
 
-  const runAction = async (pluginId: string, action: { id: string }): Promise<void> => {
-    setBusy(action.id);
+  const runAction = async (
+    pluginId: string,
+    dialogId: string,
+    action: { id: string; label: string; submitsInput?: boolean },
+  ): Promise<void> => {
+    const typed = (inputs[dialogId] ?? "").trim();
+    if (action.submitsInput && typed === "") return;
+    // A submitsInput action carries the typed text; a choice button carries
+    // its label so a static descriptor action id ("answer-option") still
+    // resolves the exact option the user clicked.
+    const confirm = action.submitsInput ? typed : action.label;
+    setBusy(`${action.id}:${action.label}`);
     try {
-      const { data } = await postPluginAction(sessionId, pluginId, action);
+      const { data } = await postPluginAction(sessionId, pluginId, { id: action.id, confirm });
       if (!data.ok) {
         // Surface the failure where the user just clicked.
         window.dispatchEvent(new CustomEvent("pi-web:dialog-error", { detail: data.error ?? "action failed" }));
+      } else if (action.submitsInput) {
+        setInputs((prev) => ({ ...prev, [dialogId]: "" }));
       }
     } finally {
       setBusy(null);
@@ -1190,6 +1204,9 @@ export function DialogLayer({
     <>
       {entries.map(([pluginId, view]) => {
         const dialogId = viewDialogId(view.id) ?? pluginId;
+        const typed = inputs[dialogId] ?? "";
+        const submitAction = view.actions?.find((action) => action.submitsInput && action.tone === "primary")
+          ?? view.actions?.find((action) => action.submitsInput);
         return (
           <div key={dialogId} className="app-dialog-backdrop">
             <div className="app-dialog" role="dialog" aria-modal="true" aria-label={view.title ?? dialogId}>
@@ -1215,22 +1232,46 @@ export function DialogLayer({
                 {view.lines !== undefined ? (
                   <pre className="app-dialog-lines">{view.lines.join("\n")}</pre>
                 ) : null}
+                {view.input !== undefined ? (
+                  <input
+                    type="text"
+                    className="app-dialog-input"
+                    aria-label={view.input.placeholder ?? "Type your answer"}
+                    placeholder={view.input.placeholder ?? "Type your own answer…"}
+                    value={typed}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      setInputs((prev) => ({ ...prev, [dialogId]: next }));
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && submitAction !== undefined && typed.trim() !== "") {
+                        event.preventDefault();
+                        void runAction(pluginId, dialogId, submitAction);
+                      }
+                    }}
+                  />
+                ) : null}
               </div>
               {view.actions !== undefined && view.actions.length > 0 ? (
                 <div className="app-dialog-foot app-dialog-actions">
-                  {view.actions.map((action) => (
-                    <button
-                      key={action.id}
-                      type="button"
-                      className={`app-dialog-action app-dialog-action-${action.tone ?? "default"}`}
-                      disabled={busy === action.id}
-                      onClick={() => {
-                        void runAction(pluginId, action);
-                      }}
-                    >
-                      {busy === action.id ? "…" : action.label}
-                    </button>
-                  ))}
+                  {view.actions.map((action, index) => {
+                    const key = `${action.id}:${index}:${action.label}`;
+                    const isBusy = busy === `${action.id}:${action.label}`;
+                    const disabled = isBusy || (action.submitsInput === true && typed.trim() === "");
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        className={`app-dialog-action app-dialog-action-${action.tone ?? "default"}`}
+                        disabled={disabled}
+                        onClick={() => {
+                          void runAction(pluginId, dialogId, action);
+                        }}
+                      >
+                        {isBusy ? "…" : action.label}
+                      </button>
+                    );
+                  })}
                 </div>
               ) : null}
             </div>

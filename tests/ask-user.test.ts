@@ -200,17 +200,82 @@ test("web renders an option dialog and resolves through the plugin action pipeli
   assert.equal(view.type, "dialog");
   assert.equal(view.title, "Proceed?");
   assert.equal(view.open, true);
-  assert.deepEqual(view.actions.map((a: any) => a.label), ["yes", "no", "Cancel"]);
+  assert.deepEqual(view.input, { placeholder: "Or type your own answer…" });
+  assert.deepEqual(view.actions.map((a: any) => a.label), ["yes", "no", "Submit", "Cancel"]);
   assert.equal(view.actions[1].tone, "primary", "the recommended option is marked primary");
 
   assert.equal(actionHandlers.length, 1);
   const yesAction = view.actions.find((a: any) => a.label === "yes");
-  actionHandlers[0]!({ pluginId: "ask-user", actionId: yesAction.id, sessionId: "s1", requestId: "r1" });
+  actionHandlers[0]!({
+    pluginId: "ask-user",
+    actionId: yesAction.id,
+    confirm: "yes",
+    sessionId: "s1",
+    requestId: "r1",
+  });
 
   const out = await pending;
   status(out, "answered");
   assert.equal(out.details.answer, "yes");
   assert.equal(out.details.answeredWith, "option");
+}));
+
+test("web resolves a free-text question through the dialog input action", () => withSession(false, async () => {
+  const tools: any[] = [];
+  const actionHandlers: Array<(data: any) => void> = [];
+  const published: Array<{ pluginId: string; view: any }> = [];
+  const pi: any = {
+    registerTool: (tool: any) => tools.push(tool),
+    on: () => {},
+    events: {
+      emit: (channel: string, data: any) => {
+        if (channel === WEB_PLUGIN_VIEW_EVENT && data && typeof data === "object") {
+          published.push({ pluginId: (data as any).pluginId, view: (data as any).view });
+        }
+      },
+      on: (channel: string, handler: Function) => {
+        if (channel === WEB_PLUGIN_ACTION_REQUEST_EVENT) actionHandlers.push(handler as any);
+        return () => {};
+      },
+    },
+  };
+  extension(pi);
+
+  const ctx: any = {
+    hasUI: true,
+    mode: "print",
+    sessionManager: { getSessionFile: () => undefined },
+    tools: [],
+  };
+
+  const pending = tools[0].execute(
+    "test",
+    { question: "Which region?", context: "Deployment target" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  await Promise.resolve();
+
+  assert.equal(published.length, 1);
+  const view = published[0]!.view;
+  assert.deepEqual(view.input, { placeholder: "Type your answer…" });
+  assert.deepEqual(view.actions.map((a: any) => a.label), ["Submit", "Cancel"]);
+  assert.equal(view.actions[0].submitsInput, true);
+
+  const submitAction = view.actions[0];
+  actionHandlers[0]!({
+    pluginId: "ask-user",
+    actionId: submitAction.id,
+    confirm: "  ap-southeast-1  ",
+    sessionId: "s1",
+    requestId: "r1",
+  });
+
+  const out = await pending;
+  status(out, "answered");
+  assert.equal(out.details.answer, "ap-southeast-1");
+  assert.equal(out.details.answeredWith, "text");
 }));
 
 test("dismissal and empty input are unanswered, never consent", () => withSession(false, async () => {

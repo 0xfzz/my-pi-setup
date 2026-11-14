@@ -1,0 +1,7 @@
+{
+  "name": "@pi-web-plugin/ask-user",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Clarification dialog for ask_user: choices, typed answers, and cancellation."
+}
