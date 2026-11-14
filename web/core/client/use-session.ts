@@ -16,24 +16,17 @@ import {
   type StreamAction,
 } from "./streaming.ts";
 import type { WebCommand } from "../shared/commands.ts";
-import type { WebPluginDescriptor, WebView, WorkingModelLike } from "./plugin-system/contract.ts";
+import type {
+  CustomPanelLike,
+  WebNotificationLike,
+  WebPluginDescriptor,
+  WebView,
+  WidgetModelLike,
+  WorkingModelLike,
+} from "./plugin-system/contract.ts";
+import { pluginStateFrameOf } from "../shared/plugin-state.ts";
 
-export interface WebNotificationLike {
-  id: string;
-  message: string;
-  level: "info" | "warning" | "error";
-  timestamp: number;
-}
-
-export interface WidgetModelLike {
-  lines: string[];
-  placement: "aboveEditor" | "belowEditor";
-}
-
-export interface CustomPanelLike {
-  method: string;
-  lines: string[] | null;
-}
+export type { CustomPanelLike, WebNotificationLike, WidgetModelLike };
 
 export interface UiPromptLike {
   kind: string;
@@ -887,14 +880,17 @@ export function usePiSession() {
           break;
         case "plugin_state": {
           // Plugin views, the working indicator model and the running flag,
-          // all scoped to this stream's session.
-          setPluginViews((data.views ?? {}) as Record<string, WebView>);
-          setWorking((data.working ?? null) as WorkingModelLike | null);
-          setUiRunning(data.running === true);
-          setStatuses((data.statuses ?? {}) as Record<string, string>);
-          setWidgets((data.widgets ?? {}) as Record<string, WidgetModelLike>);
-          setCustom((data.custom ?? {}) as Record<string, CustomPanelLike>);
-          setNotifications((data.notifications ?? []) as WebNotificationLike[]);
+          // all scoped to this stream's session. One shared reader turns the
+          // frame into its declared type; nothing here casts a field.
+          const frame = pluginStateFrameOf(data);
+          if (frame === undefined) break;
+          setPluginViews(frame.views);
+          setWorking(frame.working);
+          setUiRunning(frame.running);
+          setStatuses(frame.statuses);
+          setWidgets(frame.widgets);
+          setCustom(frame.custom);
+          setNotifications(frame.notifications);
           break;
         }
         case "ui_prompt_start": {

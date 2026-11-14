@@ -17,17 +17,15 @@ export type { ActionDescriptor } from "../../plugin-contracts/actions.ts";
 export type { WebPluginDescriptor, WebPluginIcon } from "../../plugin-contracts/descriptor.ts";
 export type { WebPluginUiContribution } from "../../plugin-contracts/ui-contracts.ts";
 
-/** The working-indicator model streamed per session (ui.working.changed). */
-export interface WorkingSegmentLike {
-  text: string;
-  color: string | null;
-  bold?: boolean;
-}
-export interface WorkingModelLike {
-  message: string | null;
-  visible: boolean;
-  frames: string[] | null;
-  intervalMs: number;
-  messageSegments?: WorkingSegmentLike[] | null;
-  frameColors?: (string | null)[] | null;
-}
+// The models the SSE stream carries, named from their single definition:
+// the wire frame's fields and the plugin contract's event payloads.
+export type {
+  PluginCustomPanelState as CustomPanelLike,
+  PluginStateFrame,
+  PluginWidgetState as WidgetModelLike,
+} from "../../shared/plugin-state.ts";
+export type {
+  WebNotification as WebNotificationLike,
+  WorkingModel as WorkingModelLike,
+  WorkingSegment as WorkingSegmentLike,
+} from "../../plugin-contracts/ui-event-models.ts";

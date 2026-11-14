@@ -22,6 +22,7 @@ import {
   type SessionInfo,
 } from "./sessions.ts";
 import { recordExtensionUi, webUiStore } from "./ui-store.ts";
+import type { PluginStateFrame } from "../shared/plugin-state.ts";
 import { sessionBus } from "./plugin-sessions.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT } from "../plugin-contracts/ui-event-models.ts";
 
@@ -202,15 +203,16 @@ export function attachAgentEventStream(
         const snapshot = webUiStore.snapshot();
         const sessionState = snapshot.sessions[sessionId];
         const views = sessionState?.views ?? {};
-        const frame = {
-          type: "plugin_state" as const,
+        // The web port of the TUI's UI primitives: footer statuses, editor
+        // widgets, custom popups and transient notifications, all driven by
+        // the same ui.* events extensions publish. Typed by the shared wire
+        // contract, so the client reads it without per-field casts.
+        const frame: PluginStateFrame = {
+          type: "plugin_state",
           revision: snapshot.revision,
           views,
           working: sessionState?.working ?? null,
           running: sessionState?.running ?? false,
-          // The web port of the TUI's UI primitives: footer statuses, editor
-          // widgets, custom popups and transient notifications, all driven
-          // by the same ui.* events extensions publish.
           statuses: sessionState?.statuses ?? {},
           widgets: sessionState?.widgets ?? {},
           custom: sessionState?.custom ?? {},

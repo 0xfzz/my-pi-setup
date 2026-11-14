@@ -6,7 +6,8 @@
 // web-plugin-specific, which is what makes it a core surface to extend on.
 
 import { useEffect, useState } from "react";
-import type { CustomPanelLike, UiPromptLike, WebNotificationLike, WidgetModelLike } from "./use-session.ts";
+import type { UiPromptLike } from "./use-session.ts";
+import type { CustomPanelLike, WebNotificationLike, WidgetModelLike } from "./plugin-system/contract.ts";
 
 /** How long a toast stays on screen. */
 const TOAST_TTL_MS = 6_000;
