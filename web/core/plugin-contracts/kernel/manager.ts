@@ -12,6 +12,7 @@ import { runWithBudget } from "./budget.ts";
 import { assertGranted, formatCapability, isSensitive, parseCapability, resolveGrants, type Capability } from "./capabilities.ts";
 import type { DiscoveredPlugin } from "./discovery.ts";
 import { EventTapRegistry, type TapHandler } from "./events.ts";
+import { PluginChannelBus, type PeerHandler } from "./plugin-channels.ts";
 import { PluginLifecycle, isLive, type PluginEvent, type PluginState } from "./lifecycle.ts";
 import { HookBus } from "./hooks.ts";
 import { PluginUiRegistry, type NotificationLevel } from "./plugin-ui.ts";
@@ -37,12 +38,18 @@ export interface PluginServices {
 }
 
 /**
- * Live session events for this plugin. A subscription needs the
- * `tap.pi-events:<channel>` grant; the payload is the host's bounded
- * projection, never the raw pi event.
+ * Realtime communication for this plugin, in all three directions:
+ *
+ * - `on` — host session traffic (`session.lifecycle`, `session.message`,
+ *   `session.tool`). Needs `tap.pi-events:<channel>`.
+ * - `listen` — another plugin's channel. Needs `events.subscribe:<channel>`;
+ *   your own namespace is free.
+ * - `emit` — announce on a channel in your own namespace (`<yourId>.<name>`).
  */
 export interface PluginEvents {
   on(channel: string, handler: TapHandler): () => void;
+  listen(channel: string, handler: PeerHandler): () => void;
+  emit(channel: string, payload: unknown): boolean;
 }
 
 /**
@@ -138,6 +145,7 @@ export interface ManagerOptions {
   audit?: AuditLog;
   hooks?: HookBus;
   events?: EventTapRegistry;
+  channels?: PluginChannelBus;
   ui?: PluginUiRegistry;
   services?: ServiceRegistry;
   routes?: PluginRouteRegistry;
@@ -201,6 +209,7 @@ export class PluginManager {
   private readonly audit: AuditLog;
   private readonly hooks: HookBus;
   private readonly events: EventTapRegistry;
+  private readonly channels: PluginChannelBus;
   private readonly ui: PluginUiRegistry;
   private readonly services: ServiceRegistry;
   private readonly routes: PluginRouteRegistry;
@@ -221,6 +230,7 @@ export class PluginManager {
     this.audit = options.audit ?? new AuditLog({ clock: this.now });
     this.hooks = options.hooks ?? new HookBus();
     this.events = options.events ?? new EventTapRegistry();
+    this.channels = options.channels ?? new PluginChannelBus();
     this.ui = options.ui ?? new PluginUiRegistry();
     this.services = options.services ?? new ServiceRegistry();
     this.routes = options.routes ?? new PluginRouteRegistry();
@@ -232,6 +242,14 @@ export class PluginManager {
     // broken hook, so it counts toward the same breaker.
     this.events.setFailureHandler((failure) => {
       void this.reportFailure(failure.pluginId, `tap ${failure.channel} ${failure.reason}: ${failure.message}`);
+    });
+    // A listener that cannot keep up is dropping its own backlog, not the
+    // emitter's: it is reported, but it is not a failure that trips the breaker.
+    this.channels.setFailureHandler((failure) => {
+      void this.reportFailure(failure.pluginId, `listen ${failure.channel} ${failure.reason}: ${failure.message}`);
+    });
+    this.channels.setOverflowHandler((overflow) => {
+      this.audit.append("failure", overflow.pluginId, `listen ${overflow.channel} overflow: ${overflow.dropped} event(s) dropped`);
     });
     this.state = options.state;
     for (const plugin of options.plugins) {
@@ -599,6 +617,11 @@ export class PluginManager {
       },
       events: {
         on: (channel, handler) => this.track(slot, () => this.events.subscribe(owner, channel, handler)),
+        listen: (channel, handler) => this.track(slot, () => this.channels.listen(owner, channel, handler)),
+        emit: (channel, payload) => {
+          if (slot.disposed) return false;
+          return this.channels.emit(owner, channel, payload);
+        },
       },
       ui: {
         view: (sessionId, view) => this.ui.publishView(owner, sessionId, view),
@@ -657,6 +680,7 @@ export class PluginManager {
     slot.disposed = true;
     this.hooks.removeOwner(slot.plugin.id);
     this.events.removeOwner(slot.plugin.id);
+    this.channels.removeOwner(slot.plugin.id);
     this.ui.removeOwner(slot.plugin.id);
     this.services.removeOwner(slot.plugin.id);
     this.routes.removeOwner(slot.plugin.id);

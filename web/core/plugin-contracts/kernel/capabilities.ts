@@ -20,6 +20,9 @@ export const CAPABILITY_KINDS = {
   "hooks.observe": { argument: "required" },
   "hooks.transform": { argument: "required" },
   "hooks.veto": { argument: "required" },
+  // Reading another plugin's channel. Listening to your own namespace needs no
+  // grant, exactly like a hook in your own namespace.
+  "events.subscribe": { argument: "required" },
   "services.provide": { argument: "required" },
   "services.replace": { argument: "required" },
   routes: { argument: "none" },

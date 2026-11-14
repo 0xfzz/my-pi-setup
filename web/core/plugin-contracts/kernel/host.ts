@@ -11,6 +11,7 @@ import { EventTapRegistry } from "./events.ts";
 import { PluginManager, type BootReport, type PluginLoader, type PluginRuntime } from "./manager.ts";
 import { HookBus } from "./hooks.ts";
 import { PluginUiRegistry } from "./plugin-ui.ts";
+import { PluginChannelBus } from "./plugin-channels.ts";
 import { PluginRouteRegistry } from "./routes.ts";
 import { ServiceRegistry } from "./services.ts";
 import { PluginStorage } from "./storage.ts";
@@ -48,6 +49,8 @@ export interface PluginHost<D extends DescriptorLike> {
    * session event here; a plugin subscribes through `ctx.events`.
    */
   readonly events: EventTapRegistry;
+  /** Plugin → plugin channels: a plugin announces on its own namespace, others listen. */
+  readonly channels: PluginChannelBus;
   /** The plugin → browser publish gate. The host attaches its store as the sink. */
   readonly ui: PluginUiRegistry;
   readonly services: ServiceRegistry;
@@ -124,6 +127,7 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
   const audit = new AuditLog({ clock: options.now });
   const hooks = new HookBus();
   const events = new EventTapRegistry();
+  const channels = new PluginChannelBus();
   const ui = new PluginUiRegistry();
   const services = new ServiceRegistry();
   const routes = new PluginRouteRegistry();
@@ -164,6 +168,7 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     audit,
     hooks,
     events,
+    channels,
     ui,
     services,
     routes,
@@ -203,6 +208,7 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     shadowed: discovered.shadowed,
     hooks,
     events,
+    channels,
     ui,
     services,
     routes,
