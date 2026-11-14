@@ -7,7 +7,8 @@
 
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../plugin-contracts/actions.ts";
 import { recordPluginView, pluginView } from "./plugin-views.ts";
-import { clearPluginSessionState, registerSessionBusForTests, releaseInFlightActions, sessionBus, type MinimalEventBus } from "./plugin-sessions.ts";
+import { clearActionState, releaseInFlightActions } from "./plugin-actions.ts";
+import { clearPluginSessionState, registerSessionBusForTests, sessionBus, type MinimalEventBus } from "./plugin-sessions.ts";
 import { recordWorkingUi, webUiStore } from "./ui-store.ts";
 
 /** The session id every fixture view hangs off. */
@@ -136,5 +137,6 @@ export function seedPluginFixtures(): void {
 export function clearWebPluginStateForTests(): void {
   webUiStore.clear();
   clearPluginSessionState();
+  clearActionState();
   seededWorkingSessions.clear();
 }

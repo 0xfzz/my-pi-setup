@@ -12,6 +12,7 @@ import { WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT, type WebUiType } from "../plugi
 import { contributionsOf } from "../plugin-contracts/ui-contracts.ts";
 import { getPluginDescriptor } from "./plugin-host.ts";
 import { recordPluginView } from "./plugin-views.ts";
+import { releaseInFlightActions } from "./plugin-actions.ts";
 import { webUiStore } from "./ui-store.ts";
 
 /** The subset of an event bus the bridge needs. */
@@ -20,38 +21,13 @@ export interface MinimalEventBus {
   emit?(channel: string, data: unknown): void;
 }
 
-export interface ActionAuditEntry {
-  requestId: string;
-  sessionId: string;
-  pluginId: string;
-  actionId: string;
-  timestamp: number;
-}
-
-interface InFlightAction {
-  requestId: string;
-  expiresAt: number;
-}
-
-/**
- * A declared action stays locked for this long, per (session, plugin, action).
- * Long enough to swallow a double submit; short enough that a handler which
- * never reports back cannot lock the button for the rest of the session.
- */
-export const IN_FLIGHT_ACTION_TTL_MS = 10_000;
-const AUDIT_LOG_LIMIT = 500;
-
 const knownSessions = new Set<string>();
 const sessionBuses = new Map<string, MinimalEventBus>();
-const inFlightActions = new Map<string, InFlightAction>();
-const auditLog: ActionAuditEntry[] = [];
 
 /** Test-only reset: the bridge keeps no state worth preserving across a suite. */
 export function clearPluginSessionState(): void {
   knownSessions.clear();
   sessionBuses.clear();
-  inFlightActions.clear();
-  auditLog.length = 0;
 }
 
 /** The live session bus for `sessionId`, if that session has attached. */
@@ -241,46 +217,3 @@ export function relayActionRequest(
   }
 }
 
-function inFlightKey(sessionId: string, pluginId: string, actionId: string): string {
-  return `${sessionId}\u0000${pluginId}\u0000${actionId}`;
-}
-
-/** One declared action submission: what to lock, and for how long. */
-export interface InFlightClaim {
-  sessionId: string;
-  pluginId: string;
-  actionId: string;
-  requestId: string;
-  ttlMs?: number;
-}
-
-/**
- * Claim the in-flight slot for a declared action. False while an earlier
- * submission of the *same* action is still held; a different action in the
- * same session is never blocked.
- */
-export function checkAndSetInFlightAction(claim: InFlightClaim): boolean {
-  const now = Date.now();
-  const key = inFlightKey(claim.sessionId, claim.pluginId, claim.actionId);
-  const current = inFlightActions.get(key);
-  if (current !== undefined && current.expiresAt > now) return false;
-  const ttlMs = claim.ttlMs ?? IN_FLIGHT_ACTION_TTL_MS;
-  inFlightActions.set(key, { requestId: claim.requestId, expiresAt: now + ttlMs });
-  return true;
-}
-
-/** Release every lock a session holds — a finished turn means nothing is pending. */
-export function releaseInFlightActions(sessionId: string): void {
-  for (const key of inFlightActions.keys()) {
-    if (key.startsWith(`${sessionId}\u0000`)) inFlightActions.delete(key);
-  }
-}
-
-export function recordActionAudit(entry: ActionAuditEntry): void {
-  auditLog.push(entry);
-  if (auditLog.length > AUDIT_LOG_LIMIT) auditLog.splice(0, auditLog.length - AUDIT_LOG_LIMIT);
-}
-
-export function getActionAuditLog(): readonly ActionAuditEntry[] {
-  return auditLog;
-}

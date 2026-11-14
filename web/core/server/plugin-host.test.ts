@@ -7,14 +7,12 @@ import {
 } from "./plugin-host.ts";
 import {
   attachSessionPlugins,
-  checkAndSetInFlightAction,
-  getActionAuditLog,
   isKnownSession,
-  recordActionAudit,
   relayActionRequest,
   sessionBus,
   type MinimalEventBus,
 } from "./plugin-sessions.ts";
+import { checkAndSetInFlightAction, getActionAuditLog, recordActionAudit } from "./plugin-actions.ts";
 import { clearWebPluginStateForTests, seedPluginFixtures } from "./plugin-fixtures.ts";
 import { pluginView, recordPluginView } from "./plugin-views.ts";
 import { recordExtensionUi, webUiStore } from "./ui-store.ts";
@@ -210,6 +208,18 @@ test("checkAndSetInFlightAction locks one submission of one action, not the whol
   // …but a different action in the same session is not.
   assert.equal(claim("sess-1", "clear"), true);
   assert.equal(claim("sess-2", "sync"), true);
+});
+
+test("a plugin publishing a view releases the action it was asked for", () => {
+  const claim = (pluginId: string) =>
+    checkAndSetInFlightAction({ sessionId: "sess-4", pluginId, actionId: "sync", requestId: "r" });
+
+  assert.equal(claim("todo"), true);
+  assert.equal(claim("todo"), false, "held while nothing has answered");
+
+  // The handler answering with a new view is the signal that it is done.
+  recordPluginView("sess-4", "todo", { type: "status", tone: "neutral", text: "synced" });
+  assert.equal(claim("todo"), true, "the button is free again without waiting for the TTL");
 });
 
 test("an expired claim is reusable", () => {

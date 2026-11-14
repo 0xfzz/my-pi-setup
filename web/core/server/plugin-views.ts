@@ -7,6 +7,7 @@
 // keeps no second copy, and a session's views are read back from the snapshot.
 
 import { validateView, type WebView } from "../plugin-contracts/view.ts";
+import { releasePluginActions } from "./plugin-actions.ts";
 import { webUiStore } from "./ui-store.ts";
 
 /**
@@ -20,7 +21,11 @@ export function recordPluginView(sessionId: string, pluginId: string, rawView: u
   const validation = validateView(rawView);
   if (!validation.ok) return false;
 
-  return webUiStore.publish(sessionId, "ui.view.changed", { pluginId, view: validation.view }, pluginId);
+  const accepted = webUiStore.publish(sessionId, "ui.view.changed", { pluginId, view: validation.view }, pluginId);
+  // A new view is the handler answering: the action it was asked for is no
+  // longer in flight, so the button is free again immediately.
+  if (accepted) releasePluginActions(sessionId, pluginId);
+  return accepted;
 }
 
 /** One plugin's view for one session, or undefined when nothing is published. */

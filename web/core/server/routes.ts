@@ -16,12 +16,8 @@ import {
   getPluginHost,
   pluginsWhenReady,
 } from "./plugin-host.ts";
-import {
-  checkAndSetInFlightAction,
-  isKnownSession,
-  recordActionAudit,
-  relayActionRequest,
-} from "./plugin-sessions.ts";
+import { checkAndSetInFlightAction, recordActionAudit } from "./plugin-actions.ts";
+import { isKnownSession, relayActionRequest } from "./plugin-sessions.ts";
 import { recordPluginView } from "./plugin-views.ts";
 import {
   announceCodeChanges,
