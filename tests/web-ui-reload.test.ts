@@ -169,10 +169,10 @@ test("the watcher fires once after a quiet period, and ignores node_modules chur
 });
 
 /** A fake managed server: health follows whether the process was started and not killed. */
-function fakeServer(options: { build?: "current" | "stale"; runtime?: "current" | "stale"; statePath: string; lock?: boolean }) {
+function fakeServer(options: { build?: "current" | "stale"; runtime?: "current" | "stale"; statePath: string; lock?: boolean; up?: boolean }) {
   const calls: string[] = [];
-  let up = true;
-  let state: WebUiState | null = { pid: 1111, port: 30142, url: "http://127.0.0.1:30142", startedBy: "s", startedAt: "t" };
+  let up = options.up ?? true;
+  let state: WebUiState | null = { ...FAKE_START_STATE };
   const record = { build: "b", runtime: "r", builtAt: "t" };
   const current = { build: options.build === "stale" ? "b2" : "b", runtime: options.runtime === "stale" ? "r2" : "r" };
   const deps: Partial<WebUiDeps> = {
@@ -190,6 +190,11 @@ function fakeServer(options: { build?: "current" | "stale"; runtime?: "current" 
     removeState: async () => {
       calls.push("removeState");
       state = null;
+    },
+    writeState: async (_path, next) => {
+      // Not recorded in `calls`: the success-path start write would pollute
+      // the pinned reload sequences above; the restore test reads `state()`.
+      state = next;
     },
     killProcess: (pid) => {
       calls.push(`kill ${pid}`);
@@ -218,6 +223,15 @@ function fakeServer(options: { build?: "current" | "stale"; runtime?: "current" 
   };
   return { deps, calls, state: () => state };
 }
+
+/** The pre-reload state fakeServer starts with, for restore assertions. */
+const FAKE_START_STATE: WebUiState = {
+  pid: 1111,
+  port: 30142,
+  url: "http://127.0.0.1:30142",
+  startedBy: "s",
+  startedAt: "t",
+};
 
 test("/web reload stops the managed server, waits for it to go down, rebuilds when the build changed, then starts", async () => {
   const dir = await tree();
@@ -260,6 +274,70 @@ test("the automatic reload does nothing when nothing changed, nothing is running
     idle.deps.fetchHealth = async () => false;
     assert.deepEqual(await reloadWebUiIfChanged(idle.deps), { status: "idle" });
     assert.deepEqual(idle.calls, []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// Regression: a failed reload (or a crash) left the server dead while the
+// state file still held a dead pid; the next save returned "idle" forever,
+// so the web stayed down even though the user never ran /web stop.
+test("the automatic reload restarts a dead server whose state is still start", async () => {
+  const dir = await tree();
+  try {
+    const fake = fakeServer({ build: "stale", statePath: join(dir, "state.json"), up: false });
+    fake.deps.isPidAlive = () => false;
+    const result = await reloadWebUiIfChanged(fake.deps);
+    assert.equal(result.status, "started", "a dead server under a start state recovers");
+    assert.deepEqual(fake.calls, ["removeState", "build", "spawn", "record"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("the automatic reload stays idle when no state file exists and the server is down", async () => {
+  const dir = await tree();
+  try {
+    const fake = fakeServer({ build: "stale", statePath: join(dir, "state.json") });
+    fake.deps.fetchHealth = async () => false;
+    fake.deps.readState = async () => null;
+    fake.deps.isPidAlive = () => false;
+    assert.deepEqual(await reloadWebUiIfChanged(fake.deps), { status: "idle" });
+    assert.deepEqual(fake.calls, [], "a /web stop must not be undone by an automatic reload");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("the automatic reload tells connected browsers there are code changes before stopping the server", async () => {
+  const dir = await tree();
+  try {
+    const fake = fakeServer({ build: "stale", statePath: join(dir, "state.json") });
+    const notices: string[] = [];
+    fake.deps.notifyReloading = async (message) => {
+      notices.push(message);
+    };
+    const result = await reloadWebUiIfChanged(fake.deps);
+    assert.equal(result.status, "started");
+    assert.deepEqual(notices, ["There are code changes — reloading…"]);
+    // The notice precedes the kill: browsers show the banner while the old
+    // server is still serving.
+    assert.ok(fake.calls.indexOf("kill 1111") > -1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// Regression: a failed build during /web reload deleted the state file, so
+// the durable start intent was lost and nothing ever restarted the server.
+test("a failed reload restores the state file so the start intent survives", async () => {
+  const dir = await tree();
+  try {
+    const fake = fakeServer({ build: "stale", statePath: join(dir, "state.json") });
+    fake.deps.buildServer = async () => ({ ok: false, error: "Type error in core/client/app.tsx" });
+    const result = await reloadWebUi(fake.deps);
+    assert.equal(result.status, "error");
+    assert.deepEqual(fake.state(), FAKE_START_STATE, "the pre-reload state is restored after a failed build");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

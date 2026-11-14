@@ -214,8 +214,10 @@ export function usePiSession() {
   const [pluginViews, setPluginViews] = useState<Record<string, WebView>>({});
   const [working, setWorking] = useState<WorkingModelLike | null>(null);
   const [uiRunning, setUiRunning] = useState(false);
-  /** True while a /reload is in flight: the extension is re-running. */
+  /** True while a /reload or a code-change server reload is in flight. */
   const [reloading, setReloading] = useState(false);
+  /** Banner text while reloading (defaults to "pi is reloading…" when null). */
+  const [reloadingMessage, setReloadingMessage] = useState<string | null>(null);
   /** Model list for the web picker (web_models events + /models fetch). */
   const [models, setModels] = useState<ModelsState>({ models: [] });
   /** A session-side command asked the web to open one of its dialogs. */
@@ -244,6 +246,10 @@ export function usePiSession() {
   // apply a response belonging to a session the user already left.
   const selectedIdRef = useRef<string | null>(selectedId);
   selectedIdRef.current = selectedId;
+  // The boot id of the server we first connected to: when a subsequent
+  // `sessions_snapshot` carries a different bootId, the server restarted
+  // onto a new build/runtime and the page reloads onto the fresh bundle.
+  const bootIdRef = useRef<string | null>(null);
   const applyStream = useCallback((action: StreamAction) => {
     const next = streamReducer(streamingRef.current, action);
     if (next !== streamingRef.current) {
@@ -257,7 +263,10 @@ export function usePiSession() {
   // expire the banner so it never sticks around as a false "still reloading".
   useEffect(() => {
     if (!reloading) return;
-    const timer = setTimeout(() => setReloading(false), RELOAD_INDICATOR_TIMEOUT_MS);
+    const timer = setTimeout(() => {
+      setReloading(false);
+      setReloadingMessage(null);
+    }, RELOAD_INDICATOR_TIMEOUT_MS);
     return () => clearTimeout(timer);
   }, [reloading]);
 
@@ -286,9 +295,28 @@ export function usePiSession() {
       }
       switch (data.type) {
         case "sessions_snapshot": {
-          const body = data as { sessions?: SessionSummary[] };
+          const body = data as { bootId?: unknown; sessions?: SessionSummary[] };
+          if (typeof body.bootId === "string" && body.bootId !== "") {
+            if (bootIdRef.current !== null && bootIdRef.current !== body.bootId) {
+              bootIdRef.current = body.bootId;
+              setReloadingMessage("There are code changes — reloading…");
+              setReloading(true);
+              window.location.reload();
+              return;
+            }
+            bootIdRef.current = body.bootId;
+          }
           setSessions(body.sessions ?? []);
           setSessionsLoading(false);
+          break;
+        }
+        case "code_changes": {
+          const frame = data as { message?: unknown };
+          const text = typeof frame.message === "string" && frame.message.trim() !== ""
+            ? frame.message.trim()
+            : "There are code changes — reloading…";
+          setReloadingMessage(text);
+          setReloading(true);
           break;
         }
         case "session_running": {
@@ -1059,6 +1087,7 @@ export function usePiSession() {
     working,
     uiRunning,
     reloading,
+    reloadingMessage,
     models,
     fetchModels,
     setModel,

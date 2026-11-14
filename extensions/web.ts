@@ -46,7 +46,7 @@ import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 import { buildWebTree, type PiTreeNodeLike } from "../lib/web-tree.ts";
 import { sseFrameData, takeSseFrames } from "../lib/web-sse.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
-import { defaultServerDir, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiCommandResult, type WebUiDeps } from "../lib/web-ui.ts";
+import { defaultIsPidAlive, defaultReadState, defaultServerDir, defaultWebUiStatePath, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiCommandResult, type WebUiDeps } from "../lib/web-ui.ts";
 import { repoRootFromServerDir, sourceWatchRoots, watchSources, type SourceWatcher } from "../lib/web-ui-reload.ts";
 import { WebAuthConfigCache, loadWebAuthConfig, removeWebPassword, webAuthConfigPath, writeWebPassword } from "../web/core/auth/config.ts";
 import { MIN_PASSWORD_LENGTH, passwordProblem } from "../web/core/auth/password.ts";
@@ -351,7 +351,18 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
           });
           if (health.ok) await attachBridge(ctx);
         } catch {
-          // Server down: try again next tick.
+          // Server down: if the durable state is still "start" (a /web stop
+          // would have removed the state file) and the recorded pid is dead,
+          // the server crashed or a reload failed — restart it through the
+          // same changed-sources path instead of waiting for the next save.
+          try {
+            const state = await defaultReadState(defaultWebUiStatePath());
+            if (state !== null && state !== "corrupt" && !defaultIsPidAlive(state.pid)) {
+              void autoReload(ctx);
+            }
+          } catch {
+            // Server down: try again next tick.
+          }
         }
       })();
     }, 5_000);

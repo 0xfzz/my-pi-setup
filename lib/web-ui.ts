@@ -125,6 +125,12 @@ export interface WebUiDeps {
   sleep: (ms: number) => Promise<void>;
   /** Receives each phase and periodic progress line (`Building… 2m 05s`). Defaults to silence. */
   onProgress: (message: string) => void;
+  /**
+   * Tell connected browsers a reload is starting, best-effort: they show
+   * "There are code changes…" while the server restarts. Defaults to POST
+   * /api/reload-notice on the health URL's origin.
+   */
+  notifyReloading: (message: string) => Promise<void>;
 }
 
 /** Pure decision for start requests based on current health and persisted state. */
@@ -452,6 +458,15 @@ function resolveDeps(overrides: Partial<WebUiDeps> = {}): WebUiDeps {
     startupTimeoutMs: overrides.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS,
     sleep: overrides.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms))),
     onProgress: overrides.onProgress ?? (() => undefined),
+    notifyReloading: overrides.notifyReloading ?? (async (message) => {
+      const rootUrl = (overrides.healthUrl ?? DEFAULT_HEALTH_ENDPOINT).replace(/\/api\/.*$/, "");
+      await fetch(`${rootUrl}/api/reload-notice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+        signal: AbortSignal.timeout(2_000),
+      });
+    }),
   };
 }
 
@@ -734,6 +749,12 @@ export async function reloadWebUi(options: Partial<WebUiDeps> = {}): Promise<Web
 
   deps.onProgress("pi-web is stopped; starting it again…");
   const started = await startWebUi(deps);
+  // The state file was removed before the restart so startWebUi would not
+  // see a running instance; a failed restart must restore it — the state is
+  // the durable "start" intent, and only /web stop clears it.
+  if (started.status !== "started" && state !== null && state !== "corrupt") {
+    await deps.writeState(deps.statePath, state).catch(() => undefined);
+  }
   return { ...started, message: `pi-web reloaded. ${started.message}` };
 }
 
@@ -749,7 +770,16 @@ export type AutoReloadResult =
 export async function reloadWebUiIfChanged(options: Partial<WebUiDeps> = {}): Promise<AutoReloadResult> {
   const deps = resolveDeps(options);
   const healthy = await deps.fetchHealth(deps.healthUrl);
-  if (!healthy) return { status: "idle" };
+  // Durable start state: when the server is down but the state file still
+  // holds a dead pid, the user started the web and never ran /web stop —
+  // a crashed or failed-reload server is restarted by the same path, not
+  // treated as idle.
+  if (!healthy) {
+    const state = await deps.readState(deps.statePath);
+    if (state === null || state === "corrupt" || deps.isPidAlive(state.pid)) {
+      return { status: "idle" };
+    }
+  }
 
   const change = evaluateChange(await deps.fingerprints(), await deps.readRecord());
   if (!change.build && !change.runtime) return { status: "unchanged" };
@@ -757,6 +787,9 @@ export async function reloadWebUiIfChanged(options: Partial<WebUiDeps> = {}): Pr
   const release = deps.acquireReloadLock();
   if (!release) return { status: "busy" };
   deps.onProgress(change.build ? "pi-web sources changed: rebuilding and reloading…" : "pi-web plugin code changed: reloading…");
+  if (healthy) {
+    await deps.notifyReloading("There are code changes — reloading…").catch(() => undefined);
+  }
   try {
     return await reloadWebUi(deps);
   } finally {

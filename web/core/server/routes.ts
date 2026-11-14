@@ -21,7 +21,9 @@ import {
   webPluginsStore,
 } from "./plugin-host.ts";
 import {
+  announceCodeChanges,
   ensureSession,
+  getServerBootId,
   getSession,
   listDiskSessions,
   listLiveSessions,
@@ -80,7 +82,21 @@ const MAX_ACTION_VALUE_LENGTH = 2000;
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 async function handleHealth(ctx: ApiRouteContext): Promise<void> {
-  sendJson(ctx.res, 200, { ok: true, service: "pi-web-minimal" });
+  sendJson(ctx.res, 200, { ok: true, service: "pi-web-minimal", bootId: getServerBootId() });
+}
+
+async function handleReloadNotice(ctx: ApiRouteContext): Promise<void> {
+  let message: string | undefined;
+  try {
+    const body = (await readJsonBody(ctx.req)) as { message?: unknown };
+    if (typeof body?.message === "string" && body.message.trim() !== "") {
+      message = body.message.trim();
+    }
+  } catch {
+    // Default message is used when no JSON body is supplied.
+  }
+  announceCodeChanges(message);
+  sendJson(ctx.res, 200, { ok: true });
 }
 
 async function handlePluginsList(ctx: ApiRouteContext): Promise<void> {
@@ -558,6 +574,7 @@ async function handleFilesDownload(ctx: ApiRouteContext): Promise<void> {
 
 const API_ROUTES: readonly ApiRoute[] = [
   { match: "/api/health", methods: ["GET"], handle: handleHealth },
+  { match: "/api/reload-notice", methods: ["POST"], handle: handleReloadNotice },
   { match: "/api/plugins", methods: ["GET"], handle: handlePluginsList },
   { match: "/api/plugins/action", methods: ["POST"], handle: ({ req, res }) => handlePluginAction(req, res) },
   { match: /^\/api\/bridge\/([^/]+)\/attach$/, methods: ["GET"], handle: handleBridgeAttach },

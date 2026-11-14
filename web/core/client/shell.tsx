@@ -512,7 +512,7 @@ export function AppShell() {
         </header>
       )}
       <UiPromptBanner prompt={session.uiPrompt} />
-      <ReloadingBanner active={session.reloading} />
+      <ReloadingBanner active={session.reloading} message={session.reloadingMessage} />
       {conflicts.length > 0 ? (
         <div className="app-region-conflicts" role="status">
           {conflicts.map((conflict) => (

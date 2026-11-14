@@ -15,6 +15,7 @@ import {
 import type { SessionCore } from "./sessions.ts";
 import { onSessionReplaced } from "./sessions.ts";
 import {
+  getServerBootId,
   listDiskSessions,
   listLiveSessions,
   subscribeSessionDirectory,
@@ -349,14 +350,14 @@ export function attachSessionsEventStream(req: IncomingMessage, res: ServerRespo
   void buildSessionsSnapshot()
     .then((sessions) => {
       if (closed) return;
-      send({ type: "sessions_snapshot", sessions });
+      send({ type: "sessions_snapshot", bootId: getServerBootId(), sessions });
       announced = true;
       for (const event of buffered) send(event);
       buffered.length = 0;
     })
     .catch(() => {
       if (closed) return;
-      send({ type: "sessions_snapshot", sessions: [] });
+      send({ type: "sessions_snapshot", bootId: getServerBootId(), sessions: [] });
       announced = true;
       for (const event of buffered) send(event);
       buffered.length = 0;

@@ -104,13 +104,13 @@ export function UiPromptBanner({ prompt }: { prompt: UiPromptLike | null }) {
   );
 }
 
-/** A /reload is in flight: a quiet, functional "still loading" strip. */
-export function ReloadingBanner({ active }: { active: boolean }) {
+/** A /reload or code-change reload is in flight: a quiet, functional "still loading" strip. */
+export function ReloadingBanner({ active, message }: { active: boolean; message?: string | null }) {
   if (!active) return null;
   return (
     <div className="app-reloading-banner" role="status" aria-live="polite">
       <span className="app-reloading-spinner" aria-hidden="true" />
-      pi is reloading…
+      {message ?? "pi is reloading…"}
     </div>
   );
 }

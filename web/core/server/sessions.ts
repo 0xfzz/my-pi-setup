@@ -135,7 +135,24 @@ export type SessionDirectoryEvent =
   | { type: "session_running"; id: string; running: boolean }
   | { type: "session_added"; session: SessionInfo }
   | { type: "session_removed"; id: string }
-  | { type: "session_renamed"; id: string; name: string };
+  | { type: "session_renamed"; id: string; name: string }
+  | { type: "code_changes"; message: string };
+
+/**
+ * Unique identity of this server process. The directory stream sends it on
+ * `sessions_snapshot` so a browser reconnecting after a reload sees that the
+ * server restarted and reloads the page onto the fresh bundle.
+ */
+const SERVER_BOOT_ID = `${process.pid}-${Date.now().toString(36)}`;
+
+export function getServerBootId(): string {
+  return SERVER_BOOT_ID;
+}
+
+/** Tell connected browsers that code changed and the web is reloading. */
+export function announceCodeChanges(message = "There are code changes — reloading…"): void {
+  emitDirectory({ type: "code_changes", message });
+}
 
 const directoryListeners = new Set<(event: SessionDirectoryEvent) => void>();
 

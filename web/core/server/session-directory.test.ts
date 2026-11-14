@@ -201,6 +201,7 @@ test("sessions stream sends a snapshot then pushes running transitions", async (
     const snapshot = await readUntil((text) => text.includes("\"type\":\"sessions_snapshot\""));
     assert.match(snapshot, /"id":"dir-stream"/);
     assert.match(snapshot, /"running":false/);
+    assert.match(snapshot, /"bootId":"[^"]+"/, "the snapshot carries this server's boot id");
 
     // A simulated turn start is pushed as a transition, not discovered by a poll.
     emit({ type: "agent_start" });
@@ -208,6 +209,38 @@ test("sessions stream sends a snapshot then pushes running transitions", async (
       (text) => text.includes("\"type\":\"session_running\"") && text.includes("\"running\":true"),
     );
     assert.match(running, /"id":"dir-stream"/);
+
+    await reader.cancel();
+  } finally {
+    await handle.close();
+  }
+});
+
+test("the reload notice route broadcasts code_changes to directory streams", async () => {
+  const { core } = directoryCore("dir-notice");
+  registerSession(core, "/tmp/project");
+  const handle = await startWebServer({ port: 0, host: "127.0.0.1" });
+  try {
+    const res = await fetch(`http://127.0.0.1:${handle.port}/api/sessions/events`);
+    assert.ok(res.body !== null);
+    const reader = res.body.getReader();
+    const readUntil = createFrameReader(reader);
+    await readUntil((text) => text.includes("sessions_snapshot"));
+
+    const notice = await fetch(`http://127.0.0.1:${handle.port}/api/reload-notice`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "There are code changes — reloading…" }),
+    });
+    assert.equal(notice.status, 200);
+
+    const frame = await readUntil((text) => text.includes("code_changes"));
+    assert.match(frame, /"message":"There are code changes/g);
+
+    // A bodyless notice still announces, with the default message.
+    const bare = await fetch(`http://127.0.0.1:${handle.port}/api/reload-notice`, { method: "POST" });
+    assert.equal(bare.status, 200);
+    await readUntil((text) => (text.match(/code_changes/g) ?? []).length >= 2);
 
     await reader.cancel();
   } finally {
