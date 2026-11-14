@@ -12,7 +12,10 @@ import { join } from "node:path";
 import { startWebServer } from "../web/core/server/main.ts";
 import { registerWebPlugins } from "../web/core/server/plugin-host.ts";
 import { WEB_PLUGINS } from "../web/plugins/index.ts";
-import { availableActions, groupBySource, type PluginManagerRow } from "../web/plugins/plugin-manager/lib/plugin-manager-api.ts";
+import { availableActions, groupBySource } from "../web/plugins/plugin-manager/lib/plugin-manager-api.ts";
+import type { PluginManagerRow } from "../web/core/shared/plugin-manager.ts";
+import type { PluginState } from "../web/core/plugin-contracts/kernel/lifecycle.ts";
+import type { PluginSource } from "../web/core/plugin-contracts/kernel/discovery.ts";
 import { PLUGIN_MANAGER_PLUGIN_ID } from "../web/plugins/plugin-manager/contract.ts";
 
 const stateDir = mkdtempSync(join(tmpdir(), "pi-plugin-manager-"));
@@ -104,7 +107,7 @@ test("clearing a quarantine on a healthy plugin is refused, not silently accepte
   });
 });
 
-function row(id: string, state: string, source = "repo"): PluginManagerRow {
+function row(id: string, state: PluginState, source: PluginSource = "repo"): PluginManagerRow {
   return {
     id,
     title: id,

@@ -11,26 +11,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { getPluginHost } from "./plugin-host.ts";
 import { sendJson } from "./http.ts";
-import type { PluginStatus } from "../plugin-contracts/kernel/manager.ts";
-
-export const PLUGIN_MANAGER_ACTIONS = ["enable", "disable", "reload", "clear-quarantine"] as const;
-export type PluginManagerAction = (typeof PLUGIN_MANAGER_ACTIONS)[number];
-
-/** One row the manager UI renders: kernel status plus what the plugin contributes. */
-export interface PluginManagerRow extends PluginStatus {
-  title: string;
-  description?: string;
-  /** `/api/p/<id>/…` routes the plugin mounted. */
-  routes: Array<{ method: string; path: string }>;
-}
-
-export interface PluginManagerReport {
-  safeMode: boolean;
-  warnings: string[];
-  shadowed: Array<{ id: string; source: string; shadowedBy: string }>;
-  plugins: PluginManagerRow[];
-  audit: Array<{ seq: number; at: number; kind: string; pluginId: string; detail: string }>;
-}
+import {
+  PLUGIN_MANAGER_ACTIONS,
+  type PluginManagerAction,
+  type PluginManagerOutcome,
+  type PluginManagerReport,
+  type PluginManagerRow,
+} from "../shared/plugin-manager.ts";
 
 /** The whole kernel state the manager page needs, in one read. */
 export function pluginManagerReport(): PluginManagerReport | null {
@@ -68,7 +55,7 @@ export function isPluginManagerAction(value: string): value is PluginManagerActi
 export async function applyPluginManagerAction(
   pluginId: string,
   action: PluginManagerAction,
-): Promise<{ ok: boolean; state: string; error?: string; rolledBack?: boolean }> {
+): Promise<PluginManagerOutcome> {
   const host = getPluginHost();
   if (host === null) {
     return { ok: false, state: "unknown", error: "plugin host not started" };

@@ -1,35 +1,20 @@
 // Typed client for the plugin manager endpoints. Pure shaping + fetch, no React,
 // so the page stays a view over the kernel's answers.
 
-import { PLUGIN_MANAGER_API } from "../contract.ts";
+import {
+  PLUGIN_MANAGER_API,
+  PLUGIN_MANAGER_ACTIONS,
+  type PluginManagerAction,
+  type PluginManagerOutcome,
+  type PluginManagerReport,
+  type PluginManagerRow,
+} from "../../../core/shared/plugin-manager.ts";
 
-export interface PluginManagerRow {
-  id: string;
-  title: string;
-  description?: string;
-  source: string;
-  version: string;
-  state: string;
-  waiting?: string;
-  lastError?: string;
-  grants: string[];
-  pending: string[];
-  quarantine?: { version: string; reason: string; at: number };
-  routes: Array<{ method: string; path: string }>;
-}
-
-export interface PluginManagerReport {
-  safeMode: boolean;
-  warnings: string[];
-  shadowed: Array<{ id: string; source: string; shadowedBy: string }>;
-  plugins: PluginManagerRow[];
-  audit: Array<{ seq: number; at: number; kind: string; pluginId: string; detail: string }>;
-}
+export type { PluginManagerAction, PluginManagerOutcome, PluginManagerReport, PluginManagerRow };
 
 export type ManagerResult<T> = { ok: true; data: T } | { ok: false; message: string };
 
-export const MANAGER_ACTIONS = ["enable", "disable", "reload", "clear-quarantine"] as const;
-export type ManagerAction = (typeof MANAGER_ACTIONS)[number];
+export const MANAGER_ACTIONS = PLUGIN_MANAGER_ACTIONS;
 
 /** Read the whole kernel state in one request. */
 export async function fetchPluginManagerReport(): Promise<ManagerResult<PluginManagerReport>> {
@@ -39,33 +24,26 @@ export async function fetchPluginManagerReport(): Promise<ManagerResult<PluginMa
   } catch {
     return { ok: false, message: "the web server did not answer" };
   }
-  const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  const body = (await response.json().catch(() => ({}))) as Partial<PluginManagerReport> & { error?: unknown };
   if (!response.ok) {
     return { ok: false, message: typeof body.error === "string" ? body.error : `request failed (HTTP ${response.status})` };
   }
   if (!Array.isArray(body.plugins)) return { ok: false, message: "the manager report was not understood" };
-  return { ok: true, data: body as unknown as PluginManagerReport };
-}
-
-export interface ManagerActionOutcome {
-  ok: boolean;
-  state: string;
-  error?: string;
-  rolledBack?: boolean;
+  return { ok: true, data: body as PluginManagerReport };
 }
 
 /** Apply one operator action; the kernel's verdict comes back verbatim. */
 export async function applyManagerAction(
   pluginId: string,
-  action: ManagerAction,
-): Promise<ManagerResult<ManagerActionOutcome>> {
+  action: PluginManagerAction,
+): Promise<ManagerResult<PluginManagerOutcome>> {
   let response: Response;
   try {
     response = await fetch(`${PLUGIN_MANAGER_API}/${encodeURIComponent(pluginId)}/${action}`, { method: "POST" });
   } catch {
     return { ok: false, message: "the web server did not answer" };
   }
-  const body = (await response.json().catch(() => ({}))) as ManagerActionOutcome & { error?: string };
+  const body = (await response.json().catch(() => ({}))) as PluginManagerOutcome;
   if (!response.ok) {
     return { ok: false, message: body.error ?? `action ${action} failed (HTTP ${response.status})` };
   }
@@ -73,7 +51,7 @@ export async function applyManagerAction(
 }
 
 /** Which actions make sense for a plugin in this state — a pure decision. */
-export function availableActions(state: string): ManagerAction[] {
+export function availableActions(state: string): PluginManagerAction[] {
   switch (state) {
     case "active":
       return ["disable", "reload"];
@@ -93,9 +71,11 @@ export function availableActions(state: string): ManagerAction[] {
   }
 }
 
-/** Group the report by source so the page reads as installed/third-party first. */
+/** Where a plugin came from, in the order the page lists the groups. */
+const SOURCE_ORDER = ["repo", "project", "user", "package"];
+
+/** Group the report by source so the page reads as first-party/installed first. */
 export function groupBySource(rows: readonly PluginManagerRow[]): Array<{ source: string; rows: PluginManagerRow[] }> {
-  const order = ["repo", "project", "user", "package"];
   const groups = new Map<string, PluginManagerRow[]>();
   for (const row of rows) {
     const list = groups.get(row.source) ?? [];
@@ -103,7 +83,7 @@ export function groupBySource(rows: readonly PluginManagerRow[]): Array<{ source
     groups.set(row.source, list);
   }
   return [...groups.entries()]
-    .sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]))
+    .sort((a, b) => SOURCE_ORDER.indexOf(a[0]) - SOURCE_ORDER.indexOf(b[0]))
     .map(([source, groupRows]) => ({
       source,
       rows: [...groupRows].sort((a, b) => a.id.localeCompare(b.id)),

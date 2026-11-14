@@ -11,12 +11,12 @@ import {
   availableActions,
   fetchPluginManagerReport,
   groupBySource,
-  type ManagerAction,
+  type PluginManagerAction,
   type PluginManagerReport,
   type PluginManagerRow,
 } from "./lib/plugin-manager-api.ts";
 
-const ACTION_LABELS: Record<ManagerAction, string> = {
+const ACTION_LABELS: Record<PluginManagerAction, string> = {
   enable: "Enable",
   disable: "Disable",
   reload: "Reload",
@@ -43,7 +43,7 @@ export function PluginManagerPage() {
   }, [refresh]);
 
   const run = useCallback(
-    async (pluginId: string, action: ManagerAction) => {
+    async (pluginId: string, action: PluginManagerAction) => {
       setBusy(`${pluginId}:${action}`);
       const outcome = await applyManagerAction(pluginId, action);
       setBusy(null);
@@ -118,7 +118,7 @@ function PluginRow({
 }: {
   row: PluginManagerRow;
   busy: string | null;
-  onAction: (action: ManagerAction) => void;
+  onAction: (action: PluginManagerAction) => void;
 }) {
   const actions = availableActions(row.state);
   return (
