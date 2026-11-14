@@ -1,42 +1,33 @@
 /**
- * Extension-point catalog (PRD §5.4). Ids are the public API: the registries
- * reject any contribution whose point is not listed here, unless a plugin
- * defines it under its own namespace. `protected` points can never be
- * replaced, wrapped or vetoed by a plugin.
+ * Extension-point catalog: the logic seams a plugin may attach to.
+ *
+ * These ids are the kernel's public API — `hooks.ts` and `services.ts` validate
+ * against them, so a plugin cannot hook a point the host never calls. Every
+ * entry here has a named call site in `web/core/server/` (or a plugin's own
+ * server half, for `file.before-read`); a point with no call site is not listed,
+ * because a catalogued point that nothing invokes is a promise the host breaks.
+ *
+ * The UI vocabulary is a different axis with its own single source:
+ * `WEB_UI_ANCHORS` / `WEB_UI_COMPONENTS` / `OVERRIDABLE_COMPONENTS` in
+ * `ui-contracts.ts`, which the descriptor validator enforces. Both are
+ * documented together in docs/web-plugin-catalog.md.
  */
+import { OVERRIDABLE_COMPONENTS, WEB_UI_ANCHORS, WEB_UI_COMPONENTS, WEB_UI_REGIONS } from "../ui-contracts.ts";
 
-export const POINT_KINDS = [
-  "slot",
-  "component",
-  "route",
-  "command",
-  "keybinding",
-  "theme",
-  "event",
-  "waterfall",
-  "bail",
-  "service",
-  "job",
-  "storage",
-  "bridge",
-  "tap",
-  "protected",
-] as const;
+export const POINT_KINDS = ["event", "waterfall", "bail", "service", "protected"] as const;
 
 export type PointKind = (typeof POINT_KINDS)[number];
 
 export type Stability = "stable" | "experimental";
 
 export interface ExtensionPoint {
-  /** Dotted id. A trailing `<name>` placeholder marks a family (e.g. `chat.tool.<name>`). */
+  /** Dotted id, or `service:<name>` for a resolvable implementation. */
   id: string;
   kind: PointKind;
   version: number;
   stability: Stability;
   protected: boolean;
   description: string;
-  /** The `WEB_UI_COMPONENTS` key this point replaces, when one exists today. */
-  legacyComponent?: string;
 }
 
 const point = (
@@ -55,75 +46,26 @@ const point = (
 });
 
 export const EXTENSION_POINTS: readonly ExtensionPoint[] = [
-  // UI slots: additive regions. A slot contribution never controls its host's layout.
-  point("app.header", "slot", "Application header, right of the title."),
-  point("session.header", "slot", "Header of the selected session."),
-  point("session.sidebar.row.actions", "slot", "Action area of a sidebar session row."),
-  point("chat.before", "slot", "Above the message list.", { legacyComponent: "ui.chat-before.v1" }),
-  point("chat.composer.toolbar", "slot", "Toolbar beside the composer's attach button."),
-  point("chat.composer.above", "slot", "Strip above the composer."),
-  point("file-panel.header", "slot", "Header of the file panel."),
-  point("settings.sections", "slot", "Sections of the settings page."),
-
-  // UI components: replaceable by key, with a built-in `Default`.
-  point("chat.message.user", "component", "A user message row."),
-  point("chat.message.assistant", "component", "An assistant message row."),
-  point("chat.tool.<name>", "component", "A tool call, keyed by tool name."),
-  point("chat.tool.result.<name>", "component", "A tool result, keyed by tool name."),
-  point("chat.working", "component", "The working indicator under the message list.", {
-    legacyComponent: "ui.working-indicator.v1",
-  }),
-  point("chat.input", "component", "The chat input."),
-  point("sidebar.session-row", "component", "A sidebar session row.", {
-    legacyComponent: "ui.session-sidebar-row.v1",
-  }),
-  point("file.viewer.<mime>", "component", "The file viewer for a MIME type."),
-  point("settings.panel.<id>", "component", "A settings panel."),
-  point("ui.extension-status", "component", "Extension status chip.", {
-    legacyComponent: "ui.extension-status.v1",
-  }),
-  point("ui.plugin-view", "component", "Declarative plugin view renderer.", {
-    legacyComponent: "ui.plugin-view.v1",
-  }),
-  point("ui.floating-layer", "component", "Floating overlay layer.", {
-    legacyComponent: "ui.floating-layer.v1",
-  }),
-
-  // Routes, commands and keys.
-  point("route.page", "route", "A plugin page under /p/<plugin-id>/…"),
-  point("command", "command", "A palette command, optionally a slash command."),
-  point("keybinding", "keybinding", "A keyboard shortcut, checked for conflicts with the core map."),
-  point("theme", "theme", "A validated design-token theme."),
-
-  // Logic: observe, transform, veto.
+  // Observe: fire-and-forget, cannot change the result.
   point("session.created", "event", "A hosted session was created."),
   point("session.settled", "event", "A hosted session finished a turn."),
   point("message.appended", "event", "A message was appended to a session."),
   point("tool.finished", "event", "A tool call finished."),
   point("plugin.enabled", "event", "A plugin was enabled."),
-  point("prompt.before-send", "waterfall", "Transform the prompt before it is sent to the agent.", {
-    stability: "stable",
-  }),
+
+  // Transform: each handler receives the previous value and returns the next.
+  point("prompt.before-send", "waterfall", "Transform the prompt before it is sent to the agent.", { stability: "stable" }),
+  point("attachment.before-upload", "waterfall", "Transform an attachment before it is stored."),
   point("message.before-render-model", "waterfall", "Transform a message before it is rendered."),
   point("session.list.sort", "waterfall", "Reorder the session list."),
-  point("session.title.generate", "waterfall", "Produce a session title."),
-  point("session.before-delete", "bail", "Veto deleting a session with a user-visible reason.", {
-    stability: "stable",
-  }),
-  point("file.before-read", "bail", "Veto reading a file."),
-  point("attachment.before-upload", "waterfall", "Transform an attachment before upload."),
 
-  // Services: named, replaceable implementations.
-  point("service:session.search", "service", "Session search."),
-  point("service:model.pick", "service", "Model selection."),
-  point("service:notifier", "service", "User notifications."),
-  point("service:title-generator", "service", "Session title generation."),
+  // Veto: the first handler to return `{ deny }` stops the action.
+  point("session.before-delete", "bail", "Veto deleting a session with a user-visible reason.", { stability: "stable" }),
+  point("file.before-read", "bail", "Veto reading a file through the Files plugin."),
 
-  // Background work, storage, bridge, pi-event tap.
-  point("job.schedule", "job", "A scheduled or event-triggered background job."),
-  point("storage.scope", "storage", "Scoped key-value storage: global, project, or session."),
-  point("bridge.call", "bridge", "A typed browser-to-server call owned by a plugin."),
-  point("tap.pi-events", "tap", "Read-only projection of a session's pi event stream."),
+  // Services: a named implementation the host resolves at call time.
+  point("service:session.search", "service", "Session search over the live and on-disk list."),
+  point("service:model.pick", "service", "The model catalog a session offers."),
 
   // Protected: observable at most, never replaceable, vetoable, or skippable.
   point("core.auth.session", "protected", "Signed-session authentication and proxy.", { protected: true, stability: "stable" }),
@@ -144,19 +86,9 @@ function splitRef(ref: string): { id: string; version?: number } {
   return { id: ref.slice(0, at), version: Number(ref.slice(at + 1)) };
 }
 
-/** Matches a concrete id against a catalogued id, treating `<name>` as a one-segment wildcard. */
-function matchesFamily(catalogued: string, concrete: string): boolean {
-  if (!catalogued.includes("<")) return catalogued === concrete;
-  const pattern = catalogued
-    .split(/<[a-z-]+>/)
-    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-    .join("[^.]+");
-  return new RegExp(`^${pattern}$`).test(concrete);
-}
-
 export function lookupPoint(ref: string): LookupResult {
   const { id, version } = splitRef(ref);
-  const found = EXTENSION_POINTS.find((p) => matchesFamily(p.id, id));
+  const found = EXTENSION_POINTS.find((candidate) => candidate.id === id);
   if (!found) return { ok: false, error: `unknown extension point "${id}"` };
   if (version !== undefined && version !== found.version) {
     return { ok: false, error: `extension point "${id}" is version ${found.version}; "@${version}" is not served` };
@@ -171,22 +103,48 @@ export function isProtectedPoint(ref: string): boolean {
 
 /** Stable ids a plugin may rely on without an experimental opt-in. */
 export function stablePoints(): readonly ExtensionPoint[] {
-  return EXTENSION_POINTS.filter((p) => p.stability === "stable");
+  return EXTENSION_POINTS.filter((candidate) => candidate.stability === "stable");
 }
 
+const LOGIC_TABLE_HEADER = ["| Id | Kind | Stability | Description |", "| --- | --- | --- | --- |"];
+
+function logicRows(points: readonly ExtensionPoint[]): string[] {
+  return points.map((candidate) =>
+    `| \`${candidate.id}@${candidate.version}\` | ${candidate.kind} | ${candidate.stability}${candidate.protected ? ", protected" : ""} | ${candidate.description} |`);
+}
+
+function uiRows(): string[] {
+  return [
+    ...WEB_UI_ANCHORS.map((anchor) => `| \`${anchor}\` | anchor | Where a view may mount. |`),
+    ...WEB_UI_REGIONS.map((region) => `| \`${region}\` | region | A slot the host renders. |`),
+    ...Object.entries(WEB_UI_COMPONENTS).map(([id, entry]) =>
+      `| \`${id}\` | component | ${entry.model} model${OVERRIDABLE_COMPONENTS.includes(id as never) ? "; overridable" : ""} |`),
+  ];
+}
+
+/** The generated catalog doc: logic points, then the UI vocabulary. */
 export function catalogMarkdown(points: readonly ExtensionPoint[] = EXTENSION_POINTS): string {
-  const rows = points.map((p) =>
-    `| \`${p.id}@${p.version}\` | ${p.kind} | ${p.stability}${p.protected ? ", protected" : ""} | ${p.description}${p.legacyComponent ? ` (was \`${p.legacyComponent}\`)` : ""} |`);
   return [
     "# Web plugin extension-point catalog",
     "",
     "> Part of [pi-workflow-extensions](../README.md). Every extension point a web plugin can use, with its stability, version and whether it is protected. Web plugins are interface bridging — the boundary rule lives in [web-plugin-architecture.md](web-plugin-architecture.md).",
     "",
-    "Generated from `web/core/plugin-contracts/kernel/catalog.ts` by `scripts/gen-web-plugin-catalog.mjs`. Do not edit by hand.",
+    "Generated by `scripts/gen-web-plugin-catalog.mjs`. Do not edit by hand.",
     "",
-    "| Id | Kind | Stability | Description |",
-    "| --- | --- | --- | --- |",
-    ...rows,
+    "## Logic points",
+    "",
+    "Hook and service ids the kernel validates against. Each one has a named call site in the host, so attaching to it does something.",
+    "",
+    ...LOGIC_TABLE_HEADER,
+    ...logicRows(points),
+    "",
+    "## UI vocabulary",
+    "",
+    "Where a plugin's views may mount, from `web/core/plugin-contracts/ui-contracts.ts`. A descriptor is validated against these lists; the host mounts every entry.",
+    "",
+    "| Id | Kind | Notes |",
+    "| --- | --- | --- |",
+    ...uiRows(),
     "",
   ].join("\n");
 }

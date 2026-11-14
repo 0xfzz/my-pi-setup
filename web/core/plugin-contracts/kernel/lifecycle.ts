@@ -96,11 +96,6 @@ export function isLive(state: PluginState): boolean {
   return state === "active";
 }
 
-/** States in which the plugin's code may still be running and needs deactivation. */
-export function holdsResources(state: PluginState): boolean {
-  return state === "activating" || state === "active" || state === "deactivating";
-}
-
 export interface LifecycleRecord {
   from: PluginState;
   event: PluginEvent;

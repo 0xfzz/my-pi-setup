@@ -8,7 +8,6 @@ import { AuditLog } from "./audit.ts";
 import { compatCandidates, type DescriptorLike } from "./compat.ts";
 import { discoverPlugins, type DiscoveredPlugin, type DiscoveryRoots, type Shadowed } from "./discovery.ts";
 import { PluginManager, type BootReport, type PluginLoader, type PluginRuntime } from "./manager.ts";
-import type { PluginState } from "./lifecycle.ts";
 import { HookBus } from "./hooks.ts";
 import { PluginRouteRegistry } from "./routes.ts";
 import { ServiceRegistry } from "./services.ts";
@@ -16,12 +15,10 @@ import { PluginStorage } from "./storage.ts";
 import { loadStorageSnapshot, saveStorageSnapshot } from "./storage-file.ts";
 import { loadState, saveState, type WebPluginsState } from "./state.ts";
 import { validatePlugin } from "../descriptor.ts";
+import { validateRegistry } from "../registry.ts";
 
 /** Coalesce a burst of storage writes into one file write. */
 const STORAGE_SAVE_DEBOUNCE_MS = 250;
-
-/** States whose descriptor must not be shown or acted on. */
-export const HIDDEN_STATES: ReadonlySet<PluginState> = new Set<PluginState>(["disabled", "quarantined", "rejected", "unresolved", "ignored"]);
 
 export interface PluginHostOptions<D extends DescriptorLike> {
   descriptors: readonly D[];
@@ -104,6 +101,11 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
   const loaded = loadState(options.statePath);
   if (loaded.warning) warnings.push(loaded.warning);
 
+  // Cross-plugin checks no single descriptor can make: duplicate ids, duplicate
+  // page paths, duplicate action ids, two plugins claiming one exclusive
+  // replacement. A broken registry is a warning at boot, not a crash.
+  warnings.push(...validateRegistry(options.descriptors));
+
   const discovered = discoverPlugins({
     ...options.roots,
     inline: compatCandidates(options.descriptors, options.descriptorDir),
@@ -177,14 +179,10 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     byId.set(compiled.id, compiled);
   }
 
-  // Hidden unless active: unenabled user/project plugins stay in `resolved`,
-  // failed/disposed/disabled/quarantined plugins are not live, and in safe mode
-  // only active core.* plugins (or explicitly re-enabled active ones) show.
-  const hidden = (id: string): boolean => {
-    const status = manager.snapshot().find((s) => s.id === id);
-    if (status === undefined || HIDDEN_STATES.has(status.state)) return true;
-    return status.state !== "active";
-  };
+  // Served only while active. Unenabled user/project plugins stay `resolved`,
+  // a failed or quarantined one is not live, and in safe mode only the core
+  // plugins that started are active — one rule, no state list to keep in sync.
+  const served = (id: string): boolean => manager.isActive(id);
 
   return {
     manager,
@@ -196,10 +194,10 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     storage,
     ready: manager.start(),
     warnings,
-    visible: () => orderedDescriptors.filter((d) => !hidden(d.id)),
+    visible: () => orderedDescriptors.filter((descriptor) => served(descriptor.id)),
     descriptor: (id) => {
       const descriptor = byId.get(id);
-      return descriptor && !hidden(id) ? descriptor : undefined;
+      return descriptor !== undefined && served(id) ? descriptor : undefined;
     },
     // A pending storage write is data a plugin already considers saved, so the
     // debounce is flushed rather than dropped.

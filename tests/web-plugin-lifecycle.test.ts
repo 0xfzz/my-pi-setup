@@ -6,7 +6,6 @@ import {
   PLUGIN_STATES,
   PluginLifecycle,
   TRANSITIONS,
-  holdsResources,
   isLive,
   legalTransitions,
   transition,
@@ -54,10 +53,9 @@ test("every state is reachable from discovered and every non-terminal state has 
   }
 });
 
-test("active is the only live state, and only activating/active/deactivating hold resources", () => {
+test("active is the only live state", () => {
   for (const state of PLUGIN_STATES) {
     assert.equal(isLive(state), state === "active", state);
-    assert.equal(holdsResources(state), state === "activating" || state === "active" || state === "deactivating", state);
   }
 });
 

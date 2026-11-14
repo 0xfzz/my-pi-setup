@@ -110,6 +110,14 @@ async function handlePluginsList(ctx: ApiRouteContext): Promise<void> {
 }
 
 /**
+ * The host's own dialog channel: the bridge's built-in pickers (fork, tree,
+ * model, thinking). It has no descriptor because its action ids are the
+ * session's own entries, so the extension that published the picker is the
+ * validator. The in-flight guard and audit below still apply.
+ */
+const HOST_DIALOG_CHANNEL = "web-core";
+
+/**
  * POST /api/plugins/action — ported from the vendored app with identical
  * semantics: 404 before anything else, 403 when a declared confirm does not
  * match byte-identically, 409 while another action is in flight for the
@@ -134,14 +142,9 @@ async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Pr
     sendJson(res, 404, { error: "Plugin not found" });
     return;
   }
-  // The web core channel: the bridge's own built-in pickers. Its action
-  // ids are dynamic (session entries: "fork@<entryId>"), so the extension
-  // that published the picker is the validator — the static descriptor
-  // registry is for external plugins. The in-flight guard and audit below
-  // still apply.
-  const isWebCore = pluginId === "web-core";
-  const descriptor = isWebCore ? undefined : getPluginDescriptor(pluginId);
-  if (!isWebCore && !descriptor) {
+  const isHostChannel = pluginId === HOST_DIALOG_CHANNEL;
+  const descriptor = isHostChannel ? undefined : getPluginDescriptor(pluginId);
+  if (!isHostChannel && !descriptor) {
     sendJson(res, 404, { error: "Plugin not found" });
     return;
   }
@@ -149,8 +152,11 @@ async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Pr
     sendJson(res, 404, { error: "Action not found" });
     return;
   }
+  // A plugin whose action ids are chosen at runtime (the host's own dialog
+  // channel, or a descriptor that declares `dynamicActions`) validates them
+  // itself: the static list cannot name `fork@<entryId>`.
   const action = descriptor?.actions?.find((candidate) => candidate.id === actionId);
-  if (!isWebCore && !action) {
+  if (!isHostChannel && descriptor?.dynamicActions !== true && !action) {
     sendJson(res, 404, { error: "Action not found" });
     return;
   }
@@ -191,13 +197,13 @@ async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Pr
     && confirm.length <= MAX_ACTION_VALUE_LENGTH
     ? confirm
     : undefined;
-  if (isWebCore) {
+  if (isHostChannel) {
     // The picker closes here, server-side: the picked action's side effect
     // (a fork, a tree navigation) can switch the pi's session and rebind
     // its poster before the extension's own queued open:false flushes —
     // this close is immediate and race-free. The relay still notifies the
     // extension (the TUI-side dialog close).
-    recordPluginView(sessionId, "web-core", { type: "dialog", open: false });
+    recordPluginView(sessionId, HOST_DIALOG_CHANNEL, { type: "dialog", open: false });
   }
   const { relayed } = relayActionRequest(sessionId, pluginId, actionId, requestId, relayedConfirm);
   sendJson(res, 200, { ok: true, requestId, relayed });

@@ -18,13 +18,14 @@ function exclusiveReplacementKey(contribution: WebPluginUiContribution): string 
 
 /**
  * Cross-plugin checks that no single descriptor can make: duplicate ids,
- * duplicate page paths, duplicate action ids, and two plugins claiming the
- * same exclusive replacement at the same priority.
+ * duplicate page paths, duplicate action ids, and two plugins claiming the same
+ * exclusive replacement at the same priority.
  *
- * Returns the problems as messages, so a caller can decide whether a bad
- * registry is fatal (a test) or a warning (a booting host).
+ * Input is untrusted, so every entry is validated first and only the validated
+ * descriptor is read. Returns the problems as messages, so a caller can decide
+ * whether a bad registry is fatal (a test) or a warning (a booting host).
  */
-export function validateRegistry(plugins: readonly WebPluginDescriptor[]): string[] {
+export function validateRegistry(plugins: readonly unknown[]): string[] {
   if (!Array.isArray(plugins)) return ["plugins must be an array"];
 
   const errors: string[] = [];
@@ -32,14 +33,15 @@ export function validateRegistry(plugins: readonly WebPluginDescriptor[]): strin
   const seenPaths = new Set<string>();
   const replacements = new Map<string, string>();
 
-  for (const plugin of plugins) {
-    const pluginResult = validatePlugin(plugin);
-    if (!pluginResult.ok) {
-      errors.push(pluginResult.error);
+  for (const candidate of plugins) {
+    const result = validatePlugin(candidate);
+    if (!result.ok) {
+      errors.push(result.error);
       continue;
     }
+    const plugin: WebPluginDescriptor = result.plugin;
 
-    for (const contribution of contributionsOf(pluginResult.plugin)) {
+    for (const contribution of contributionsOf(plugin)) {
       if (contribution.override === undefined || contribution.override.mode === "wrap") continue;
       const key = exclusiveReplacementKey(contribution);
       if (key === undefined) continue;

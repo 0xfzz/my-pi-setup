@@ -431,6 +431,12 @@ export class PluginManager {
     });
   }
 
+  /** Whether this plugin is running right now (the only state the web serves). */
+  isActive(id: string): boolean {
+    const slot = this.slots.get(id);
+    return slot !== undefined && isLive(slot.life.state);
+  }
+
   activeIds(): string[] {
     return this.order.filter((id) => isLive(this.slots.get(id)!.life.state));
   }
