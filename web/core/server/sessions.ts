@@ -18,6 +18,8 @@ import { createReadStream, existsSync } from "node:fs";
 import { open, readFile, readdir, stat, unlink } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { getPluginHost } from "./plugin-host.ts";
+import type { PluginHost } from "../plugin-contracts/kernel/host.ts";
+import type { WebPluginDescriptor } from "../plugin-contracts/descriptor.ts";
 import { attachSessionPlugins } from "./plugin-sessions.ts";
 import { publishSessionTapEvent } from "./session-tap.ts";
 import { createHeadlessWebUiContext } from "./web-ui-context.ts";
@@ -559,47 +561,97 @@ export function listLiveSessions(): SessionInfo[] {
 }
 
 /**
+ * How many disk sessions a search considers.
+ *
+ * The list window is small on purpose — the sidebar shows recent work, and a
+ * name scan costs a backwards read of the session file. A *search* is
+ * different: the user is looking for one session they know exists, and a
+ * generated title on an older session must still be found. So a query widens
+ * the scan; the returned rows stay bounded by what actually matches.
+ */
+const SEARCH_SCAN_LIMIT = 500;
+
+/** Whether one row matches a lower-cased needle: id, project path, or name. */
+function matchesQuery(row: SessionInfo, needle: string): boolean {
+  return row.id.toLowerCase().includes(needle)
+    || row.cwd.toLowerCase().includes(needle)
+    || (row.name?.toLowerCase().includes(needle) ?? false);
+}
+
+/**
+ * Narrow rows to a query. A plugin may take over through
+ * `service:session.search`; without a host, or without a service, the host's
+ * own matcher runs — a query is never silently ignored.
+ */
+async function narrowToQuery(
+  host: PluginHost<WebPluginDescriptor> | null,
+  rows: SessionInfo[],
+  query: string,
+): Promise<SessionInfo[]> {
+  const service = host?.services.resolve<
+    (rows: SessionInfo[], q: string) => SessionInfo[] | Promise<SessionInfo[]>
+  >("session.search");
+  if (service !== undefined) {
+    const matched = await service(rows, query);
+    if (Array.isArray(matched)) return matched;
+  }
+  const needle = query.toLowerCase();
+  return rows.filter((row) => matchesQuery(row, needle));
+}
+
+/**
+ * The name a row shows: what this process was told, else what the file holds.
+ *
+ * `sessionNames` is the directory's memory of every rename it observed (a
+ * `session_info_changed`, a bridge `session_name`, an attach-time `state.name`),
+ * so it is at least as fresh as the file for a session this process watched.
+ * The fallback matters because a session's row outlives its liveness: when a
+ * TUI-owned session detaches, its row becomes a disk row, and a bridge writes
+ * the name in the *TUI* process — so the web server's copy of the file may
+ * never contain the title at all. Reading only the file would drop a generated
+ * title from the sidebar at that moment.
+ */
+function displayNameOf(sessionId: string, fromFile: string | undefined): string | undefined {
+  return sessionNames.get(sessionId) ?? fromFile;
+}
+
+/**
  * Combined live + disk session snapshot, transformed through `session.list.sort`
  * waterfall hooks and filtered by `service:session.search` when `query` is set.
  */
 export async function listAllSessions(options?: { agentDir?: string; query?: string }): Promise<SessionInfo[]> {
+  const query = options?.query?.trim() ?? "";
   const live = listLiveSessions();
   const liveIds = new Set(live.map((session) => session.id));
-  const disk = await listDiskSessions({ agentDir: options?.agentDir });
+  // A search reaches further back than the sidebar's window, or a titled
+  // session that fell out of it would be unfindable by its own title.
+  const disk = await listDiskSessions({
+    agentDir: options?.agentDir,
+    ...(query === "" ? {} : { limit: SEARCH_SCAN_LIMIT }),
+  });
   let sessions: SessionInfo[] = [
     ...live,
     ...disk
       .filter((session) => !liveIds.has(session.id))
-      .map((session) => ({
-        id: session.id,
-        cwd: session.cwd,
-        sessionFile: session.file,
-        live: false,
-        running: false,
-        modifiedAt: session.modifiedAt,
-        ...(session.name !== undefined ? { name: session.name } : {}),
-      })),
+      .map((session) => {
+        const name = displayNameOf(session.id, session.name);
+        return {
+          id: session.id,
+          cwd: session.cwd,
+          sessionFile: session.file,
+          live: false,
+          running: false,
+          modifiedAt: session.modifiedAt,
+          ...(name !== undefined ? { name } : {}),
+        };
+      }),
   ];
   const host = getPluginHost();
   if (host !== null) {
     const sorted = await host.hooks.waterfall("session.list.sort", sessions, {});
     if (Array.isArray(sorted)) sessions = sorted;
-    const trimmed = options?.query?.trim();
-    if (trimmed !== undefined && trimmed !== "") {
-      const searchService = host.services.resolve<(rows: SessionInfo[], q: string) => SessionInfo[] | Promise<SessionInfo[]>>("session.search");
-      if (searchService !== undefined) {
-        const matched = await searchService(sessions, trimmed);
-        if (Array.isArray(matched)) sessions = matched;
-      } else {
-        const needle = trimmed.toLowerCase();
-        sessions = sessions.filter((row) =>
-          row.id.toLowerCase().includes(needle)
-          || row.cwd.toLowerCase().includes(needle)
-          || (row.name?.toLowerCase().includes(needle) ?? false));
-      }
-    }
   }
-  return sessions;
+  return query === "" ? sessions : narrowToQuery(host, sessions, query);
 }
 
 export type DeleteSessionResult =
