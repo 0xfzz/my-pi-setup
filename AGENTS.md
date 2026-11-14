@@ -93,3 +93,20 @@ files, and clear whatever you introduce.
 
 `git commit --no-verify` is for a clearly named WIP commit only. Explain why in
 the commit body, and remove the bypass before the work is finished.
+
+## Never delete a watched directory
+
+The pi runtime walks the workspace while a session runs. Removing a directory
+under it — `rm -rf web/plugins/<x>/app`, a `git stash pop` that deletes a
+renamed tree, a rename that drops the old folder — can crash the whole session
+with `ENOENT: no such file or directory, scandir …/<dir>`, and it takes the
+running git command down with it (a stale `.git/index.lock` is the usual
+leftover).
+
+- Create in place instead of deleting and recreating: `web/build.mjs` keeps
+  `core/client/dist` and overwrites its outputs for exactly this reason.
+- To retire a directory, move it out of the workspace first
+  (`mv <dir> /tmp/…`), then delete it there.
+- If a crash leaves `.git/index.lock` behind, confirm no git process is running
+  before removing it, then check whether the interrupted command half-applied
+  (`git status`, `git stash list`) before redoing it.
