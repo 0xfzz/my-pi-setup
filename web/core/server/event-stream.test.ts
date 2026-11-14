@@ -3,11 +3,8 @@ import assert from "node:assert/strict";
 import { startWebServer } from "./main.ts";
 import { clearSessionsForTests, registerSession, type SessionCore, type SessionStateLite } from "./sessions.ts";
 import { createStreamTracker } from "./stream-tracker.ts";
-import {
-  attachSessionPlugins,
-  clearWebPluginStateForTests,
-  type MinimalEventBus,
-} from "./plugin-host.ts";
+import { attachSessionPlugins, type MinimalEventBus } from "./plugin-sessions.ts";
+import { clearWebPluginStateForTests } from "./plugin-fixtures.ts";
 import { WEB_PLUGIN_VIEW_EVENT } from "../plugin-contracts/view.ts";
 
 const state: SessionStateLite = {

@@ -21,8 +21,8 @@ import {
   type SessionDirectoryEvent,
   type SessionInfo,
 } from "./sessions.ts";
-import { getRegisteredPlugins, recordExtensionUi, webPluginsStore, webUiStore } from "./plugin-host.ts";
-import { resolveRegionOverrides } from "../shared/regions.ts";
+import { recordExtensionUi, webUiStore } from "./ui-store.ts";
+import { sessionBus } from "./plugin-sessions.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT } from "../plugin-contracts/ui-event-models.ts";
 
 const TOOL_UPDATE_COALESCE_MS = 150;
@@ -215,10 +215,6 @@ export function attachAgentEventStream(
           widgets: sessionState?.widgets ?? {},
           custom: sessionState?.custom ?? {},
           notifications: sessionState?.notifications ?? [],
-          // Region override conflicts are host-resolved diagnostics: the
-          // client renders overrides from the same views, and every conflict
-          // (several plugins overriding one region) stays visible here.
-          regionConflicts: resolveRegionOverrides(getRegisteredPlugins(), views).conflicts,
         };
         const json = JSON.stringify(frame);
         if (json === lastPluginStateJson) return;
@@ -237,7 +233,7 @@ export function attachAgentEventStream(
       let lastSessionStateJson = "";
       syncInterval = setInterval(() => {
         if (closed || !session.isStreaming()) return;
-        webPluginsStore.sessionBuses.get(sessionId)?.emit?.(WEB_PLUGIN_UI_SYNC_EVENT, {});
+        sessionBus(sessionId)?.emit?.(WEB_PLUGIN_UI_SYNC_EVENT, {});
         const state = session.getState();
         const frame = {
           type: "session_state" as const,

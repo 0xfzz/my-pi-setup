@@ -165,7 +165,8 @@ test("parsePluginRoutePath splits the plugin id from its mount path", () => {
 // ── The HTTP surface: a plugin's own endpoint, served by the real server ───
 
 test("a plugin route answers over HTTP with its body, status and headers", async () => {
-  const { registerWebPlugins, clearWebPluginStateForTests } = await import("../web/core/server/plugin-host.ts");
+  const { registerWebPlugins } = await import("../web/core/server/plugin-host.ts");
+  const { clearWebPluginStateForTests } = await import("../web/core/server/plugin-fixtures.ts");
   const { startWebServer } = await import("../web/core/server/main.ts");
   const { WEB_PLUGINS } = await import("../web/plugins/index.ts");
   const dir = mkdtempSync(join(tmpdir(), "pi-plugin-routes-"));

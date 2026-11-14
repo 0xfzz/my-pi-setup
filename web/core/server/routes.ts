@@ -12,15 +12,17 @@ import { existsSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { attachBridge, getBridge, type BridgeState } from "./bridge.ts";
 import {
-  checkAndSetInFlightAction,
   getPluginDescriptor,
   getPluginHost,
-  isKnownSession,
   pluginsWhenReady,
+} from "./plugin-host.ts";
+import {
+  checkAndSetInFlightAction,
+  isKnownSession,
   recordActionAudit,
   relayActionRequest,
-  webPluginsStore,
-} from "./plugin-host.ts";
+} from "./plugin-sessions.ts";
+import { recordPluginView } from "./plugin-views.ts";
 import {
   announceCodeChanges,
   deleteSession,
@@ -166,14 +168,17 @@ async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Pr
     return;
   }
 
-  // 3. At most one in-flight CONFIRMED action per session, held for 60 s
-  //    (409). Instant actions (no declared confirm) and the web core
-  //    channel are exempt: both are fire-and-forget dispatches, so a lock
-  //    here would refuse the next click — the exact failure behind rapid
-  //    Normal↔Plan toggling. Confirmed actions stay locked to stop a
-  //    cost-intense re-submission while the first is still processing.
+  // 3. One in-flight CONFIRMED submission per (session, plugin, action) (409).
+  //    Instant actions (no declared confirm) and the web core channel are
+  //    exempt: both are fire-and-forget dispatches, so a lock here would
+  //    refuse the next click — the exact failure behind rapid Normal↔Plan
+  //    toggling. The lock is per action, not per session, and a finished turn
+  //    releases it, so a handler that never reports back cannot wedge the
+  //    button for the rest of the session.
   const requestId = randomUUID();
-  if (action?.confirm !== undefined && !checkAndSetInFlightAction(sessionId, requestId, 60_000)) {
+  const claimed = action?.confirm === undefined
+    || checkAndSetInFlightAction({ sessionId, pluginId, actionId, requestId });
+  if (!claimed) {
     sendJson(res, 409, { error: "Action already in flight for this session" });
     return;
   }
@@ -196,7 +201,7 @@ async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Pr
     // its poster before the extension's own queued open:false flushes —
     // this close is immediate and race-free. The relay still notifies the
     // extension (the TUI-side dialog close).
-    webPluginsStore.recordView(sessionId, "web-core", { type: "dialog", open: false });
+    recordPluginView(sessionId, "web-core", { type: "dialog", open: false });
   }
   const { relayed } = relayActionRequest(sessionId, pluginId, actionId, requestId, relayedConfirm);
   sendJson(res, 200, { ok: true, requestId, relayed });

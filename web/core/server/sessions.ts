@@ -17,7 +17,8 @@ import { createStreamTracker, type StreamSnapshot } from "./stream-tracker.ts";
 import { createReadStream, existsSync } from "node:fs";
 import { open, readFile, readdir, stat, unlink } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { attachSessionPlugins, getPluginHost } from "./plugin-host.ts";
+import { getPluginHost } from "./plugin-host.ts";
+import { attachSessionPlugins } from "./plugin-sessions.ts";
 import { createHeadlessWebUiContext } from "./web-ui-context.ts";
 
 export interface SessionStateLite {

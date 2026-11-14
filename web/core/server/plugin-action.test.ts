@@ -1,15 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { startWebServer } from "./main.ts";
-import {
-  attachSessionPlugins,
-  clearWebPluginStateForTests,
-  getActionAuditLog,
-  getPluginDescriptor,
-  registerWebPlugins,
-  webPluginsStore,
-  type MinimalEventBus,
-} from "./plugin-host.ts";
+import { getPluginDescriptor, registerWebPlugins } from "./plugin-host.ts";
+import { attachSessionPlugins, getActionAuditLog, registerSessionBusForTests, type MinimalEventBus } from "./plugin-sessions.ts";
+import { clearWebPluginStateForTests } from "./plugin-fixtures.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../plugin-contracts/actions.ts";
 import { WEB_PLUGINS } from "../../plugins/index.ts";
 
@@ -208,8 +202,9 @@ test("action route enforces one in-flight CONFIRMED action per session (409)", a
 });
 
 test("action route reports relayed false when the session has no bus", async () => {
-  // Known to the plugin store (via knownSessions) but no bus attached.
-  webPluginsStore.knownSessions.add("views-only-session");
+  // Known to the session bridge, but with no bus attached: the action has
+  // nowhere to go, so the route reports relayed false instead of 404.
+  registerSessionBusForTests("views-only-session", { on: () => () => {} });
   const monitor = getPluginDescriptor("subagent-monitor");
   const action = monitor?.actions?.find((a) => a.confirm !== undefined);
   assert.ok(action && action.confirm !== undefined);

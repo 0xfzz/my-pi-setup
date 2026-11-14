@@ -13,12 +13,9 @@ import { createStreamTracker, type StreamSnapshot } from "./stream-tracker.ts";
 import type { WebTreeNode } from "../../../lib/web-tree.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../plugin-contracts/actions.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT, type WebUiType } from "../plugin-contracts/ui-event-models.ts";
-import {
-  recordExtensionUi,
-  webPluginsStore,
-  webUiStore,
-  type MinimalEventBus,
-} from "./plugin-host.ts";
+import { recordExtensionUi, webUiStore } from "./ui-store.ts";
+import { detachSessionBus, registerSessionBusForTests, type MinimalEventBus } from "./plugin-sessions.ts";
+import { recordPluginView } from "./plugin-views.ts";
 import {
   getSession,
   markBridgeAttached,
@@ -338,9 +335,7 @@ export function attachBridge(options: {
       if (bridges.get(metadata.sessionId) === connection) {
         bridges.delete(metadata.sessionId);
       }
-      if (webPluginsStore.sessionBuses.get(metadata.sessionId) === actionBus) {
-        webPluginsStore.sessionBuses.delete(metadata.sessionId);
-      }
+      detachSessionBus(metadata.sessionId, actionBus);
       unregisterSession(metadata.sessionId);
       // End the browser streams watching this session: their EventSources
       // reconnect and re-resolve (a re-attached bridge, or the disk fallback).
@@ -362,8 +357,7 @@ export function attachBridge(options: {
   };
 
   bridges.set(metadata.sessionId, connection);
-  webPluginsStore.knownSessions.add(metadata.sessionId);
-  webPluginsStore.sessionBuses.set(metadata.sessionId, actionBus);
+  registerSessionBusForTests(metadata.sessionId, actionBus);
 
   // Ask the owning pi process to re-emit its current web UI values now that
   // this session's consumers can receive them: a bridge that attaches after
@@ -409,7 +403,7 @@ function handleBridgeEvent(sessionId: string, event: unknown): void {
   if (e.type === "web_plugin_view") {
     const payload = e.payload as { pluginId?: unknown; view?: unknown } | undefined;
     if (payload !== undefined && typeof payload.pluginId === "string") {
-      webPluginsStore.recordView(sessionId, payload.pluginId, payload.view);
+      recordPluginView(sessionId, payload.pluginId, payload.view);
     }
     return;
   }

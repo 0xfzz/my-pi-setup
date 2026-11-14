@@ -1,22 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  attachSessionPlugins,
-  checkAndSeedFixtures,
-  checkAndSetInFlightAction,
-  clearWebPluginStateForTests,
-  getActionAuditLog,
   getPluginDescriptor,
+  registerWebPlugins,
+  visiblePluginsWhenReady,
+} from "./plugin-host.ts";
+import {
+  attachSessionPlugins,
+  checkAndSetInFlightAction,
+  getActionAuditLog,
   isKnownSession,
   recordActionAudit,
-  recordExtensionUi,
-  registerWebPlugins,
   relayActionRequest,
-  visiblePluginsWhenReady,
-  webPluginsStore,
-  webUiStore,
+  sessionBus,
   type MinimalEventBus,
-} from "./plugin-host.ts";
+} from "./plugin-sessions.ts";
+import { clearWebPluginStateForTests, seedPluginFixtures } from "./plugin-fixtures.ts";
+import { pluginView, recordPluginView } from "./plugin-views.ts";
+import { recordExtensionUi, webUiStore } from "./ui-store.ts";
 import type { WebPluginDescriptor } from "../plugin-contracts/descriptor.ts";
 import { WEB_PLUGIN_VIEW_EVENT } from "../plugin-contracts/view.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../plugin-contracts/actions.ts";
@@ -71,19 +72,18 @@ test("recordExtensionUi clears the running flag on agent_end", () => {
 
 test("recordView stores valid views and rejects invalid ones", () => {
   assert.equal(
-    webPluginsStore.recordView("host-session", "todo", {
+    recordPluginView("host-session", "todo", {
       type: "kv",
       title: "Snapshot",
       rows: [{ label: "L", value: "V" }],
     }),
     true,
   );
-  assert.ok(webPluginsStore.getView("host-session", "todo"));
-  assert.equal(webPluginsStore.getLatestView("todo") !== undefined, true);
-  assert.deepEqual(Object.keys(webPluginsStore.getAllViews()), ["host-session"]);
+  assert.ok(pluginView("host-session", "todo"));
+  assert.deepEqual(Object.keys(webUiStore.snapshot().sessions), ["host-session"]);
 
-  assert.equal(webPluginsStore.recordView("host-session", "todo", { type: "nonsense" }), false);
-  assert.equal(webPluginsStore.recordView("", "todo", { type: "status", tone: "info", text: "x" }), false);
+  assert.equal(recordPluginView("host-session", "todo", { type: "nonsense" }), false);
+  assert.equal(recordPluginView("", "todo", { type: "status", tone: "info", text: "x" }), false);
 });
 
 test("attachSessionPlugins routes bus view events into the store", () => {
@@ -94,7 +94,7 @@ test("attachSessionPlugins routes bus view events into the store", () => {
     pluginId: "cache-stats",
     view: { type: "status", tone: "success", text: "healthy" },
   });
-  const view = webPluginsStore.getView("host-session", "cache-stats");
+  const view = pluginView("host-session", "cache-stats");
   assert.ok(view);
   assert.equal(view.type, "status");
 });
@@ -128,7 +128,7 @@ test("a view published before attach is replayed into the store on attach", () =
   attachSessionPlugins({ sessionId: "replay-session", inner: { resourceLoader: { eventBus: events } } });
 
   assert.ok(
-    webPluginsStore.getView("replay-session", "todo"),
+    pluginView("replay-session", "todo"),
     "the pre-attach view must be replayed when the host subscribes",
   );
 });
@@ -139,7 +139,7 @@ test("attachSessionPlugins cleanup detaches the session bus", () => {
     pluginId: "todo",
     view: { type: "status", tone: "accent", text: "seeded" },
   });
-  assert.ok(webPluginsStore.getView("detach-session", "todo"));
+  assert.ok(pluginView("detach-session", "todo"));
 
   detach();
   assert.equal(relayActionRequest("detach-session", "todo", "sync").relayed, false);
@@ -200,13 +200,23 @@ test("a rejected boot still serves the plugins that did activate", async () => {
   assert.deepEqual(plugins.map((plugin) => plugin.id), ["survivor"]);
 });
 
-test("checkAndSetInFlightAction bounds one in-flight action per session", () => {
-  assert.equal(checkAndSetInFlightAction("sess-1", "req-1", 60_000), true);
-  assert.equal(checkAndSetInFlightAction("sess-1", "req-2", 60_000), false);
-  assert.equal(checkAndSetInFlightAction("sess-2", "req-3", 60_000), true);
+test("checkAndSetInFlightAction locks one submission of one action, not the whole session", () => {
+  const claim = (sessionId: string, actionId: string) =>
+    checkAndSetInFlightAction({ sessionId, pluginId: "todo", actionId, requestId: `${sessionId}-${actionId}` });
 
-  webPluginsStore.inFlightActions.set("sess-3", { requestId: "old", expiresAt: Date.now() - 1000 });
-  assert.equal(checkAndSetInFlightAction("sess-3", "new", 60_000), true);
+  assert.equal(claim("sess-1", "sync"), true);
+  // The same action again while the first is held is refused…
+  assert.equal(claim("sess-1", "sync"), false);
+  // …but a different action in the same session is not.
+  assert.equal(claim("sess-1", "clear"), true);
+  assert.equal(claim("sess-2", "sync"), true);
+});
+
+test("an expired claim is reusable", () => {
+  const claim = () =>
+    checkAndSetInFlightAction({ sessionId: "sess-3", pluginId: "todo", actionId: "sync", requestId: "r", ttlMs: 0 });
+  assert.equal(claim(), true);
+  assert.equal(claim(), true);
 });
 
 test("audit log records entries and clears with the store", () => {
@@ -228,19 +238,19 @@ test("audit log records entries and clears with the store", () => {
 
 test("checkAndSeedFixtures seeds the test session when enabled", () => {
   process.env.PI_WEB_TEST_PLUGIN_VIEWS = "1";
-  checkAndSeedFixtures();
+  seedPluginFixtures();
   const session = "__test_session__";
-  assert.ok(webPluginsStore.getView(session, "cache-stats"), "cache-stats kv view seeded");
-  assert.ok(webPluginsStore.getView(session, "todo"), "todo list view seeded");
-  const graph = webPluginsStore.getView(session, "subagent-monitor");
+  assert.ok(pluginView(session, "cache-stats"), "cache-stats kv view seeded");
+  assert.ok(pluginView(session, "todo"), "todo list view seeded");
+  const graph = pluginView(session, "subagent-monitor");
   assert.ok(graph && graph.type === "graph", "monitor graph seeded");
   assert.equal(isKnownSession(session), true);
 
   // The seeded bus records action requests as graph updates with the request id.
-  const bus = webPluginsStore.sessionBuses.get(session);
+  const bus = sessionBus(session);
   assert.ok(bus && typeof bus.emit === "function", "fixture bus present");
   bus.emit?.(WEB_PLUGIN_ACTION_REQUEST_EVENT, { requestId: "custom-req" });
-  const updated = webPluginsStore.getView(session, "subagent-monitor");
+  const updated = pluginView(session, "subagent-monitor");
   assert.ok(updated && updated.type === "graph");
   const labeled = updated.nodes.find((node) => node.id === "child:worker-slots");
   assert.ok(labeled?.label.includes("custom-req"), "request id flows into the graph label");

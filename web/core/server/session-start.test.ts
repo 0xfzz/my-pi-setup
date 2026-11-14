@@ -12,7 +12,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { publishWebView } from "../plugin-contracts/publisher.ts";
 import { createHeadlessWebUiContext } from "./web-ui-context.ts";
-import { attachSessionPlugins, clearWebPluginStateForTests, webPluginsStore } from "./plugin-host.ts";
+import { attachSessionPlugins } from "./plugin-sessions.ts";
+import { clearWebPluginStateForTests } from "./plugin-fixtures.ts";
+import { pluginView } from "./plugin-views.ts";
 
 type ModelRef = NonNullable<CreateAgentSessionOptions["model"]>;
 
@@ -92,7 +94,7 @@ test("in-process sessions republish resting views on session_start", async () =>
     });
 
     assert.deepEqual(
-      webPluginsStore.getView(sessionId, "todo"),
+      pluginView(sessionId, "todo"),
       restingView,
       "the resting view published on session_start must reach the store on attach",
     );

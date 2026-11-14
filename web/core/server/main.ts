@@ -8,6 +8,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { extname, join, resolve, sep } from "node:path";
 import { registerSession } from "./sessions.ts";
+import { seedPluginFixtures } from "./plugin-fixtures.ts";
 import { handleApi } from "./routes.ts";
 import { sendJson } from "./http.ts";
 import { createAuthHttp, type AuthHttp, type AuthHttpOptions } from "./auth.ts";
@@ -228,6 +229,9 @@ export async function main(): Promise<void> {
     console.warn(`[pi-web-minimal] WARNING: listening on ${handle.host} with no password. Anyone who can reach this port controls your agent. Run /web set-password in pi.`);
   }
   if (process.env.PI_WEB_TEST_PLUGIN_VIEWS === "1") {
+    // Seeding is explicit: the plugin modules carry no import-time side effect,
+    // so the server decides when the fixture surfaces exist.
+    seedPluginFixtures();
     registerFixtureSession();
     console.log("[pi-web-minimal] fixture session registered (PI_WEB_TEST_PLUGIN_VIEWS=1)");
   }
