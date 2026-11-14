@@ -12,6 +12,8 @@ import { RequestLoading } from "./core/client/request-loading.tsx";
 import { initTheme } from "./core/client/theme.ts";
 // Side-effect import: registers the Files and Artifacts bespoke panels.
 import "./plugins/panels.tsx";
+// Side-effect import: registers the MCP manager bespoke page.
+import "./plugins/pages.tsx";
 
 // Before the first paint: the theme is on <html> before React renders.
 initTheme();

@@ -6,6 +6,7 @@
 import { autocompleteApi } from "./autocomplete.ts";
 import { authAnswerApi, authLoginApi, authLogoutApi, authReadApi, authStateApi } from "./auth.ts";
 import { builtinCommandsApi } from "./builtin-commands.ts";
+import { mcpReadApi, mcpWriteApi } from "./mcp.ts";
 import { settingsApi, settingsModelsApi, settingsModelsWriteApi, settingsWriteApi } from "./settings.ts";
 import { trustApi, trustWriteApi } from "./trust.ts";
 import type { PiApiModule } from "./types.ts";
@@ -31,4 +32,6 @@ export const PI_API_MODULES: readonly PiApiModule[] = [
   authStateApi,
   authAnswerApi,
   authLogoutApi,
+  mcpReadApi,
+  mcpWriteApi,
 ];

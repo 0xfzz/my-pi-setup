@@ -24,7 +24,9 @@ export type PiApiName =
   | "auth.login"
   | "auth.state"
   | "auth.answer"
-  | "auth.logout";
+  | "auth.logout"
+  | "mcp.read"
+  | "mcp.write";
 
 /** pi-tui's AutocompleteItem, wire form. */
 export interface PiAutocompleteItem {
@@ -70,6 +72,8 @@ export interface PiApiParams {
   "auth.state": { loginId: string };
   "auth.answer": { loginId: string; value: string };
   "auth.logout": { providerId: string };
+  "mcp.read": Record<string, never>;
+  "mcp.write": PiMcpWriteParams;
 }
 
 /** results per api — one entry per PiApiName. */
@@ -87,6 +91,8 @@ export interface PiApiResult {
   "auth.state": PiAuthLoginState;
   "auth.answer": { ok: true };
   "auth.logout": { ok: true };
+  "mcp.read": PiMcpConfigState;
+  "mcp.write": PiMcpConfigState;
 }
 
 /** One entry of pi's settings surface, as the web dialog renders it. */
@@ -99,6 +105,54 @@ export interface PiSettingEntry {
   /** select entries: the offered choices; the current value is among them. */
   options?: Array<{ label: string; value: string | number | boolean }>;
 }
+
+/** Which mcp.json defines a server, mirroring pi's McpServerEntry scope. */
+export type PiMcpScope = "global" | "project" | "extension";
+
+/** One configured MCP server, wire form of pi's McpServerEntry. */
+export interface PiMcpServerEntry {
+  name: string;
+  scope: PiMcpScope;
+  /** The mcp.json that defines (or, for overrides, enables) this entry. */
+  source: string;
+  /** Set when a project mcp.json overrides this global server. */
+  override?: string;
+  enabled: boolean;
+  exposure: string;
+  transport: "stdio" | "http";
+  /** stdio: one executable plus its arguments (not a shell string). */
+  command?: string;
+  args?: string[];
+  /** http: the streamable HTTP endpoint. */
+  url?: string;
+  /** stdio: environment references (`${NAME}`, `!cmd`), as configured. */
+  env?: Record<string, string>;
+  /** http: header values, as configured. */
+  headers?: Record<string, string>;
+  description?: string;
+}
+
+/** pi's loaded MCP configuration, as /mcp lists it. */
+export interface PiMcpConfigState {
+  servers: PiMcpServerEntry[];
+  /** The user-level mcp.json — where global writes land. */
+  globalConfigPath: string;
+  /** The project mcp.json when the project is trusted, else null. */
+  projectConfigPath: string | null;
+  projectTrusted: boolean;
+  autoEnableCodemode: boolean;
+  /** pi's own parse/validation errors for skipped entries. */
+  errors: string[];
+}
+
+/** One mutation of the MCP configuration. */
+export type PiMcpWriteParams =
+  | { action: "add"; scope: "global" | "project"; name: string; config: Record<string, unknown> }
+  | { action: "remove"; scope: "global" | "project"; name: string }
+  /** Patch enabled/exposure in the file that defines or overrides the entry. */
+  | { action: "patch"; name: string; enabled?: boolean; exposure?: string }
+  /** Add a project override of a global server (enable/disable in this project). */
+  | { action: "override"; name: string; enabled?: boolean; exposure?: string };
 
 /** pi's project-trust state, as its own trust selector shows it. */
 export interface PiTrustEntry {
@@ -188,6 +242,8 @@ export function parsePiApiBody(body: unknown): { api: PiApiName; params: unknown
     "auth.state",
     "auth.answer",
     "auth.logout",
+    "mcp.read",
+    "mcp.write",
   ];
   if (typeof api !== "string" || !known.includes(api)) {
     return { error: `unknown pi api: ${String(api)}` };
@@ -253,5 +309,37 @@ export function parsePiApiBody(body: unknown): { api: PiApiName; params: unknown
       return { error: "auth.logout params: {providerId: string}" };
     }
   }
+  if (api === "mcp.write") {
+    const error = parseMcpWriteError(params);
+    if (error !== null) return { error };
+  }
   return { api: apiName, params };
+}
+
+/** Wire check for one mcp.write mutation; null when the shape is valid. */
+function parseMcpWriteError(params: unknown): string | null {
+  if (typeof params !== "object" || params === null) return "mcp.write params must be an object";
+  const p = params as { action?: unknown; scope?: unknown; name?: unknown; config?: unknown; enabled?: unknown; exposure?: unknown };
+  if (p.action !== "add" && p.action !== "remove" && p.action !== "patch" && p.action !== "override") {
+    return "mcp.write params: {action: 'add' | 'remove' | 'patch' | 'override', …}";
+  }
+  if (typeof p.name !== "string" || !/^[A-Za-z0-9_-]+$/.test(p.name)) {
+    return "server name must contain only letters, digits, _ and -";
+  }
+  if ((p.action === "add" || p.action === "remove") && p.scope !== "global" && p.scope !== "project") {
+    return `mcp.write ${p.action} params: {scope: 'global' | 'project'}`;
+  }
+  if (p.action === "add" && (typeof p.config !== "object" || p.config === null)) {
+    return "mcp.write add params: {config: object}";
+  }
+  if ((p.action === "patch" || p.action === "override") && p.enabled === undefined && p.exposure === undefined) {
+    return `mcp.write ${p.action} params: {enabled?: boolean, exposure?: string}`;
+  }
+  if (p.enabled !== undefined && typeof p.enabled !== "boolean") {
+    return "enabled must be a boolean";
+  }
+  if (p.exposure !== undefined && !(p.exposure === "codemode" || p.exposure === "deferred" || p.exposure === "direct" || p.exposure === "hidden")) {
+    return "exposure must be 'codemode', 'deferred', 'direct' or 'hidden'";
+  }
+  return null;
 }

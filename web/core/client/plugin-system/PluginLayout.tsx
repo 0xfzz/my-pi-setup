@@ -4,6 +4,7 @@
 
 import type { WebPluginDescriptor, WebView } from "./contract.ts";
 import { ArrowLeft } from "@phosphor-icons/react";
+import { getPluginPage } from "./page-registry.ts";
 import { PluginViewRenderer } from "./PluginViewRenderer.tsx";
 import { PluginActions } from "./PluginActions.tsx";
 
@@ -21,6 +22,7 @@ function pageHref(plugin: WebPluginDescriptor): string {
 
 export function PluginPage({ plugin, view, sessionId, plugins }: PluginPageProps) {
   const pagePlugins = plugins.filter((p) => p.surfaces.some((surface) => surface.kind === "page"));
+  const BespokePage = getPluginPage(plugin.id);
 
   return (
     <div className="app-shell">
@@ -33,7 +35,9 @@ export function PluginPage({ plugin, view, sessionId, plugins }: PluginPageProps
       </header>
       <main className="app-transcript">
         <div className="plugin-page">
-          <PluginViewRenderer view={view} />
+          {BespokePage !== undefined
+            ? (<BespokePage plugin={plugin} sessionId={sessionId} plugins={plugins} />)
+            : <PluginViewRenderer view={view} />}
           <PluginActions pluginId={plugin.id} sessionId={sessionId} actions={plugin.actions} />
         </div>
       </main>

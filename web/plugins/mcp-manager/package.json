@@ -1,0 +1,13 @@
+{
+  "name": "@pi-web-plugin/mcp-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Setup and management for pi's MCP servers, bridged through the pi_api facade.",
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.10"
+  },
+  "peerDependencies": {
+    "react": "^19.2.4"
+  }
+}
