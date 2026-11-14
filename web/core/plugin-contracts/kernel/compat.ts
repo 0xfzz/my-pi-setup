@@ -7,6 +7,15 @@
  */
 import { validateManifest, type PluginManifest } from "./manifest.ts";
 import type { DiscoveredPlugin } from "./discovery.ts";
+import { satisfies } from "./semver.ts";
+
+/**
+ * The versions this host serves. A manifest's `engines` range is checked
+ * against these, so a plugin written for a different contract is refused by
+ * name instead of failing at its first import.
+ */
+export const HOST_PI_WEB_VERSION = "1.0.0";
+export const HOST_SDK_VERSION = "1.0.0";
 
 /** The subset of a `WebPluginDescriptor` the compat layer reads. */
 export interface DescriptorLike {
@@ -15,7 +24,18 @@ export interface DescriptorLike {
   description?: string;
 }
 
-export const COMPAT_VERSION = "1.0.0";
+export const COMPAT_VERSION = HOST_PI_WEB_VERSION;
+
+/** Why this manifest cannot run on this host, or undefined when it can. */
+export function engineMismatch(manifest: PluginManifest): string | undefined {
+  if (!satisfies(HOST_PI_WEB_VERSION, manifest.engines.piWeb)) {
+    return `requires piWeb ${manifest.engines.piWeb}; this host serves ${HOST_PI_WEB_VERSION}`;
+  }
+  if (!satisfies(HOST_SDK_VERSION, manifest.engines.sdk)) {
+    return `requires sdk ${manifest.engines.sdk}; this host serves ${HOST_SDK_VERSION}`;
+  }
+  return undefined;
+}
 
 /**
  * Build a manifest for a descriptor. Descriptor ids are already dotless

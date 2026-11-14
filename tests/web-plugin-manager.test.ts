@@ -506,3 +506,58 @@ test("a plugin in the host's own tree is granted its sensitive requests outright
   assert.deepEqual(mgr.snapshot()[0]?.grants, ["routes", "fs.read:/work"]);
   assert.deepEqual(mgr.snapshot()[0]?.pending, []);
 });
+
+test("a plugin's manifest settings reach its context, read-only", async () => {
+  const h = harness();
+  let seen: Record<string, unknown> | undefined;
+  let frozen: boolean | undefined;
+  h.behaviour.set("acme.settings", {
+    activate: (ctx) => {
+      seen = { ...ctx.settings };
+      frozen = Object.isFrozen(ctx.settings);
+    },
+  });
+  const manifest = validateManifest({
+    id: "acme.settings",
+    name: "Settings",
+    version: "1.0.0",
+    engines: { piWeb: "^1.0.0", sdk: "^1.0.0" },
+    trust: "trusted",
+    main: { server: "./server.ts" },
+    settings: { accent: "blue", limit: 3 },
+  });
+  assert.equal(manifest.ok, true);
+  if (!manifest.ok) return;
+
+  const plugin: DiscoveredPlugin = { id: "acme.settings", source: "repo", dir: "/plugins/acme.settings", manifest: manifest.manifest };
+  const { mgr } = manager(h, [plugin], { state: enabledState("acme.settings") });
+  await mgr.start();
+
+  assert.deepEqual(seen, { accent: "blue", limit: 3 });
+  assert.equal(frozen, true, "a plugin cannot mutate the manifest it was loaded from");
+});
+
+test("a plugin built for another host version is unresolved, named, and never loaded", async () => {
+  const h = harness();
+  const manifest = validateManifest({
+    id: "acme.future",
+    name: "Future",
+    version: "2.0.0",
+    engines: { piWeb: "^9.0.0", sdk: "^9.0.0" },
+    trust: "trusted",
+    main: { server: "./server.ts" },
+  });
+  assert.equal(manifest.ok, true);
+  if (!manifest.ok) return;
+
+  const plugin: DiscoveredPlugin = { id: "acme.future", source: "user", dir: "/plugins/acme.future", manifest: manifest.manifest };
+  const { mgr, audit } = manager(h, [plugin], { state: enabledState("acme.future") });
+  const boot = await mgr.start();
+
+  assert.deepEqual(boot.active, []);
+  const status = mgr.snapshot()[0];
+  assert.equal(status?.state, "unresolved");
+  assert.match(status?.lastError ?? "", /requires piWeb \^9\.0\.0; this host serves/);
+  assert.deepEqual(h.calls.filter((call) => call.endsWith(":load")), [], "the loader is never called");
+  assert.match(audit.list({ kind: "rejected" }).map((entry) => entry.detail).join("\n"), /requires piWeb/);
+});

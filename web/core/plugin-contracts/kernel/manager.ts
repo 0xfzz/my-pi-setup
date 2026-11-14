@@ -7,6 +7,7 @@
  */
 import { AuditLog } from "./audit.ts";
 import { CircuitBreaker } from "./breaker.ts";
+import { engineMismatch } from "./compat.ts";
 import { runWithBudget } from "./budget.ts";
 import { assertGranted, formatCapability, isSensitive, parseCapability, resolveGrants, type Capability } from "./capabilities.ts";
 import type { DiscoveredPlugin } from "./discovery.ts";
@@ -57,6 +58,8 @@ export interface PluginContext {
   readonly routes: PluginRoutes;
   /** Scoped storage; each scope needs its `storage:<scope>` grant. Survives deactivation. */
   readonly storage: ScopedStorage;
+  /** The plugin's declared settings, from its manifest. Read-only. */
+  readonly settings: Readonly<Record<string, unknown>>;
   /** Throws CapabilityError (and audits the denial) unless the capability is granted. */
   assert(capability: string): void;
   log(message: string): void;
@@ -223,12 +226,17 @@ export class PluginManager {
       this.audit.append("discovered", plugin, `${slot.plugin.source} ${slot.plugin.dir}`);
     }
     const resolution = resolvePlugins(this.order.map((id) => this.resolverInput(this.slots.get(id)!)));
+    // A plugin built for another host version is as unresolved as one with a
+    // missing dependency: both are named, neither is loaded.
+    const unresolved = new Set<string>();
     for (const id of this.order) {
       const slot = this.slots.get(id)!;
-      if (resolution.unresolved[id]) {
-        slot.unresolvedReason = resolution.unresolved[id];
+      const mismatch = resolution.unresolved[id] ?? engineMismatch(slot.plugin.manifest);
+      if (mismatch !== undefined) {
+        unresolved.add(id);
+        slot.unresolvedReason = mismatch;
         slot.life.dispatch("resolve-fail");
-        this.audit.append("rejected", id, slot.unresolvedReason);
+        this.audit.append("rejected", id, mismatch);
       } else {
         slot.life.dispatch("resolve-ok");
       }
@@ -244,6 +252,7 @@ export class PluginManager {
       }
     }
     for (const id of resolution.ordered) {
+      if (unresolved.has(id)) continue;
       const slot = this.slots.get(id)!;
       const persisted = this.state.plugins[id];
       if (persisted?.quarantine) {
@@ -546,6 +555,7 @@ export class PluginManager {
         delete: (path, handler) => this.track(slot, () => this.routes.register(owner, "DELETE", path, handler)),
       },
       storage: scoped,
+      settings: Object.freeze({ ...slot.plugin.manifest.settings }),
       assert: (capability) => {
         const parsed = parseCapability(capability);
         if (!parsed.ok) throw new Error(`Plugin "${id}": ${parsed.error}`);

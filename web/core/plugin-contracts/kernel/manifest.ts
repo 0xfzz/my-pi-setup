@@ -7,33 +7,37 @@ import { TRUSTED_ONLY, validateCapabilities, type Capability } from "./capabilit
 import { isValidRange } from "./semver.ts";
 
 export const PLUGIN_ID_PATTERN = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)*$/;
-export const TRUST_TIERS = ["declarative", "sandboxed", "trusted"] as const;
+
+/**
+ * How far a plugin is trusted. `declarative` ships no code at all; `trusted`
+ * may run a server half in the host process. There is no third tier: a
+ * sandbox would be a different runtime, and a manifest must not be able to
+ * claim a guarantee the host does not provide.
+ */
+export const TRUST_TIERS = ["declarative", "trusted"] as const;
 export type TrustTier = (typeof TRUST_TIERS)[number];
 
-const ACTIVATION_PATTERNS: readonly RegExp[] = [
-  /^onStartup$/,
-  /^onSession$/,
-  /^onSessionKind:[a-z][a-z0-9-]*$/,
-  /^onRoute:\/[a-z0-9\-/]*$/,
-  /^onSlotVisible:[a-z][a-z0-9.-]*$/,
-  /^onComponentUsed:[a-z][a-z0-9.@-]*$/,
-  /^onCommand:[a-z][a-z0-9.-]*$/,
-  /^onHook:[a-z][a-z0-9.-]*$/,
-  /^onEvent:[a-z][a-z0-9.-]*$/,
-  /^onSetting:[a-z][a-z0-9.-]*$/,
-];
+/**
+ * When a plugin's code is loaded. Only `onStartup` is implemented: the manager
+ * activates every enabled plugin at boot. The other events the PRD sketches
+ * (onRoute, onSlotVisible, onCommand, …) would each need a lazy-activation
+ * seam in the host, and a manifest that declares one would be lying about what
+ * the kernel does — so they are refused rather than accepted and ignored.
+ */
+export const ACTIVATION_EVENTS = ["onStartup"] as const;
+export type ActivationEvent = (typeof ACTIVATION_EVENTS)[number];
 
 export interface PluginManifest {
   id: string;
   name: string;
   version: string;
   engines: { piWeb: string; sdk: string };
-  main: { server?: string; browser?: string };
+  main: { server?: string };
   trust: TrustTier;
   capabilities: Capability[];
   dependsOn: Record<string, string>;
   optionalDependsOn: Record<string, string>;
-  activation: string[];
+  activation: ActivationEvent[];
   settings?: Record<string, unknown>;
   contributes?: Record<string, unknown>;
 }
@@ -92,26 +96,24 @@ export function validateManifest(input: unknown): ManifestResult {
 
   const main: PluginManifest["main"] = {};
   if (input.main !== undefined) {
-    if (!isRecord(input.main)) return fail("main must be an object with server and/or browser");
+    if (!isRecord(input.main)) return fail("main must be an object with a server entry");
     for (const key of Object.keys(input.main)) {
-      if (key !== "server" && key !== "browser") return fail(`main.${key} is not a known entry point`);
+      // `main.browser` was accepted and then refused by every loader; a
+      // manifest may only declare an entry point the host can actually load.
+      if (key !== "server") return fail(`main.${key} is not a known entry point`);
     }
     if (input.main.server !== undefined) {
       if (!entryPath(input.main.server)) return fail("main.server must be a ./relative path inside the plugin");
       main.server = input.main.server as string;
     }
-    if (input.main.browser !== undefined) {
-      if (!entryPath(input.main.browser)) return fail("main.browser must be a ./relative path inside the plugin");
-      main.browser = input.main.browser as string;
-    }
   }
 
   const trust = input.trust === undefined ? "declarative" : input.trust;
   if (typeof trust !== "string" || !(TRUST_TIERS as readonly string[]).includes(trust)) {
-    return fail("trust must be declarative, sandboxed, or trusted");
+    return fail(`trust must be one of ${TRUST_TIERS.join(", ")}`);
   }
-  if (trust === "declarative" && (main.server !== undefined || main.browser !== undefined)) {
-    return fail("a declarative plugin cannot declare code entry points");
+  if (trust === "declarative" && main.server !== undefined) {
+    return fail("a declarative plugin cannot declare a code entry point");
   }
 
   const caps = validateCapabilities(input.capabilities ?? []);
@@ -129,13 +131,13 @@ export function validateManifest(input: unknown): ManifestResult {
     return fail("a plugin cannot depend on itself");
   }
 
-  const activation = input.activation ?? ["onStartup"];
-  if (!Array.isArray(activation) || activation.length === 0 || activation.length > 32) {
-    return fail("activation must be a non-empty array of at most 32 events");
+  const activation = input.activation ?? [...ACTIVATION_EVENTS];
+  if (!Array.isArray(activation) || activation.length === 0) {
+    return fail("activation must be a non-empty array of events");
   }
   for (const event of activation) {
-    if (typeof event !== "string" || !ACTIVATION_PATTERNS.some((p) => p.test(event))) {
-      return fail(`unknown activation event "${String(event)}"`);
+    if (!(ACTIVATION_EVENTS as readonly unknown[]).includes(event)) {
+      return fail(`unsupported activation event "${String(event)}"; this host activates on ${ACTIVATION_EVENTS.join(", ")}`);
     }
   }
 
@@ -152,7 +154,7 @@ export function validateManifest(input: unknown): ManifestResult {
     capabilities: caps.value,
     dependsOn: deps.value,
     optionalDependsOn: optional.value,
-    activation: [...(activation as string[])],
+    activation: [...(activation as ActivationEvent[])],
     ...(input.settings !== undefined ? { settings: structuredClone(input.settings) as Record<string, unknown> } : {}),
     ...(input.contributes !== undefined ? { contributes: structuredClone(input.contributes) as Record<string, unknown> } : {}),
   };

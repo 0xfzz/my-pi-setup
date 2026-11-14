@@ -53,8 +53,8 @@ export interface PluginHost<D extends DescriptorLike> {
 }
 
 const defaultLoader: PluginLoader = (plugin): PluginRuntime => {
-  if (plugin.manifest.main.server || plugin.manifest.main.browser) {
-    throw new Error(`no loader configured for code entry points of "${plugin.id}"`);
+  if (plugin.manifest.main.server) {
+    throw new Error(`no loader configured for the server entry of "${plugin.id}"`);
   }
   return {};
 };

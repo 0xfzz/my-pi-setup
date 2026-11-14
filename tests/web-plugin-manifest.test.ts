@@ -2,18 +2,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { parseManifestText, validateManifest } from "../web/core/plugin-contracts/kernel/manifest.ts";
+import { engineMismatch } from "../web/core/plugin-contracts/kernel/compat.ts";
 
 const base = () => ({
   id: "acme.zen-chat",
   name: "Zen chat",
   version: "1.2.0",
   engines: { piWeb: "^1.0.0", sdk: "^1.0.0" },
-  main: { server: "./server.ts", browser: "./browser.tsx" },
+  main: { server: "./server.ts" },
   trust: "trusted",
   capabilities: ["ui.slots", "ui.replace:chat.message.*", "session.read", "routes"],
   dependsOn: { "core.messages": "^1.0.0" },
   optionalDependsOn: { "acme.metrics": "^1.0.0" },
-  activation: ["onStartup", "onSessionKind:workflow", "onCommand:acme.zen.toggle"],
+  activation: ["onStartup"],
 });
 
 function expectError(input: unknown, pattern: RegExp) {
@@ -35,7 +36,7 @@ test("a manifest with no trust field defaults to declarative and may not carry c
   const ok = validateManifest({ ...plain, main: undefined });
   assert.ok(ok.ok);
   assert.equal(ok.manifest.trust, "declarative");
-  expectError(plain, /declarative plugin cannot declare code entry points/);
+  expectError(plain, /declarative plugin cannot declare a code entry point/);
 });
 
 test("ids must be dotted lowercase segments", () => {
@@ -64,7 +65,7 @@ test("trust tiers, engines and version are validated", () => {
 });
 
 test("ui.css is only accepted from a trusted plugin", () => {
-  expectError({ ...base(), trust: "sandboxed", capabilities: ["ui.css"] }, /capability "ui.css" requires trust "trusted"/);
+  expectError({ ...base(), trust: "declarative", main: undefined, capabilities: ["ui.css"] }, /capability "ui.css" requires trust "trusted"/);
   assert.ok(validateManifest({ ...base(), trust: "trusted", capabilities: ["ui.css"] }).ok);
 });
 
@@ -79,9 +80,9 @@ test("dependency maps reject bad ids, bad ranges and self-dependence", () => {
   expectError({ ...base(), optionalDependsOn: { "acme.zen-chat": "^1.0.0" } }, /cannot depend on itself/);
 });
 
-test("activation events must match the catalogued forms", () => {
-  assert.ok(validateManifest({ ...base(), activation: ["onRoute:/stats"] }).ok);
-  expectError({ ...base(), activation: ["onMagic"] }, /unknown activation event "onMagic"/);
+test("activation events must be ones the kernel implements", () => {
+  assert.ok(validateManifest({ ...base(), activation: ["onStartup"] }).ok);
+  expectError({ ...base(), activation: ["onMagic"] }, /unsupported activation event "onMagic"/);
   expectError({ ...base(), activation: [] }, /non-empty array/);
 });
 
@@ -91,4 +92,39 @@ test("parseManifestText turns JSON syntax errors into rejections", () => {
   assert.match(bad.ok ? "" : bad.error, /not valid JSON/);
   const good = parseManifestText(JSON.stringify(base()));
   assert.ok(good.ok);
+});
+
+test("an unimplemented activation event is refused, not accepted and ignored", () => {
+  // Only onStartup is implemented: every other event would need a lazy
+  // activation seam the kernel does not have.
+  for (const event of ["onSession", "onRoute:/api/x", "onCommand:foo", "onSlotVisible:chat.composer"]) {
+    expectError({ ...base(), activation: [event] }, /unsupported activation event/);
+  }
+  const ok = validateManifest({ ...base(), activation: ["onStartup"] });
+  assert.equal(ok.ok, true);
+});
+
+test("a browser entry point is refused: no loader can serve one", () => {
+  expectError({ ...base(), trust: "trusted", main: { browser: "./client.ts" } }, /main\.browser is not a known entry point/);
+});
+
+test("trust has no sandbox tier: a manifest cannot claim a guarantee the host lacks", () => {
+  expectError({ ...base(), trust: "sandboxed" }, /trust must be one of declarative, trusted/);
+});
+
+test("engines ranges are checked against the host versions", () => {
+  const ok = validateManifest(base());
+  assert.equal(ok.ok, true);
+  if (!ok.ok) return;
+  assert.equal(engineMismatch(ok.manifest), undefined);
+
+  const future = validateManifest({ ...base(), engines: { piWeb: "^2.0.0", sdk: "^1.0.0" } });
+  assert.equal(future.ok, true);
+  if (!future.ok) return;
+  assert.match(engineMismatch(future.manifest) ?? "", /requires piWeb \^2\.0\.0; this host serves/);
+
+  const oldSdk = validateManifest({ ...base(), engines: { piWeb: "^1.0.0", sdk: ">=0.5.0 <1.0.0" } });
+  assert.equal(oldSdk.ok, true);
+  if (!oldSdk.ok) return;
+  assert.match(engineMismatch(oldSdk.manifest) ?? "", /requires sdk/);
 });
