@@ -16,6 +16,9 @@ import { CustomPopups, EditorWidgets, ReloadingBanner, StatusChips, ToastStack, 
 import { DialogLayer, InfoDialog, LoginDialog, LogoutDialog, ModelPickerDialog, ScopedModelsDialog, SettingsDialog, ThinkingPickerDialog, TreeSelectorDialog, TrustDialog } from "./dialogs.tsx";
 import type { WebTreeNode } from "../shared/tree.ts";
 import { SlotHost } from "./plugin-system/slots.tsx";
+import { AnchorHost } from "./plugin-system/AnchorHost.tsx";
+import { ComponentOverrideHost } from "./plugin-system/ComponentOverrideHost.tsx";
+import { anchorSuppression, regionOverrideOwners } from "./plugin-system/anchor-policy.ts";
 import { PluginSidePanel } from "./plugin-system/PluginSidePanel.tsx";
 import { PanelLauncher } from "./plugin-system/panel-launcher.tsx";
 import { buildPanelEntries } from "./plugin-system/panel-entry.ts";
@@ -420,6 +423,17 @@ export function AppShell() {
   // composer. Resolved from the same per-session views the slots render.
   const { regions, conflicts } = resolveRegionOverrides(session.plugins, session.pluginViews);
   const panelPlugins = availablePanelPlugins(session.plugins, session.pluginViews, session.selectedId !== null);
+  // One published view renders once: a region override or the right-hand panel
+  // already owns it, so the anchor is only the additive fallback.
+  const anchorHostProps = {
+    plugins: session.plugins,
+    views: session.pluginViews,
+    running: showWorking,
+    suppressed: anchorSuppression(
+      regionOverrideOwners(regions),
+      panelPlugins.map((plugin) => plugin.id),
+    ),
+  } as const;
   const inlinePlugins = session.plugins.filter((plugin) => !isPanelPlugin(plugin));
   const panelEntries = buildPanelEntries(
     session.plugins,
@@ -463,6 +477,7 @@ export function AppShell() {
         setNewSessionOpen(true);
         if (window.innerWidth <= 720) setSidebarOpen(false);
       }}
+      anchorSlot={<AnchorHost anchor="session.sidebar" {...anchorHostProps} />}
     />
   );
 
@@ -488,12 +503,19 @@ export function AppShell() {
             <span className="app-header-title">{headerLabel}</span>
             <span className="app-header-caption">{selected ? "Session" : "pi"}</span>
           </div>
+          <AnchorHost anchor="session.header" {...anchorHostProps} className="app-header-session-slot" />
           <StatusChips statuses={session.statuses} />
           <span className="app-header-status">
             {regions.status !== undefined ? (
               <RegionOverrideView override={regions.status} region="status" />
             ) : (
-              headerStatus
+              <ComponentOverrideHost
+                target="ui.extension-status.v1"
+                plugins={session.plugins}
+                views={session.pluginViews}
+              >
+                {headerStatus}
+              </ComponentOverrideHost>
             )}
           </span>
           <PanelLauncher
@@ -509,6 +531,7 @@ export function AppShell() {
             onUnpin={handleUnpin}
             pinError={pinError}
           />
+          <AnchorHost anchor="app.header" {...anchorHostProps} className="app-header-slot" />
         </header>
       )}
       <UiPromptBanner prompt={session.uiPrompt} />
@@ -523,6 +546,7 @@ export function AppShell() {
         </div>
       ) : null}
       <SlotHost slot="top" plugins={inlinePlugins} views={session.pluginViews} />
+      <AnchorHost anchor="chat.before" {...anchorHostProps} />
       {/* Keep transcript controls positioned over the scroller. Plugin
           panels live beside the chat, not inside its reading area. */}
       <div className="app-transcript-frame">
@@ -541,10 +565,15 @@ export function AppShell() {
             toolResults={session.toolResults}
             working={session.working}
             showWorking={showWorking}
+            plugins={session.plugins}
+            pluginViews={session.pluginViews}
+            workingAnchor={<AnchorHost anchor="chat.working" {...anchorHostProps} />}
           />
         )}
       </div>
+      <AnchorHost anchor="chat.after" {...anchorHostProps} />
       <EditorWidgets widgets={session.widgets} placement="aboveEditor" />
+      <AnchorHost anchor="chat.composer" {...anchorHostProps} />
       {regions.composer !== undefined ? (
         <div className="app-composer app-composer-override">
           <RegionOverrideView override={regions.composer} region="composer" />

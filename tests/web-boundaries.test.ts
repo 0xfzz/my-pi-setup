@@ -118,7 +118,18 @@ const ZONES: readonly ZoneRules[] = [
     // The browser bundle: interface only. React, the wire/plugin contracts
     // and the plugin UI are its world; pi behavior never enters it.
     dir: "web/core/client",
-    runtimeAllow: ["web/core/client/", "web/core/shared/"],
+    // The four pure vocabulary modules of the plugin contract (view shapes,
+    // descriptors, actions, ui placement + resolution) carry no runtime: no
+    // node, no pi, no kernel. The client composes them to validate what it
+    // renders and to resolve overrides. `kernel/` stays out of the bundle.
+    runtimeAllow: [
+      "web/core/client/",
+      "web/core/shared/",
+      "web/core/plugin-contracts/view.ts",
+      "web/core/plugin-contracts/descriptor.ts",
+      "web/core/plugin-contracts/actions.ts",
+      "web/core/plugin-contracts/ui-contracts.ts",
+    ],
     typeOnlyAllow: CONTRACT_LAYERS,
     why: "the client is interface only: it renders wire/plugin contracts and plugin UI, and never runs pi behavior",
   },

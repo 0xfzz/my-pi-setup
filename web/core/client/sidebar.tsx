@@ -2,7 +2,7 @@
 // replacing the header dropdown. One row per session — the project name,
 // the state dot (pulsing while a turn runs), and how long ago it was active.
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { MagnifyingGlass, Moon, Plus, Sun, Terminal } from "@phosphor-icons/react";
 import type { SessionSummary } from "./use-session.ts";
 import { useAuth } from "./auth-gate.tsx";
@@ -33,6 +33,8 @@ export interface SessionSidebarProps {
   onNewSession: () => void;
   /** The selected session is mid-turn right now (known instantly from the stream). */
   selectedRunning?: boolean;
+  /** Plugin content mounted at the `session.sidebar` anchor, under the list. */
+  anchorSlot?: ReactNode;
 }
 
 export function SessionSidebar({
@@ -42,6 +44,7 @@ export function SessionSidebar({
   onSelect,
   onNewSession,
   selectedRunning,
+  anchorSlot,
 }: SessionSidebarProps) {
   // The theme is on <html> before first paint; the glyph only mirrors it.
   const [theme, setTheme] = useState<Theme>(() =>
@@ -143,6 +146,7 @@ export function SessionSidebar({
           </button>
         ) : null}
       </div>
+      {anchorSlot}
     </nav>
   );
 }

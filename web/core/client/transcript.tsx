@@ -4,11 +4,12 @@
 // The transcript stays pinned to the bottom while the user is there, and a
 // jump-to-latest button appears whenever they scroll up.
 
-import { memo, useEffect, useRef, useState, type CSSProperties } from "react";
+import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ArrowDown, CaretDown, CaretRight, Stop, Warning } from "@phosphor-icons/react";
 import type { AssistantBlock, BashBlock, ImageBlock, ToolCallBlock } from "./streaming.ts";
 import type { HistoryEntryLike, ToolCallStatus, ToolResultLike } from "./use-session.ts";
-import type { WorkingModelLike } from "./plugin-system/contract.ts";
+import type { WebPluginDescriptor, WebView, WorkingModelLike } from "./plugin-system/contract.ts";
+import { ComponentOverrideHost } from "./plugin-system/ComponentOverrideHost.tsx";
 import { MarkdownBody } from "./plugin-system/markdown.tsx";
 import { LoadingSpinner } from "./plugin-system/LoadingSpinner.tsx";
 import { INITIAL_FOLLOW, reduceFollow, type FollowEvent, type FollowState, type ScrollMetrics } from "./transcript-follow.ts";
@@ -365,6 +366,11 @@ export interface TranscriptProps {
   toolResults: Record<string, ToolResultLike>;
   working: WorkingModelLike | null;
   showWorking: boolean;
+  /** Plugin hosts for the `chat.working` anchor and the working-indicator override. */
+  plugins?: readonly WebPluginDescriptor[];
+  pluginViews?: Record<string, WebView> | null;
+  /** Extra content mounted beside the working line (the `chat.working` anchor). */
+  workingAnchor?: ReactNode;
 }
 
 /** The user side: text paragraphs, attached images, `!` bash rows. */
@@ -400,6 +406,9 @@ export function Transcript({
   toolResults,
   working,
   showWorking,
+  plugins,
+  pluginViews,
+  workingAnchor,
 }: TranscriptProps) {
   const scrollRef = useRef<HTMLElement | null>(null);
   const innerRef = useRef<HTMLDivElement | null>(null);
@@ -527,7 +536,14 @@ export function Transcript({
           ) : null}
           {showWorking ? (
             <div className="msg-working">
-              <WorkingIndicator working={working} fallback="pi is working…" />
+              <ComponentOverrideHost
+                target="ui.working-indicator.v1"
+                plugins={plugins ?? []}
+                views={pluginViews}
+              >
+                <WorkingIndicator working={working} fallback="pi is working…" />
+              </ComponentOverrideHost>
+              {workingAnchor}
             </div>
           ) : null}
         </div>
