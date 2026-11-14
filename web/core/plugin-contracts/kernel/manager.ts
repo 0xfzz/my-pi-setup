@@ -2,7 +2,8 @@
  * Plugin manager (PRD §6). Drives the lifecycle state machine for every discovered
  * plugin: resolve, enable, load, activate, deactivate, reload with rollback,
  * quarantine, and safe mode. It never runs plugin code itself; the loader is
- * injected, so the same logic runs in production (jiti) and in tests (fakes).
+ * injected, so the same logic runs in production (a native dynamic import of
+ * the manifest's `main.server`) and in tests (fakes).
  */
 import { AuditLog } from "./audit.ts";
 import { CircuitBreaker } from "./breaker.ts";
