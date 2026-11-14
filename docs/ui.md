@@ -2,9 +2,9 @@
 
 > Part of [pi-workflow-extensions](../README.md). The shared frame, list, markdown viewer, ask popup and responsive rules used by every extension dialog.
 
-The implementation lives in `lib/popup.ts` (low-level frame and markdown) and
-`lib/ui/` (shell, list, ask popup, tokens). New popups should use these
-primitives instead of hand-rolling rows, scrolling or hints.
+The implementation lives in `lib/popup/frame.ts` (low-level frame and
+markdown) and `lib/ui/` (shell, list, ask popup, tokens). New popups should
+use these primitives instead of hand-rolling rows, scrolling or hints.
 
 ## Rules
 
@@ -33,7 +33,7 @@ primitives instead of hand-rolling rows, scrolling or hints.
 | `popupFrame` / `PopupPanel` | Tiny fixed-row menus and compatibility callers. |
 | `PopupShell` (`lib/ui/shell.ts`) | Header + scrollable body + footer detail views. |
 | `PopupList` | Pickers: virtualization, selection, digits, click, empty state. |
-| `ProviderModelPicker` (`lib/provider-model-picker.ts`) | Multi-select model picker on the shared shell: search owns typing, the cursor owns arrows, the wheel moves the highlight. |
+| `ProviderModelPicker` (`lib/provider/provider-model-picker.ts`) | Multi-select model picker on the shared shell: search owns typing, the cursor owns arrows, the wheel moves the highlight. |
 | `MarkdownPopup` / `renderMarkdown` | Markdown detail with `/` search, match highlighting, OSC 8 repair and code highlighting from the host theme. |
 | `AskUserPopup` (`lib/ui/ask.ts`) | `ask_user` recommended marker, free-text row, scrolling and abort handling. |
 | `RouterSettingsPopup` (`lib/ui/router-settings.ts`) | Route editor: add models, set the routing method and trigger, order the chain. |
@@ -67,7 +67,7 @@ primitives instead of hand-rolling rows, scrolling or hints.
 
 ## Prompt chrome
 
-`extensions/prompt-ui.ts` (implementation in `lib/prompt-ui.ts`) draws the model
+`extensions/prompt-ui.ts` (implementation in `lib/popup/prompt-ui.ts`) draws the model
 into the prompt border and makes context usage readable at a glance:
 
 ```text

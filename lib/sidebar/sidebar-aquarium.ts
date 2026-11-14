@@ -2,7 +2,7 @@
  * Features classic terminal sea life (tropical angelfish, neon tetra, minnow,
  * pulsating jellyfish, scuttling crab), swaying kelp, gravel bed, and gentle bubbles.
  * High-performance dual engine:
- * 1. Rust WebAssembly engine (crates/aquarium-engine) for microsecond zero-allocation
+ * 1. Rust WebAssembly engine (crates/ascii-anim-engine) for microsecond zero-allocation
  *    rendering during high-frequency drag-resizing and animation.
  * 2. Pure TypeScript fallback engine for environments without WASM or custom theme mocks.
  * 

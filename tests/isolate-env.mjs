@@ -13,8 +13,3 @@
 for (const key of Object.keys(process.env)) {
   if (key.startsWith("PI_SESSION_") || key.startsWith("PI_SUBAGENT_")) delete process.env[key];
 }
-
-// The scope extension appends every gate decision to a global log in the agent
-// directory. A test suite must not write its fixtures into a user's real log, so
-// the sink is off unless a test turns it on with its own destination.
-if (!process.env.PI_SCOPE_TELEMETRY) process.env.PI_SCOPE_TELEMETRY = "off";

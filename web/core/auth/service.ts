@@ -1,6 +1,6 @@
 /**
  * The web auth service: password login, short-lived JWT access tokens, and rotating
- * long-lived JWT refresh tokens. HTTP-agnostic — web/server/auth.ts maps it to routes
+ * long-lived JWT refresh tokens. HTTP-agnostic — web/core/server/auth.ts maps it to routes
  * and cookies, and tests drive it with a fake clock.
  *
  * Token model (the standard rotation-with-reuse-detection design):

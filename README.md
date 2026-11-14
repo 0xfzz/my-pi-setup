@@ -158,7 +158,7 @@ directory below answers "what lives here?" without needing an explanation.
 | --- | --- |
 | `extensions/` | The installable extensions listed in `package.json` → `pi.extensions`. Nothing else: helpers belong in `lib/`. |
 | `lib/` | Shared implementation, not loaded as extensions. Subdivided by concept — see below. |
-| `tests/` | `node:test` suites, mirroring the source tree: `tests/*.test.ts`, `tests/provider/`, `tests/sidebar/`, `tests/delegation/`. Add a group to `package.json` → `test` when you add a directory. |
+| `tests/` | `node:test` suites, mirroring the source tree: `tests/*.test.ts`, `tests/provider/`, `tests/sidebar/`, `tests/delegation/`, plus shared fixtures in `tests/fixtures/`. Add a group to `scripts/test.mjs` when you add a directory. |
 | `scripts/` | Repo tooling: the subagent graph build, the WASM build, the VCC mirror, and the subagent graph dev preview server. |
 | `web/` | The first-party web client: the shell, the server, the plugin contracts, and the first-party plugins under `web/plugins/`. See [web plugin architecture](docs/web-plugin-architecture.md). |
 | `vendor/` | Third-party code kept in-tree: `pi-herdr-subagents` (see its `VENDORED.md`) and `antigravity`. A source snapshot — read `VENDORED.md` before touching it. |
@@ -183,8 +183,7 @@ truly cut across all of them (tool policy, naming, clipboard, the intent graph):
 ## Verification
 
 ```sh
-npm run typecheck
-npm test
+npm run tidy      # typecheck + lint:smell + tests (root and web) in one gate
 ```
 
 The only accepted failures are the two documented `native … inline custom UI reproduces

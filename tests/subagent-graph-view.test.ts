@@ -24,7 +24,7 @@ test("the graph view carries the parent, each child, and handoff-labelled edges"
     children: [
       {
         id: "c1", name: "worker-slots", scope: "slots", status: "running", purpose: "implementation",
-        task: "Port the slot adapters", handoffId: "h1", laneFiles: ["vendor/pi-web/components/plugins/slots/TopSlotAdapter.tsx"],
+        task: "Port the slot adapters", handoffId: "h1", laneFiles: ["web/plugins/subagent-graph/app/src/graph.mjs"],
         lastMilestoneFiles: [], lastTokens: 18_400, lastContextWindow: 200_000,
       },
       { id: "c2", name: "reviewer", scope: "review", status: "completed", laneFiles: [], lastMilestoneFiles: [] },
@@ -51,7 +51,7 @@ test("the graph view carries the parent, each child, and handoff-labelled edges"
   assert.match(detail, /\*\*Handoff:\*\* Port slot adapters/);
   assert.match(detail, /\*\*Context:\*\* 18,400 tokens of 200,000/);
   assert.match(detail, /\*\*Acceptance:\*\*[\s\S]*- e2e passes/);
-  assert.match(detail, /TopSlotAdapter\.tsx/);
+  assert.match(detail, /graph\.mjs/);
   assert.equal(validateView(view).ok, true);
 });
 

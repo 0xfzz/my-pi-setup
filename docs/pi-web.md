@@ -26,10 +26,10 @@ npm run dev        # build + serve on http://127.0.0.1:30142
 
 | Command | What it does |
 |---|---|
-| `npm run build` | esbuild bundle + Tailwind/shadcn CSS compile into `client/dist` |
+| `npm run build` | esbuild bundle + Tailwind/shadcn CSS compile into `core/client/dist` |
 | `npm start` | serve the built client (`tsx server.ts`) |
 | `npm run check` | tsc over server, client and shared |
-| `npm test` | unit tests (server routes, wire, reducer, regions) |
+| `npm test` | build, then unit tests over `core/server`, `core/client`, `core/shared` and `plugins/` |
 | `npm run test:e2e` | Playwright e2e with the fixture session (needs a browser) |
 
 From the pi TUI, `/web start | reload | stop | status | set-password | clear-password` manages a detached
@@ -42,24 +42,33 @@ spawn (no npm wrapper holding the server's stdio), and auto-reload watching
 
 ```
 web/
-  server/    plain Node HTTP (tsx, no framework)
-    main.ts        routes: health, plugins, sessions, agent, action, static
-    sessions.ts    session core: spawn/resume via the SDK, live registry,
-                   commands (prompt/abort/get_state), disk scan, history
-    wire.ts        event projection for the browser
-    event-stream.ts  SSE transport: coalescing, heartbeats, backpressure
-    plugin-host.ts   the plugin host: views store, session-bus attach,
-                     action relay + audit, kernel wiring, fixtures
-  client/    React 19 SPA (esbuild bundle)
-    shell.tsx        base regions + slots + overrides + routing
-    use-session.ts   the session hook (one EventSource per session)
-    transcript.tsx, composer.tsx, streaming.ts
-    components/ui/   shadcn/ui primitives (button, textarea, input, badge, separator)
-    lib/utils.ts     cn() class-merge helper
-    globals.css      shadcn/Tailwind theme tokens (compiled into dist)
-    plugins/         view renderer, slots, plugin pages, actions, shortcuts
-  shared/    regions.ts — override resolution (server + client)
-  e2e/       e2e.mjs — the Playwright suite
+  server.ts     composition root: registers WEB_PLUGINS into the plugin host,
+                then starts the core server (core never imports a plugin)
+  app.tsx       client composition root: wires the core shell to the
+                first-party plugin panels/pages before the first render
+  core/         everything plugins may depend on — the one-way boundary
+    server/     plain Node HTTP (tsx, no framework)
+      main.ts          static client, auth wiring, directories, SSE serving
+      routes.ts        the /api route table: sessions, agent, bridge, plugins
+      sessions.ts      session core: spawn/resume via the SDK, live registry,
+                       commands (prompt/abort/web_command), disk scan, history
+      wire.ts          event projection for the browser
+      event-stream.ts  SSE transport: coalescing, heartbeats, backpressure
+      plugin-host.ts   the plugin host: discovery, kernel wiring, ui sink
+    client/     React 19 SPA (esbuild bundle into core/client/dist)
+      shell.tsx        base regions + slots + overrides + routing
+      use-session.ts   the session hook (one EventSource per session + the
+                       push-driven directory stream)
+      transcript.tsx, composer.tsx, streaming.ts
+      components/ui/   shadcn/ui primitives (button, textarea, input, badge, separator)
+      lib/utils.ts     cn() class-merge helper
+      globals.css      shadcn/Tailwind theme tokens (compiled into dist)
+      plugin-system/   view renderer, slots, anchors, panels, pages, actions, shortcuts
+    shared/     regions.ts, commands.ts, pi-api.ts — contracts used by server + client
+    plugin-contracts/  view vocabulary, descriptors, actions, kernel, publisher
+    pi-api/     the pi_api facade modules (below)
+    e2e/        e2e.mjs + files-viewers.e2e.mjs — the Playwright suite
+  plugins/      the first-party plugins (descriptors, bespoke panels, server halves)
 ```
 
 The plugin contract itself lives in the root repo and is shared with the
@@ -73,17 +82,19 @@ One SSE stream per selected session (`GET /api/agent/:id/events`)
 multiplexes everything:
 
 - **Agent events** — message deltas, tool execution status, lifecycle —
-  projected by `server/wire.ts` (no turn markers, no system messages,
+  projected by `web/core/server/wire.ts` (no turn markers, no system messages,
   slimmed tool payloads, no cumulative partial snapshots).
 - **`plugin_state` frames** — the session's plugin views, working model
   and running flag, pushed on every store revision and deduplicated, so
   slots, pages, region overrides and the working indicator update without
   reloads.
-
-Commands `POST /api/agent/:id` (`prompt`, `abort`, `get_state`);
-history loads from `GET /api/agent/:id/history` (parsed from the session
-file); the session list polls `/api/sessions` every 5 s. The selected
-session persists in `localStorage`, so reloads and plugin-page navigation
+Commands `POST /api/agent/:id` (`prompt`, `abort`, `get_state`,
+`web_command`); history loads from `GET /api/agent/:id/history` (parsed
+from the session file); the session list is push-driven over
+`GET /api/sessions/events` (one directory EventSource: a full snapshot on
+connect, then running/idle and add/remove transitions — no polling), with
+`GET /api/sessions?q=…` for whole-directory search. The selected session
+persists in `localStorage`, so reloads and plugin-page navigation
 reconnect the stream. Backpressure: rebuildable deltas drop above 512 KB
 queued, the stream ends above 16 MB (the client reconnects and
 re-snapshots).
@@ -243,13 +254,20 @@ live session.
 | `/api/plugin-manager` | GET | plugin kernel state for the manager page |
 | `/api/plugin-manager/:id/:action` | POST | enable / disable / reload / clear-quarantine |
 | `/api/p/<pluginId>/…` | * | a plugin's own backend routes |
-| `/api/sessions` | GET | live + disk sessions, newest first |
+| `/api/sessions/events` | GET | the push-driven session directory stream (snapshot + transitions) |
+| `/api/sessions` | GET | live + disk sessions, newest first (`?q=` searches the whole directory) |
 | `/api/agent/new` | POST | spawn a pi session (`createAgentSession`) |
 | `/api/agent/:id` | GET / POST | state read / prompt, abort, get_state |
 | `/api/agent/:id/events` | GET | the SSE stream |
 | `/api/agent/:id/history` | GET | transcript entries |
 | `/api/agent/:id/commands` | GET | pi's runtime built-ins + the session's live commands |
 | `/api/agent/:id/pi_api` | POST | call a pi built-in api (below) |
+| `/api/agent/:id/tree` | GET | pi's tree, projected for the web picker |
+| `/api/agent/:id/models` | GET | the picker's model list (scoped or available) |
+| `/api/agent/:id/model` | POST | apply a model (`/model <provider/id>`) |
+| `/api/agent/:id/thinking` | POST | set the thinking level |
+| `/api/directories` | GET | directory listing for path pickers |
+| `/api/changelog` | GET | pi's changelog for the `/changelog` dialog |
 | `/api/sessions/:id` | DELETE | delete a session (`session.before-delete` may veto) |
 
 Every non-GET API request to a wrong method gets 405; unknown sessions 404. With a web password set, every route except `/api/health` and `/api/auth/*` answers 401 without a valid access token (see [Password protection](#password-protection-publishing-the-web)).
@@ -274,6 +292,7 @@ The contract lives in `web/core/shared/pi-api.ts` (names, params, results);
 | `settings.read` / `settings.write` | `SettingsManager` — pi's effective settings, written through its setter methods | the web `/settings` dialog |
 | `settings.models.read` / `settings.models.write` | `SettingsManager.getEnabledModels` / `setEnabledModels` | the web `/scoped-models` dialog |
 | `trust.read` / `trust.write` | `ProjectTrustStore` + `getProjectTrustOptions` from pi's trust-manager | the web `/trust` dialog |
+| `mcp.read` / `mcp.write` | pi's MCP config (`loadMcpConfig`) and its own config mutators (`addMcpServerConfig`, `removeMcpServerConfig`, `updateMcpServerConfig`) | the MCP manager page |
 | `auth.read` / `auth.login` / `auth.state` / `auth.answer` / `auth.logout` | `ModelRuntime` (`listCredentials`, `login`, `logout`) against pi's shared auth.json | the web `/login` and `/logout` dialogs |
 
 Three consequences worth stating:
@@ -290,7 +309,9 @@ Three consequences worth stating:
   The web adds only *presentation* flags (`web/core/shared/commands.ts`:
   `COMMAND_META` — `webPorted` / `web` / `tuiOnly`); commands pi ships that
   the web has never heard of pass through unflagged and dispatch as prompt
-  text, exactly like typing them in the TUI.
+  text, exactly like typing them in the TUI. (Today every pi built-in is
+  flagged, so `tuiOnly` is an empty set — the composer still honours it for
+  future commands.)
 
 - **Project trust is core, not a plugin.** The “trust this folder?”
   prompt that gates `.pi/` config, `mcp.json` and project extensions is
@@ -314,7 +335,6 @@ generic:
    lifecycle (the registry lazily initializes on first use and tears down
    on host detach).
 3. Register it in `PI_API_MODULES` (`web/core/pi-api/index.ts`).
-
 Deep pi imports that the package `exports` map does not open load by file
 path — e.g. `../../node_modules/@earendil-works/pi-coding-agent/dist/core/slash-commands.js`.
 Both `@earendil-works/pi-tui` and `@earendil-works/pi-coding-agent` are
@@ -368,7 +388,8 @@ region overrides and dialogs are unchanged.
 by `order`, then `priority`, then plugin id, and gated by `visibleWhen`
 (`always` / `running` / `idle` / `has-view`). `AnchorHost`
 (`web/core/client/plugin-system/AnchorHost.tsx`) mounts them at each spot and
-`anchor-policy.ts` decides what goes where — pure functions, unit-tested
+`anchor-policy.ts` (in the same `plugin-system/` directory) decides what goes
+where — pure functions, unit-tested
 without a browser.
 
 One published view renders once. The precedence is **region override → panel →
@@ -556,8 +577,9 @@ answers them with its own. The composer intercepts the ported names
 | `/resume` | session selector | the session sidebar |
 | `/compact`, `/name`, `/new`, `/clone`, `/reload`, `/web` | direct | dispatched as session commands |
 
-Genuinely TUI-only commands (`/settings`, `/tree`, `/share`, …) still get an
-honest notice instead of being fed to the model.
+Every pi built-in is ported or dispatched — nothing is terminal-only, so the
+composer's TUI-only notice is currently unreachable (it stays as the guard
+for future built-ins).
 
 **The model chip** sits at the composer with the thinking level, both live:
 the extension posts `web_models` (the picker's list: scoped or available
@@ -611,7 +633,7 @@ no placeholder file browser or extra navigation is added.
 Both themes are the same slot variables. The legacy stylesheet
 (`web/core/client/base.css`) switches on `data-theme` on `<html>`; the
 shadcn/Tailwind tokens (`web/core/client/globals.css`) switch on the `.dark`
-class. `theme.ts` moves both together, set before the first React render
+class. `theme.ts` (in `web/core/client/`) moves both together, set before the first React render
 (no flash). The choice is `pi-web-theme` in localStorage; with no stored
 choice the web follows the OS and re-follows it live. The toggle is the
 Moon/Sun button in the sidebar footer (a Phosphor icon). Shadows and modal

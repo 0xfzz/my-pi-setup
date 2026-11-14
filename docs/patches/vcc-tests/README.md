@@ -71,7 +71,7 @@ package with the same patch, or restore the three backed-up files.
 ## Verification
 
 ```sh
-node --test /home/faiz/projects/pi-workflow-extensions/patches/vcc-tests/regression.mjs
+node --test /home/faiz/projects/pi-workflow-extensions/docs/patches/vcc-tests/regression.mjs
 ```
 
 **10 tests passed** using Node's test runner, installed jiti, and the real installed

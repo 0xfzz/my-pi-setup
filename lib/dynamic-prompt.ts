@@ -12,7 +12,7 @@
  *
  * Everything here is derived from the live tool registry at request time, so the
  * prompt cannot name a capability the session does not have. That is the same
- * invariant `lib/plan-mode.ts` broke when its allowlist named MCP resource tools
+ * invariant `lib/plan/plan-mode.ts` broke when its allowlist named MCP resource tools
  * that are only registered when a server advertises resources.
  */
 

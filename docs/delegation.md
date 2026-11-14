@@ -383,12 +383,14 @@ cannot both pass the last-slot check, and a failed launch never eats capacity.
 
 | Shape | Admitted | Child policy |
 | --- | --- | --- |
-| `adhoc` (worker, default) | ✅ every mode | worker allowlist; writes only inside its declared lane |
-| `research` / `role: "planner"` | ✅ every mode | read-only reader: no `write`/`edit`/patch, no general shell, no parent surface |
+| `adhoc` / `role: "worker"` (default) | ✅ every mode | worker allowlist; writes only inside its declared lane |
+| `research` / `role: "planner"` (or the deprecated `role: "research"`, mapped to planner) | ✅ every mode | read-only reader: no `write`/`edit`/patch, no general shell, no parent surface |
 | `spec`, `review`, `implementation` | ❌ | the spec-review/QA pipeline was removed; these values are refused with their successor named |
+| `handoffId` | ❌ | handoffs are authored by `agent_spawn`; passing an id is refused — describe the work in `task` |
 
 A planner produces a plan artifact (`plan-<scope>`); a worker executes a plan step
-with `planId`/`stepId`, and the step supplies its lane and criteria.
+with `planId`/`stepId`, and the step supplies its lane and criteria. A worker with
+no lane whose acceptance criteria require file writes is refused (`lane-required`).
 
 ## Child lifecycle
 

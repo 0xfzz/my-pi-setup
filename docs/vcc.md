@@ -208,8 +208,8 @@ this one, and keeping code under `docs/` meant nothing compiled or linted it.
 Diff against it from history instead:
 
 ```sh
-# the archived pre-redesign controller
-git show 3090557:docs/patches/vcc-auto-compact-legacy.ts > /tmp/legacy.ts
+# the archived pre-redesign controller (dropped from the tree in bf7772e)
+git show 9202d03:docs/patches/vcc-auto-compact-legacy.ts > /tmp/legacy.ts
 diff -u /tmp/legacy.ts lib/vcc/auto-compact-entry.ts
 ```
 

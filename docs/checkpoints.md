@@ -27,7 +27,7 @@ Example child milestone:
 
 This directory is already configured in `~/.pi/agent/settings.json`; the manifest now includes the checkpoint extension. **After all children finish**, restart Pi or use `/reload`. No live session is automatically reloaded by this installation.
 
-The installed VCC compaction/recall patch keeps VCC's **zero-LLM algorithmic compiler**. It fixes selection of projected custom/branch messages and stable recall indexing; it is not a lossless summarizer. See [`docs/patches/vcc-tests/README.md`](patches/vcc-tests/README.md) for exact changes, tests, retention/index behavior, rollback, and limitations. Your separate 20% auto-compactor is left intact; the request-local checkpoint hook covers that path.
+The installed VCC compaction/recall patch keeps VCC's **zero-LLM algorithmic compiler**. It fixes selection of projected custom/branch messages and stable recall indexing; it is not a lossless summarizer. See [the VCC patch test notes](patches/vcc-tests/README.md) for exact changes, tests, retention/index behavior, rollback, and limitations. Your separate 20% auto-compactor is left intact; the request-local checkpoint hook covers that path.
 
 Patches are under `docs/patches/`:
 

@@ -19,16 +19,20 @@ silently does nothing.
 
 ## Why Pi's own paste failed
 
-Pi's reader (`dist/utils/clipboard.js`) had two gaps on Linux:
+Pi's reader (`@earendil-works/pi-coding-agent/dist/utils/clipboard.js`) had two
+gaps on Linux:
 
 1. **`wl-paste` was gated on the environment.** It is only tried when
    `WAYLAND_DISPLAY` is exported. The socket is discoverable without it
    (`$XDG_RUNTIME_DIR/wayland-0`), so a Pi started from an X11-ish launcher, over
    ssh, from `systemd-run`, or from a terminal that did not inherit the variable
    never tried Wayland at all.
-2. **`xclip` was asked for `STRING`.** Many toolkits only offer `UTF8_STRING` or
-   `text/plain;charset=utf-8`, so `xclip -o` fails while the clipboard is
-   perfectly readable.
+2. **`xclip` was gated on `DISPLAY` and asked for the default target.** It only
+   ran when `DISPLAY` was exported (so the same ssh/launcher cases never tried
+   X11 either, even with a forwarded socket), and it was invoked without an
+   explicit `-target`, so toolkits that offer only `UTF8_STRING` or
+   `text/plain;charset=utf-8` — not `STRING` — returned nothing while the
+   clipboard was perfectly readable.
 
 Either way the read returns `null`, and `handleClipboardPaste` treats that as
 "nothing to do": no text, no message, no error. That is the reported symptom —
@@ -50,7 +54,7 @@ through the reader in `lib/clipboard.ts`:
 | 3 | `xclip` | explicit `text/uri-list`, `UTF8_STRING`, `text/plain;charset=utf-8`, then `STRING` |
 | 4 | `xsel` | when `xclip` is not installed |
 | 5 | `tmux save-buffer -` | the buffer `prefix + ]` would paste; tried last because it is often stale |
-| 6 | `readClipboardImage` | `image/png`, `image/jpeg`, `image/webp`, `image/gif` when no text is present |
+| 6 | the image targets inside `readClipboard` | `image/png`, `image/jpeg`, `image/webp`, `image/gif` when no text is present |
 | — | Pi's own reader | macOS and Windows: unchanged, including Finder file copies |
 
 Ordering inside a backend matters: file paths (`text/uri-list`) win over images,
@@ -66,9 +70,10 @@ Pasted text is delivered as a bracketed paste rather than inserted literally, so
 Pi keeps its own paste behaviour: a paste over 10 lines (or 1000 characters) is
 stored and collapsed into a chip — `[paste #1 +40 lines]` — instead of flooding
 the editor, and pi-paster can still turn image paths into `[#image 1]`.
-`lib/paste-marker.ts` paints both chip shapes with the theme background
-(`customMessageBg`), so they read as objects rather than as text the model was
-asked to look at. Widths are unchanged, so the layout cannot shift.
+`paintPasteMarkers` (`lib/paste-marker.ts`) wraps both chip shapes in the theme
+background (`customMessageBg`, applied by `extensions/clipboard-paste.ts`), so
+they read as objects rather than as text the model was asked to look at. Widths
+are unchanged, so the layout cannot shift.
 
 `/paste-doctor` prints what the reader sees, which is the fastest way to tell a
 missing helper from an empty clipboard:

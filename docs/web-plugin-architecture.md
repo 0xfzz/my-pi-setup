@@ -167,8 +167,7 @@ capability and each removed on deactivate:
 
 Every call site is a named point in `web/core/server/` — `sessions.ts` (prompt
 send, session lifecycle, session list sort, delete), `routes.ts` (history
-render, model pick) and `web/plugins/files/server/index.ts` (file read). A
-veto is recorded in the bounded audit log and surfaced to the caller (403 with
+render, model pick) and `web/plugins/files/server/index.ts` (file read). Aveto is recorded in the bounded audit log and surfaced to the caller (403 with
 the plugin's own reason); a throwing or slow handler is isolated and counted
 toward the breaker, never propagated into the host.
 
@@ -208,7 +207,7 @@ Four guarantees the hook bus does not need to make:
 
 | Rule | Why |
 |---|---|
-| Closed channel vocabulary (`TAP_CHANNELS` in `kernel/events.ts`) | The host knows which projections it owes; a plugin cannot invent traffic |
+| Closed channel vocabulary (`TAP_CHANNELS` in `web/core/plugin-contracts/kernel/events.ts`) | The host knows which projections it owes; a plugin cannot invent traffic |
 | Bounded payloads (`web/core/server/session-tap.ts`) | A raw `message_end` or bash execution can be megabytes; the tap caps text at 4 KB and drops the result bodies |
 | Ordered per subscriber | A plugin tracking state sees a tool start before its end, even when its own handler is slow |
 | Budgeted and isolated | A throwing or slow handler is audited against its plugin and counts toward the breaker; the agent loop never waits on it |
@@ -286,15 +285,17 @@ needs convergence publishes a view instead of replaying history.
 `web/plugins/activity` consumes two of the three directions with no client code
 and no route: it taps `session.tool` / `session.message` / `session.lifecycle`,
 folds each event into a bounded per-session state, and publishes a declarative
-list view plus one status line. Its logic (`server/activity.ts`) is pure — no
-clock, no store — and `core/server/activity-plugin.test.ts` proves the whole
-chain: manifest → descriptor compile → activation with grants → tap → store.
+list view plus one status line. Its logic (`server/activity.ts`, inside the
+plugin's own directory) is pure — no
+clock, no store — and the kernel integration test
+(`web/core/server/activity-plugin.test.ts`) proves the whole chain: manifest →
+descriptor compile → activation with grants → tap → store.
 
 ## The lifecycle
 
 ### A web surface, end to end
 
-1. **Descriptor** — `web/plugins/foo/descriptor.ts` declares the view, placement
+1. **Descriptor** — `web/plugins/<id>/descriptor.ts` declares the view, placement
    (`region`/`slot`/`anchor`), surfaces and actions. Registered in
    `web/plugins/index.ts` (`WEB_PLUGINS`). A plugin installed from a directory
    instead ships `pi-web-plugin.json` whose `contributes` block carries the same
@@ -369,7 +370,7 @@ responsibilities is deliberate:
 |---|---|
 | Which routes exist, and for how long | the kernel (registered in `setup`, removed on deactivate/rollback/quarantine) |
 | Path shape inside `/api/p/<pluginId>/` | the plugin (validated: no `..`, no `*`, `:param` segments only) |
-| Authentication, CSRF, body limits | the core server (`web/core/server/http.ts`, `auth.ts`) |
+| Authentication, CSRF, body limits | the core server (`web/core/server/http.ts`, `web/core/server/auth.ts`) |
 | Session resolution (`sessionId` → `sessionRoot`) | the dispatcher, before the handler runs |
 | Time budget, error isolation, 502 mapping | the dispatcher (`runWithBudget`, 10 s default) |
 | The bytes/JSON of the answer | the plugin |
@@ -441,7 +442,7 @@ Worked examples from this repo:
   path policy — the dispatcher owns those; the handler owns the answer.
 - A descriptor field nothing mounts. Anchors, overrides and `sessionPanel`
   are mounted by the client (`AnchorHost`, `ComponentOverrideHost`,
-  `panel-policy.ts`); a new placement must come with its host, or it is
+  `panel-policy.ts` (in `web/core/client/plugin-system/`)); a new placement must come with its host, or it is
   dead metadata.
 
 ## Enforcement

@@ -271,7 +271,7 @@ export default function modesExtension(pi: ExtensionAPI) {
     const registeredTools = typeof pi.getAllTools === "function" ? pi.getAllTools().map(tool => tool.name) : [];
     const missing = registeredTools.length ? missingPlanTools(registeredTools) : [];
     if (missing.length && ctx.hasUI) {
-      ctx.ui.notify(`Plan mode allowlist references unregistered tool(s): ${missing.join(", ")}. Update lib/plan-mode.ts.`, "warning");
+      ctx.ui.notify(`Plan mode allowlist references unregistered tool(s): ${missing.join(", ")}. Update lib/plan/plan-mode.ts.`, "warning");
     }
     if (ctx.mode !== "tui") return;
     draw = () => {

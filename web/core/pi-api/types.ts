@@ -8,10 +8,10 @@
  * same api names.
  *
  * Adding an api:
- *   1. extend PiApiName/PiApiParams/PiApiResult in web/shared/pi-api.ts,
+ *   1. extend PiApiName/PiApiParams/PiApiResult in web/core/shared/pi-api.ts,
  *   2. implement a PiApiModule (one file per api family),
  *   3. register it in web/core/pi-api/index.ts.
- * See docs/pi-web.md — "The pi_api interface map".
+ * See docs/pi-web.md — "The pi_api facade".
  */
 
 /** What a pi_api module may need from its host. */
@@ -29,7 +29,7 @@ export interface PiApiContext {
  * `init` (lazily, on first dispatch) and released in `dispose`.
  */
 export interface PiApiModule {
-  /** The wire name from web/shared/pi-api.ts. */
+  /** The wire name from web/core/shared/pi-api.ts. */
   readonly api: string;
   /** Parse + validate params, then call pi's native implementation. */
   handle(params: unknown, ctx: PiApiContext): Promise<unknown>;
