@@ -5,6 +5,7 @@
 
 import type { FileKind } from "../../../core/shared/file-kind.ts";
 import { getJson, type ApiFailure, type ApiResult } from "../../../core/client/plugin-system/api-client.ts";
+import { FILES_API_PATH } from "../contract.ts";
 
 export type FilesFailure = ApiFailure;
 export type FilesResult<T> = ApiResult<T>;
@@ -53,9 +54,6 @@ export interface FileRef {
   mtimeMs?: number;
 }
 
-/** The plugin's route mount point: everything under it is this plugin's own. */
-const FILES_API = "/api/p/files";
-
 function encode(path: string): string {
   return encodeURIComponent(path);
 }
@@ -66,21 +64,21 @@ function scope(sessionId: string): string {
 }
 
 export function downloadUrl(sessionId: string, path: string, attach: boolean): string {
-  const base = `${FILES_API}/download?${scope(sessionId)}&path=${encode(path)}`;
+  const base = `${FILES_API_PATH}/download?${scope(sessionId)}&path=${encode(path)}`;
   return attach ? `${base}&download=1` : base;
 }
 
 export function fetchDirectory(sessionId: string, path: string, hidden: boolean): Promise<FilesResult<FilesListData>> {
-  const url = `${FILES_API}?${scope(sessionId)}&path=${encode(path)}${hidden ? "&hidden=1" : ""}`;
+  const url = `${FILES_API_PATH}?${scope(sessionId)}&path=${encode(path)}${hidden ? "&hidden=1" : ""}`;
   return getJson<FilesListData>(url);
 }
 
 export function fetchText(sessionId: string, path: string): Promise<FilesResult<FilesTextData>> {
-  return getJson<FilesTextData>(`${FILES_API}/read?${scope(sessionId)}&path=${encode(path)}`);
+  return getJson<FilesTextData>(`${FILES_API_PATH}/read?${scope(sessionId)}&path=${encode(path)}`);
 }
 
 export function fetchSearch(sessionId: string, query: string): Promise<FilesResult<FilesSearchData>> {
-  return getJson<FilesSearchData>(`${FILES_API}/search?${scope(sessionId)}&q=${encodeURIComponent(query)}`);
+  return getJson<FilesSearchData>(`${FILES_API_PATH}/search?${scope(sessionId)}&q=${encodeURIComponent(query)}`);
 }
 
 /**

@@ -4,8 +4,10 @@
 // plugin directly. Adding a custom page is one line.
 
 import { registerPluginPage } from "../core/client/plugin-system/page-registry.ts";
+import { MCP_MANAGER_PLUGIN_ID } from "./mcp-manager/contract.ts";
 import { McpManagerPage } from "./mcp-manager/McpManagerPage.tsx";
+import { PLUGIN_MANAGER_PLUGIN_ID } from "./plugin-manager/contract.ts";
 import { PluginManagerPage } from "./plugin-manager/PluginManagerPage.tsx";
 
-registerPluginPage("mcp-manager", McpManagerPage);
-registerPluginPage("core.plugin-manager", PluginManagerPage);
+registerPluginPage(MCP_MANAGER_PLUGIN_ID, McpManagerPage);
+registerPluginPage(PLUGIN_MANAGER_PLUGIN_ID, PluginManagerPage);

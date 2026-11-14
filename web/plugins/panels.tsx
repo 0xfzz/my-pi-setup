@@ -6,6 +6,8 @@
 
 import { registerPluginPanel, type HostPanelProps } from "../core/client/plugin-system/panel-registry.tsx";
 import { ArtifactsPanel } from "./artifacts/ArtifactsPanel.tsx";
+import { ARTIFACTS_PLUGIN_ID } from "./artifacts/contract.ts";
+import { FILES_PLUGIN_ID } from "./files/contract.ts";
 import { FilesPanel } from "./files/FilesPanel.tsx";
 
 function filesPanel({ open, onClose, sessionId, rootLabel }: HostPanelProps) {
@@ -23,5 +25,5 @@ function artifactsPanel({ open, onClose, view }: HostPanelProps) {
   return <ArtifactsPanel open={open} onClose={onClose} view={view} />;
 }
 
-registerPluginPanel("files", filesPanel);
-registerPluginPanel("artifacts", artifactsPanel);
+registerPluginPanel(FILES_PLUGIN_ID, filesPanel);
+registerPluginPanel(ARTIFACTS_PLUGIN_ID, artifactsPanel);
