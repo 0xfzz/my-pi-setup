@@ -5,13 +5,22 @@ import { getJson, postJson, type ApiFailure, type ApiResult } from "../../../cor
 import {
   PLUGIN_MANAGER_API,
   PLUGIN_MANAGER_ACTIONS,
+  type PluginCapabilityAction,
   type PluginManagerAction,
+  type PluginManagerCommand,
   type PluginManagerOutcome,
   type PluginManagerReport,
   type PluginManagerRow,
 } from "../../../core/shared/plugin-manager.ts";
 
-export type { PluginManagerAction, PluginManagerOutcome, PluginManagerReport, PluginManagerRow };
+export type {
+  PluginCapabilityAction,
+  PluginManagerAction,
+  PluginManagerCommand,
+  PluginManagerOutcome,
+  PluginManagerReport,
+  PluginManagerRow,
+};
 
 export type ManagerResult<T> = ApiResult<T>;
 export type ManagerFailure = ApiFailure;
@@ -31,9 +40,11 @@ export async function fetchPluginManagerReport(): Promise<ManagerResult<PluginMa
 /** Apply one operator action; the kernel's verdict comes back verbatim. */
 export async function applyManagerAction(
   pluginId: string,
-  action: PluginManagerAction,
+  action: PluginManagerCommand,
+  capability?: string,
 ): Promise<ManagerResult<PluginManagerOutcome>> {
-  return postJson<PluginManagerOutcome>(`${PLUGIN_MANAGER_API}/${encodeURIComponent(pluginId)}/${action}`);
+  const url = `${PLUGIN_MANAGER_API}/${encodeURIComponent(pluginId)}/${action}`;
+  return postJson<PluginManagerOutcome>(url, capability === undefined ? undefined : { capability });
 }
 
 /** Which actions make sense for a plugin in this state — a pure decision. */

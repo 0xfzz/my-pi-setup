@@ -331,7 +331,7 @@ test("a hanging activate times out within its budget and is rolled back, not lef
   assert.equal(registered, true, "registrations made before the timeout are disposed");
 });
 
-test("capabilities: auto grants apply, exec stays pending, and an ungranted assert is denied and audited", async () => {
+test("capabilities: interface grants apply, a sensitive one stays pending, and an ungranted assert is denied and audited", async () => {
   const h = harness();
   h.behaviour.set("acme.zen", {
     activate: (ctx) => {
@@ -339,7 +339,8 @@ test("capabilities: auto grants apply, exec stays pending, and an ungranted asse
       ctx.assert("exec");
     },
   });
-  const { mgr, audit } = manager(h, [candidate("acme.zen", { capabilities: ["routes", "exec"] })], { state: enabledState("acme.zen"), threshold: 9 });
+  // An outside plugin: `exec` is sensitive, so it stays pending until granted.
+  const { mgr, audit } = manager(h, [candidate("acme.zen", { source: "user", capabilities: ["routes", "exec"] })], { state: enabledState("acme.zen"), threshold: 9 });
   await mgr.start();
   const status = mgr.snapshot()[0];
   assert.deepEqual(status.grants, ["routes"]);
@@ -436,4 +437,72 @@ test("a registration from an abandoned activation never becomes live", async () 
     audit.list({ kind: "failure" }).map((entry) => entry.detail).join("\n"),
     /registration after disposal refused/,
   );
+});
+
+test("a sensitive capability stays pending until the operator grants it, and the grant persists", async () => {
+  const h = harness();
+  const plugins = [candidate("acme.files", { source: "user", capabilities: ["routes", "fs.read:/work"] })];
+  const { mgr, audit } = manager(h, plugins, { state: enabledState("acme.files") });
+  await mgr.start();
+
+  const before = mgr.snapshot()[0];
+  assert.deepEqual(before?.grants, ["routes"], "only the interface capability is granted from the manifest");
+  assert.deepEqual(before?.pending, ["fs.read:/work"]);
+
+  const granted = mgr.grant("acme.files", "fs.read:/work");
+  assert.equal(granted.ok, true);
+  assert.deepEqual(mgr.snapshot()[0]?.grants, ["routes", "fs.read:/work"]);
+  assert.deepEqual(mgr.snapshot()[0]?.pending, []);
+  assert.match(audit.list({ kind: "granted" }).map((entry) => entry.detail).join("\n"), /fs\.read:\/work/);
+  assert.deepEqual(h.persisted.at(-1)?.plugins["acme.files"]?.grants, ["fs.read:/work"]);
+
+  // A restart reads the confirmation back.
+  const restarted = manager(harness(), plugins, {
+    state: { ...enabledState("acme.files"), plugins: { "acme.files": { enabled: true, grants: ["fs.read:/work"] } } },
+  });
+  await restarted.mgr.start();
+  assert.deepEqual(restarted.mgr.snapshot()[0]?.grants, ["routes", "fs.read:/work"]);
+  assert.deepEqual(restarted.mgr.snapshot()[0]?.pending, []);
+});
+
+test("grant refuses what the manifest never requested and what is already automatic", async () => {
+  const h = harness();
+  const plugins = [candidate("acme.files", { source: "user", capabilities: ["routes"] })];
+  const { mgr } = manager(h, plugins, { state: enabledState("acme.files") });
+  await mgr.start();
+
+  const unrequested = mgr.grant("acme.files", "exec");
+  assert.equal(unrequested.ok, false);
+  if (!unrequested.ok) assert.match(unrequested.error, /not requested by its manifest/);
+
+  const automatic = mgr.grant("acme.files", "routes");
+  assert.equal(automatic.ok, false);
+  if (!automatic.ok) assert.match(automatic.error, /granted automatically/);
+});
+
+test("revoke withdraws a grant and puts the capability back in pending", async () => {
+  const h = harness();
+  const plugins = [candidate("acme.files", { source: "user", capabilities: ["routes", "net:https://api.example.com"] })];
+  const { mgr, audit } = manager(h, plugins, { state: enabledState("acme.files") });
+  await mgr.start();
+  mgr.grant("acme.files", "net:https://api.example.com");
+
+  const revoked = mgr.revoke("acme.files", "net:https://api.example.com");
+  assert.equal(revoked.ok, true);
+  assert.deepEqual(mgr.snapshot()[0]?.grants, ["routes"]);
+  assert.deepEqual(mgr.snapshot()[0]?.pending, ["net:https://api.example.com"]);
+  assert.match(audit.list({ kind: "revoked" }).map((entry) => entry.detail).join("\n"), /net:https/);
+
+  const again = mgr.revoke("acme.files", "net:https://api.example.com");
+  assert.equal(again.ok, false);
+  if (!again.ok) assert.match(again.error, /is not granted/);
+});
+
+test("a plugin in the host's own tree is granted its sensitive requests outright", async () => {
+  const h = harness();
+  const plugins = [candidate("core.files", { capabilities: ["routes", "fs.read:/work"] })];
+  const { mgr } = manager(h, plugins, { state: enabledState("core.files") });
+  await mgr.start();
+  assert.deepEqual(mgr.snapshot()[0]?.grants, ["routes", "fs.read:/work"]);
+  assert.deepEqual(mgr.snapshot()[0]?.pending, []);
 });

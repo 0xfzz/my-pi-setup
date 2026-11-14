@@ -83,6 +83,29 @@ test("a disable/enable round trip over HTTP hides and restores the plugin", asyn
   });
 });
 
+test("a capability grant over HTTP carries the capability and answers the kernel's verdict", async () => {
+  await withServer(async (baseUrl) => {
+    // `files` is a repo plugin, so it already holds what its manifest asks for:
+    // `routes` is automatic and `exec` was never requested. Both are the
+    // kernel's refusal to make, answered over HTTP with its own message.
+    const unrequested = await fetch(`${baseUrl}/api/plugin-manager/files/grant`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ capability: "exec" }),
+    });
+    assert.equal(unrequested.status, 409);
+    assert.match(((await unrequested.json()) as { error: string }).error, /not requested by its manifest/);
+
+    const automatic = await fetch(`${baseUrl}/api/plugin-manager/files/grant`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ capability: "routes" }),
+    });
+    assert.equal(automatic.status, 409);
+    assert.match(((await automatic.json()) as { error: string }).error, /granted automatically/);
+  });
+});
+
 test("unknown plugins are 404 and unknown actions are 400", async () => {
   await withServer(async (baseUrl) => {
     const unknownPlugin = await fetch(`${baseUrl}/api/plugin-manager/never-heard/enable`, { method: "POST" });

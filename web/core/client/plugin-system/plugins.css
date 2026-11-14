@@ -2344,6 +2344,33 @@
   margin-right: 4px;
 }
 
+/* A pending capability is a request the operator confirms in place. */
+.plugin-manager-cap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 6px;
+}
+
+.plugin-manager-grant {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border, #2a2a2a);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.plugin-manager-grant:hover:not(:disabled) {
+  background: var(--muted, rgba(255, 255, 255, 0.06));
+}
+
+.plugin-manager-grant:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .plugin-manager-routes {
   display: inline-flex;
   flex-wrap: wrap;

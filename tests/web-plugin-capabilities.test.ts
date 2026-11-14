@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import {
   CapabilityError,
   assertGranted,
-  autoGrant,
+  resolveGrants,
   formatCapability,
   grantCovers,
   hasWildcard,
@@ -70,13 +70,40 @@ test("assertGranted throws CapabilityError naming plugin and capability", () => 
   );
 });
 
-test("exec is never auto-granted; everything else requested is", () => {
-  const requested = validateCapabilities(["routes", "exec", "storage"]);
-  assert.ok(requested.ok);
-  const { granted, pending } = autoGrant(requested.value);
-  assert.deepEqual(granted.map(formatCapability), ["routes", "storage"]);
-  assert.deepEqual(pending.map(formatCapability), ["exec"]);
+const REQUESTED = ["routes", "exec", "storage", "fs.read:/tmp", "hooks.veto:file.before-read", "session.read"];
+
+function requested(capabilities: string[] = REQUESTED) {
+  const parsed = validateCapabilities(capabilities);
+  assert.ok(parsed.ok);
+  return parsed.value;
+}
+
+test("an outside plugin gets the interface capabilities and must ask for the rest", () => {
+  const { granted, pending } = resolveGrants(requested(), { inHostTree: false, confirmed: [] });
+  assert.deepEqual(granted.map(formatCapability), ["routes", "storage", "session.read"]);
+  assert.deepEqual(pending.map(formatCapability), ["exec", "fs.read:/tmp", "hooks.veto:file.before-read"]);
   assert.equal(isGranted(granted, cap("exec")), false);
+});
+
+test("a plugin in the host's own tree is trusted with what it asks for", () => {
+  const { granted, pending } = resolveGrants(requested(), { inHostTree: true, confirmed: [] });
+  assert.deepEqual(pending, []);
+  assert.equal(isGranted(granted, cap("exec")), true);
+});
+
+test("an operator grant moves one sensitive capability out of pending", () => {
+  const { granted, pending } = resolveGrants(requested(), { inHostTree: false, confirmed: ["fs.read:/tmp"] });
+  assert.deepEqual(granted.map(formatCapability), ["routes", "storage", "fs.read:/tmp", "session.read"]);
+  assert.deepEqual(pending.map(formatCapability), ["exec", "hooks.veto:file.before-read"]);
+});
+
+test("a grant the manifest never requested is ignored", () => {
+  const { granted, pending } = resolveGrants(requested(["routes"]), {
+    inHostTree: false,
+    confirmed: ["exec", "net:https://example.com"],
+  });
+  assert.deepEqual(granted.map(formatCapability), ["routes"]);
+  assert.deepEqual(pending, []);
 });
 
 test("hasWildcard flags glob grants for the confirmation prompt", () => {

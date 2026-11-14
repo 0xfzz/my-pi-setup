@@ -41,8 +41,34 @@ export interface Capability {
 
 export type CapabilityResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
-/** Capabilities that can never be granted by the kernel; each use needs a per-run confirmation. */
-export const NEVER_AUTO_GRANTABLE: ReadonlySet<CapabilityKind> = new Set(["exec"]);
+/**
+ * Capabilities a manifest may grant itself. Everything outside this set is
+ * *sensitive*: it reaches past the interface — the filesystem, the network, a
+ * shell, the session's own state, or another plugin's extension point — so it
+ * stays pending until the operator grants it, and every grant is audited.
+ *
+ * Declaring a capability in a manifest is a request, never an entitlement.
+ */
+export const AUTO_GRANTED: ReadonlySet<CapabilityKind> = new Set<CapabilityKind>([
+  "ui.slots",
+  "ui.replace",
+  "ui.theme",
+  "ui.css",
+  "ui.route",
+  "commands",
+  "keys",
+  "hooks.observe",
+  "services.provide",
+  "routes",
+  "storage",
+  "jobs",
+  "session.read",
+]);
+
+/** Capabilities that need an explicit operator grant. */
+export function isSensitive(kind: CapabilityKind): boolean {
+  return !AUTO_GRANTED.has(kind);
+}
 
 /** Capabilities a `trusted` plugin cannot receive without an explicit operator grant. */
 export const TRUSTED_ONLY: ReadonlySet<CapabilityKind> = new Set(["ui.css"]);
@@ -144,15 +170,43 @@ export function assertGranted(plugin: string, granted: readonly Capability[], re
   }
 }
 
+export interface CapabilityGrants {
+  /** Granted now. */
+  granted: Capability[];
+  /** Sensitive, not yet confirmed by the operator. */
+  pending: Capability[];
+}
+
+/** Who is asking, and what the operator has already confirmed. */
+export interface GrantPolicy {
+  /**
+   * The plugin ships in the host's own tree. Its manifest is the operator's own
+   * code, so a sensitive request is granted outright — the same trust the repo
+   * gets when its plugins default to enabled. Anything dropped into a user,
+   * project or package root has to ask.
+   */
+  inHostTree: boolean;
+  /** Capability strings the operator confirmed for this plugin. */
+  confirmed: readonly string[];
+}
+
 /**
- * Default grants for an enabled plugin: everything requested except capabilities
- * that are never auto-granted. Those stay pending until the operator confirms.
+ * Decide what a plugin may do. A manifest's `capabilities` list is a request,
+ * never an entitlement: an interface capability is granted on request, a
+ * sensitive one needs either the host's own tree or an operator grant.
+ *
+ * A confirmation the manifest never asked for is ignored — the operator
+ * confirms a request, and cannot widen a manifest behind its author's back.
  */
-export function autoGrant(requested: readonly Capability[]): { granted: Capability[]; pending: Capability[] } {
+export function resolveGrants(requested: readonly Capability[], policy: GrantPolicy): CapabilityGrants {
+  const confirmed = new Set(policy.confirmed);
   const granted: Capability[] = [];
   const pending: Capability[] = [];
-  for (const cap of requested) {
-    (NEVER_AUTO_GRANTABLE.has(cap.kind) ? pending : granted).push(cap);
+  for (const capability of requested) {
+    const mayHave = !isSensitive(capability.kind)
+      || policy.inHostTree
+      || confirmed.has(formatCapability(capability));
+    (mayHave ? granted : pending).push(capability);
   }
   return { granted, pending };
 }

@@ -8,7 +8,7 @@
 import { AuditLog } from "./audit.ts";
 import { CircuitBreaker } from "./breaker.ts";
 import { runWithBudget } from "./budget.ts";
-import { assertGranted, autoGrant, formatCapability, parseCapability, type Capability } from "./capabilities.ts";
+import { assertGranted, formatCapability, isSensitive, parseCapability, resolveGrants, type Capability } from "./capabilities.ts";
 import type { DiscoveredPlugin } from "./discovery.ts";
 import { PluginLifecycle, isLive, type PluginEvent, type PluginState } from "./lifecycle.ts";
 import { HookBus } from "./hooks.ts";
@@ -183,14 +183,17 @@ export class PluginManager {
     this.state = options.state;
     for (const plugin of options.plugins) {
       if (this.slots.has(plugin.id)) continue;
-      const auto = autoGrant(plugin.manifest.capabilities);
+      const confirmed = resolveGrants(plugin.manifest.capabilities, {
+        inHostTree: plugin.source === "repo",
+        confirmed: this.state.plugins[plugin.id]?.grants ?? [],
+      });
       this.slots.set(plugin.id, {
         plugin,
         life: new PluginLifecycle(plugin.id, { clock: this.now }),
         disposers: [],
         breaker: new CircuitBreaker({ ...this.breakerOptions, clock: this.now }),
-        grants: auto.granted,
-        pending: auto.pending,
+        grants: confirmed.granted,
+        pending: confirmed.pending,
         disposed: false,
       });
       this.order.push(plugin.id);
@@ -352,6 +355,51 @@ export class PluginManager {
     slot.life.dispatch("clear-quarantine");
     this.setOperator(id, { enabled: true, quarantineClearedAt: this.now() });
     await this.activateSlot(slot);
+    return this.result(slot);
+  }
+
+  /**
+   * Confirm one capability the plugin asked for. The grant is persisted, so it
+   * survives a restart, and it is audited. A capability the manifest never
+   * requested is refused: the operator confirms a request, it cannot widen one.
+   *
+   * A running plugin picks the grant up for registrations made from now on; a
+   * reload re-runs its setup under the new grants.
+   */
+  grant(id: string, capability: string): ActionResult {
+    const slot = this.slot(id);
+    if (!slot) return this.unknown(id);
+    const parsed = parseCapability(capability);
+    if (!parsed.ok) return this.refuse(slot, parsed.error);
+    const requested = slot.plugin.manifest.capabilities;
+    const match = requested.find((candidate) => formatCapability(candidate) === formatCapability(parsed.value));
+    if (match === undefined) {
+      return this.refuse(slot, `"${formatCapability(parsed.value)}" is not requested by its manifest`);
+    }
+    if (!isSensitive(match.kind)) return this.refuse(slot, `"${formatCapability(match)}" is granted automatically`);
+    if (isGrantedIn(slot.grants, match)) return this.result(slot);
+
+    slot.grants.push(match);
+    removeCapability(slot.pending, match);
+    this.setOperator(id, { grants: [...this.state.plugins[id]?.grants ?? [], formatCapability(match)] });
+    this.audit.append("granted", id, formatCapability(match));
+    return this.result(slot);
+  }
+
+  /** Withdraw a capability and put it back in the pending list. */
+  revoke(id: string, capability: string): ActionResult {
+    const slot = this.slot(id);
+    if (!slot) return this.unknown(id);
+    const parsed = parseCapability(capability);
+    if (!parsed.ok) return this.refuse(slot, parsed.error);
+    if (!removeCapability(slot.grants, parsed.value)) {
+      return this.refuse(slot, `"${formatCapability(parsed.value)}" is not granted`);
+    }
+    if (isSensitive(parsed.value.kind) && !isGrantedIn(slot.pending, parsed.value)) {
+      slot.pending.push(parsed.value);
+    }
+    this.setOperator(id, { grants: (this.state.plugins[id]?.grants ?? []).filter((entry) => entry !== formatCapability(parsed.value)) });
+    this.audit.append("revoked", id, formatCapability(parsed.value));
     return this.result(slot);
   }
 
@@ -653,6 +701,20 @@ export class PluginManager {
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isGrantedIn(grants: readonly Capability[], capability: Capability): boolean {
+  const wanted = formatCapability(capability);
+  return grants.some((grant) => formatCapability(grant) === wanted);
+}
+
+/** Remove one exact capability; returns whether it was there. */
+function removeCapability(list: Capability[], capability: Capability): boolean {
+  const wanted = formatCapability(capability);
+  const index = list.findIndex((grant) => formatCapability(grant) === wanted);
+  if (index < 0) return false;
+  list.splice(index, 1);
+  return true;
 }
 
 /** First-party plugins are named `core.*`; they are the only ones that start in safe mode. */

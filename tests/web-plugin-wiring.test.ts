@@ -9,6 +9,11 @@ import { validateManifest } from "../web/core/plugin-contracts/kernel/manifest.t
 import { PluginManager, type PluginLoader, type PluginRuntime } from "../web/core/plugin-contracts/kernel/manager.ts";
 import { defaultState, setPluginState, type WebPluginsState } from "../web/core/plugin-contracts/kernel/state.ts";
 
+/**
+ * An outside plugin whose sensitive capabilities the operator has already
+ * confirmed. These tests pin the host's call sites, so the grant policy is
+ * taken as settled rather than re-proved here.
+ */
 function candidate(id: string, capabilities: string[]): DiscoveredPlugin {
   const result = validateManifest({
     id,
@@ -23,8 +28,11 @@ function candidate(id: string, capabilities: string[]): DiscoveredPlugin {
   return { id, source: "user", dir: `/plugins/${id}`, manifest: result.manifest };
 }
 
-function enabled(...ids: string[]): WebPluginsState {
-  return ids.reduce((state, id) => setPluginState(state, id, { enabled: true }), defaultState());
+/** Enabled with its sensitive requests confirmed by the operator. */
+function confirmed(plugin: DiscoveredPlugin): WebPluginsState {
+  const grants = plugin.manifest.capabilities.map((capability) =>
+    capability.arg === undefined ? capability.kind : `${capability.kind}:${capability.arg}`);
+  return setPluginState(defaultState(), plugin.id, { enabled: true, grants });
 }
 
 /** Shared host-level instances, exactly as the kernel host creates them. */
@@ -45,7 +53,7 @@ test("a plugin's bail veto applies while it runs and stops when it is disabled",
   });
   const manager = new PluginManager({
     plugins: [candidate("acme.guard", ["hooks.veto:session.before-delete"])],
-    state: enabled("acme.guard"),
+    state: confirmed(candidate("acme.guard", ["hooks.veto:session.before-delete"])),
     loader,
     ...s,
   });
@@ -70,7 +78,7 @@ test("a transform hook rewrites the value the host passes through, and only whil
   });
   const manager = new PluginManager({
     plugins: [candidate("acme.docs", ["hooks.transform:prompt.before-send"])],
-    state: enabled("acme.docs"),
+    state: confirmed(candidate("acme.docs", ["hooks.transform:prompt.before-send"])),
     loader,
     ...s,
   });
@@ -89,7 +97,7 @@ test("a plugin's service replacement is what the host resolves, and the base ret
   });
   const manager = new PluginManager({
     plugins: [candidate("acme.titles", ["services.replace:service:title-generator"])],
-    state: enabled("acme.titles"),
+    state: confirmed(candidate("acme.titles", ["services.replace:service:title-generator"])),
     loader,
     ...s,
   });
@@ -109,7 +117,7 @@ test("a plugin's storage survives deactivation but its hooks and services do not
   });
   const manager = new PluginManager({
     plugins: [candidate("acme.count", ["storage:session", "hooks.observe:session.settled"])],
-    state: enabled("acme.count"),
+    state: confirmed(candidate("acme.count", ["storage:session", "hooks.observe:session.settled"])),
     loader,
     ...s,
   });
@@ -130,7 +138,7 @@ test("a hook that keeps throwing trips the breaker and the plugin is quarantined
   });
   const manager = new PluginManager({
     plugins: [candidate("acme.bad", ["hooks.transform:prompt.before-send"])],
-    state: enabled("acme.bad"),
+    state: confirmed(candidate("acme.bad", ["hooks.transform:prompt.before-send"])),
     loader,
     breaker: { threshold: 2, windowMs: 60_000 },
     ...s,

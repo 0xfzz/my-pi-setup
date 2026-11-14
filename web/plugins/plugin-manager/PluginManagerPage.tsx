@@ -11,7 +11,9 @@ import {
   availableActions,
   fetchPluginManagerReport,
   groupBySource,
+  type PluginCapabilityAction,
   type PluginManagerAction,
+  type PluginManagerCommand,
   type PluginManagerReport,
   type PluginManagerRow,
 } from "./lib/plugin-manager-api.ts";
@@ -43,9 +45,9 @@ export function PluginManagerPage() {
   }, [refresh]);
 
   const run = useCallback(
-    async (pluginId: string, action: PluginManagerAction) => {
-      setBusy(`${pluginId}:${action}`);
-      const outcome = await applyManagerAction(pluginId, action);
+    async (pluginId: string, action: PluginManagerCommand, capability?: string) => {
+      setBusy(`${pluginId}:${action}:${capability ?? ""}`);
+      const outcome = await applyManagerAction(pluginId, action, capability);
       setBusy(null);
       if (!outcome.ok) setError(outcome.message);
       else if (!outcome.data.ok) setError(`${pluginId}: ${outcome.data.error ?? "action refused"}`);
@@ -72,7 +74,7 @@ export function PluginManagerPage() {
                 key={row.id}
                 row={row}
                 busy={busy}
-                onAction={(action) => void run(row.id, action)}
+                onAction={(action, capability) => void run(row.id, action, capability)}
               />
             ))}
           </ul>
@@ -118,9 +120,11 @@ function PluginRow({
 }: {
   row: PluginManagerRow;
   busy: string | null;
-  onAction: (action: PluginManagerAction) => void;
+  onAction: (action: PluginManagerCommand, capability?: string) => void;
 }) {
   const actions = availableActions(row.state);
+  const capabilityBusy = (action: PluginCapabilityAction, capability: string): boolean =>
+    busy === `${row.id}:${action}:${capability}`;
   return (
     <li className="plugin-manager-item" data-plugin-id={row.id} data-state={row.state}>
       <div className="plugin-manager-item-head">
@@ -141,7 +145,23 @@ function PluginRow({
       ) : null}
       <div className="plugin-manager-item-meta">
         <CapabilityList label="granted" values={row.grants} />
-        <CapabilityList label="pending" values={row.pending} />
+        {/* A pending capability is a request waiting for the operator: it is
+            the only way a sensitive one becomes granted. */}
+        <CapabilityList
+          label="pending"
+          values={row.pending}
+          renderAction={(capability) => (
+            <button
+              type="button"
+              className="plugin-manager-grant"
+              disabled={capabilityBusy("grant", capability)}
+              onClick={() => onAction("grant", capability)}
+              title={`Grant ${capability}`}
+            >
+              {capabilityBusy("grant", capability) ? "…" : "Grant"}
+            </button>
+          )}
+        />
         {row.routes.length > 0 ? (
           <span className="plugin-manager-routes">
             <Plugs size={12} aria-hidden="true" />
@@ -160,10 +180,10 @@ function PluginRow({
               key={action}
               type="button"
               className={`plugin-manager-action${action === "disable" ? " is-destructive" : ""}`}
-              disabled={busy === `${row.id}:${action}`}
+              disabled={busy === `${row.id}:${action}:`}
               onClick={() => onAction(action)}
             >
-              {busy === `${row.id}:${action}` ? "…" : ACTION_LABELS[action]}
+              {busy === `${row.id}:${action}:` ? "…" : ACTION_LABELS[action]}
             </button>
           ))}
         </div>
@@ -172,11 +192,25 @@ function PluginRow({
   );
 }
 
-function CapabilityList({ label, values }: { label: string; values: readonly string[] }) {
+function CapabilityList({
+  label,
+  values,
+  renderAction,
+}: {
+  label: string;
+  values: readonly string[];
+  renderAction?: (capability: string) => React.ReactNode;
+}) {
   if (values.length === 0) return null;
   return (
     <span className="plugin-manager-caps">
-      {label}: {values.map((value) => <code key={value}>{value}</code>)}
+      {label}:{" "}
+      {values.map((value) => (
+        <span key={value} className="plugin-manager-cap">
+          <code>{value}</code>
+          {renderAction?.(value)}
+        </span>
+      ))}
     </span>
   );
 }

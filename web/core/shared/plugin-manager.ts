@@ -12,6 +12,20 @@ export const PLUGIN_MANAGER_API = "/api/plugin-manager";
 export const PLUGIN_MANAGER_ACTIONS = ["enable", "disable", "reload", "clear-quarantine"] as const;
 export type PluginManagerAction = (typeof PLUGIN_MANAGER_ACTIONS)[number];
 
+/**
+ * Capability actions carry the capability string in the request body. They are
+ * separate from the lifecycle actions so a caller cannot confuse "enable the
+ * plugin" with "confirm one of its requests".
+ */
+export const PLUGIN_CAPABILITY_ACTIONS = ["grant", "revoke"] as const;
+export type PluginCapabilityAction = (typeof PLUGIN_CAPABILITY_ACTIONS)[number];
+
+export type PluginManagerCommand = PluginManagerAction | PluginCapabilityAction;
+
+export interface CapabilityActionBody {
+  capability: string;
+}
+
 export interface PluginManagerRoute {
   method: string;
   path: string;
