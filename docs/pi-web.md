@@ -441,6 +441,34 @@ The Files plugin is the reference: `web/plugins/files/server/index.ts` mounts
 traversal/symlink policy in `web/core/server/files.ts` rather than duplicating
 it. Its client (`web/plugins/files/lib/files-api.ts`) calls those routes.
 
+### A plugin's realtime surface
+
+A server half does not have to be request/response. Two seams cover the other
+directions, and neither needs a client change:
+
+| Need | Seam |
+|---|---|
+| React to live session activity | `ctx.events.on("session.tool" \| "session.message" \| "session.lifecycle", fn)` |
+| Show something in the browser | `ctx.ui.view / notify / status / widget` — the same store an extension publishes into |
+| Tell another plugin something | `ctx.events.emit("<yourId>.<name>", payload)` and `listen` |
+
+```ts
+// web/plugins/activity/server/index.ts — capabilities: ["tap.pi-events:session.tool", "ui.publish"]
+export default {
+  setup(ctx) {
+    ctx.events.on("session.tool", (event) => {
+      ctx.ui.status(event.sessionId, `tool ${event.payload.toolName}`);
+    });
+  },
+} satisfies PluginRuntime;
+```
+
+`web/plugins/activity` is the worked example: it taps tool/message/lifecycle
+events and publishes a declarative list view plus one status line, with no
+client code, no route and no polling. Full rules — payload bounds, ordering,
+the reserved host state a plugin may not publish, and the channel namespace —
+are in [web-plugin-architecture.md](web-plugin-architecture.md#realtime-communication-the-three-directions).
+
 ### The plugin manager
 
 `/plugins/core.plugin-manager` is a first-party **core** plugin, so safe mode

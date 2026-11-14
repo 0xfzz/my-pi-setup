@@ -151,7 +151,7 @@ bridge an extension installed as an external pi package, so
 
 ## Logic extension points (server half)
 
-The kernel exposes four seams a server-half plugin can use, each behind a
+The kernel exposes six seams a server-half plugin can use, each behind a
 capability and each removed on deactivate:
 
 | Seam | API | Wired at |
@@ -160,6 +160,8 @@ capability and each removed on deactivate:
 | Hooks — transform | `ctx.hooks.waterfall(point, fn)` | `prompt.before-send`, `attachment.before-upload`, `message.before-render-model`, `session.list.sort` |
 | Hooks — veto | `ctx.hooks.bail(point, fn)` | `session.before-delete`, `file.before-read` |
 | Events — tap | `ctx.events.on(channel, fn)` | `session.lifecycle`, `session.message`, `session.tool` — every live session event, projected and capped |
+| Events — channels | `ctx.events.emit/listen` | plugin → plugin, in the emitter's own namespace |
+| UI — publish | `ctx.ui.view/notify/status/widget` | the plugin's own surface in the browser, through the same store an extension publishes into |
 | Services | `ctx.services.provide/replace/decorate` | `service:session.search`, `service:model.pick`, `service:notifier`, `service:title-generator` |
 | Routes | `ctx.routes.get/post/put/patch/delete` | `/api/p/<pluginId>/…` |
 
@@ -170,14 +172,28 @@ veto is recorded in the bounded audit log and surfaced to the caller (403 with
 the plugin's own reason); a throwing or slow handler is isolated and counted
 toward the breaker, never propagated into the host.
 
-### Subscribing to live session events
+### Realtime communication: the three directions
 
-A hook is the host calling the plugin. A **tap** is the plugin listening to the
-host, which is what a plugin needs when it reacts to activity instead of
-transforming it:
+A hook is the host calling the plugin. Realtime is everything else, and it
+runs in three directions that used to be reachable only by running a second
+server or polling a route:
+
+| Direction | Question it answers | Seam |
+|---|---|---|
+| host → plugin | "what is the session doing?" | `ctx.events.on(channel, fn)` |
+| plugin → browser | "show this to the user" | `ctx.ui.view/notify/status/widget` |
+| plugin → plugin | "tell whoever cares that I finished" | `ctx.events.emit/listen` |
+
+They are separate seams on purpose. A tap is read-only host traffic with a
+closed vocabulary; a publish is a write to a screen the host owns and
+validates; a channel is peer traffic in a namespace the emitter owns. Folding
+them into one API would make "who may write what" a runtime question instead
+of a capability.
+
+#### host → plugin: the tap
 
 ```ts
-// web/plugins/acme/server/index.ts — manifest: capabilities: ["tap.pi-events:session.tool"]
+// web/plugins/acme/server/index.ts — capabilities: ["tap.pi-events:session.tool"]
 const runtime: PluginRuntime = {
   setup(ctx) {
     ctx.events.on("session.tool", (event) => {
@@ -188,8 +204,7 @@ const runtime: PluginRuntime = {
 };
 ```
 
-`ctx.events` is a subscription seam with four guarantees the hook bus does not
-need to make:
+Four guarantees the hook bus does not need to make:
 
 | Rule | Why |
 |---|---|
@@ -204,6 +219,76 @@ granted on request. Streaming deltas (`message_update`, `tool_execution_update`)
 are deliberately not tap traffic — a subscriber would see hundreds per turn for
 payloads its end event already carries. The tap is read-only: nothing a
 subscriber does changes what pi does.
+
+#### plugin → browser: the publish
+
+```ts
+// capabilities: ["ui.publish"]
+setup(ctx) {
+  ctx.ui.view(sessionId, { type: "list", title: "Activity", items: ["bash"] });
+  ctx.ui.status(sessionId, "3 tools");
+  ctx.ui.notify(sessionId, "indexed 4 files", "info");
+}
+```
+
+Before this seam a server half could only mount a route and let the client poll
+it — the reason the Subagent graph plugin runs its own producer and SSE server.
+The publish lands in the **same per-session store** a pi extension publishes
+into, so one browser surface has one source of truth whichever side wrote it.
+
+The split keeps the kernel honest: `PluginUiRegistry` owns the gate
+(`ui.publish`), the source key — so the store's per-producer rate limit applies
+to the plugin rather than the host — and teardown; the sink
+(`web/core/server/plugin-ui-sink.ts`) owns validation, reusing
+`recordPluginView` and `webUiStore.publish`, so a plugin cannot publish a shape
+an extension could not. Two bounds follow:
+
+- **Host-owned state is refused by name.** A plugin may not publish
+  `ui.session.lifecycle`, the title, the editor, layout, action relays, custom
+  panels or the working model: it cannot claim a session is running or forge an
+  action request.
+- **Teardown tombstones what it set.** Status and widget entries have a
+  documented null tombstone, so a deactivated plugin's line disappears. A view
+  needs no delete — the host only serves a descriptor for a live plugin.
+
+#### plugin → plugin: channels
+
+```ts
+// emitter — capabilities: [] (its own namespace is free)
+ctx.events.emit("acme.indexer.done", { files: 4 });
+
+// listener — capabilities: ["events.subscribe:acme.indexer.done"]
+ctx.events.listen("acme.indexer.done", (event) => {
+  // event.channel, event.from, event.payload
+});
+```
+
+Three rules make a shared bus safe inside one process:
+
+| Rule | Why |
+|---|---|
+| The namespace is the identity (`<yourId>.<name>`) | A payload's `from` is trustworthy and traffic cannot be forged |
+| Listening elsewhere needs `events.subscribe:<channel>` | Reading another plugin's data is a grant; your own namespace is free, like a hook in your own namespace |
+| Payloads are bounded and inert | Finite JSON only, 32 KB, 8 levels, `__proto__`/`constructor`/`prototype` refused; nothing is executed |
+
+Delivery cannot take the emitter down: each listener has its own ordered queue
+capped at 64 pending, and past the cap it drops its own backlog (audited, not
+counted toward the breaker) instead of growing memory. A throwing or slow
+handler is reported against the **listener** and does count, like any other
+plugin failure. `listen` refuses the host session channels by name and points
+at `ctx.events.on`, so the two vocabularies cannot be confused.
+
+There is no replay and no retention: a channel is live traffic. A producer that
+needs convergence publishes a view instead of replaying history.
+
+#### The worked example
+
+`web/plugins/activity` consumes two of the three directions with no client code
+and no route: it taps `session.tool` / `session.message` / `session.lifecycle`,
+folds each event into a bounded per-session state, and publishes a declarative
+list view plus one status line. Its logic (`server/activity.ts`) is pure — no
+clock, no store — and `core/server/activity-plugin.test.ts` proves the whole
+chain: manifest → descriptor compile → activation with grants → tap → store.
 
 ## The lifecycle
 
@@ -318,6 +403,9 @@ Ask, for anything new:
 | Does it change what pi does (commands, tools, session state, file effects)? | pi extension |
 | Is it a TUI surface that needs a web counterpart? | web plugin (descriptor) + the extension that publishes |
 | Does the web need to *read* a pi built-in (completion, lists)? | pi_api facade module |
+| Does a plugin's server half need to react to live session activity? | `ctx.events.on` (tap) |
+| Does a plugin's server half need to put something on screen? | `ctx.ui` publish (a declared view, a status, a toast) |
+| Do two plugins need to talk to each other? | `ctx.events.emit/listen` on the emitter's namespace |
 | Is it purely how the browser renders or arranges things? | web client |
 | Do two sides need the same constant? | `lib/<plugin>-web-view.ts` |
 
