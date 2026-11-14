@@ -207,6 +207,11 @@ function modelRefs(ctx: ExtensionContext): ModelRef[] {
   return models.map((model) => ({ provider: model.provider, id: model.id }));
 }
 
+/** Every model the registry offers, scoped or not — the picker's "all" tab. */
+function allModelRefs(ctx: ExtensionContext): ModelRef[] {
+  return ctx.modelRegistry.getAvailable().map((model) => ({ provider: model.provider, id: model.id }));
+}
+
 /** Resolve a model reference the way the TUI does: exact `provider/id`, or a
  * unique bare `id` across providers. */
 function findModelRef(ctx: ExtensionContext, term: string): ModelRef | undefined {
@@ -390,12 +395,14 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     postSessionState(ctx);
   };
 
-  // Push the model list for the web picker (SSE `web_models`).
+  // Push the model list for the web picker (SSE `web_models`). `models` is
+  // the effective (scoped) set; `all` lets the picker offer every model.
   const postModelsEvent = (ctx: ExtensionContext): void => {
     bridgePoster?.post({
       type: "web_models",
       current: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
       models: modelRefs(ctx),
+      all: allModelRefs(ctx),
     });
   };
 

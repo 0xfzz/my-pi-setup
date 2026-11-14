@@ -44,7 +44,11 @@ export interface SessionCore {
   /** Slash commands the session can dispatch (extension/prompt/skill). */
   getCommands?(): Array<{ name: string; description?: string }>;
   /** Model list for the web picker + the current model. */
-  getModels?(): { current?: { provider: string; id: string }; models: Array<{ provider: string; id: string }> };
+  getModels?(): {
+    current?: { provider: string; id: string };
+    models: Array<{ provider: string; id: string }>;
+    all?: Array<{ provider: string; id: string }>;
+  };
   /** Apply a model to the session; false when it could not be applied. */
   setModel?(provider: string, id: string): Promise<boolean>;
   /** Apply a thinking level; false when rejected. */
@@ -240,7 +244,11 @@ function toCore(inner: AgentSession): SessionCore {
     const source = scoped.length > 0 ? scoped.map((scopedModel) => scopedModel.model) : inner.modelRuntime.getAvailableSnapshot();
     return source.map((model) => ({ provider: model.provider, id: model.id }));
   };
-  const findModel = (provider: string, id: string) => modelRefs().find((ref) => ref.provider === provider && ref.id === id);
+  // Every model the runtime offers — the picker's "all" tab. The scoped
+  // list drives Ctrl+P; picking from all of them is still allowed, like the
+  // TUI's full selector.
+  const allModelRefs = (): Array<{ provider: string; id: string }> =>
+    inner.modelRuntime.getAvailableSnapshot().map((model) => ({ provider: model.provider, id: model.id }));
   // A permanent tap on the session's raw events keeps the in-flight
   // streaming snapshot current from the session's birth — not from the
   // first browser stream — so any (re)connect can replay it.
@@ -300,11 +308,10 @@ function toCore(inner: AgentSession): SessionCore {
     getCommands,
     getModels: () => ({
       models: modelRefs(),
+      all: allModelRefs(),
       ...(inner.model !== undefined ? { current: { provider: inner.model.provider, id: inner.model.id } } : {}),
     }),
     setModel: async (provider: string, id: string) => {
-      const ref = findModel(provider, id);
-      if (ref === undefined) return false;
       const model = inner.modelRuntime.getAvailableSnapshot().find(
         (candidate) => candidate.provider === provider && candidate.id === id,
       );

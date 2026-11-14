@@ -442,3 +442,37 @@ test("detach ends the browser streams with session_shutdown", async () => {
     assert.equal(finished.done, true, "the browser stream ends after the bridge detaches");
   });
 });
+
+test("web_models events carry the all-models catalogue for the picker tabs", async () => {
+  await withServer(async (baseUrl) => {
+    await attachFakeTui(baseUrl, "bridge-models");
+    await postEvents(baseUrl, "bridge-models", [
+      {
+        type: "web_models",
+        current: { provider: "anthropic", id: "claude-sonnet" },
+        models: [{ provider: "anthropic", id: "claude-sonnet" }],
+        all: [
+          { provider: "anthropic", id: "claude-sonnet" },
+          { provider: "openai", id: "gpt-x" },
+          { provider: "bogus" },
+        ],
+      },
+    ]);
+    const res = await fetch(`${baseUrl}/api/agent/bridge-models/models`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      current?: { provider: string; id: string };
+      models: Array<{ provider: string; id: string }>;
+      all?: Array<{ provider: string; id: string }>;
+    };
+    // The effective list stays the scoped set; `all` carries the full
+    // catalogue with malformed refs dropped, so the picker's tabs offer
+    // "Scoped" and "All models" without letting junk through.
+    assert.deepEqual(body.models, [{ provider: "anthropic", id: "claude-sonnet" }]);
+    assert.deepEqual(body.all, [
+      { provider: "anthropic", id: "claude-sonnet" },
+      { provider: "openai", id: "gpt-x" },
+    ]);
+    assert.deepEqual(body.current, { provider: "anthropic", id: "claude-sonnet" });
+  });
+});

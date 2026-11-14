@@ -47,6 +47,8 @@ export interface ModelRefLike {
 
 export interface ModelsState {
   models: ModelRefLike[];
+  /** Every model the registry offers, scoped or not (picker's "all" tab). */
+  all?: ModelRefLike[];
   current?: ModelRefLike;
 }
 
@@ -409,6 +411,7 @@ export function usePiSession() {
       if (selectedIdRef.current !== id) return;
       setModels((prev) => ({
         models: Array.isArray(data.models) ? data.models : prev.models,
+        all: Array.isArray(data.all) ? data.all : prev.all,
         current: data.current ?? prev.current,
       }));
     } catch {
@@ -843,15 +846,18 @@ export function usePiSession() {
         }
         case "web_models": {
           // The extension's model list for the picker: scoped models when
-          // scoping is active, else the available catalogue.
-          const pushed = data as { models?: unknown; current?: { provider?: unknown; id?: unknown } };
-          const models = Array.isArray(pushed.models)
-            ? (pushed.models as ModelRefLike[]).filter(
-              (ref) => typeof ref?.provider === "string" && typeof ref?.id === "string",
-            )
-            : [];
+          // scoping is active, else the available catalogue; `all` carries
+          // every registry model for the picker's "all" tab.
+          const pushed = data as { models?: unknown; all?: unknown; current?: { provider?: unknown; id?: unknown } };
+          const refsOf = (value: unknown): ModelRefLike[] =>
+            Array.isArray(value)
+              ? (value as ModelRefLike[]).filter(
+                (ref) => typeof ref?.provider === "string" && typeof ref?.id === "string",
+              )
+              : [];
           setModels({
-            models,
+            models: refsOf(pushed.models),
+            all: refsOf(pushed.all),
             current: typeof pushed.current?.provider === "string" && typeof pushed.current?.id === "string"
               ? { provider: pushed.current.provider, id: pushed.current.id }
               : undefined,

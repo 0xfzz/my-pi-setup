@@ -231,6 +231,7 @@ export function TreeSelectorDialog({
 
 export function ModelPickerDialog({
   models,
+  allModels,
   current,
   onPick,
   onClose,
@@ -238,6 +239,8 @@ export function ModelPickerDialog({
   error,
 }: {
   models: ModelRefLike[];
+  /** Every registry model; the "All models" tab, falling back to `models`. */
+  allModels?: ModelRefLike[];
   current?: ModelRefLike;
   onPick: (provider: string, id: string) => void;
   onClose: () => void;
@@ -246,14 +249,27 @@ export function ModelPickerDialog({
 }) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
+  const [tab, setTab] = useState<"scoped" | "all">("scoped");
   const listRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // The all-tab falls back to the effective list when the session has not
+  // posted a separate catalogue (older extension or no scoping at all).
+  const allList = allModels !== undefined && allModels.length > 0 ? allModels : models;
+  // When nothing is scoped the two tabs would show the same list — offer
+  // just one, so the picker stays as small as the choice it offers.
+  const scopingActive = allList.length !== models.length || (
+    allList.length === models.length
+    && allList.some((ref, position) => ref.provider !== models[position]?.provider || ref.id !== models[position]?.id)
+  );
+  const activeTab = tab === "all" || !scopingActive ? "all" : "scoped";
+  const shown = activeTab === "all" ? allList : models;
 
   const results = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const list = needle === ""
-      ? models
-      : models.filter((model) => `${model.provider}/${model.id}`.toLowerCase().includes(needle));
+      ? shown
+      : shown.filter((model) => `${model.provider}/${model.id}`.toLowerCase().includes(needle));
     // The current model sorts first so Enter keeps it.
     return list.sort((a, b) => {
       const aCurrent = current !== undefined && a.provider === current.provider && a.id === current.id;
@@ -261,7 +277,7 @@ export function ModelPickerDialog({
       if (aCurrent !== bCurrent) return aCurrent ? -1 : 1;
       return `${a.provider}/${a.id}`.localeCompare(`${b.provider}/${b.id}`);
     });
-  }, [models, query, current]);
+  }, [shown, query, current]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -269,7 +285,7 @@ export function ModelPickerDialog({
 
   useEffect(() => {
     setIndex(0);
-  }, [query]);
+  }, [query, activeTab]);
 
   // Keep the highlighted row in view while navigating.
   useEffect(() => {
@@ -306,6 +322,28 @@ export function ModelPickerDialog({
       }
     >
       {error !== null && error !== undefined ? <div className="app-dialog-error" role="alert">{error}</div> : null}
+      {scopingActive ? (
+        <div className="app-dialog-tabs" role="tablist" aria-label="Model list scope">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "scoped"}
+            className={`app-dialog-tab${activeTab === "scoped" ? " is-active" : ""}`}
+            onClick={() => setTab("scoped")}
+          >
+            Scoped ({models.length})
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "all"}
+            className={`app-dialog-tab${activeTab === "all" ? " is-active" : ""}`}
+            onClick={() => setTab("all")}
+          >
+            All models ({allList.length})
+          </button>
+        </div>
+      ) : null}
       <input
         ref={inputRef}
         className="app-dialog-search"
@@ -319,7 +357,9 @@ export function ModelPickerDialog({
       <div className="app-dialog-list" ref={listRef} role="listbox" aria-label="Models">
         {results.length === 0 ? (
           <div className="app-dialog-empty">
-            {models.length === 0 ? "No models posted by this session yet." : "No matches."}
+            {shown.length === 0
+              ? (activeTab === "all" ? "No models available." : "No models posted by this session yet — try All models.")
+              : "No matches."}
           </div>
         ) : results.map((model, position) => {
           const isCurrent = current !== undefined && model.provider === current.provider && model.id === current.id;

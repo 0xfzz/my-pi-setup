@@ -1255,6 +1255,37 @@ a:focus-visible {
   width: min(720px, calc(100vw - 32px));
 }
 
+/* The model picker's scope tabs (Scoped / All models). */
+.app-dialog-tabs {
+  display: flex;
+  gap: 6px;
+  flex: none;
+  margin-bottom: 10px;
+}
+
+.app-dialog-tab {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.app-dialog-tab:hover {
+  border-color: var(--accent);
+}
+
+.app-dialog-tab.is-active {
+  color: var(--fg);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 .app-dialog-search {
   flex: none;
   width: 100%;

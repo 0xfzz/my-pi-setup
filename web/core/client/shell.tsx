@@ -657,6 +657,7 @@ export function AppShell() {
       {modelPickerOpen ? (
         <ModelPickerDialog
           models={session.models.models}
+          allModels={session.models.all}
           current={session.models.current ?? session.sessionState?.model}
           busy={modelBusy}
           error={modelError}
@@ -687,7 +688,7 @@ export function AppShell() {
       {scopedModelsOpen ? (
         <ScopedModelsDialog
           sessionId={session.selectedId}
-          models={session.models.models}
+          models={session.models.all && session.models.all.length > 0 ? session.models.all : session.models.models}
           current={session.models.current ?? session.sessionState?.model}
           onClose={() => setScopedModelsOpen(false)}
         />

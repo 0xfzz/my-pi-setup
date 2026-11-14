@@ -62,7 +62,10 @@ export type BridgeCommand =
 /** Model list for the web picker, posted by the extension (web_models). */
 export interface BridgeModels {
   current?: { provider: string; id: string };
+  /** The effective set: scoped models when scoping is active, else all. */
   models: Array<{ provider: string; id: string }>;
+  /** Every model the registry offers, scoped or not (the picker's "all" tab). */
+  all?: Array<{ provider: string; id: string }>;
 }
 
 export interface BridgeConnection {
@@ -86,6 +89,17 @@ export interface BridgeConnection {
 
 const bridges = new Map<string, BridgeConnection>();
 const BRIDGE_HEARTBEAT_MS = 30_000;
+
+/** The well-formed model refs of a web_models list; unknown shapes drop out. */
+function parseModelRefs(value: unknown): Array<{ provider: string; id: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (ref): ref is { provider: string; id: string } =>
+      typeof ref === "object" && ref !== null
+      && typeof (ref as { provider?: unknown }).provider === "string"
+      && typeof (ref as { id?: unknown }).id === "string",
+  );
+}
 
 /**
  * Registration drift heal: a live bridge whose registry entry points
@@ -253,21 +267,15 @@ export function attachBridge(options: {
           }
         }
         if (e.type === "web_models") {
-          const payload = event as { current?: unknown; models?: unknown };
-          const list = Array.isArray(payload.models)
-            ? payload.models.filter(
-              (ref): ref is { provider: string; id: string } =>
-                typeof ref === "object" && ref !== null
-                && typeof (ref as { provider?: unknown }).provider === "string"
-                && typeof (ref as { id?: unknown }).id === "string",
-            )
-            : [];
+          const payload = event as { current?: unknown; models?: unknown; all?: unknown };
+          const list = parseModelRefs(payload.models);
+          const all = parseModelRefs(payload.all);
           const current = typeof payload.current === "object" && payload.current !== null
             && typeof (payload.current as { provider?: unknown }).provider === "string"
             && typeof (payload.current as { id?: unknown }).id === "string"
             ? (payload.current as { provider: string; id: string })
             : undefined;
-          setModels({ current, models: list.slice(0, 500) });
+          setModels({ current, models: list.slice(0, 500), all: all.slice(0, 500) });
         }
       }
       streamTracker.feed(event);
