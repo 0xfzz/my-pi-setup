@@ -753,9 +753,12 @@ test("phase 6 placements: WEB_PLUGINS declared with exact slot and page placemen
 
   // No hard-coded plugin/opt-out counts: they broke on every newly registered
   // plugin, which is the exact flow this system exists to make cheap. Coverage
-  // is pinned by the sum (every extension in exactly one list) plus membership.
-  assert.equal(WEB_PLUGINS.length + Object.keys(WEB_PLUGIN_OPT_OUT).length, diskFiles.length);
-  for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "subagent-monitor", "bubbly-spinner"]) {
+  // is pinned by every local extension appearing in exactly one list, plus
+  // explicit membership of first-party plugins (including web-only `web-core.*`).
+  const diskSet = new Set(diskFiles.map(normalizeExtName));
+  const localBridged = WEB_PLUGINS.filter((p) => diskSet.has(normalizeExtName(p.extension)));
+  assert.equal(localBridged.length + Object.keys(WEB_PLUGIN_OPT_OUT).length, diskFiles.length);
+  for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "subagent-monitor", "bubbly-spinner", "files"]) {
     assert.ok(WEB_PLUGINS.some((plugin) => plugin.id === id), `${id} must be a registered plugin`);
     assert.equal(id in WEB_PLUGIN_OPT_OUT, false, `${id} must not also be opted out`);
   }

@@ -61,6 +61,6 @@ export function PluginPage({ plugin, view, sessionId, plugins }: PluginPageProps
 
 /** Route helper: does the pathname address a plugin page, and which id? */
 export function parsePluginRoute(pathname: string): string | null {
-  const match = /^\/plugins\/([a-z0-9][a-z0-9-]*)$/.exec(pathname);
+  const match = /^\/plugins\/([a-z0-9][a-z0-9.-]*)$/.exec(pathname);
   return match ? match[1] : null;
 }

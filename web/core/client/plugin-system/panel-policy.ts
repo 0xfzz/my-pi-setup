@@ -11,9 +11,12 @@ export function isPanelPlugin(plugin: WebPluginDescriptor): boolean {
 export function availablePanelPlugins(
   plugins: readonly WebPluginDescriptor[],
   views: Record<string, WebView> | null,
+  hasSession = false,
 ): WebPluginDescriptor[] {
   return plugins.filter((plugin) => {
+    if (!isPanelPlugin(plugin)) return false;
+    if (plugin.sessionPanel === true) return hasSession;
     const view = views?.[plugin.id];
-    return isPanelPlugin(plugin) && view != null && view.type !== "dialog";
+    return view != null && view.type !== "dialog";
   });
 }

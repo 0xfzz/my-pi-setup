@@ -49,14 +49,20 @@ export interface WebPluginDescriptor {
   ui?: WebPluginUiContribution[];
   description?: string;
   actions?: ActionDescriptor[];
+  /**
+   * True when the plugin's sidebar panel renders from session context alone
+   * (e.g. session workspace files) rather than waiting for an extension-published
+   * WebView. Still requires an active session.
+   */
+  sessionPanel?: boolean;
 }
 
 export type ValidatePluginResult =
   | { ok: true; plugin: WebPluginDescriptor }
   | { ok: false; error: string };
 
-const PLUGIN_ID_REGEX = /^[a-z][a-z0-9-]*$/;
-const PAGE_PATH_REGEX = /^\/plugins\/[a-z0-9\-/]*$/;
+const PLUGIN_ID_REGEX = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)*$/;
+const PAGE_PATH_REGEX = /^\/plugins\/[a-z0-9.\-/]*$/;
 
 export function validatePlugin(
   input: unknown,
@@ -73,7 +79,7 @@ export function validatePlugin(
     if (typeof raw.id !== "string" || !PLUGIN_ID_REGEX.test(raw.id)) {
       return {
         ok: false,
-        error: `Plugin "${pluginName}": id must match ^[a-z][a-z0-9-]*$`,
+        error: `Plugin "${pluginName}": id must match ^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$`,
       };
     }
 
@@ -164,6 +170,13 @@ export function validatePlugin(
       };
     }
 
+    if (raw.sessionPanel !== undefined && typeof raw.sessionPanel !== "boolean") {
+      return {
+        ok: false,
+        error: `Plugin "${pluginName}": sessionPanel must be a boolean`,
+      };
+    }
+
     let cleanActions: ActionDescriptor[] | undefined;
     if (raw.actions !== undefined) {
       const actionsResult = validateActions(raw.actions);
@@ -188,6 +201,7 @@ export function validatePlugin(
       ...(ui?.ok ? { ui: ui.value } : {}),
       ...(typeof raw.description === "string" ? { description: raw.description } : {}),
       ...(cleanActions !== undefined ? { actions: cleanActions } : {}),
+      ...(typeof raw.sessionPanel === "boolean" ? { sessionPanel: raw.sessionPanel } : {}),
     };
 
     return { ok: true, plugin };

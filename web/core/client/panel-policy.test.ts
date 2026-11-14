@@ -53,3 +53,15 @@ test("navbar ordering follows the registry and excludes dialogs", () => {
   assert.deepEqual(availablePanelPlugins([first, second], { fixture: status, second: status }), [first, second]);
   assert.deepEqual(availablePanelPlugins([first, second], { fixture: dialog, second: status }), [second]);
 });
+
+test("sessionPanel plugins are available whenever a session is selected", () => {
+  const sessionPanel: WebPluginDescriptor = {
+    id: "files",
+    title: "Files",
+    extension: "web-core.files",
+    surfaces: [{ kind: "sidebar" }],
+    sessionPanel: true,
+  };
+  assert.deepEqual(availablePanelPlugins([sessionPanel], null, false), []);
+  assert.deepEqual(availablePanelPlugins([sessionPanel], null, true), [sessionPanel]);
+});

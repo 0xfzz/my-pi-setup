@@ -23,7 +23,7 @@ import { availablePanelPlugins, isPanelPlugin } from "./plugin-system/panel-poli
 import { pinPanel, seedPins, unpinPanel } from "./plugin-system/pin-policy.ts";
 import { browserStorage, loadPinnedIds, savePinnedIds } from "./plugin-system/pin-storage.ts";
 import { Group, Panel, Separator } from "react-resizable-panels";
-import { getPluginPanel, hasPluginPanel } from "./plugin-system/panel-registry.tsx";
+import { getPluginPanel } from "./plugin-system/panel-registry.tsx";
 import { PluginActionShortcuts } from "./plugin-system/PluginActionShortcuts.tsx";
 import { PluginPage, parsePluginRoute } from "./plugin-system/PluginLayout.tsx";
 import { PluginViewRenderer } from "./plugin-system/PluginViewRenderer.tsx";
@@ -419,7 +419,7 @@ export function AppShell() {
   // Region overrides: header, status (inside the header), transcript and
   // composer. Resolved from the same per-session views the slots render.
   const { regions, conflicts } = resolveRegionOverrides(session.plugins, session.pluginViews);
-  const panelPlugins = availablePanelPlugins(session.plugins, session.pluginViews);
+  const panelPlugins = availablePanelPlugins(session.plugins, session.pluginViews, session.selectedId !== null);
   const inlinePlugins = session.plugins.filter((plugin) => !isPanelPlugin(plugin));
   const panelEntries = buildPanelEntries(
     session.plugins,
@@ -445,7 +445,7 @@ export function AppShell() {
     savePinnedIds(browserStorage(), next);
   };
   const openPanelPluginId = sidePanelOpen
-    && (hasPluginPanel(activeSidePlugin) || panelPlugins.some((plugin) => plugin.id === activeSidePlugin))
+    && panelPlugins.some((plugin) => plugin.id === activeSidePlugin)
     ? activeSidePlugin
     : null;
 

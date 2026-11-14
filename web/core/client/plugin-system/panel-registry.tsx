@@ -30,8 +30,3 @@ export function registerPluginPanel(id: string, component: HostPanelComponent): 
 export function getPluginPanel(id: string): HostPanelComponent | undefined {
   return panels.get(id);
 }
-
-/** Whether a bespoke panel exists for `id`. */
-export function hasPluginPanel(id: string | null | undefined): boolean {
-  return typeof id === "string" && panels.has(id);
-}

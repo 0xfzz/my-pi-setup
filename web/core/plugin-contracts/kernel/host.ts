@@ -6,13 +6,14 @@
  */
 import { AuditLog } from "./audit.ts";
 import { compatCandidates, type DescriptorLike } from "./compat.ts";
-import { discoverPlugins, type DiscoveryRoots } from "./discovery.ts";
-import { isCorePlugin, PluginManager, type BootReport, type PluginLoader, type PluginRuntime } from "./manager.ts";
+import { discoverPlugins, type DiscoveredPlugin, type DiscoveryRoots, type Shadowed } from "./discovery.ts";
+import { PluginManager, type BootReport, type PluginLoader, type PluginRuntime } from "./manager.ts";
 import type { PluginState } from "./lifecycle.ts";
 import { HookBus } from "./hooks.ts";
 import { ServiceRegistry } from "./services.ts";
 import { PluginStorage } from "./storage.ts";
 import { loadState, saveState, type WebPluginsState } from "./state.ts";
+import { validatePlugin } from "../descriptor.ts";
 
 /** States whose descriptor must not be shown or acted on. */
 export const HIDDEN_STATES: ReadonlySet<PluginState> = new Set<PluginState>(["disabled", "quarantined", "rejected", "unresolved", "ignored"]);
@@ -32,6 +33,8 @@ export interface PluginHostOptions<D extends DescriptorLike> {
 
 export interface PluginHost<D extends DescriptorLike> {
   readonly manager: PluginManager;
+  readonly audit: AuditLog;
+  readonly shadowed: readonly Shadowed[];
   /** Logic hooks shared by every plugin; the host calls `waterfall`/`bail` at its call sites. */
   readonly hooks: HookBus;
   readonly services: ServiceRegistry;
@@ -53,6 +56,40 @@ const defaultLoader: PluginLoader = (plugin): PluginRuntime => {
   }
   return {};
 };
+
+/**
+ * Compile a discovered manifest's `contributes` block into a validated
+ * `WebPluginDescriptor`, when the plugin declares web UI surfaces, ui
+ * contributions, or actions. Returns undefined for pure logic/service plugins.
+ */
+function manifestDescriptor<D extends DescriptorLike>(
+  plugin: DiscoveredPlugin,
+  warnings: string[],
+): D | undefined {
+  const contributes = plugin.manifest.contributes;
+  if (!contributes || typeof contributes !== "object") return undefined;
+  const raw = contributes as Record<string, unknown>;
+  if (raw.surfaces === undefined && raw.ui === undefined && raw.actions === undefined) {
+    return undefined;
+  }
+  const candidate = {
+    id: plugin.id,
+    title: typeof raw.title === "string" ? raw.title : plugin.manifest.name,
+    extension: typeof raw.extension === "string" ? raw.extension : plugin.id,
+    ...(raw.icon !== undefined ? { icon: raw.icon } : {}),
+    surfaces: Array.isArray(raw.surfaces) ? raw.surfaces : [],
+    ...(raw.ui !== undefined ? { ui: raw.ui } : {}),
+    ...(typeof raw.description === "string" ? { description: raw.description } : {}),
+    ...(raw.actions !== undefined ? { actions: raw.actions } : {}),
+    ...(raw.sessionPanel !== undefined ? { sessionPanel: raw.sessionPanel } : {}),
+  };
+  const validated = validatePlugin(candidate);
+  if (!validated.ok) {
+    warnings.push(`contributes (${plugin.source}): ${validated.error}`);
+    return undefined;
+  }
+  return validated.plugin as unknown as D;
+}
 
 export function createPluginHost<D extends DescriptorLike>(options: PluginHostOptions<D>): PluginHost<D> {
   const warnings: string[] = [];
@@ -89,22 +126,40 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     },
   });
 
-  const byId = new Map(options.descriptors.map((d) => [d.id, d] as const));
-  // Hidden when switched off or quarantined, and in safe mode unless the plugin is core and active.
+  const byId = new Map<string, D>(options.descriptors.map((d) => [d.id, d] as const));
+  const orderedDescriptors: D[] = [...options.descriptors];
+  for (const plugin of discovered.selected) {
+    const compiled = manifestDescriptor<D>(plugin, warnings);
+    if (compiled === undefined) continue;
+    const existingIndex = orderedDescriptors.findIndex((d) => d.id === compiled.id);
+    if (existingIndex >= 0) {
+      // A higher-precedence manifest (project > user > package > repo) shadows the inline descriptor.
+      orderedDescriptors[existingIndex] = compiled;
+    } else {
+      orderedDescriptors.push(compiled);
+    }
+    byId.set(compiled.id, compiled);
+  }
+
+  // Hidden unless active: unenabled user/project plugins stay in `resolved`,
+  // failed/disposed/disabled/quarantined plugins are not live, and in safe mode
+  // only active core.* plugins (or explicitly re-enabled active ones) show.
   const hidden = (id: string): boolean => {
     const status = manager.snapshot().find((s) => s.id === id);
     if (status === undefined || HIDDEN_STATES.has(status.state)) return true;
-    return manager.isSafeMode() && !isCorePlugin(id) && status.state !== "active";
+    return status.state !== "active";
   };
 
   return {
     manager,
+    audit,
+    shadowed: discovered.shadowed,
     hooks,
     services,
     storage,
     ready: manager.start(),
     warnings,
-    visible: () => options.descriptors.filter((d) => !hidden(d.id)),
+    visible: () => orderedDescriptors.filter((d) => !hidden(d.id)),
     descriptor: (id) => {
       const descriptor = byId.get(id);
       return descriptor && !hidden(id) ? descriptor : undefined;

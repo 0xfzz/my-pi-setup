@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createPluginHost } from "../web/core/plugin-contracts/kernel/host.ts";
 import { compatCandidates, manifestForDescriptor } from "../web/core/plugin-contracts/kernel/compat.ts";
 import type { PluginLoader } from "../web/core/plugin-contracts/kernel/manager.ts";
+import type { WebPluginDescriptor } from "../web/core/plugin-contracts/descriptor.ts";
 
 const descriptors = [
   { id: "todo", title: "Todo" },
@@ -69,7 +70,6 @@ test("safe mode hides first-party descriptors that are not core.* plugins", asyn
 
 test("a corrupt state file is reported as a warning and boots with defaults", async () => {
   await withState(async (statePath) => {
-    const { writeFileSync } = await import("node:fs");
     writeFileSync(statePath, "{ broken");
     const host = createPluginHost({ descriptors, descriptorDir: "/repo/web-plugins", statePath });
     await host.ready;
@@ -77,6 +77,88 @@ test("a corrupt state file is reported as a warning and boots with defaults", as
     assert.ok(host.warnings.some((w) => /not valid JSON/.test(w)));
     await host.shutdown();
   });
+});
+
+test("a user manifest with contributes.surfaces/actions becomes visible and actionable once enabled", async () => {
+  const root = mkdtempSync(join(tmpdir(), "web-plugin-user-root-"));
+  try {
+    const pluginDir = join(root, "user-plugins", "acme.notes");
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, "pi-web-plugin.json"),
+      JSON.stringify({
+        id: "acme.notes",
+        name: "Acme Notes",
+        version: "1.0.0",
+        engines: { piWeb: "^1.0.0", sdk: "^1.0.0" },
+        trust: "declarative",
+        contributes: {
+          icon: "list-checks",
+          description: "Notes from user manifest",
+          surfaces: [{ kind: "sidebar" }, { kind: "page", path: "/plugins/acme.notes" }],
+          actions: [{ id: "refresh", title: "Refresh notes" }],
+        },
+      }),
+    );
+
+    const inline: WebPluginDescriptor[] = [
+      { id: "todo", extension: "todo", title: "Todo", surfaces: [{ kind: "sidebar" }] },
+    ];
+    const host = createPluginHost<WebPluginDescriptor>({
+      descriptors: inline,
+      descriptorDir: "/repo/web-plugins",
+      roots: { user: join(root, "user-plugins") },
+      statePath: join(root, "web-plugins.json"),
+    });
+    await host.ready;
+
+    // User plugins default to off until enabled by the operator.
+    assert.equal(host.descriptor("acme.notes"), undefined);
+    assert.deepEqual(host.visible().map((d) => d.id), ["todo"]);
+
+    const enabled = await host.manager.enable("acme.notes");
+    assert.equal(enabled.ok, true);
+    assert.deepEqual(host.visible().map((d) => d.id), ["todo", "acme.notes"]);
+    assert.equal(host.descriptor("acme.notes")?.title, "Acme Notes");
+    assert.equal(host.descriptor("acme.notes")?.actions?.[0]?.id, "refresh");
+    await host.shutdown();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an invalid manifest contributes block records a warning without breaking boot", async () => {
+  const root = mkdtempSync(join(tmpdir(), "web-plugin-bad-contrib-"));
+  try {
+    const pluginDir = join(root, "user-plugins", "acme.bad");
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, "pi-web-plugin.json"),
+      JSON.stringify({
+        id: "acme.bad",
+        name: "Bad Contributes",
+        version: "1.0.0",
+        engines: { piWeb: "^1.0.0", sdk: "^1.0.0" },
+        trust: "declarative",
+        contributes: {
+          surfaces: [{ kind: "unknown-surface" }],
+        },
+      }),
+    );
+
+    const host = createPluginHost({
+      descriptors,
+      descriptorDir: "/repo/web-plugins",
+      roots: { user: join(root, "user-plugins") },
+      statePath: join(root, "web-plugins.json"),
+    });
+    await host.ready;
+    assert.ok(host.warnings.some((w) => w.includes("contributes (user)")));
+    assert.equal(host.visible().length, 2);
+    await host.shutdown();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("a plugin whose loader throws is failed in the manager and its descriptor is still visible until quarantined", async () => {
