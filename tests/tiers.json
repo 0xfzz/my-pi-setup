@@ -23,6 +23,7 @@
     "tests/provider/provider-discovery.test.ts",
     "tests/runtime.test.ts",
     "tests/stream-recovery-runtime.test.ts",
-    "tests/subagent-runtime.test.ts"
+    "tests/subagent-runtime.test.ts",
+    "tests/web-bridge-shutdown.test.ts"
   ]
 }

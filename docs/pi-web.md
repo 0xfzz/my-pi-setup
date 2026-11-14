@@ -568,6 +568,14 @@ the terminal (its own `/model`, Ctrl+P) reaches the web at the next turn's
 `session_state` push, and the state the fetch-on-settle reads carries the
 same model so nothing resurrects a stale one.
 
+**The context-window meter** reads the same state, so the snapshot has to
+carry `contextUsage` and has to be posted *after* the attach stream opens:
+the server has no bridge before that, refuses the post, and the meter — which
+only dashes when it has no reading — stays blank until a turn settles. The
+snapshot is posted on every (re)attach, and again on each `ui_sync`, so a
+browser attaching later sees the current reading rather than the one cached
+when the bridge opened.
+
 **Extensions can open web dialogs too** — the web's extensibility surface:
 publish a `dialog` view (title, markdown body or lines, up to 8 actions,
 `open: false` to close) through the same view events as every other view.

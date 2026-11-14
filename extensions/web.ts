@@ -314,8 +314,16 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   let bridgeStreaming = false;
   /** Self-heal timer: a healthy server with a dead bridge re-attaches. */
   let bridgeWatchdog: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Bumped by every stop and by every newer attach. An attach that was still
+   * awaiting the health check or the attach response when the bridge stopped
+   * must not resurrect it: doing so re-attached a session the user had just
+   * detached, to whatever server URL was current by then.
+   */
+  let bridgeGeneration = 0;
 
   const stopBridge = (): void => {
+    bridgeGeneration++;
     bridgeController?.abort();
     bridgeController = null;
     bridgePoster?.stop();
@@ -427,11 +435,15 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     // loop (server restart mid-stream, a silent drop) must be replaceable —
     // otherwise the bridge never comes back and the web stream stays frozen.
     if (!bridgeEnabled || bridgeStreaming) return;
+    const generation = ++bridgeGeneration;
     try {
       const health = await fetch(`${bridgeServerUrl()}/api/health`, {
         signal: AbortSignal.timeout(1_500),
       });
       if (!health.ok) return;
+      // A stop (or a newer attach) may have landed while the health check
+      // was in flight; this attach is stale and must not revive the bridge.
+      if (bridgeGeneration !== generation) return;
     } catch {
       // Server not running: the watchdog re-attaches when it comes up.
       ensureBridgeWatchdog();
@@ -445,7 +457,9 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       bridgeController = new AbortController();
       bridgePoster = createBridgePoster(sessionId);
       bridgePoster.start();
-      void postBridgeState(sessionId, bridgeStateOf(ctx));
+      // The state snapshot is NOT posted here: the server has no bridge until
+      // the attach stream below opens, so the post would answer 404 and be
+      // dropped (see runBridgeStream).
       // The session's dispatchable slash commands (extension, prompt
       // templates, skills), so the web composer can offer them.
       try {
@@ -485,7 +499,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       } catch {
         // Model listing is best-effort; the picker falls back to fetching.
       }
-      void runBridgeStream(ctx, sessionId, bridgeController.signal);
+      void runBridgeStream(ctx, sessionId, bridgeController.signal, generation);
     } catch (error) {
       // The bridge must never take the pi session down with it.
       stopBridge();
@@ -497,6 +511,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     ctx: ExtensionContext,
     sessionId: string,
     signal: AbortSignal,
+    generation: number,
   ): Promise<void> => {
     const query = new URLSearchParams({ cwd: ctx.cwd });
     if (ctx.model) query.set("model", `${ctx.model.provider}/${ctx.model.id}`);
@@ -505,15 +520,28 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     if (sessionFile) query.set("sessionFile", sessionFile);
     let firstAttach = true;
     let retryDelayMs = 1_000;
-    while (!signal.aborted) {
+    while (!signal.aborted && bridgeGeneration === generation) {
       try {
         const res = await fetch(
           `${bridgeServerUrl()}/api/bridge/${encodeURIComponent(sessionId)}/attach?${query.toString()}`,
           { signal, headers: bridgeHeaders({ accept: "text/event-stream" }) },
         );
         if (!res.ok || res.body === null) throw new Error(`attach failed: HTTP ${res.status}`);
+        // The bridge was stopped (or replaced) while this attach was in
+        // flight: drop the stream instead of attaching a detached session.
+        if (bridgeGeneration !== generation) {
+          await res.body.cancel().catch(() => undefined);
+          return;
+        }
         retryDelayMs = 1_000;
         bridgeStreaming = true;
+        // The bridge exists from here on, so the state snapshot can land. It
+        // carries the context-window reading: without it the server's cached
+        // state keeps `contextUsage: null`, and that is what the browser's
+        // meter reads until a turn settles — the bar rendered em-dashes for a
+        // whole session. Every (re)attach needs it: a fresh bridge starts with
+        // no reading, and the reading cannot be derived server-side.
+        void postBridgeState(sessionId, bridgeStateOf(ctx));
         if (!firstAttach) {
           // The stream survived a drop: the web may have missed events while
           // we were away, so its streams reload their history.
@@ -527,8 +555,11 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       // The attach stream ended or dropped — however it happened (including
       // a silent exit), the bridge is down until a retry reconnects.
       bridgeStreaming = false;
+      // A stopped bridge stays stopped: arming the self-heal here would
+      // re-attach the session the user just detached (to whatever server URL
+      // is current by then), and its retry timer would outlive the session.
+      if (signal.aborted || bridgeGeneration !== generation) return;
       ensureBridgeWatchdog();
-      if (signal.aborted) return;
       await sleep(retryDelayMs, signal);
       retryDelayMs = Math.min(retryDelayMs * 2, 10_000);
     }
@@ -702,6 +733,13 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       // re-emit the current UI values (publisher remembers the last value per
       // plugin and re-publishes them on this event).
       pi.events?.emit(WEB_PLUGIN_UI_SYNC_EVENT, {});
+      // The state snapshot is a value too: the server caches it for the
+      // browser's first render, and a consumer attaching late must see the
+      // current reading rather than whatever was cached when the bridge
+      // opened.
+      if (bridgeSessionId !== null && lastCtxForCommands !== null) {
+        void postBridgeState(bridgeSessionId, bridgeStateOf(lastCtxForCommands));
+      }
       return;
     }
   };
