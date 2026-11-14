@@ -219,6 +219,52 @@ export function getRegisteredPlugins(): readonly WebPluginDescriptor[] {
   return registry?.visible() ?? [];
 }
 
+/**
+ * How long the registry may wait for the kernel to finish booting before it
+ * answers with whatever is active. Activation is budgeted per plugin, so this
+ * only bounds the pathological case of many slow plugins at once.
+ */
+export const PLUGIN_READY_TIMEOUT_MS = 10_000;
+
+/** Resolve when `ready` settles or the deadline passes — never reject. */
+async function settleWithin(ready: Promise<unknown>, timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+  });
+  try {
+    await Promise.race([ready.catch(() => undefined), deadline]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/** The minimum a registry read needs from a booting host. */
+export interface BootableRegistry {
+  readonly ready: Promise<unknown>;
+  visible(): readonly WebPluginDescriptor[];
+}
+
+/**
+ * The descriptors to serve. `visible()` hides every plugin that is not active
+ * yet, so answering before the kernel has booted tells the client "no plugins"
+ * for a whole page load — and the client fetches the registry exactly once.
+ * Waiting for boot (bounded) is what makes that single fetch correct.
+ */
+export async function visiblePluginsWhenReady(
+  host: BootableRegistry,
+  timeoutMs: number = PLUGIN_READY_TIMEOUT_MS,
+): Promise<readonly WebPluginDescriptor[]> {
+  await settleWithin(host.ready, timeoutMs);
+  return host.visible();
+}
+
+/** The served registry, after boot. Empty when no host is registered yet. */
+export async function pluginsWhenReady(): Promise<readonly WebPluginDescriptor[]> {
+  const host = registry;
+  return host === null ? [] : visiblePluginsWhenReady(host);
+}
+
 /** Undefined while the plugin is switched off, quarantined, or hidden. */
 export function getPluginDescriptor(id: string): WebPluginDescriptor | undefined {
   return registry?.descriptor(id);

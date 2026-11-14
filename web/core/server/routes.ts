@@ -15,8 +15,8 @@ import {
   checkAndSetInFlightAction,
   getPluginDescriptor,
   getPluginHost,
-  getRegisteredPlugins,
   isKnownSession,
+  pluginsWhenReady,
   recordActionAudit,
   relayActionRequest,
   webPluginsStore,
@@ -106,7 +106,9 @@ async function handleReloadNotice(ctx: ApiRouteContext): Promise<void> {
 }
 
 async function handlePluginsList(ctx: ApiRouteContext): Promise<void> {
-  sendJson(ctx.res, 200, { plugins: getRegisteredPlugins() });
+  // After boot: a descriptor whose plugin has not activated yet is hidden, and
+  // the client reads this list once per page load.
+  sendJson(ctx.res, 200, { plugins: await pluginsWhenReady() });
 }
 
 /**

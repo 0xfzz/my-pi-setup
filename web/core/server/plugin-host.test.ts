@@ -12,10 +12,12 @@ import {
   recordExtensionUi,
   registerWebPlugins,
   relayActionRequest,
+  visiblePluginsWhenReady,
   webPluginsStore,
   webUiStore,
   type MinimalEventBus,
 } from "./plugin-host.ts";
+import type { WebPluginDescriptor } from "../plugin-contracts/descriptor.ts";
 import { WEB_PLUGIN_VIEW_EVENT } from "../plugin-contracts/view.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../plugin-contracts/actions.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT } from "../plugin-contracts/ui-event-models.ts";
@@ -158,6 +160,44 @@ test("relayActionRequest emits the request on the session bus", () => {
   });
 
   assert.equal(relayActionRequest("no-bus-session", "todo", "sync").relayed, false);
+});
+
+/** The minimum a registry read needs from a host. */
+function descriptor(id: string): WebPluginDescriptor {
+  return { id, title: id, extension: id, surfaces: [] };
+}
+
+test("the served registry waits for boot before hiding not-yet-active plugins", async () => {
+  // A plugin that is still activating is not `active`, so `visible()` hides it.
+  // Answering the one-shot registry fetch before `ready` settles would tell the
+  // client "no plugins" for the whole page load.
+  let bootResolved = false;
+  const ready = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      bootResolved = true;
+      resolve();
+    }, 10);
+  });
+  const host = {
+    ready,
+    visible: () => (bootResolved ? [descriptor("late")] : []),
+  };
+
+  assert.deepEqual((await visiblePluginsWhenReady(host)).map((plugin) => plugin.id), ["late"]);
+});
+
+test("a host that never finishes booting still answers, bounded by the deadline", async () => {
+  const host = { ready: new Promise<void>(() => {}), visible: () => [descriptor("fast")] };
+
+  const plugins = await visiblePluginsWhenReady(host, 5);
+  assert.deepEqual(plugins.map((plugin) => plugin.id), ["fast"]);
+});
+
+test("a rejected boot still serves the plugins that did activate", async () => {
+  const host = { ready: Promise.reject(new Error("boom")), visible: () => [descriptor("survivor")] };
+
+  const plugins = await visiblePluginsWhenReady(host, 50);
+  assert.deepEqual(plugins.map((plugin) => plugin.id), ["survivor"]);
 });
 
 test("checkAndSetInFlightAction bounds one in-flight action per session", () => {
