@@ -243,6 +243,10 @@ async function run() {
       // ~/.pi/agent/web-auth.json enables the password gate and step 1 stalls
       // on the login screen instead of the fixture shell.
       PI_WEB_AUTH_FILE: join(pluginStateDir, "web-auth.json"),
+      // The unified UI store is a durable floor: without its own path every
+      // run restores the views the previous one left, so a plugin that
+      // renders a region would fail the "no chat slots" step on a warm home.
+      PI_WEB_UI_STATE: join(pluginStateDir, "web-ui-state.json"),
     },
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
@@ -430,6 +434,14 @@ async function run() {
     // The completed turn lands in history as rendered markdown.
     const done = page.locator(".msg-assistant", { hasText: "All checks passed" });
     await done.first().waitFor({ state: "visible", timeout: 15_000 });
+    // The turn ended by naming the session (as auto-title does): the sidebar
+    // row swaps its folder label for that name. This is the in-process rename
+    // path — a session the server owns, no TUI bridge — announced over the
+    // directory stream rather than the agent stream.
+    await page
+      .locator('.app-session-item[data-id="__test_session__"] .app-session-name')
+      .filter({ hasText: "Plan review" })
+      .waitFor({ timeout: 10_000 });
     assert.ok((await page.locator(".markdown-body strong").count()) >= 1, "bold renders");
     assert.ok((await page.locator(".markdown-body li").count()) >= 2, "list items render");
     assert.ok((await page.locator(".markdown-body pre code").count()) >= 1, "code fences render");

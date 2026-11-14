@@ -245,12 +245,23 @@ export async function main(): Promise<void> {
  * a tool call, the tool execution and result, then a second assistant reply
  * streamed as markdown — emitted with small delays so realtime streaming,
  * collapsible tool calls and markdown rendering are observable in a browser.
+ * The turn then names the session, exactly as the auto-title extension does at
+ * the end of a real turn, so the sidebar's rename path is observable too.
  */
+/** The name the fixture turn writes, the way auto-title names a session. */
+export const FIXTURE_SESSION_TITLE = "Plan review";
+
 function registerFixtureSession(): void {
   const sessionId = "__test_session__";
-  let listener: ((event: unknown) => void) | null = null;
+  let sessionName: string | undefined;
+  // Many listeners, like AgentSession.subscribe: the directory tap, the plugin
+  // bridge and every browser stream subscribe to the same session. A
+  // single-listener slot made the newest subscriber silently evict the others,
+  // so the directory tap (running flags, renames) died as soon as a browser
+  // opened the session — a fidelity gap no e2e could see past.
+  const listeners = new Set<(event: unknown) => void>();
   const emit = (event: unknown): void => {
-    listener?.(event);
+    for (const listener of listeners) listener(event);
   };
   const delay = (ms: number): Promise<void> =>
     new Promise((resolve) => {
@@ -353,6 +364,11 @@ function registerFixtureSession(): void {
     }
     emit({ type: "message_update", assistantMessageEvent: { type: "text_end", contentIndex: 0, content: finalMarkdown } });
     emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: finalMarkdown }] } });
+    // A real turn ends by naming the session (auto-title, or a /name). The
+    // name is announced the way pi announces it, so the sidebar's rename path
+    // — directory stream in, row label out — is exercised, not just the view.
+    sessionName = FIXTURE_SESSION_TITLE;
+    emit({ type: "session_info_changed", name: sessionName });
     emit({ type: "agent_settled" });
   };
 
@@ -360,10 +376,11 @@ function registerFixtureSession(): void {
     {
       sessionId,
       subscribe: (next: (event: unknown) => void) => {
-        listener = next;
-        emit({ type: "agent_start" });
+        listeners.add(next);
+        // The stream's connect announcement goes to the newcomer only.
+        next({ type: "agent_start" });
         return () => {
-          listener = null;
+          listeners.delete(next);
         };
       },
       prompt: async () => {
@@ -371,6 +388,7 @@ function registerFixtureSession(): void {
       },
       abort: async () => {},
       isStreaming: () => false,
+      getSessionName: () => sessionName,
       getState: () => ({
         sessionId,
         sessionFile: "",

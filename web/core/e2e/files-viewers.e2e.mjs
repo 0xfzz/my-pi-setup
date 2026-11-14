@@ -212,6 +212,10 @@ async function run() {
       PI_WEB_TEST_PLUGIN_VIEWS: "1",
       PI_WEB_TEST_FILES_ROOT: fixtureDir,
       PI_WEB_AUTH_FILE: join(pluginStateDir, "web-auth.json"),
+      // The unified UI store is a durable floor: without its own path every
+      // run restores the views the previous one left, so a plugin that
+      // renders a region would fail the "no chat slots" step on a warm home.
+      PI_WEB_UI_STATE: join(pluginStateDir, "web-ui-state.json"),
     },
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,

@@ -43,6 +43,10 @@ const EMPTY_STATE: PersistedWebUiState = { version: 1, views: {} };
  * record, and /web reload then refused a healthy server as unmanaged.
  */
 function webUiStatePath(): string {
+  // A caller that isolates its state (the e2e suites, a second instance) points
+  // this at its own directory: the store is a durable floor, so without an
+  // override every run inherits whatever the last one left on screen.
+  if (process.env.PI_WEB_UI_STATE) return process.env.PI_WEB_UI_STATE;
   // Test processes get their own file so a suite never writes into a real home dir.
   if (process.env.NODE_TEST_CONTEXT) {
     return join(tmpdir(), "pi-web-ui-state", `${process.pid}.json`);
