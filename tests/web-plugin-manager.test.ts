@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { AuditLog } from "../web/core/plugin-contracts/kernel/audit.ts";
 import { CapabilityError } from "../web/core/plugin-contracts/kernel/capabilities.ts";
 import type { DiscoveredPlugin } from "../web/core/plugin-contracts/kernel/discovery.ts";
+import { HookBus } from "../web/core/plugin-contracts/kernel/hooks.ts";
 import { validateManifest } from "../web/core/plugin-contracts/kernel/manifest.ts";
 import { PluginManager, type PluginContext, type PluginLoader, type PluginRuntime } from "../web/core/plugin-contracts/kernel/manager.ts";
 import { defaultState, type WebPluginsState } from "../web/core/plugin-contracts/kernel/state.ts";
@@ -61,18 +62,28 @@ function harness(): Harness {
   return { calls, behaviour, loader, persisted: [] };
 }
 
-function manager(h: Harness, plugins: DiscoveredPlugin[], options: { state?: WebPluginsState; env?: Record<string, string>; activateMs?: number; threshold?: number; now?: () => number } = {}) {
+interface ManagerOptions {
+  state?: WebPluginsState;
+  env?: Record<string, string>;
+  activateMs?: number;
+  threshold?: number;
+  now?: () => number;
+  hooks?: HookBus;
+}
+
+function manager(h: Harness, plugins: DiscoveredPlugin[], options: ManagerOptions = {}) {
   const audit = new AuditLog();
   const mgr = new PluginManager({
     plugins,
     state: options.state ?? defaultState(),
     loader: h.loader,
     env: options.env ?? {},
-    now: options.now,
+    ...(options.now !== undefined ? { now: options.now } : {}),
     budgets: { activateMs: options.activateMs ?? 500, deactivateMs: 200 },
     breaker: { threshold: options.threshold ?? 3, windowMs: 60_000 },
     persist: (s) => h.persisted.push(structuredClone(s)),
     audit,
+    ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
   });
   return { mgr, audit };
 }
@@ -376,4 +387,53 @@ test("unknown plugin ids are refused, not created", async () => {
   const result = await mgr.enable("acme.ghost");
   assert.equal(result.ok, false);
   assert.match(result.ok ? "" : result.error, /unknown plugin "acme\.ghost"/);
+});
+
+test("a registration from an abandoned activation never becomes live", async () => {
+  const h = harness();
+  const hooks = new HookBus();
+  const hookCalls: string[] = [];
+  let releaseLate: (() => void) | undefined;
+  let lateError: unknown;
+
+  h.behaviour.set("acme.slow", {
+    activate: async (ctx) => {
+      // The activation outlives its budget: the manager abandons it and drains
+      // the disposers, then this continuation resumes and tries to register.
+      await new Promise<void>((resolve) => {
+        releaseLate = resolve;
+      });
+      try {
+        ctx.hooks.event("session.created", () => hookCalls.push("late hook"));
+        ctx.register(() => h.calls.push("acme.slow:late-dispose"));
+      } catch (error) {
+        lateError = error;
+      }
+    },
+  });
+
+  const plugins = [candidate("acme.slow", { capabilities: ["hooks.observe:session.created"] })];
+  const { mgr, audit } = manager(h, plugins, { state: enabledState("acme.slow"), activateMs: 20, hooks });
+  const boot = await mgr.start();
+
+  assert.deepEqual(boot.active, [], "a timed-out activation is not active");
+  assert.equal(mgr.snapshot()[0]?.state, "failed");
+
+  // The abandoned activation now resumes and registers.
+  releaseLate?.();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(lateError, undefined, "a refused registration is audited, not thrown at the plugin");
+  assert.deepEqual(mgr.snapshot()[0]?.state, "failed", "the resumed continuation changes nothing");
+  await hooks.event("session.created", { sessionId: "s" });
+  assert.deepEqual(hookCalls, [], "the refused hook is never invoked");
+  assert.deepEqual(
+    h.calls.filter((call) => call.endsWith(":late-dispose")),
+    ["acme.slow:late-dispose"],
+    "the late disposer runs immediately instead of leaking",
+  );
+  assert.match(
+    audit.list({ kind: "failure" }).map((entry) => entry.detail).join("\n"),
+    /registration after disposal refused/,
+  );
 });

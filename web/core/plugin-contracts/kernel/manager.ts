@@ -134,6 +134,12 @@ interface Slot {
   waiting?: string;
   lastError?: string;
   unresolvedReason?: string;
+  /**
+   * True once the plugin's registrations have been disposed. A registration
+   * that arrives afterwards (a timed-out `activate` that kept running) must
+   * not become live state for a plugin that is no longer running.
+   */
+  disposed: boolean;
 }
 
 export class PluginManager {
@@ -185,6 +191,7 @@ export class PluginManager {
         breaker: new CircuitBreaker({ ...this.breakerOptions, clock: this.now }),
         grants: auto.granted,
         pending: auto.pending,
+        disposed: false,
       });
       this.order.push(plugin.id);
     }
@@ -440,6 +447,23 @@ export class PluginManager {
     this.persistFn(this.state);
   }
 
+  /**
+   * Run one registration, or refuse it when the plugin is already disposed.
+   *
+   * A timed-out activation keeps running: `runWithBudget` abandons it, the
+   * disposers are drained, and the still-running `activate` may then register a
+   * hook, service or route for a plugin that is no longer live. Refusing here is
+   * what keeps that leak out of the registries; a refusal is audited, never
+   * thrown into the plugin's own code path.
+   */
+  private track(slot: Slot, register: () => () => void): () => void {
+    if (slot.disposed) {
+      this.audit.append("failure", slot.plugin.id, "registration after disposal refused");
+      return () => {};
+    }
+    return register();
+  }
+
   private makeContext(slot: Slot, signal: AbortSignal): PluginContext {
     const id = slot.plugin.id;
     const owner = { pluginId: id, grants: slot.grants };
@@ -448,25 +472,30 @@ export class PluginManager {
       id,
       signal,
       register: (dispose) => {
+        if (slot.disposed) {
+          this.audit.append("failure", id, "registration after disposal refused");
+          dispose();
+          return;
+        }
         slot.disposers.push(dispose);
       },
       hooks: {
-        event: (point, handler, priority) => this.hooks.register(owner, "event", point, handler, priority),
-        waterfall: (point, handler, priority) => this.hooks.register(owner, "waterfall", point, handler, priority),
-        bail: (point, handler, priority) => this.hooks.register(owner, "bail", point, handler, priority),
+        event: (point, handler, priority) => this.track(slot, () => this.hooks.register(owner, "event", point, handler, priority)),
+        waterfall: (point, handler, priority) => this.track(slot, () => this.hooks.register(owner, "waterfall", point, handler, priority)),
+        bail: (point, handler, priority) => this.track(slot, () => this.hooks.register(owner, "bail", point, handler, priority)),
       },
       services: {
-        provide: (name, impl) => this.services.register(owner, name, "provide", impl),
-        replace: (name, impl, priority) => this.services.register(owner, name, "replace", impl, priority),
-        decorate: (name, wrap, priority) => this.services.register(owner, name, "decorate", wrap, priority),
+        provide: (name, impl) => this.track(slot, () => this.services.register(owner, name, "provide", impl)),
+        replace: (name, impl, priority) => this.track(slot, () => this.services.register(owner, name, "replace", impl, priority)),
+        decorate: (name, wrap, priority) => this.track(slot, () => this.services.register(owner, name, "decorate", wrap, priority)),
       },
       routes: {
-        register: (method, path, handler) => this.routes.register(owner, method, path, handler),
-        get: (path, handler) => this.routes.register(owner, "GET", path, handler),
-        post: (path, handler) => this.routes.register(owner, "POST", path, handler),
-        put: (path, handler) => this.routes.register(owner, "PUT", path, handler),
-        patch: (path, handler) => this.routes.register(owner, "PATCH", path, handler),
-        delete: (path, handler) => this.routes.register(owner, "DELETE", path, handler),
+        register: (method, path, handler) => this.track(slot, () => this.routes.register(owner, method, path, handler)),
+        get: (path, handler) => this.track(slot, () => this.routes.register(owner, "GET", path, handler)),
+        post: (path, handler) => this.track(slot, () => this.routes.register(owner, "POST", path, handler)),
+        put: (path, handler) => this.track(slot, () => this.routes.register(owner, "PUT", path, handler)),
+        patch: (path, handler) => this.track(slot, () => this.routes.register(owner, "PATCH", path, handler)),
+        delete: (path, handler) => this.track(slot, () => this.routes.register(owner, "DELETE", path, handler)),
       },
       storage: scoped,
       assert: (capability) => {
@@ -502,6 +531,7 @@ export class PluginManager {
 
   /** Dispose registrations LIFO. A throwing disposer is audited and does not stop the rest. */
   private disposeAll(slot: Slot): void {
+    slot.disposed = true;
     this.hooks.removeOwner(slot.plugin.id);
     this.services.removeOwner(slot.plugin.id);
     this.routes.removeOwner(slot.plugin.id);
@@ -545,6 +575,7 @@ export class PluginManager {
       slot.runtime = given;
     }
     const runtime = slot.runtime!;
+    slot.disposed = false;
     slot.life.dispatch("load");
     slot.life.dispatch("activate");
     this.state = markActivating(this.state, [...(this.state.activating), id]);
