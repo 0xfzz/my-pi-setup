@@ -7,6 +7,7 @@
 import { AuditLog } from "./audit.ts";
 import { compatCandidates, type DescriptorLike } from "./compat.ts";
 import { discoverPlugins, type DiscoveredPlugin, type DiscoveryRoots, type Shadowed } from "./discovery.ts";
+import { EventTapRegistry } from "./events.ts";
 import { PluginManager, type BootReport, type PluginLoader, type PluginRuntime } from "./manager.ts";
 import { HookBus } from "./hooks.ts";
 import { PluginRouteRegistry } from "./routes.ts";
@@ -41,6 +42,11 @@ export interface PluginHost<D extends DescriptorLike> {
   readonly shadowed: readonly Shadowed[];
   /** Logic hooks shared by every plugin; the host calls `waterfall`/`bail` at its call sites. */
   readonly hooks: HookBus;
+  /**
+   * Live session events. The host publishes the bounded projection of each
+   * session event here; a plugin subscribes through `ctx.events`.
+   */
+  readonly events: EventTapRegistry;
   readonly services: ServiceRegistry;
   readonly routes: PluginRouteRegistry;
   readonly storage: PluginStorage;
@@ -114,6 +120,7 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
 
   const audit = new AuditLog({ clock: options.now });
   const hooks = new HookBus();
+  const events = new EventTapRegistry();
   const services = new ServiceRegistry();
   const routes = new PluginRouteRegistry();
   const storage = new PluginStorage({ onChange: () => scheduleStorageSave() });
@@ -152,6 +159,7 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     now: options.now,
     audit,
     hooks,
+    events,
     services,
     routes,
     storage,
@@ -189,6 +197,7 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     audit,
     shadowed: discovered.shadowed,
     hooks,
+    events,
     services,
     routes,
     storage,

@@ -29,6 +29,16 @@ Hook and service ids the kernel validates against. Each one has a named call sit
 | `core.capability-gate@1` | protected | stable, protected | The capability gate and the audit log. |
 | `core.confirm.destructive@1` | protected | stable, protected | Destructive-action confirmation dialogs (add, never skip). |
 
+## Tap channels
+
+`ctx.events.on(channel, handler)` subscribes to live session activity. Each channel needs its own grant; a bare `tap.pi-events` grant covers every channel. Delivery is budgeted, isolated per subscriber, and ordered; the payload is the host's bounded projection, never the raw pi event.
+
+| Channel | Grant | Carries |
+| --- | --- | --- |
+| `session.lifecycle` | `tap.pi-events:session.lifecycle` | A live session started a turn, settled, shut down, or was renamed. |
+| `session.message` | `tap.pi-events:session.message` | A message was appended to a live session: role, block types, capped text. |
+| `session.tool` | `tap.pi-events:session.tool` | A tool call started or finished, or a bash execution completed. |
+
 ## UI vocabulary
 
 Where a plugin's views may mount, from `web/core/plugin-contracts/ui-contracts.ts`. A descriptor is validated against these lists; the host mounts every entry.

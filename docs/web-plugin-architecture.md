@@ -159,6 +159,7 @@ capability and each removed on deactivate:
 | Hooks — observe | `ctx.hooks.event(point, fn)` | `session.created`, `session.settled`, `message.appended`, `tool.finished`, `plugin.enabled` |
 | Hooks — transform | `ctx.hooks.waterfall(point, fn)` | `prompt.before-send`, `attachment.before-upload`, `message.before-render-model`, `session.list.sort` |
 | Hooks — veto | `ctx.hooks.bail(point, fn)` | `session.before-delete`, `file.before-read` |
+| Events — tap | `ctx.events.on(channel, fn)` | `session.lifecycle`, `session.message`, `session.tool` — every live session event, projected and capped |
 | Services | `ctx.services.provide/replace/decorate` | `service:session.search`, `service:model.pick`, `service:notifier`, `service:title-generator` |
 | Routes | `ctx.routes.get/post/put/patch/delete` | `/api/p/<pluginId>/…` |
 
@@ -168,6 +169,41 @@ render, model pick) and `web/plugins/files/server/index.ts` (file read). A
 veto is recorded in the bounded audit log and surfaced to the caller (403 with
 the plugin's own reason); a throwing or slow handler is isolated and counted
 toward the breaker, never propagated into the host.
+
+### Subscribing to live session events
+
+A hook is the host calling the plugin. A **tap** is the plugin listening to the
+host, which is what a plugin needs when it reacts to activity instead of
+transforming it:
+
+```ts
+// web/plugins/acme/server/index.ts — manifest: capabilities: ["tap.pi-events:session.tool"]
+const runtime: PluginRuntime = {
+  setup(ctx) {
+    ctx.events.on("session.tool", (event) => {
+      // event.sessionId, event.project, event.type, event.payload
+      if (event.payload.isError === true) ctx.log(`failed tool ${event.payload.toolName}`);
+    });
+  },
+};
+```
+
+`ctx.events` is a subscription seam with four guarantees the hook bus does not
+need to make:
+
+| Rule | Why |
+|---|---|
+| Closed channel vocabulary (`TAP_CHANNELS` in `kernel/events.ts`) | The host knows which projections it owes; a plugin cannot invent traffic |
+| Bounded payloads (`web/core/server/session-tap.ts`) | A raw `message_end` or bash execution can be megabytes; the tap caps text at 4 KB and drops the result bodies |
+| Ordered per subscriber | A plugin tracking state sees a tool start before its end, even when its own handler is slow |
+| Budgeted and isolated | A throwing or slow handler is audited against its plugin and counts toward the breaker; the agent loop never waits on it |
+
+`tap.pi-events:<channel>` is sensitive, so a user, project or package plugin
+stays pending until the operator grants it; a plugin in the host's own tree is
+granted on request. Streaming deltas (`message_update`, `tool_execution_update`)
+are deliberately not tap traffic — a subscriber would see hundreds per turn for
+payloads its end event already carries. The tap is read-only: nothing a
+subscriber does changes what pi does.
 
 ## The lifecycle
 

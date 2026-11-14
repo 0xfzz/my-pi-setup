@@ -11,6 +11,7 @@ import { engineMismatch } from "./compat.ts";
 import { runWithBudget } from "./budget.ts";
 import { assertGranted, formatCapability, isSensitive, parseCapability, resolveGrants, type Capability } from "./capabilities.ts";
 import type { DiscoveredPlugin } from "./discovery.ts";
+import { EventTapRegistry, type TapHandler } from "./events.ts";
 import { PluginLifecycle, isLive, type PluginEvent, type PluginState } from "./lifecycle.ts";
 import { HookBus } from "./hooks.ts";
 import { deactivationOrder, requiredDependents, resolvePlugins, type ResolverInput } from "./resolver.ts";
@@ -33,6 +34,15 @@ export interface PluginServices {
   decorate(name: string, wrap: (next: (...args: never[]) => unknown) => (...args: never[]) => unknown, priority?: number): () => void;
 }
 
+/**
+ * Live session events for this plugin. A subscription needs the
+ * `tap.pi-events:<channel>` grant; the payload is the host's bounded
+ * projection, never the raw pi event.
+ */
+export interface PluginEvents {
+  on(channel: string, handler: TapHandler): () => void;
+}
+
 /** HTTP route registration for this plugin's own backend surface. */
 export interface PluginRoutes {
   /** `ctx.routes.register("GET", "summary/:id", handler)` mounts /api/p/<pluginId>/summary/<id>. */
@@ -50,6 +60,12 @@ export interface PluginContext {
   /** Register cleanup. Everything registered is disposed LIFO on deactivate or rollback. */
   register(dispose: () => void): void;
   readonly hooks: PluginHooks;
+  /**
+   * Read-only subscription to live session activity (`session.lifecycle`,
+   * `session.message`, `session.tool`). Delivery is budgeted, isolated, and
+   * ordered per subscriber; every subscription is removed on deactivate.
+   */
+  readonly events: PluginEvents;
   readonly services: PluginServices;
   /**
    * Mount HTTP routes under `/api/p/<pluginId>/`. Needs the `routes` capability;
@@ -98,6 +114,7 @@ export interface ManagerOptions {
   persist?: (state: WebPluginsState) => void;
   audit?: AuditLog;
   hooks?: HookBus;
+  events?: EventTapRegistry;
   services?: ServiceRegistry;
   routes?: PluginRouteRegistry;
   storage?: PluginStorage;
@@ -159,6 +176,7 @@ export class PluginManager {
   private readonly persistFn: (state: WebPluginsState) => void;
   private readonly audit: AuditLog;
   private readonly hooks: HookBus;
+  private readonly events: EventTapRegistry;
   private readonly services: ServiceRegistry;
   private readonly routes: PluginRouteRegistry;
   private readonly storage: PluginStorage;
@@ -177,11 +195,17 @@ export class PluginManager {
     this.persistFn = options.persist ?? (() => undefined);
     this.audit = options.audit ?? new AuditLog({ clock: this.now });
     this.hooks = options.hooks ?? new HookBus();
+    this.events = options.events ?? new EventTapRegistry();
     this.services = options.services ?? new ServiceRegistry();
     this.routes = options.routes ?? new PluginRouteRegistry();
     this.storage = options.storage ?? new PluginStorage();
     this.hooks.setFailureHandler((failure) => {
       void this.reportFailure(failure.pluginId, `${failure.point} ${failure.reason}: ${failure.message}`);
+    });
+    // A tap handler that throws or times out is as much a broken plugin as a
+    // broken hook, so it counts toward the same breaker.
+    this.events.setFailureHandler((failure) => {
+      void this.reportFailure(failure.pluginId, `tap ${failure.channel} ${failure.reason}: ${failure.message}`);
     });
     this.state = options.state;
     for (const plugin of options.plugins) {
@@ -547,6 +571,9 @@ export class PluginManager {
         waterfall: (point, handler, priority) => this.track(slot, () => this.hooks.register(owner, "waterfall", point, handler, priority)),
         bail: (point, handler, priority) => this.track(slot, () => this.hooks.register(owner, "bail", point, handler, priority)),
       },
+      events: {
+        on: (channel, handler) => this.track(slot, () => this.events.subscribe(owner, channel, handler)),
+      },
       services: {
         provide: (name, impl) => this.track(slot, () => this.services.register(owner, name, "provide", impl)),
         replace: (name, impl, priority) => this.track(slot, () => this.services.register(owner, name, "replace", impl, priority)),
@@ -597,6 +624,7 @@ export class PluginManager {
   private disposeAll(slot: Slot): void {
     slot.disposed = true;
     this.hooks.removeOwner(slot.plugin.id);
+    this.events.removeOwner(slot.plugin.id);
     this.services.removeOwner(slot.plugin.id);
     this.routes.removeOwner(slot.plugin.id);
     while (slot.disposers.length) {

@@ -19,6 +19,7 @@ import { open, readFile, readdir, stat, unlink } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { getPluginHost } from "./plugin-host.ts";
 import { attachSessionPlugins } from "./plugin-sessions.ts";
+import { publishSessionTapEvent } from "./session-tap.ts";
 import { createHeadlessWebUiContext } from "./web-ui-context.ts";
 
 export interface SessionStateLite {
@@ -327,8 +328,11 @@ function toCore(inner: AgentSession): SessionCore {
   };
 }
 
-/** One permanent tap per live session: detect running/idle flips and emit kernel hooks. */
-function trackSessionDirectory(core: SessionCore, cwd: string): void {
+/**
+ * One permanent tap per live session: running/idle flips, the kernel hooks, and
+ * the plugin event tap (every live event a plugin may subscribe to).
+ */
+function trackSessionEvents(core: SessionCore, cwd: string): void {
   const id = core.sessionId;
   directoryTaps.get(id)?.();
   directoryTaps.delete(id);
@@ -337,6 +341,7 @@ function trackSessionDirectory(core: SessionCore, cwd: string): void {
     const typed = event as { type?: unknown; name?: string; message?: unknown; toolCallId?: string; toolName?: string; isError?: boolean } | null;
     const type = typed?.type;
     const host = getPluginHost();
+    publishSessionTapEvent(host?.events ?? null, id, cwd, event);
     if (type === "agent_start") {
       setSessionRunning(id, true);
     } else if (type === "agent_settled") {
@@ -413,7 +418,7 @@ function register(core: SessionCore, cwd: string, sessionFile: string, inner?: u
   // takeover or an in-process resume both refresh the listing).
   const seeded = core.getSessionName?.()?.trim();
   if (seeded) sessionNames.set(core.sessionId, seeded);
-  trackSessionDirectory(core, cwd);
+  trackSessionEvents(core, cwd);
   const registered = liveSessions.get(core.sessionId);
   if (registered !== undefined) {
     emitDirectory({ type: "session_added", session: sessionInfoOf(registered) });

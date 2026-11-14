@@ -9,6 +9,7 @@ import {
   lookupPoint,
   stablePoints,
 } from "../web/core/plugin-contracts/kernel/catalog.ts";
+import { TAP_CHANNELS } from "../web/core/plugin-contracts/kernel/events.ts";
 import {
   OVERRIDABLE_COMPONENTS,
   WEB_UI_ANCHORS,
@@ -25,9 +26,11 @@ test("every catalogued id is unique and uses a known kind", () => {
 });
 
 test("the catalog lists only kinds the kernel validates against", () => {
-  // UI placement is a separate vocabulary with its own source; routes,
-  // commands, keybindings, themes, jobs, bridges and taps have no registry to
-  // validate them, so they are not catalogued at all.
+  // UI placement is a separate vocabulary with its own source, and routes,
+  // commands, keybindings, themes, jobs and bridges have no registry to
+  // validate them. Tap channels are validated by the tap registry, but they
+  // name pi's own session event families rather than kernel points, so they
+  // are documented as their own table (see `TAP_CHANNELS`).
   assert.deepEqual([...POINT_KINDS].sort(), ["bail", "event", "protected", "service", "waterfall"]);
 });
 
@@ -76,6 +79,7 @@ test("the stable set includes the contracts plugins are told to depend on", () =
 test("generated markdown documents both vocabularies from their own source", () => {
   const doc = catalogMarkdown();
   for (const point of EXTENSION_POINTS) assert.ok(doc.includes(`\`${point.id}@${point.version}\``), point.id);
+  for (const channel of TAP_CHANNELS) assert.ok(doc.includes(`\`${channel}\` | \`tap.pi-events:${channel}\``), channel);
   for (const anchor of WEB_UI_ANCHORS) assert.ok(doc.includes(`\`${anchor}\` | anchor`), anchor);
   for (const component of Object.keys(WEB_UI_COMPONENTS)) assert.ok(doc.includes(`\`${component}\` | component`), component);
   for (const component of OVERRIDABLE_COMPONENTS) {

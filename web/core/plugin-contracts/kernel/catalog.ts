@@ -12,6 +12,7 @@
  * `ui-contracts.ts`, which the descriptor validator enforces. Both are
  * documented together in docs/web-plugin-catalog.md.
  */
+import { TAP_CHANNELS, type TapChannel } from "./events.ts";
 import { OVERRIDABLE_COMPONENTS, WEB_UI_ANCHORS, WEB_UI_COMPONENTS, WEB_UI_REGIONS } from "../ui-contracts.ts";
 
 export const POINT_KINDS = ["event", "waterfall", "bail", "service", "protected"] as const;
@@ -106,6 +107,17 @@ export function stablePoints(): readonly ExtensionPoint[] {
   return EXTENSION_POINTS.filter((candidate) => candidate.stability === "stable");
 }
 
+/** The tap vocabulary, described once here and documented from `TAP_CHANNELS`. */
+const TAP_CHANNEL_DESCRIPTIONS: Record<TapChannel, string> = {
+  "session.lifecycle": "A live session started a turn, settled, shut down, or was renamed.",
+  "session.message": "A message was appended to a live session: role, block types, capped text.",
+  "session.tool": "A tool call started or finished, or a bash execution completed.",
+};
+
+function tapRows(): string[] {
+  return TAP_CHANNELS.map((channel) => `| \`${channel}\` | \`tap.pi-events:${channel}\` | ${TAP_CHANNEL_DESCRIPTIONS[channel]} |`);
+}
+
 const LOGIC_TABLE_HEADER = ["| Id | Kind | Stability | Description |", "| --- | --- | --- | --- |"];
 
 function logicRows(points: readonly ExtensionPoint[]): string[] {
@@ -137,6 +149,14 @@ export function catalogMarkdown(points: readonly ExtensionPoint[] = EXTENSION_PO
     "",
     ...LOGIC_TABLE_HEADER,
     ...logicRows(points),
+    "",
+    "## Tap channels",
+    "",
+    "`ctx.events.on(channel, handler)` subscribes to live session activity. Each channel needs its own grant; a bare `tap.pi-events` grant covers every channel. Delivery is budgeted, isolated per subscriber, and ordered; the payload is the host's bounded projection, never the raw pi event.",
+    "",
+    "| Channel | Grant | Carries |",
+    "| --- | --- | --- |",
+    ...tapRows(),
     "",
     "## UI vocabulary",
     "",
