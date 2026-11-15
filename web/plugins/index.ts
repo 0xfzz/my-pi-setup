@@ -8,6 +8,7 @@ import { mcpManagerPlugin } from "./mcp-manager/descriptor.ts";
 import { modesPlugin } from "./modes/descriptor.ts";
 import { pluginManagerPlugin } from "./plugin-manager/descriptor.ts";
 import { providersPlugin } from "./providers/descriptor.ts";
+import { routerPlugin } from "./router/descriptor.ts";
 import { subagentCheckpointsPlugin } from "./subagent-checkpoints/descriptor.ts";
 import { subagentGraphPlugin } from "./subagent-graph/descriptor.ts";
 import { todoPlugin } from "./todo/descriptor.ts";
@@ -26,12 +27,11 @@ export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [
   mcpManagerPlugin,
   pluginManagerPlugin,
   providersPlugin,
+  routerPlugin,
   exampleOverridePlugin,
 ];
 
 export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {
-  "account-router":
-    "Virtual model fallback chains, multi-account credential rotation and prompt-cache-aware routing; the routing view is TUI-only (/router status, /router why) and has no web surface yet",
   agent:
     "Parent delegation engine, tool dispatch, and child lifecycle tracking; no persistent web view",
   "antigravity-accounts":

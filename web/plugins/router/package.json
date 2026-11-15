@@ -1,0 +1,7 @@
+{
+  "name": "@pi-web-plugin/router",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The account router's route editor, embedded in the shared model-settings dialog."
+}
