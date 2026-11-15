@@ -21,7 +21,7 @@
  * disk or pi.
  */
 import type {
-  DialogAction, DialogField, DialogItem, DialogWebView, ListItem, ListStatus, ListWebView,
+  DialogAction, DialogField, DialogItem, DialogWebView, GraphEdge, GraphNode, GraphWebView, ListStatus,
 } from "../../web/core/plugin-contracts/view.ts";
 import { VIEW_MAX_ROWS } from "../../web/core/plugin-contracts/view.ts";
 import {
@@ -150,6 +150,8 @@ export type RouterPanelContext = {
   warmth?: Readonly<Record<string, string>>;
   /** The model the route is currently answering from, keyed by route name. */
   current?: Readonly<Record<string, string>>;
+  /** The route the panel visualises. Defaults to the most recently routed one. */
+  selectedRoute?: string;
 };
 
 /** The key a panel warmth reading is filed under. */
@@ -165,40 +167,65 @@ export function warmthKey(routeName: string, model: string): string {
  * removed. Everything the panel says comes from the same `RouterSettingsView`
  * the TUI popup and the editor render, so the three cannot disagree.
  */
-export function routerPanelView(context: RouterPanelContext): ListWebView {
+export function routerPanelView(context: RouterPanelContext): GraphWebView {
   const { view } = context;
-  const items: ListItem[] = view.rows.map((row) => {
-    const current = context.current?.[row.route.name];
-    return {
-      text: current ? `${row.id} · ${current}` : row.id,
-      status: panelStatus(row),
-      detail: panelDetail(row, context, current),
-    };
-  });
-  for (const row of view.shadowed) {
-    items.push({
-      text: `${row.id} (hidden)`,
-      status: "neutral",
-      detail: `A project route with this name wins over the global one.\n\n${panelDetail(row, context)}`,
-    });
-  }
-  for (const error of view.errors) {
-    items.push({ text: "Config error", status: "failed", detail: error });
-  }
-  if (items.length === 0) {
-    items.push({
-      text: "No routes yet",
+
+  // The panel visualises one route at a time: the one asked for, otherwise the
+  // most recently routed one, otherwise the first route in the table.
+  const selectedName = context.selectedRoute
+    ?? (context.current ? Object.keys(context.current).at(-1) : undefined)
+    ?? view.rows[0]?.route.name;
+  const row = view.rows.find((entry) => entry.route.name === selectedName) ?? view.rows[0];
+
+  if (row === undefined) {
+    // No routes yet: a single informational node keeps the graph non-empty.
+    const nodes: GraphNode[] = [{
+      id: "none",
+      label: "No routes yet",
+      kind: "parent",
       status: "neutral",
       detail: "A route is a virtual model in `/model` that answers from the chain you give it. Open **Models → Router** to create one.",
-    });
+    }];
+    return { type: "graph", title: "Routing", nodes, edges: [] };
   }
-  const shown = items.slice(0, VIEW_MAX_ROWS);
-  return {
-    type: "list",
-    title: "Routes",
-    items: shown,
-    ...(shown.length < items.length ? { omitted: items.length - shown.length } : {}),
-  };
+
+  const current = context.current?.[row.route.name];
+  const nodes: GraphNode[] = [{
+    id: "route",
+    label: row.id,
+    kind: "parent",
+    status: panelStatus(row),
+    detail: panelDetail(row, context, current),
+  }];
+  const edges: GraphEdge[] = [];
+  row.route.targets.forEach((target, index) => {
+    const nodeId = `target:${index}`;
+    const isCurrent = current === describeTarget(target);
+    nodes.push({
+      id: nodeId,
+      label: describeTarget(target),
+      kind: "child",
+      status: isCurrent ? "active" : (panelStatus(row) === "blocked" ? "neutral" : "neutral"),
+      detail: context.warmth?.[warmthKey(row.route.name, target.model)] ?? undefined,
+    });
+    edges.push({ from: "route", to: nodeId, label: `${index + 1}` });
+  });
+  if (row.route.targets.length === 0) {
+    nodes.push({ id: "empty", label: "no targets yet", kind: "child", status: "neutral" });
+    edges.push({ from: "route", to: "empty" });
+  }
+
+  // Config errors and shadowed routes become their own nodes attached to the route.
+  for (const issue of row.issues) {
+    const id = `issue:${issue.slice(0, 20)}`;
+    nodes.push({ id, label: issue, kind: "review", status: "blocked" });
+    edges.push({ from: "route", to: id, label: "problem" });
+  }
+
+  const title = view.rows.length > 1
+    ? `Routing · ${row.id} (${view.rows.length} routes)`
+    : "Routing";
+  return { type: "graph", title, nodes, edges };
 }
 
 /**

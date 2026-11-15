@@ -1004,13 +1004,13 @@ test("the router publishes a panel view listing every route", { timeout: 20000 }
     // The panel view is published at session start, so a late attach still sees it.
     eventBus.emit("web-plugin:ui-sync", {});
     const view = views.at(-1);
-    assert.equal(view?.type, "list");
-    assert.equal(view?.title, "Routes");
-    assert.ok((view?.items?.length ?? 0) > 0, "the panel lists the configured routes");
-    const row = view.items.find((item: any) => item.text === "router/auto");
-    assert.ok(row, "router/auto is a panel row");
-    assert.equal(row.status, "done", "a healthy route is done, not blocked");
-    assert.match(row.detail ?? "", /primary\/main-model/);
+    assert.equal(view?.type, "graph");
+    assert.equal(view?.title, "Routing");
+    const route = (view?.nodes ?? []).find((node: any) => node.id === "route");
+    assert.ok(route, "the panel has a route node");
+    assert.equal(route.label, "router/auto");
+    assert.equal(route.status, "done", "a healthy route is done, not blocked");
+    assert.match(route.detail ?? "", /primary\/main-model/);
   }, (seen) => ({
     providers: [{ name: "primary", config: fakeProvider("primary", ["main-model"], seen).config }],
     config: { routes: [{ name: "auto", targets: ["primary/main-model"] }] },
@@ -1025,9 +1025,9 @@ test("the panel is a read-only visualization: it has no edit action", { timeout:
     });
     eventBus.emit("web-plugin:ui-sync", {});
     const view = views.at(-1);
-    // A list view carries no action ids; the panel's only action is reload,
+    // A graph view carries no action ids; the panel's only action is reload,
     // and it is declared on the descriptor, not on the view.
-    assert.equal(view?.type, "list");
+    assert.equal(view?.type, "graph");
   }, (seen) => ({
     providers: [{ name: "primary", config: fakeProvider("primary", ["main-model"], seen).config }],
     config: { routes: [{ name: "auto", targets: ["primary/main-model"] }] },

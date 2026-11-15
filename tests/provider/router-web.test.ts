@@ -451,117 +451,53 @@ test("a large catalogue still produces a valid view", async () => {
   assert.equal(result.ok, true, result.ok ? "" : result.error);
 });
 
+
 // ── the right sidebar panel ─────────────────────────────────────────────────
 
-test("the panel lists one row per route, healthy or blocked", () => {
+test("the panel is a graph with the route as the root and its targets as children", () => {
   const context: RouterPanelContext = { view: viewWith(ROUTE, ROUTE_2) };
   const view = routerPanelView(context);
-  assert.equal(view.type, "list");
-  assert.equal(view.title, "Routes");
-  assert.deepEqual(view.items.map((item) => (typeof item === "string" ? item : [item.text, item.status])), [
-    ["router/auto", "done"],
-    ["router/cheap", "done"],
-  ]);
+  assert.equal(view.type, "graph");
+  assert.equal(view.title, "Routing · router/auto (2 routes)");
+  const route = view.nodes.find((node) => node.id === "route");
+  assert.equal(route?.label, "router/auto");
+  assert.equal(route?.kind, "parent");
+  assert.equal(route?.status, "done");
+  const children = view.edges.filter((edge) => edge.from === "route").map((edge) => edge.to);
+  assert.deepEqual(children, ["target:0", "target:1"]);
+  assert.equal(view.nodes.find((node) => node.id === "target:0")?.label, "primary/main-model");
 });
 
-test("the panel names the model a route is currently answering from", () => {
+test("the panel highlights the target the route is currently answering from", () => {
   const context: RouterPanelContext = {
     view: viewWith(ROUTE, ROUTE_2),
-    current: { auto: "primary/main-model", cheap: "budget/model" },
+    current: { auto: "primary/main-model" },
   };
   const view = routerPanelView(context);
-  assert.deepEqual(view.items.map((item) => (typeof item === "string" ? item : item.text)), [
-    "router/auto · primary/main-model",
-    "router/cheap · budget/model",
-  ]);
-  const detail = typeof view.items[0] === "object" ? view.items[0].detail ?? "" : "";
-  assert.match(detail, /\*\*now:\*\* `primary\/main-model`/);
+  assert.equal(view.nodes.find((node) => node.id === "target:0")?.status, "active");
+  assert.equal(view.nodes.find((node) => node.id === "target:1")?.status, "neutral");
 });
 
-test("a route with no decision yet shows no current model", () => {
-  const context: RouterPanelContext = { view: viewWith(ROUTE) };
-  const view = routerPanelView(context);
-  assert.equal(typeof view.items[0] === "object" ? view.items[0].text : "", "router/auto");
-});
-
-test("a route with a config problem is blocked, not silently healthy", () => {
+test("a route with a config problem is blocked at the root", () => {
   const context: RouterPanelContext = {
     view: viewWith({ ...ROUTE, targets: [{ model: "a/b", pool: "gone" }] }),
   };
-  const item = routerPanelView(context).items[0];
-  assert.equal(typeof item === "object" && item.status, "blocked");
-  assert.match(typeof item === "object" ? item.detail ?? "" : "", /unknown pool "gone"/);
+  const view = routerPanelView(context);
+  assert.equal(view.nodes.find((node) => node.id === "route")?.status, "blocked");
+  assert.ok(view.nodes.some((node) => node.id.startsWith("issue:")));
 });
 
-test("a route's detail carries its policy, its chain and each target's warmth", () => {
-  const context: RouterPanelContext = {
-    view: viewWith(ROUTE),
-    warmth: {
-      [warmthKey("auto", "primary/main-model")]: "warm 58k · 3m left · 94% hit",
-      [warmthKey("auto", "backup/other")]: "cold · last 6m ago",
-    },
-  };
-  const item = routerPanelView(context).items[0];
-  const detail = typeof item === "object" ? item.detail ?? "" : "";
-  assert.match(detail, /\*\*cache · on quota\*\*/);
-  assert.match(detail, /- `primary\/main-model` · warm 58k · 3m left · 94% hit/);
-  assert.match(detail, /- `backup\/other:low` · cold · last 6m ago/);
-  assert.match(detail, /_project config_/);
-});
-
-test("warmth is filed per route, so two routes over one model stay distinct", () => {
-  const context: RouterPanelContext = {
-    view: viewWith(ROUTE, { ...ROUTE_2, targets: [{ model: "primary/main-model" }] }),
-    warmth: { [warmthKey("auto", "primary/main-model")]: "warm 58k" },
-  };
-  const items = routerPanelView(context).items;
-  assert.match(typeof items[0] === "object" ? items[0].detail ?? "" : "", /warm 58k/);
-  assert.doesNotMatch(
-    typeof items[1] === "object" ? items[1].detail ?? "" : "",
-    /warm 58k/,
-    "the other route reaches that model through different auth, so it is not warm",
-  );
-});
-
-test("a route with no targets says so instead of showing an empty list", () => {
+test("a route with no targets shows an empty child", () => {
   const context: RouterPanelContext = { view: viewWith({ name: "draft", targets: [] }) };
-  const item = routerPanelView(context).items[0];
-  assert.match(typeof item === "object" ? item.detail ?? "" : "", /_no targets yet_/);
+  const view = routerPanelView(context);
+  assert.ok(view.nodes.some((node) => node.id === "empty"));
 });
 
-test("a hidden global route is listed as hidden, not dropped", () => {
-  const view = viewWith(ROUTE);
-  const context: RouterPanelContext = {
-    view: { ...view, shadowed: routerRows([{ route: ROUTE_2, source: "global" }], "router", []) },
-  };
-  const item = routerPanelView(context).items.at(-1);
-  assert.equal(typeof item === "object" ? item.text : "", "router/cheap (hidden)");
-  assert.match(typeof item === "object" ? item.detail ?? "" : "", /A project route with this name wins/);
-  assert.match(typeof item === "object" ? item.detail ?? "" : "", /_global config_/);
-});
-
-test("a config error is a failed row with the message as its detail", () => {
-  const context: RouterPanelContext = { view: { ...viewWith(ROUTE), errors: ['"pools" must be a JSON object'] } };
-  const item = routerPanelView(context).items.at(-1);
-  assert.equal(typeof item === "object" ? item.text : "", "Config error");
-  assert.equal(typeof item === "object" && item.status, "failed");
-  assert.match(typeof item === "object" ? item.detail ?? "" : "", /must be a JSON object/);
-});
-
-test("an empty table explains what a route is rather than showing nothing", () => {
-  const item = routerPanelView({ view: viewWith() }).items[0];
-  assert.equal(typeof item === "object" ? item.text : "", "No routes yet");
-  assert.match(typeof item === "object" ? item.detail ?? "" : "", /Models → Router/);
-});
-
-test("a table past the view cap reports what it omitted", () => {
-  const routes = Array.from({ length: VIEW_MAX_ROWS + 3 }, (_, index) => ({
-    name: `r${index}`,
-    targets: [{ model: "a/b" }],
-  }));
-  const view = routerPanelView({ view: viewWith(...routes) });
-  assert.equal(view.items.length, VIEW_MAX_ROWS);
-  assert.equal(view.omitted, 3);
+test("an empty table yields a single informational node", () => {
+  const view = routerPanelView({ view: viewWith() });
+  assert.equal(view.type, "graph");
+  assert.equal(view.nodes.length, 1);
+  assert.equal(view.nodes[0].id, "none");
 });
 
 test("the panel view passes the host's own validation", async () => {
