@@ -92,7 +92,10 @@ through the same writer as everything else and never edits a file in place.
 - **The right sidebar** has a **Router** panel showing only the selected route:
   a hub on the left fans out through curved connections to model pills on the
   right. The latest chosen target and its connection use the web theme's accent,
-  with inverse text and a moving dot along the selected branch. Colors follow
+  with inverse text. While the session is mid-turn a dot travels along the
+  selected branch; the moment the turn settles the dot stops and the branch and
+  its target stay highlighted, so a resting panel never animates. The header tag
+  reads **LIVE** during a turn and **IDLE** otherwise. Colors follow
   the app's shared tokens in both light and dark mode. Each routing decision updates the diagram live
   without moving its nodes or resetting the viewport. The canvas fills the
   sidebar; drag to pan, scroll or use the small overlay controls to zoom, and

@@ -111,7 +111,6 @@ async function assertRoutingCanvas(page) {
   assert.equal(await panel.locator(".router-edges path[data-from]").count(), 3);
   const target = panel.locator('[data-node-id="target:0"]');
   assert.equal(await target.getAttribute("data-status"), "active");
-  await assertRoutingTheme(page);
   const standby = panel.getByRole("button", { name: "Highlight secondary/deepseek-v4.1-flash", exact: true });
   await standby.click();
   assert.equal(await standby.getAttribute("aria-pressed"), "true");
@@ -146,6 +145,35 @@ async function assertRoutingCanvas(page) {
   assert.equal(await target.getAttribute("data-status"), "neutral", "live updates move the selected path");
   assert.equal(await stage.getAttribute("style"), liveViewport, "live updates preserve the viewport");
   assert.match(await panel.getByRole("status").filter({ hasText: "Current target:" }).innerText(), /secondary\/deepseek/);
+
+  // 4h-b. The flow belongs to a live turn: it travels the selected branch
+  //       while a turn runs and stops the moment the turn settles, leaving the
+  //       branch highlighted. The fixture session announces agent_start when a
+  //       stream connects and only a finished turn settles it, so a turn is
+  //       completed first — that rest is the bug being guarded: a stopped
+  //       prompt must not leave a dot circling the diagram.
+  const promptFixture = async () => {
+    const res = await fetch(`${BASE}/api/agent/__test_session__`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "prompt", message: "route this request" }),
+    });
+    assert.equal(res.status, 200);
+  };
+  const tag = panel.locator(".router-header-tag");
+  await promptFixture();
+  await panel.locator(".router-packet").first().waitFor({ state: "detached", timeout: 30_000 });
+  assert.equal(await panel.locator(".router-packet").count(), 0, "a stopped prompt leaves no flow");
+  assert.equal(await tag.innerText(), "IDLE", "the header does not claim a live turn once the prompt stops");
+  assert.equal(await panel.locator('[data-node-id="target:1"]').getAttribute("data-status"), "active",
+    "the target the route last used stays highlighted");
+  await promptFixture();
+  await panel.locator(".router-packet").first().waitFor({ timeout: 10_000 });
+  assert.equal(await panel.locator(".router-packet").count(), 1, "only the selected branch flows during a turn");
+  assert.equal(await tag.innerText(), "LIVE");
+  await assertRoutingTheme(page);
+  await panel.locator(".router-packet").first().waitFor({ state: "detached", timeout: 30_000 });
+  assert.equal(await panel.locator(".router-packet").count(), 0, "the flow stops when the prompt ends");
   await panel.getByRole("button", { name: "Close panel", exact: true }).click();
 }
 

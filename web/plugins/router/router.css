@@ -3,6 +3,8 @@
 .router-panel { --routing-live: var(--accent); --routing-live-text: var(--bg); }
 .router-panel-body { display: flex; flex-direction: column; padding: 0; overflow: hidden; min-height: 0; }
 .router-header-tag { color: var(--routing-live); font-size: 9px; letter-spacing: .14em; margin-left: 8px; }
+/* An idle session is not live: the tag must not claim a turn that is not running. */
+.router-header-tag.is-idle { color: var(--fg-faint); }
 .router-canvas { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; user-select: none; cursor: grab; background: radial-gradient(ellipse at 20% 40%, color-mix(in srgb, var(--routing-live) 3%, transparent), transparent 60%), var(--bg); }
 .router-canvas:active { cursor: grabbing; }
 .router-canvas-toolbar { position: absolute; z-index: 2; right: 12px; bottom: 32px; display: flex; align-items: center; gap: 4px; border: 1px solid var(--border); border-radius: 8px; padding: 5px; background: var(--bg-raised); box-shadow: 0 3px 10px color-mix(in srgb, var(--scrim) 20%, transparent); cursor: default; }

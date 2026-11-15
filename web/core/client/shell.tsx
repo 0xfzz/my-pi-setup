@@ -704,6 +704,7 @@ export function AppShell() {
       sessionId={session.selectedId}
       rootLabel={selected?.cwd ?? ""}
       view={openPanelPluginId !== null ? session.pluginViews[openPanelPluginId] : null}
+      running={session.streaming.isStreaming || session.uiRunning}
       key={session.selectedId ?? "none"}
     />
   ) : (

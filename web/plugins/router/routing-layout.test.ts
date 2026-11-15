@@ -39,6 +39,21 @@ test("a live target switch changes the highlighted curve without moving nodes", 
   assert.equal(after.edges.find(edge => edge.active)?.to, "target:0");
 });
 
+test("only a running session flows, and only along the selected branch", () => {
+  const idle = routingLayout(graph);
+  assert.equal(idle.edges.some(edge => edge.flowing), false, "a resting graph never animates");
+  assert.equal(idle.edges.find(edge => edge.active)?.to, "target:1", "the branch stays highlighted");
+  const running = routingLayout(graph, { running: true });
+  assert.deepEqual(running.edges.filter(edge => edge.flowing).map(edge => edge.to), ["target:1"]);
+  assert.deepEqual(running.nodes.map(({ x, y }) => [x, y]), idle.nodes.map(({ x, y }) => [x, y]),
+    "turning the flow on or off never moves the diagram");
+});
+
+test("a running session with no decision yet has nothing to flow through", () => {
+  const layout = routingLayout({ ...graph, nodes: graph.nodes.map(node => ({ ...node, status: "neutral" })) }, { running: true });
+  assert.equal(layout.edges.some(edge => edge.flowing), false);
+});
+
 test("no decision yet never invents an active model branch", () => {
   const layout = routingLayout({ ...graph, nodes: graph.nodes.map(node => ({ ...node, status: "neutral" })) });
   assert.equal(layout.edges.some(edge => edge.active), false);

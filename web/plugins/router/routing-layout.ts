@@ -12,7 +12,15 @@ interface RoutingEdge {
   from: string;
   to: string;
   path: string;
+  /** The chosen branch: highlighted whenever there is a latest decision. */
   active: boolean;
+  /** The branch a request is travelling right now: animated only mid-turn. */
+  flowing: boolean;
+}
+
+export interface RoutingOptions {
+  /** The session is mid-turn; a resting graph highlights but never animates. */
+  running: boolean;
 }
 
 export interface RoutingLayout {
@@ -32,7 +40,7 @@ const TARGET_GAP = 72;
 const HUB_HEIGHT = 78;
 
 /** Left-hand hub, smooth fan-out, right-hand model pills. Positions stay stable on live updates. */
-export function routingLayout(view: GraphWebView): RoutingLayout {
+export function routingLayout(view: GraphWebView, options: RoutingOptions = { running: false }): RoutingLayout {
   const root = view.nodes.find(node => node.id === "route") ?? view.nodes[0];
   const targets = view.nodes.filter(node => node.id.startsWith("target:"));
   const height = Math.max(420, PADDING * 2 + (targets.length - 1) * TARGET_GAP + TARGET_HEIGHT);
@@ -43,7 +51,7 @@ export function routingLayout(view: GraphWebView): RoutingLayout {
     ...node, role: "target", x: 196, y: targets.length === 1 ? (height - TARGET_HEIGHT) / 2 : PADDING + index * gap, width: 144, height: TARGET_HEIGHT,
   }));
   const edges = pills.map(node => ({
-    from: hub.id, to: node.id, active: node.status === "active",
+    from: hub.id, to: node.id, active: node.status === "active", flowing: options.running && node.status === "active",
     path: `M ${hub.x + hub.width} ${height / 2} C 164 ${height / 2}, 160 ${node.y + TARGET_HEIGHT / 2}, ${node.x - 8} ${node.y + TARGET_HEIGHT / 2}`,
   }));
   return { nodes: [hub, ...pills], edges, width: WIDTH, height };

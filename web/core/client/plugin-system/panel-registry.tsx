@@ -15,6 +15,14 @@ export interface HostPanelProps {
   sessionId: string | null;
   rootLabel: string;
   view: WebView | null | undefined;
+  /**
+   * The session is mid-turn right now (`agent_start` → `agent_settled`).
+   *
+   * The sidebar's "running" mark reads the same value, so a panel that
+   * animates live work stops when the turn does instead of animating a
+   * session that is sitting idle.
+   */
+  running: boolean;
 }
 
 export type HostPanelComponent = ComponentType<HostPanelProps>;

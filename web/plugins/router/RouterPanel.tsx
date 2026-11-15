@@ -18,7 +18,7 @@ function RoutingEdges({ graph }: { graph: RoutingLayout }) {
     {[...graph.edges].sort((a, b) => Number(a.active) - Number(b.active)).map(edge => <g key={`${edge.from}-${edge.to}`}>
       <path d={edge.path} className={`router-edge${edge.active ? " is-live" : ""}`}
         data-from={edge.from} data-to={edge.to} data-active={edge.active} />
-      {edge.active ? <circle r="3.5" className="router-packet"><animateMotion dur="2.4s" repeatCount="indefinite" path={edge.path} /></circle> : null}
+      {edge.flowing ? <circle r="3.5" className="router-packet"><animateMotion dur="2.4s" repeatCount="indefinite" path={edge.path} /></circle> : null}
     </g>)}
   </svg>;
 }
@@ -46,8 +46,8 @@ function RoutingCanvas({ graph, selected, onSelect }: { graph: RoutingLayout; se
   </>;
 }
 
-function RoutingDiagram({ view }: { view: GraphWebView }) {
-  const graph = useMemo(() => routingLayout(view), [view]);
+function RoutingDiagram({ view, running }: { view: GraphWebView; running: boolean }) {
+  const graph = useMemo(() => routingLayout(view, { running }), [view, running]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const active = graph.nodes.find(node => node.role === "target" && node.status === "active");
   const selected = graph.nodes.find(node => node.id === selectedId);
@@ -58,7 +58,7 @@ function RoutingDiagram({ view }: { view: GraphWebView }) {
   </>;
 }
 
-export function RouterPanel({ open, onClose, sessionId, view }: HostPanelProps) {
+export function RouterPanel({ open, onClose, sessionId, view, running }: HostPanelProps) {
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented) onClose(); };
@@ -70,11 +70,11 @@ export function RouterPanel({ open, onClose, sessionId, view }: HostPanelProps) 
   return <>
     <div className="app-side-panel-scrim" onClick={onClose} aria-hidden="true" />
     <aside id="plugin-side-panel" className="app-side-panel router-panel" role="complementary" aria-label="Router panel">
-      <div className="app-side-panel-header"><span className="app-side-panel-title">Router <span className="router-header-tag">LIVE</span></span>
+      <div className="app-side-panel-header"><span className="app-side-panel-title">Router <span className={`router-header-tag${running ? "" : " is-idle"}`}>{running ? "LIVE" : "IDLE"}</span></span>
         <button type="button" className="app-side-panel-action-btn" onClick={onClose} aria-label="Close panel"><X size={16} /></button>
       </div>
       <div className="app-side-panel-body router-panel-body">
-        {view?.type === "graph" ? <RoutingDiagram key={`${sessionId}/${routeIdentity}`} view={view} /> : <p>Select a route model to visualize its decisions.</p>}
+        {view?.type === "graph" ? <RoutingDiagram key={`${sessionId}/${routeIdentity}`} view={view} running={running} /> : <p>Select a route model to visualize its decisions.</p>}
       </div>
     </aside>
   </>;
