@@ -504,9 +504,17 @@ test("add/update model discovers the server list, saves ticks and offers a famil
     await harness.manage("Add/update model");
     await harness.awaitView("provider-manager:pick-models");
     assert.equal(harness.lastView().id, "provider-manager:pick-models");
-    const labels = (harness.lastView().items as Array<{ label: string; values?: { modelId?: string } }>).map((item) => item.label);
-    assert.deepEqual(labels.sort(), ["[ ] fresh-model", "[x] existing-model"], "configured models arrive pre-ticked");
-    await harness.manage("[ ] fresh-model", { modelId: "fresh-model" });
+    const items = harness.lastView().items as Array<{ label: string; selected?: boolean; values?: { modelId?: string } }>;
+    assert.deepEqual(
+      items.map((item) => [item.label, item.selected]).sort(),
+      [["existing-model", true], ["fresh-model", false]],
+      "the row publishes its tick state; the label is the model id alone",
+    );
+    assert.ok(
+      !items.some((item) => item.label.includes("[")),
+      "selection is a control the host draws, not a marker in the text",
+    );
+    await harness.manage("fresh-model", { modelId: "fresh-model" });
     await harness.manage("Save selected models (2)");
     assert.equal(harness.lastView().id, "provider-manager:sync-offer", "a family with siblings offers the sync");
     await harness.manage("Copy to all accounts");

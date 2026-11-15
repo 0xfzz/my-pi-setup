@@ -83,6 +83,14 @@ export interface DialogItem {
   detail?: string;
   actionId: string;
   values?: Record<string, string>;
+  /**
+   * This row is currently chosen.
+   *
+   * A multi-select list (the model-discovery picker ticks models) publishes
+   * the state here and the host draws the control: the publisher says *what*
+   * is selected, never *how* it looks. Without it a row is a plain button.
+   */
+  selected?: boolean;
 }
 
 /** What a dialog field collects. */
@@ -233,7 +241,8 @@ function validateDialogItems(input: unknown): { items?: DialogItem[] } | { error
   for (const row of input) {
     if (row === null || typeof row !== "object" || typeof row.id !== "string"
       || typeof row.label !== "string" || typeof row.actionId !== "string"
-      || (row.detail !== undefined && typeof row.detail !== "string")) {
+      || (row.detail !== undefined && typeof row.detail !== "string")
+      || (row.selected !== undefined && typeof row.selected !== "boolean")) {
       return { error: "dialog items need id, label, actionId and optional detail strings" };
     }
     const id = row.id.slice(0, VIEW_MAX_CELL_CHARS);
@@ -249,6 +258,7 @@ function validateDialogItems(input: unknown): { items?: DialogItem[] } | { error
       actionId: row.actionId.slice(0, VIEW_MAX_CELL_CHARS),
       ...(row.detail !== undefined ? { detail: row.detail.slice(0, VIEW_MAX_CELL_CHARS) } : {}),
       ...(values.values !== undefined ? { values: values.values } : {}),
+      ...(row.selected !== undefined ? { selected: row.selected } : {}),
     });
   }
   return { items };

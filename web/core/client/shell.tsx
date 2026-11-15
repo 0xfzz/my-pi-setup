@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SidebarSimple } from "@phosphor-icons/react";
 import { usePiSession } from "./use-session.ts";
-import { settingsDialog } from "./model-settings.ts";
+import { needsSettingsDispatch, settingsDialog, settingsPluginIds } from "./model-settings.ts";
 import { useVisualViewport } from "./use-visual-viewport.ts";
 import { Transcript } from "./transcript.tsx";
 import { Composer } from "./composer.tsx";
@@ -235,6 +235,16 @@ export function AppShell() {
       setLogoutOpen(true);
       return;
     }
+    // A command that manages the model catalogue owns a page in the shared
+    // model-settings dialog. Dispatch it into that page rather than letting
+    // the extension publish a dialog with nowhere to render: the pane is its
+    // only home, so opening the pane IS running the command.
+    if ((session.sessionCommands ?? []).some((command) => command.name === name && command.managesModels === true)) {
+      setModelError(null);
+      setModelPickerOpen(true);
+      setModelSettingsPage(name);
+      return;
+    }
   };
 
   const openTreePicker = (): void => {
@@ -318,19 +328,22 @@ export function AppShell() {
     : (session.sessionCommands ?? []).find(
       (command) => command.name === modelSettingsPage && command.managesModels === true,
     );
-  const modelSettingsRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (modelPickerOpen === false || modelSettingsCommand === undefined) return;
-    if (modelSettingsRef.current === modelSettingsPage) return;
-    modelSettingsRef.current = modelSettingsPage;
-    void session.sendWebCommand(modelSettingsCommand.name, "");
-  }, [modelPickerOpen, modelSettingsCommand, modelSettingsPage, session]);
   // The command explicitly names its publisher. Dialog-only plugins need
   // not appear in the panel catalogue, and another popup is never this page.
   const modelSettingsDialog = useMemo(
     () => settingsDialog(modelSettingsCommand, session.pluginViews),
     [modelSettingsCommand, session.pluginViews],
   );
+  const modelSettingsRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (modelPickerOpen === false || modelSettingsCommand === undefined) return;
+    if (modelSettingsRef.current === modelSettingsPage) return;
+    // A page whose extension is already mid-wizard renders what it published.
+    // Dispatching again would restart the flow and drop the user's answers.
+    if (!needsSettingsDispatch(modelSettingsDialog)) return;
+    modelSettingsRef.current = modelSettingsPage;
+    void session.sendWebCommand(modelSettingsCommand.name, "");
+  }, [modelPickerOpen, modelSettingsCommand, modelSettingsDialog, modelSettingsPage, session]);
   // The wizard's own close (Cancel, or Save) — its view goes `open: false` —
   // lands back on the picker, the way the TUI's editor closes to its menu. A
   // view that has not arrived yet is a dispatch in flight, not a close.
@@ -355,18 +368,14 @@ export function AppShell() {
     (command) => command.managesModels === true,
   );
 
-  const settingsPluginIds = (session.sessionCommands ?? []).flatMap(
-    (command) => command.managesModels && command.settingsPlugin ? [command.settingsPlugin] : [],
-  );
+  // A settings plugin's dialog has exactly one home (the model-settings pane),
+  // so the standalone layer never draws it — whether or not the pane is open.
+  // Suppression is unconditional on purpose: a dialog the pane owns must not
+  // pop out as a floating modal when the pane closes. Closing the pane closes
+  // the flow; reopening the page renders whatever the extension published next
+  // (and does not re-dispatch, so an in-flight wizard is not restarted).
+  const suppressedDialogPlugins = settingsPluginIds(session.sessionCommands);
   const closeModelSettings = (): void => {
-    setDismissedDialogs((previous) => {
-      const dismissed = new Map(previous);
-      for (const pluginId of settingsPluginIds) {
-        const dialog = settingsDialog({ settingsPlugin: pluginId }, session.pluginViews);
-        if (dialog !== undefined) dismissed.set(dialog.view.id ?? pluginId, session.pluginViews[pluginId]);
-      }
-      return dismissed;
-    });
     setModelPickerOpen(false);
     setModelError(null);
     setModelSettingsPage("models");
@@ -885,7 +894,7 @@ export function AppShell() {
         pluginViews={session.pluginViews}
         sessionId={session.selectedId}
         dismissed={dismissedDialogs}
-        {...(modelPickerOpen ? { suppressed: settingsPluginIds } : {})}
+        suppressed={suppressedDialogPlugins}
         onDismiss={(dialogId, view) => {
           setDismissedDialogs((prev) => new Map(prev).set(dialogId, view));
         }}

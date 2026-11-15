@@ -50,15 +50,20 @@ test("every discovery view survives the dialog validator", () => {
   }
 });
 
-test("the picker marks ticks, caps rows and never exposes a secret", () => {
+test("the picker publishes tick state, caps rows and never exposes a secret", () => {
   const many = Array.from({ length: DISCOVERY_ROW_CAP + 5 }, (_, index): DiscoveredModel => ({ id: `m-${index}` }));
   const view = discoveryPickerView(state(many, ["m-0"]));
   const result = validateView(view);
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.equal(view.items?.length, DISCOVERY_ROW_CAP);
-  assert.match(view.items?.[0]?.label ?? "", /^\[x\] m-0$/);
-  assert.match(view.items?.[1]?.label ?? "", /^\[ \] m-1$/);
+  // Selection is data the host draws a control for; the label is the model id
+  // alone, so no `[x]`/`[ ]` marker reaches the text or a screen reader.
+  assert.equal(view.items?.[0]?.label, "m-0");
+  assert.equal(view.items?.[0]?.selected, true);
+  assert.equal(view.items?.[1]?.label, "m-1");
+  assert.equal(view.items?.[1]?.selected, false);
+  assert.ok(!view.items?.some((item) => /[[\]]/.test(item.label)), "no ASCII markers in any label");
   assert.ok(view.lines?.some((line) => line.startsWith(`Showing the first ${DISCOVERY_ROW_CAP}`)));
   assert.ok(!view.lines?.some((line) => line.startsWith("Filter:")), "no filter line when the filter is empty");
   const filtered = discoveryPickerView({ ...state(many, ["m-0"]), filter: "m-1" });

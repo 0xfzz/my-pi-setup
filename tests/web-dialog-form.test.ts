@@ -55,6 +55,21 @@ test("clickable dialog items carry bounded action values without exposing arbitr
   assert.equal(validateView({ type: "dialog", items: [{ ...items[0], values: { id: 42 } }] }).ok, false);
 });
 
+test("a row's selected state survives validation and must be a boolean", () => {
+  const row = { id: "m-1", label: "m-1", actionId: "manage", selected: true };
+  const result = validateView({ type: "dialog", items: [row, { ...row, id: "m-2", selected: false }] });
+  assert.equal(result.ok, true);
+  if (result.ok && result.view.type === "dialog") {
+    assert.deepEqual(result.view.items?.map((item) => item.selected), [true, false]);
+  }
+  // A row that publishes no state stays a plain button: the key is absent, not
+  // defaulted, so the host knows not to draw a selection control.
+  const plain = validateView({ type: "dialog", items: [{ id: "m-1", label: "m-1", actionId: "manage" }] });
+  assert.equal(plain.ok, true);
+  if (plain.ok && plain.view.type === "dialog") assert.equal("selected" in (plain.view.items?.[0] ?? {}), false);
+  assert.equal(validateView({ type: "dialog", items: [{ ...row, selected: "yes" }] }).ok, false);
+});
+
 test("dialog items reject ambiguous identities, dead actions and oversized lists", () => {
   const item = { id: "row", label: "Row", actionId: "select" };
   for (const items of [[item, item], [{ ...item, id: "" }], [{ ...item, actionId: " " }], [{ ...item, label: "" }], Array.from({ length: 201 }, (_, index) => ({ ...item, id: `row-${index}` }))]) {

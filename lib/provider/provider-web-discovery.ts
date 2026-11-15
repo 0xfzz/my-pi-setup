@@ -12,8 +12,9 @@ import {
  * The TUI picker owns the screen, so it can track ticks locally. The web
  * picker is a published dialog: every tick is an action round-trip and the
  * selection lives in the publishing extension, which republishes the list
- * with new markers. Unticking never removes a model — removal is the
- * separate "Remove model" screen — so a search filter cannot destroy data.
+ * with the rows' `selected` state. Unticking never removes a model — removal
+ * is the separate "Remove model" screen — so a search filter cannot destroy
+ * data.
  */
 
 export const DISCOVERY_ROW_CAP = 200;
@@ -97,10 +98,13 @@ export function discoveryPickerView(state: DiscoveryState, options: { problem?: 
     input: { placeholder: "Filter by model id or name" },
     items: shown.map((model) => ({
       id: model.id,
-      label: `${state.selected.has(model.id) ? "[x]" : "[ ]"} ${model.id}`,
+      label: model.id,
       ...(modelDetail(model) !== undefined ? { detail: modelDetail(model)! } : {}),
       actionId: PROVIDERS_MANAGE_ACTION,
       values: { modelId: model.id },
+      // The host renders the tick control; a `[x]` in the label would be text
+      // a screen reader reads out and a style cannot reach.
+      selected: state.selected.has(model.id),
     })),
     actions: [
       action(`Save selected models (${state.selected.size})`, { tone: "primary" }),

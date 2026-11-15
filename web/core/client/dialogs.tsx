@@ -75,6 +75,17 @@ export function SidebarDialog({
       <div className="app-dialog wide" role="dialog" aria-modal="true" aria-label={title}>
         <div className="app-dialog-head">
           <span className="app-dialog-title">{title}</span>
+          {/* Every other dialog in the app closes from this X. The pane holds a
+              wizard whose only home is this frame, so it needs the same visible
+              way out — Escape and the backdrop are not discoverable. */}
+          <button
+            type="button"
+            className="app-dialog-close"
+            aria-label="Close dialog"
+            onClick={onClose}
+          >
+            <X size={14} />
+          </button>
         </div>
         <div className="app-dialog-columns">
           <div className="app-dialog-sidebar" role="tablist" aria-label={`${title} pages`}>
@@ -1487,10 +1498,19 @@ export function PluginDialog({
                 <button
                   key={item.id}
                   type="button"
-                  className="app-dialog-item app-plugin-dialog-item"
+                  className={`app-dialog-item app-plugin-dialog-item${item.selected === undefined ? "" : " app-dialog-item-option"}${item.selected === true ? " is-selected" : ""}`}
                   disabled={busy !== null}
+                  /* A row that publishes its state is an option in a multi-select
+                     list: the host says whether it is chosen, so a screen reader
+                     (and the styling) never depends on a marker in the label. */
+                  {...(item.selected === undefined ? {} : { "aria-pressed": item.selected })}
                   onClick={() => void runAction({ id: item.actionId, label: item.label }, item.values)}
                 >
+                  {item.selected === undefined ? null : (
+                    <span className="app-dialog-item-check" aria-hidden="true">
+                      {item.selected ? <Check size={12} weight="bold" /> : null}
+                    </span>
+                  )}
                   <span className="app-dialog-item-id">{item.label}</span>
                   {item.detail !== undefined ? <span className="app-dialog-item-provider">{item.detail}</span> : null}
                 </button>

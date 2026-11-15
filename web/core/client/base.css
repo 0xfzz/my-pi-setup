@@ -1349,6 +1349,47 @@ a:focus-visible {
   border-color: var(--border);
 }
 
+/* An option row: the host draws the selection control, so the published label
+   is the model's name and nothing else. */
+.app-dialog-item-option {
+  flex-direction: row;
+  align-items: center;
+  gap: 9px;
+}
+
+.app-dialog-item-option .app-dialog-item-id {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-dialog-item-option .app-dialog-item-provider {
+  margin-left: auto;
+  max-width: 55%;
+}
+
+.app-dialog-item-check {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--accent);
+  background: var(--bg-input);
+}
+
+.app-dialog-item-option.is-selected {
+  color: var(--fg);
+}
+
+.app-dialog-item-option.is-selected .app-dialog-item-check {
+  border-color: var(--accent);
+}
+
 .app-dialog-item.is-active {
   background: var(--bg-input);
   color: var(--fg);
