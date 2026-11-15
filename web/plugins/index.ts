@@ -31,7 +31,7 @@ export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [
 
 export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {
   "account-router":
-    "Virtual model fallback chains and multi-account credential rotation; internal routing logic with no persistent view",
+    "Virtual model fallback chains, multi-account credential rotation and prompt-cache-aware routing; the routing view is TUI-only (/router status, /router why) and has no web surface yet",
   agent:
     "Parent delegation engine, tool dispatch, and child lifecycle tracking; no persistent web view",
   "antigravity-accounts":

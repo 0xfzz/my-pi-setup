@@ -7,7 +7,8 @@ Command: **`/router`**. Routes each request to any registered provider/model, an
 ```text
 /router                    # the route editor (TUI); the status report elsewhere
 /router status             # routes, policies and pools as text
-/router accounts [pool]    # per-account health
+/router accounts [pool]    # per-account health and prompt-cache warmth
+/router why                # why the last requests went where they did
 /router use <pool> <id>    # pin a pool to one account
 /router reset [pool]       # clear failures, cooldowns and pins
 /router reload             # re-read config files
@@ -29,11 +30,13 @@ Config is read from the global `<agent-dir>/account-router.json` and then the pr
   ],
   "pools": {
     "ag": { "provider": "antigravity", "source": "antigravity-accounts",
-            "strategy": "round-robin", "cooldownMs": 60000 },
+            "strategy": "round-robin", "cacheAffinity": "warm", "cooldownMs": 60000 },
     "or": { "provider": "openrouter", "strategy": "least-recently-used",
             "accounts": [{ "id": "personal", "apiKey": "$OPENROUTER_KEY_1" },
                          { "id": "work", "apiKey": "$OPENROUTER_KEY_2" }] }
-  }
+  },
+  "cache": { "horizon": 3, "minCacheableTokens": 1024,
+             "ttlMs": { "anthropic": 300000, "*": 300000 } }
 }
 ```
 
@@ -47,6 +50,7 @@ Config is read from the global `<agent-dir>/account-router.json` and then the pr
 | `round-robin` | Rotate the head on each user turn; the cursor rides in the router state. |
 | `cheapest` | Ascending catalog price (input + output). A model the catalog cannot price sorts last, and equal prices keep declaration order. |
 | `last-good` | The model that answered the previous turn goes first (last known good provider). |
+| `cache` | Ascending *expected* cost: a target that still holds this conversation's prompt cache is kept unless a cheaper one repays its cache write inside `cache.horizon`. On a cold chain it is exactly `cheapest`. |
 
 **Triggers** (`when`, default `turn`) decide whether that ordering is applied again:
 
@@ -58,6 +62,71 @@ Config is read from the global `<agent-dir>/account-router.json` and then the pr
 | `overflow` | Like `failure`, but a retry moves on only after a context overflow. |
 
 Ordering happens before advancing, so a `cheapest` route cannot re-pick the model that just failed for being cheapest. A trigger's quota/overflow condition is judged from the failed request's own error message, which is the only place it is visible. `fastest` is deliberately absent: the extension only wraps pooled requests, so it cannot measure latency for a plain route target, and a method that guessed would be worse than none.
+
+## Cache-aware routing
+
+A routing decision does not cost the model's price; it costs
+`price × (is the prefix still cached there?)`. Providers bill a cache read at
+about 10% of the input price and a cache write at about 125%, so re-sending a
+60k-token conversation to a cold target is roughly **12× the warm cost**. Two
+methods and one pool key exist because of that.
+
+**What the router observes.** Every finished message already reports
+`cacheRead`/`cacheWrite`, so no extra request is made. The router folds them into
+a ledger per conversation and per `(account, model)` — a cache is scoped to the
+account that wrote it, so two accounts of one provider are two entries. It also
+learns the provider's TTL from what it sees: a hit proves the entry lived at
+least that long, and a miss on an *unchanged* prefix proves it did not live
+longer. The ledger rides in the virtual model's own session state, so a resumed
+branch stays warm-aware.
+
+**`method: "cache"`.** With a warm target `t` and a candidate `u`:
+
+```text
+stay = H · read(t)                    move = write(u) + (H − 1) · read(u)
+```
+
+The route moves only when `move < stay`. At the default `cache.horizon` of 3
+turns that means a candidate has to be about **5× cheaper** (4.8× exactly) before
+a warm target is abandoned: a 1.2× cheaper model needs 57 warm turns to repay one
+write, a 2× one needs 11.5. With nothing warm the comparison degenerates to
+price, so the method behaves like `cheapest` until a cache exists.
+
+**`pools.<name>.cacheAffinity`.** `"warm"` keeps the account that holds the
+cache; `"off"` rotates as configured. Unset follows the strategy's intent — warm
+for `sticky`/`priority`, off for `round-robin`/`least-recently-used` — so a pool
+that exists to spread quota keeps spreading until it opts in. A cooling or
+failed account is dropped first: correctness beats cache.
+`pools.<name>.rotateAfterRequests` bounds how long one account is held: after
+that many consecutive requests the pool moves on once, so affinity cannot starve
+the accounts it is not using.
+
+| `cache` key | Default | Meaning |
+| --- | --- | --- |
+| `horizon` | `3` | Turns a switch must repay itself over. `1` never leaves a warm target. |
+| `minCacheableTokens` | `1024` | Below this prompt size the provider would not cache it, so cache logic is off. |
+| `ttlMs.<provider>` / `"*"` | `300000` | TTL prior; an observed miss lowers it. |
+| `readRatio` / `writeRatio` | `0.1` / `1.25` | Used only when the catalog reports no cache prices. |
+
+`cache` is one document, not a per-name map: a project file that omits it does
+not reset the global one.
+
+**Warnings.** `/router status` and the editor flag a policy that fights the
+cache, because the cost is invisible in a request:
+
+| Config | Warning |
+| --- | --- |
+| `method: "round-robin"` + `when: "turn"` | rotates the head every turn; each turn re-writes the prompt cache (≈12× prompt cost) |
+| `method: "cheapest"` + 2 or more targets | a price gap under ~5× costs more in cache re-writes than it saves; consider `method: "cache"` |
+
+**Visibility.** `/router status` prints warmth per target and per account
+(`warm 58k · 2m left · 94% hit`, `cold · last 6m ago`, `no cache` when the
+provider reports none), and `/router why` explains the last 32 decisions,
+including the cache-driven *non*-switch that would otherwise be invisible:
+
+```text
+2m ago · auto · user · → primary/main-model · stayed: cache warm (warm 58k · 3m left · 94% hit)
+```
 
 **The editor.** Bare `/router` in the TUI opens the routes themselves:
 
@@ -96,4 +165,4 @@ A pool whose `provider` names an **account family** (`"provider": "openrouter"` 
 
 Route targets and pools are additive to the existing `/provider` wizard: use `/provider` to define a custom endpoint, then a pool or route to share or fall back across it. Errors are reported, never silently ignored: `/router` lists config warnings and the last error, and a route with no usable target fails the request with the reason instead of picking something arbitrary.
 
-Verification: `node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/provider/account-pools.test.ts tests/provider/account-sources.test.ts tests/provider/model-routes.test.ts tests/provider/router-config-write.test.ts tests/provider/router-settings.test.ts tests/provider/router-settings-popup.test.ts tests/account-router-runtime.test.ts` covers config validation and projects-over-global merging, every selection strategy, cooldowns, failure budgets, exhaustion, state persistence and permissions, corrupt-state recovery, static/`antigravity-accounts` credential resolution, token refresh and re-login errors, routes and fallback chains, **the four routing methods and the full trigger matrix**, the route writer (pools and unknown keys preserved, broken files refused, atomic writes), the editor popup (keys, refusals, narrow terminals), plus **real Pi sessions** proving that a pool rotates accounts across requests, that a `429` cools one account and the next request succeeds on another, that a route skips an unavailable provider, that `cheapest` outranks declaration order, that a `round-robin` route rotates across user turns, that `when: "failure"` keeps the answering model, that a deleted route is unregistered, and that `/router` reports status headlessly. Tests use fixture credentials and stub providers; no real inference or account is used.
+Verification: `node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/provider/account-pools.test.ts tests/provider/account-sources.test.ts tests/provider/model-routes.test.ts tests/provider/cache-routing.test.ts tests/provider/route-trace.test.ts tests/provider/router-config-write.test.ts tests/provider/router-settings.test.ts tests/provider/router-settings-popup.test.ts tests/account-router-runtime.test.ts` covers config validation and projects-over-global merging, every selection strategy, cooldowns, failure budgets, exhaustion, state persistence and permissions, corrupt-state recovery, static/`antigravity-accounts` credential resolution, token refresh and re-login errors, routes and fallback chains, **the five routing methods and the full trigger matrix**, the route writer (pools and unknown keys preserved, broken files refused, atomic writes), the editor popup (keys, refusals, narrow terminals), plus **real Pi sessions** proving that a pool rotates accounts across requests, that a `429` cools one account and the next request succeeds on another, that a route skips an unavailable provider, that `cheapest` outranks declaration order, that a `round-robin` route rotates across user turns, that `when: "failure"` keeps the answering model, that a deleted route is unregistered, that `/router` reports status headlessly, that a cache route keeps a warm target until a cheaper one repays its write, that `cacheAffinity` holds an account across prompts until the TTL lapses (and that a quota wall still moves at once), and that `/router why` explains a cache non-switch and a failed fallback. Tests use fixture credentials and stub providers; no real inference or account is used.

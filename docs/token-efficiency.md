@@ -5,7 +5,7 @@
 | Field | Value |
 | --- | --- |
 | **Status** | current policy |
-| **Scope** | `lib/dynamic-prompt.ts`, `lib/schema.ts`, `extensions/modes.ts`, `extensions/account-router.ts` |
+| **Scope** | `lib/dynamic-prompt.ts`, `lib/schema.ts`, `extensions/modes.ts`, `extensions/account-router.ts`, `lib/provider/cache-routing.ts` |
 | **Related** | [VCC](vcc.md), [accounts and router](accounts.md) |
 
 A request is billed as `tools + system prompt + messages`, in that order, and a
@@ -27,9 +27,19 @@ re-bills everything after it. The rules below follow from that.
   `enum`, instead of an `anyOf` of `const`s.
 - **Small windows get a compact prompt.** Below 48k context tokens the snippet cap
   drops to 60 characters and per-tool guideline bullets are omitted.
-- **A pool keeps its account for a whole agent run.** Rotation (round-robin, LRU)
-  happens between prompts, because a cache is scoped to the account that wrote it.
-  A failing or cooling account is dropped at once.
+- **A pool keeps its account while the cache is warm.** Rotation (round-robin,
+  LRU) happens between prompts, because a cache is scoped to the account that
+  wrote it — and between prompts is exactly when it is still warm. Within one
+  agent run the pool keeps the answering account; across prompts `cacheAffinity`
+  keeps it too, for as long as the entry can still be read. A failing or cooling
+  account is dropped at once: correctness beats cache.
+- **Routing counts the cache, not just the price.** A routing decision costs
+  `price × (is the prefix still cached there?)`, and a cache write costs ~12× a
+  read. `method: "cache"` therefore keeps a warm target unless a candidate is
+  ~5× cheaper (the gap that repays one write inside `cache.horizon` turns), and
+  `method: "round-robin"` with `when: "turn"` is warned about in `/router status`
+  for re-writing the prefix every turn. See
+  [accounts and router](accounts.md#cache-aware-routing).
 
 ## Breakpoints
 

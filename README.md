@@ -143,7 +143,7 @@ diff record, not documentation.
 | [Web plugin catalog](docs/web-plugin-catalog.md) | Every extension point a web plugin can use, with stability, version, and protection. Generated. |
 | [Web plugin architecture](docs/web-plugin-architecture.md) | The boundary rule — web = interface, pi extension = behavior — the contracts, the lifecycle, and the enforced import graph. |
 | [Providers](docs/providers.md) | A walkable editor for providers and their models in the TUI, plus dialog commands, including compatibility flags. |
-| [Accounts](docs/accounts.md) | Pooling several accounts per provider and routing each request, with `/router` as an editor for the routes, their routing method and when they re-decide. |
+| [Accounts](docs/accounts.md) | Pooling several accounts per provider and routing each request, with `/router` as an editor for the routes, their routing method, when they re-decide, and which side still holds the prompt cache. |
 | [Antigravity](docs/antigravity.md) | Linking Google accounts as `antigravity-1…n` providers. |
 | [Verification](docs/verification.md) | What the suites cover, what they mock, and how to run them. |
 | [References](docs/references.md) | Upstream projects and prior art, and what this package adds on top. |

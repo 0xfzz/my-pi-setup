@@ -7,7 +7,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | draft — for review |
+| **Status** | implemented — see §9 for the commits |
 | **Date** | 2026-11-15 |
 | **Owner** | Faiz |
 | **Branch** | `feat/porting-router-extension-to-web` |
@@ -344,14 +344,27 @@ adds *attribution*, not another meter.
 
 Each phase is one commit, gate-green (`npm run tidy`), reversible on its own.
 
-| # | Commit | Contents |
-| --- | --- | --- |
-| P0 | `feat(router): observe prompt-cache usage per target` | ledger + `observe`/`isWarm` + status column + tests. No decision change. |
-| P1 | `feat(router): cache-aware routing method` | cost model + `method: "cache"` + break-even tests. |
-| P2 | `feat(router): cache-aware pool affinity` | `selectAccount` warm option, `cacheAffinity`, `rotateAfterRequests`. |
-| P3 | `feat(router): warn about cache-hostile policies` | `routeIssues` findings + editor rows. |
-| P4 | `feat(router): /router why` | decision ring buffer + command. |
-| P5 | `docs: cache-aware routing` | `accounts.md`, `token-efficiency.md`, opt-out text. |
+| # | Commit | Contents | Landed as |
+| --- | --- | --- | --- |
+| P0 | `feat(router): observe prompt-cache usage per target` | ledger + `observe`/`isWarm` + status column + tests. No decision change. | `2fa208c` |
+| P1 | `feat(router): cache-aware routing method` | cost model + `method: "cache"` + break-even tests. | `94aee79` |
+| P2 | `feat(router): cache-aware pool affinity` | `selectAccount` warm option, `cacheAffinity`, `rotateAfterRequests`. | `e9bc0f0` |
+| P3 | `feat(router): warn about cache-hostile policies` | `routeIssues` findings + editor rows. | `a729127` |
+| P4 | `feat(router): /router why` | decision ring buffer + command. | `717ee11` |
+| P5 | `docs: cache-aware routing` | `accounts.md`, `token-efficiency.md`, opt-out text. | this commit |
+
+Delivered as specified, with two corrections found while implementing:
+
+- **The break-even algebra** in §5.3 ignored the candidate's own read in the
+  first turn. The crossing is `(write(u) − read(u)) / (read(t) − read(u))`, which
+  is 11.5 rather than 12.5 times the price gap; the table now shows the values
+  `switchVerdict` returns. The "~5× cheaper at a 3-turn horizon" rule of thumb is
+  unchanged (4.8× exactly).
+- **A pooled request reports the pool's provider, not the account** (F6 was
+  optimistic): `physical.provider` is the account id only when a provider is
+  registered under it. Warmth is therefore attributed to the account that
+  answered through the stream's own in-flight slot, which the message then
+  consumes. A plain target keys on its reported provider, as described.
 
 P0 and P1 are useful alone. P2 is the one with a quota-spend trade-off and ships
 last among the behaviour changes so it can be measured on its own.
