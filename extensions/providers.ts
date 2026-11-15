@@ -11,8 +11,7 @@ import {
   type ConfigSnapshot, type JsonObject, type ModelsConfig, type ProviderConfig,
 } from "../lib/provider/provider-config.ts";
 
-import { discoverModelDetails, discoveryAuth, DiscoveryError, modelsEndpoint, type DiscoveredModel } from "../lib/provider/provider-discovery.ts";
-import { providerKeyInput } from "../lib/provider/provider-key-input.ts";
+import { discoverModelDetails, discoveryAuth, DiscoveryError, modelsEndpoint, type DiscoveredModel } from "../lib/provider/provider-discovery.ts";import { providerKeyInput } from "../lib/provider/provider-key-input.ts";
 import { providerModelPicker } from "../lib/provider/provider-model-picker.ts";
 import { accountPlan, apiKeyFromInput, draftToProvider, withAccount, withoutModel } from "../lib/provider/provider-settings.ts";
 import { overlayRows, popupOverlayOptions } from "../lib/popup/frame.ts";
@@ -446,6 +445,18 @@ export default function providers(pi: ExtensionAPI) {
       }).catch((error: unknown) => {
         publishWebView(pi, PROVIDERS_PLUGIN_ID, unreadableFileView(error instanceof Error ? error.message : "Cannot read models.json."));
       });
+    },
+    discover: async (id) => {
+      if (process.argv.includes("--offline") || process.env.PI_OFFLINE === "1") {
+        throw new DiscoveryError("Discovery is disabled in offline mode.");
+      }
+      if (webContext === null) throw new DiscoveryError("Session context is gone; reopen Provider.");
+      const provider = (await readConfig(modelsFile())).config.providers[id];
+      if (provider === undefined) throw new DiscoveryError(`${id} is no longer configured.`);
+      // Validate protocol and destination before resolving credentials.
+      modelsEndpoint(provider);
+      const auth = await discoveryAuth(webContext.modelRegistry, id, provider);
+      return discoverModelDetails(provider, auth);
     },
   });
 

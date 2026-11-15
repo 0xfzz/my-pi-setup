@@ -636,6 +636,13 @@ optional `detail`, `actionId` and bounded `values`. Clicking a row uses the same
 plugin action pipeline as a button. This lets plugins supply interactive lists
 without adding subject-specific rendering or operations to the host.
 
+**Restarting the server rapidly trips the crash-loop guard.** Two process
+starts within 60s boot the plugin kernel in safe mode: only `core.*` plugins
+activate, `/api/plugins` hides the rest, and every plugin action answers 404
+"Plugin not found" while published views still render — so the UI looks alive
+but clicks do nothing. Space restarts at least a minute apart (or clearing the
+`boots` list in the plugin state file) restores normal activation.
+
 A dialog may also declare **`fields`** — a form of typed answers (`text`, a
 masked `secret`, or a `select` menu) — and a `submitsInput` action then
 carries them back as `values` (a name→value record), so a multi-step dialog

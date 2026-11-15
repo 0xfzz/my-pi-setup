@@ -62,6 +62,16 @@ That button replaces the list with connection and model steps in the same pane;
 **Cancel** returns to the list. No second popup is opened. The plugin owns the
 list, buttons and wizard; the core only provides the reusable container.
 
+**Add/update model** runs the TUI's discovery flow: it fetches the
+provider's own model list through the same guarded path (endpoint validated
+before credentials resolve, `!command` auth refused, 5s timeout), shows a
+multi-select picker with search (configured models pre-ticked), and writes
+the ticked models with the server-reported facts — missing context windows
+default to 128000 and are reported. Unticking never removes a model. For a
+numbered family it then offers to copy the saved list to sibling accounts,
+keeping each account's own key. A refused discovery explains itself and
+offers manual entry or retry.
+
 Click a provider row to manage its connection, models, account clones or removal.
 **Edit connection** preserves unseen fields and keeps authentication when the
 masked key field is blank. Endpoint changes that reuse authentication require a

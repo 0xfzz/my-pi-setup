@@ -3,6 +3,22 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer, type Server } from "node:http";
+
+/** Listen on an ephemeral loopback port; discovery tests must not race for one. */
+function listen(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close(() => resolve());
+    server.once("error", reject);
+  });
+}
 
 /**
  * The provider wizard on the web: one dialog step at a time.
@@ -24,6 +40,8 @@ interface Harness {
   signals: { modelChanges: number };
   /** Publish the wizard's first step. */
   start(): Promise<void>;
+  /** Wait until a view with this dialog id has been published. */
+  awaitView(id: string): Promise<void>;
   /** Answer the current step. */
   submit(value: string): Promise<void>;
   manage(label: string, values?: Record<string, string>): Promise<void>;
@@ -105,6 +123,13 @@ async function makeHarness(models: unknown = { providers: {} }): Promise<Harness
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
   };
+  const awaitView = async (id: string): Promise<void> => {
+    const deadline = Date.now() + 5_000;
+    while (!views.some((view) => view.id === id)) {
+      if (Date.now() > deadline) throw new Error(`no view with id ${id} was published`);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  };
   const act = async (actionId: string, values?: Record<string, string>, confirm?: string): Promise<void> => {
     const before = views.length;
     mockPi.events.emit(ACTION_EVENT, {
@@ -121,6 +146,7 @@ async function makeHarness(models: unknown = { providers: {} }): Promise<Harness
   return {
     views,
     signals,
+    awaitView,
     async start() {
       // The bridge asks for the announced command by name; the extension runs
       // it on the context it captured at session start.
@@ -450,6 +476,70 @@ test("confirmed provider removal returns to the list without deleting credential
   await harness.manage("Remove configuration");
   assert.equal(harness.lastView().id, "provider-wizard:home");
   assert.deepEqual(await harness.models(), { providers: { local: { name: "Local" } } });
+});
+
+test("add/update model discovers the server list, saves ticks and offers a family sync", async () => {
+  // A loopback OpenAI-style /models endpoint: discovery runs the same fetch
+  // path production uses, without leaving the machine or needing a key.
+  const seen: string[] = [];
+  const server = createServer((req, res) => {
+    seen.push(req.url ?? "");
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ data: [
+      { id: "existing-model", owned_by: "acme" },
+      { id: "fresh-model", context_length: 200000 },
+    ] }));
+  });
+  await listen(server);
+  const address = server.address();
+  assert.ok(address !== null && typeof address === "object");
+  const baseUrl = `http://127.0.0.1:${address.port}/v1`;
+  try {
+    const harness = await makeHarness({ providers: {
+      "acme-1": { name: "Acme", api: "openai-completions", baseUrl, apiKey: "pi-local", models: [{ id: "existing-model", name: "Existing", contextWindow: 64000, maxTokens: 4096 }] },
+      "acme-2": { name: "Acme 2", api: "openai-completions", baseUrl, apiKey: "$OTHER_KEY", models: [] },
+    } });
+    await harness.start();
+    await harness.manage("Acme (acme-1)", { providerId: "acme-1" });
+    await harness.manage("Add/update model");
+    await harness.awaitView("provider-manager:pick-models");
+    assert.equal(harness.lastView().id, "provider-manager:pick-models");
+    const labels = (harness.lastView().items as Array<{ label: string; values?: { modelId?: string } }>).map((item) => item.label);
+    assert.deepEqual(labels.sort(), ["[ ] fresh-model", "[x] existing-model"], "configured models arrive pre-ticked");
+    await harness.manage("[ ] fresh-model", { modelId: "fresh-model" });
+    await harness.manage("Save selected models (2)");
+    assert.equal(harness.lastView().id, "provider-manager:sync-offer", "a family with siblings offers the sync");
+    await harness.manage("Copy to all accounts");
+    assert.equal(harness.lastView().title, "Acme");
+    const providers = (await harness.models()).providers as Record<string, Record<string, unknown>>;
+    assert.ok(providers["acme-1"] && providers["acme-2"], "both accounts survive the sync");
+    const saved = (providers["acme-1"]!.models as Array<Record<string, unknown>>).find((model) => model.id === "fresh-model");
+    assert.equal(saved?.contextWindow, 200000, "the server-reported window is written");
+    assert.deepEqual(
+      (providers["acme-2"]!.models as Array<{ id: string }>).map((model) => model.id).sort(),
+      ["existing-model", "fresh-model"],
+      "the sibling received the same list",
+    );
+    assert.equal(providers["acme-2"]?.apiKey, "$OTHER_KEY", "sync never copies a credential");
+    assert.ok(seen.some((url) => url.startsWith("/v1/models")), "discovery hit the provider endpoint");
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("a refused discovery explains itself and falls back to manual entry", async () => {
+  const harness = await makeHarness({ providers: { acme: {
+    name: "Acme", api: "openai-completions", baseUrl: "http://127.0.0.1:9/v1", apiKey: "pi-local", models: [],
+  } } });
+  await harness.start();
+  await harness.manage("Acme", { providerId: "acme" });
+  await harness.manage("Add/update model");
+  await harness.awaitView("provider-manager:discovery-failed");
+  assert.equal(harness.lastView().id, "provider-manager:discovery-failed");
+  assert.match(linesOf(harness.lastView()).join(" "), /model list could not be fetched|HTTP|empty|fetch/);
+  assert.ok(!JSON.stringify(harness.lastView()).includes("pi-local"), "the refusal never echoes the credential");
+  await harness.manage("Enter model ID manually");
+  assert.equal(harness.lastView().title, "Add/update model", "manual entry opens the wizard");
 });
 
 test("an unreadable models.json is reported instead of overwritten", async () => {

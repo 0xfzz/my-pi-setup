@@ -6,7 +6,7 @@ import {
   type ProviderDraft,
 } from "./provider-settings.ts";
 
-export type ManagerScreen = "detail" | "edit" | "clone" | "remove" | "pick-model" | "remove-model" | "trust";
+export type ManagerScreen = "detail" | "edit" | "clone" | "remove" | "pick-model" | "remove-model" | "trust" | "pick-models" | "sync";
 export interface ProviderManagerState {
   id: string;
   screen: ManagerScreen;
@@ -80,6 +80,9 @@ export function providerManagerView(options: {
 function managerBody(state: ProviderManagerState, providers: Record<string, ProviderConfig>): Partial<DialogWebView> {
   const provider = providers[state.id] ?? {};
   const back = action("Back to provider");
+  // The discovery picker and the sync offer publish their own views; reaching
+  // this renderer means the state moved on, so show the provider again.
+  if (state.screen === "pick-models" || state.screen === "sync") return detailView(state, provider);
   if (state.screen === "detail") return detailView(state, provider);
   if (state.screen === "edit" || state.screen === "clone") {
     const plan = state.screen === "clone" ? providerAccountPlan(providers, state.id) : undefined;
