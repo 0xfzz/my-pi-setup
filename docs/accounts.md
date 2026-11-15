@@ -80,7 +80,7 @@ screens:
 | --- | --- |
 | Routes | One row per route: its policy, its chain, and anything wrong with it. |
 | Route | Name, method, re-decide trigger, and the chain — click a model to take it out. |
-| Models | The catalogue as a tick list. Ticked models keep their place; a ticked model past the dialog's 200-row cap stays listed. |
+| Models | The catalogue as a tick list, with a filter box for a 100-model catalogue. Ticked models keep their place — a tick stays listed even when the filter excludes it, and past the dialog's 200-row cap. |
 | Delete | The confirmation. A route is a file entry, so it is never removed on one click. |
 
 A new route is created from the same form: **New route** names it (`route-1` and
