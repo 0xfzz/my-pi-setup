@@ -592,7 +592,10 @@ catalogue it posted, not only in the scope, so a model outside the scope is
 selectable exactly as it is in the TUI's selector. A model changed in
 the terminal (its own `/model`, Ctrl+P) reaches the web at the next turn's
 `session_state` push, and the state the fetch-on-settle reads carries the
-same model so nothing resurrects a stale one.
+same model so nothing resurrects a stale one. The list itself is the attach
+snapshot's (`web_models`); a post sent before the attach opens is refused,
+and a session whose list never landed falls back to a one-row picker holding
+only the current model — the symptom of a dropped post, not of a scope.
 
 **The context-window meter** reads the same state, so the snapshot has to
 carry `contextUsage` and has to be posted *after* the attach stream opens:
@@ -600,7 +603,9 @@ the server has no bridge before that, refuses the post, and the meter — which
 only dashes when it has no reading — stays blank until a turn settles. The
 snapshot is posted on every (re)attach, and again on each `ui_sync`, so a
 browser attaching later sees the current reading rather than the one cached
-when the bridge opened.
+when the bridge opened. The command list (`web_commands`) rides the same
+attach snapshot for the same reason: a fresh bridge caches nothing, and the
+composer's palette reads that cache.
 
 **Extensions can open web dialogs too** — the web's extensibility surface:
 publish a `dialog` view (title, markdown body or lines, up to 8 actions,

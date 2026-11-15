@@ -407,6 +407,51 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     });
   };
 
+  // The session's dispatchable slash commands, for the web composer's palette.
+  const bridgeCommandList = (): Array<{ name: string; description?: string; web?: boolean }> => [
+    // pi core commands (extension, prompt templates, skills) — the web
+    // dispatches these as prompt text through the session's
+    // expandPromptTemplates path.
+    ...pi
+      .getCommands()
+      // The web-* registrations are dispatch targets for the bridge channel;
+      // the display name below carries them. Hidden picker resolvers never
+      // surface.
+      .filter((command) => !command.name.startsWith("web-"))
+      .map((command) => ({
+        name: command.name,
+        ...(command.description !== undefined ? { description: command.description } : {}),
+      })),
+    // web core commands — dispatched through the web's own bridge channel
+    // ({type: "web_command"}), never through pi's runner.
+    ...WEB_CORE_COMMANDS.map((command) => ({
+      name: command.name,
+      description: command.description,
+      web: true,
+    })),
+  ];
+
+  /**
+   * Everything the server caches per bridge: the state snapshot, the command
+   * list and the model list. A fresh bridge starts with all three empty and
+   * refuses a post sent before its attach opened (404), so this runs right
+   * after each attach — every re-attach included. Without it the server's
+   * cached model list stays null and the web picker falls back to a single
+   * row: the current model.
+   */
+  const postAttachSnapshot = (ctx: ExtensionContext, sessionId: string): void => {
+    // The state carries the context-window reading: without it the cached
+    // state keeps `contextUsage: null` and the browser's meter dashes.
+    void postBridgeState(sessionId, bridgeStateOf(ctx));
+    try {
+      bridgePoster?.post({ type: "web_commands", commands: bridgeCommandList() });
+      postModelsEvent(ctx);
+    } catch {
+      // A listing that cannot be built must never fail the attach; the
+      // picker falls back to the current model.
+    }
+  };
+
   // Apply a model reference to this session and push the fresh state to
   // the web; returns a user-facing message either way.
   const applyModelRef = async (ctx: ExtensionContext, ref: ModelRef): Promise<string> => {
@@ -450,48 +495,10 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       bridgeController = new AbortController();
       bridgePoster = createBridgePoster(sessionId);
       bridgePoster.start();
-      // The state snapshot is NOT posted here: the server has no bridge until
-      // the attach stream below opens, so the post would answer 404 and be
-      // dropped (see runBridgeStream).
-      // The session's dispatchable slash commands (extension, prompt
-      // templates, skills), so the web composer can offer them.
-      try {
-        bridgePoster.post({
-          type: "web_commands",
-          commands: [
-            // pi core commands (extension, prompt templates, skills) — the
-            // web dispatches these as prompt text through the session's
-            // expandPromptTemplates path.
-            ...pi
-              .getCommands()
-              // The web-* registrations are dispatch targets for the bridge
-              // channel; the display name below carries them. Hidden
-              // picker resolvers never surface.
-              .filter((command) => !command.name.startsWith("web-"))
-              .map((command) => ({
-                name: command.name,
-                ...(command.description !== undefined ? { description: command.description } : {}),
-              })),
-            // web core commands — dispatched through the web's own bridge
-            // channel ({type: "web_command"}), never through pi's runner.
-            ...WEB_CORE_COMMANDS.map((command) => ({
-              name: command.name,
-              description: command.description,
-              web: true,
-            })),
-          ],
-        });
-      } catch {
-        // A failed listing must never fail the attach.
-      }
-      // The model picker's data and the live model/thinking state: the web
-      // chip and selector start correct and stay synced with this session.
-      try {
-        postModelsEvent(ctx);
-        postSessionState(ctx);
-      } catch {
-        // Model listing is best-effort; the picker falls back to fetching.
-      }
+      // Nothing is posted here: the server has no bridge until the attach
+      // stream below opens, so every post would answer 404 and be dropped.
+      // The attach snapshot (state, commands, models) is posted there, where
+      // the bridge provably exists.
       void runBridgeStream(ctx, sessionId, bridgeController.signal, generation);
     } catch (error) {
       // The bridge must never take the pi session down with it.
@@ -528,13 +535,8 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
         }
         retryDelayMs = 1_000;
         bridgeStreaming = true;
-        // The bridge exists from here on, so the state snapshot can land. It
-        // carries the context-window reading: without it the server's cached
-        // state keeps `contextUsage: null`, and that is what the browser's
-        // meter reads until a turn settles — the bar rendered em-dashes for a
-        // whole session. Every (re)attach needs it: a fresh bridge starts with
-        // no reading, and the reading cannot be derived server-side.
-        void postBridgeState(sessionId, bridgeStateOf(ctx));
+        // The bridge exists from here on, so the attach snapshot can land.
+        postAttachSnapshot(ctx, sessionId);
         if (!firstAttach) {
           // The stream survived a drop: the web may have missed events while
           // we were away, so its streams reload their history.
