@@ -45,6 +45,8 @@ export type RouterSettingsView = {
   shadowed: readonly RouterRow[];
   /** Pool names, so a target can be pointed at one. */
   pools: readonly string[];
+  /** The last routing decision, so the header can say why the last request went where it did. */
+  trace?: string;
   errors: readonly string[];
 };
 

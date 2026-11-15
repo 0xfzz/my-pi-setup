@@ -925,3 +925,51 @@ test("/router status warns about a route policy that re-writes the prompt cache 
     },
   }));
 });
+
+test("/router why explains a cache non-switch and a fallback, and forgets another branch's decisions", { timeout: 20000 }, async () => {
+  await withSession(async ({ registry, session, dir }) => {
+    const runner = session._extensionRunner;
+    const messages = [{ role: "user", content: [{ type: "text", text: "hello" }] }];
+    const warmup = registry.getModel("router", "warmup")!;
+    for (const _ of [1, 2]) {
+      const message = await registry.completeSimple(warmup, { messages });
+      await runner.emit({ type: "message_end", message });
+    }
+    const auto = registry.getModel("router", "auto")!;
+    await (registry as any).resolveModel(auto, messages, { reason: "user", thinkingLevel: "off" });
+    const trace = await routerText(session, "why", dir);
+    assert.match(trace, /auto · user · → primary\/main-model · stayed: cache warm/, "the non-switch is explained");
+    // A branch switch made other decisions; the trace must not claim them.
+    await runner.emit({ type: "session_tree" });
+    assert.match(await routerText(session, "why", dir), /No routing decisions yet/);
+  }, (seen) => ({
+    providers: [
+      { name: "primary", config: fakeProvider("primary", ["main-model"], seen, { cache: { promptTokens: 60_000 }, cost: { input: 2, output: 0 } }).config },
+      { name: "secondary", config: fakeProvider("secondary", ["backup-model"], seen, { cost: { input: 1, output: 0 } }).config },
+    ],
+    config: {
+      routes: [
+        { name: "warmup", targets: ["primary/main-model"] },
+        { name: "auto", method: "cache", targets: ["primary/main-model", "secondary/backup-model"] },
+      ],
+    },
+  }));
+});
+
+test("/router why names the target that could not serve", { timeout: 20000 }, async () => {
+  await withSession(async ({ registry, session, dir }) => {
+    const virtual = registry.getModel("router", "auto")!;
+    // Routing fails loudly; the trace is what makes the failure explainable.
+    await assert.rejects(
+      async () => (registry as any).resolveModel(virtual, [{ role: "user", content: [{ type: "text", text: "go" }] }],
+        { reason: "user", thinkingLevel: "off" }),
+      /provider "nowhere" is not registered/,
+    );
+    const trace = await routerText(session, "why", dir);
+    assert.match(trace, /→ no target/);
+    assert.match(trace, /skipped nowhere\/ghost \(provider "nowhere" is not registered/);
+  }, (_seen) => ({
+    providers: [],
+    config: { routes: [{ name: "auto", targets: ["nowhere/ghost"] }] },
+  }));
+});

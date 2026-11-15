@@ -67,6 +67,9 @@ import {
   readRouteDoc, removeRoute, routeSources, routerConfigPaths, saveRoute,
 } from "../lib/provider/router-config.ts";
 import { ensureProviderInScope } from "../lib/provider/router-scope.ts";
+import {
+  describeDecision, formatTrace, pushDecision, type DecisionRecord,
+} from "../lib/provider/route-trace.ts";
 import { RouterSettingsPopup } from "../lib/ui/router-settings.ts";
 import { overlayRows, popupOverlayOptions } from "../lib/popup/frame.ts";
 import { providerModelPicker } from "../lib/provider/provider-model-picker.ts";
@@ -166,6 +169,8 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
   /** The request being compared: its prefix, and the one before it. */
   let lastFingerprint: Fingerprint | undefined;
   let previousFingerprint: Fingerprint | undefined;
+  /** The last few decisions, for `/router why`. Memory only: a hint, not state. */
+  let trace: DecisionRecord[] = [];
 
   const statePath = agentStatePath(agentDir);
 
@@ -215,6 +220,8 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     handedOut = undefined;
     lastFingerprint = undefined;
     previousFingerprint = undefined;
+    // Another branch made other decisions.
+    trace = [];
   };
 
   const persist = (ctx: ExtensionContext): void => {
@@ -820,8 +827,6 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     const resolved = resolveTarget(ctx, route, target);
     if ("error" in resolved) return undefined;
     const cost = resolved.model.cost;
-    const parsed = parseModelRef(target.model);
-    const warmth = bestWarmth(cacheKeysOf(route, target));
     return {
       cost: {
         input: cost?.input ?? Number.POSITIVE_INFINITY,
@@ -829,12 +834,47 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
         ...(typeof cost?.cacheRead === "number" ? { cacheRead: cost.cacheRead } : {}),
         ...(typeof cost?.cacheWrite === "number" ? { cacheWrite: cost.cacheWrite } : {}),
       },
-      warm: isWarm(warmth, {
-        now,
-        ttlMs: ttlFor(cacheConfig, parsed?.provider ?? ""),
-        minCacheableTokens: cacheConfig.minCacheableTokens,
-      }),
+      warm: targetIsWarm(route, target, now),
     };
+  };
+
+  /** Why the `cache` method kept the warm target or moved off it. */
+  const cacheNote = (
+    route: RouteConfig,
+    chain: readonly RouteTarget[],
+    chosen: RouteTarget | undefined,
+    now: number,
+  ): string | undefined => {
+    if (chosen && targetIsWarm(route, chosen, now)) {
+      return `stayed: cache warm (${describeTargetCache(route, chosen, now)})`;
+    }
+    const warm = chain.filter((target) => targetIsWarm(route, target, now));
+    return warm.length ? `left warm ${warm.map(describeTarget).join(", ")}` : undefined;
+  };
+
+  /** Note one decision for `/router why`, with the cache fact that drove it. */
+  const recordDecision = (input: {
+    route: RouteConfig;
+    reason: DecisionRecord["reason"];
+    chain: readonly RouteTarget[];
+    chosen?: RouteTarget;
+    rejected: readonly { target: string; why: string }[];
+    error?: string;
+    now: number;
+  }): void => {
+    const cache = routeMethod(input.route) === "cache"
+      ? cacheNote(input.route, input.chain, input.chosen, input.now)
+      : undefined;
+    trace = pushDecision(trace, {
+      at: input.now,
+      route: input.route.name,
+      reason: input.reason,
+      chosen: input.chosen ? describeTarget(input.chosen) : "",
+      chain: input.chain.map(describeTarget),
+      ...(cache ? { cache } : {}),
+      rejected: input.rejected,
+      ...(input.error ? { error: input.error } : {}),
+    });
   };
 
   const choose = (
@@ -859,18 +899,27 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
         }
       }
     }
-    for (const target of candidateChain(ctx, route, request, previous, failed, now)) {
+    const chain = candidateChain(ctx, route, request, previous, failed, now);
+    const rejected: { target: string; why: string }[] = [];
+    for (const target of chain) {
       const resolved = resolveTarget(ctx, route, target);
-      if ("error" in resolved) { problems.push(resolved.error); continue; }
+      if ("error" in resolved) {
+        problems.push(resolved.error);
+        rejected.push({ target: describeTarget(target), why: resolved.error });
+        continue;
+      }
       if (routeMethod(route) === "round-robin" && request.reason !== "continuation") {
         // The cursor advances on the request that actually picked a target, so
         // a user turn rotates the chain and a continuation does not.
         state.cursor[routeCursorKey(route.name)] = target.model;
         persistState();
       }
+      recordDecision({ route, reason: request.reason, chain, chosen: target, rejected, now });
       return { model: resolved.model, thinking: target.thinking, via: resolved.via };
     }
-    return { error: problems[0] ?? `route "${route.name}" has no usable target` };
+    const error = problems[0] ?? `route "${route.name}" has no usable target`;
+    recordDecision({ route, reason: request.reason, chain, rejected, error, now });
+    return { error };
   };
 
   // ── Prompt-cache ledger ────────────────────────────────────────────────────
@@ -931,6 +980,16 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
       .map((key) => warmthFor(ledger, key))
       .filter((entry): entry is Warmth => entry !== undefined)
       .sort((a, b) => b.lastAt - a.lastAt)[0];
+
+  /** Whether the next request would read this target's cache entry. */
+  const targetIsWarm = (route: RouteConfig, target: RouteTarget, now: number): boolean => {
+    const parsed = parseModelRef(target.model);
+    return isWarm(bestWarmth(cacheKeysOf(route, target)), {
+      now,
+      ttlMs: ttlFor(cacheConfig, parsed?.provider ?? ""),
+      minCacheableTokens: cacheConfig.minCacheableTokens,
+    });
+  };
 
   /** How warm a target is, as `/router status` prints it. */
   const describeTargetCache = (route: RouteConfig, target: RouteTarget, now: number): string => {
@@ -1219,6 +1278,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
       rows: routerRows(sources.routes, table.provider, pools),
       shadowed: routerRows(sources.shadowed, table.provider, pools),
       pools,
+      ...(trace.length ? { trace: describeDecision(trace[trace.length - 1]!, Date.now()) } : {}),
       errors: [...sources.errors, ...configErrors],
     };
   };
@@ -1352,7 +1412,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
   };
 
   pi.registerCommand(COMMAND, {
-    description: "Account router: status, accounts, use, reset, reload",
+    description: "Account router: status, accounts, why, use, reset, reload",
     handler: async (args, ctx) => {
       const input = (args ?? "").trim();
       const [verb, ...rest] = input.split(/\s+/).filter(Boolean);
@@ -1380,6 +1440,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
             "  /router                    edit routes (TUI), or the status report",
             "  /router status             routes, policies and pools as text",
             "  /router accounts [pool]    per-account health",
+            "  /router why                why the last requests went where they did",
             "  /router use <pool> <id>    pin a pool to one account",
             "  /router reset [pool]       clear health and pins",
             "  /router reload             re-read config files",
@@ -1390,7 +1451,11 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
             '                      "accounts": [{ "id": "acc-1", "apiKey": "$KEY_1" }] } }',
             "",
             "Strategies: round-robin, least-recently-used, priority, sticky.",
-            "Route methods: priority (declaration order), round-robin, cheapest, last-good.",
+            "Route methods: priority (declaration order), round-robin, cheapest, last-good,",
+            "               cache (keep a warm prompt cache unless moving pays for itself).",
+            "Cache: a warm target is kept unless the candidate is ~5x cheaper (cache.horizon).",
+            "Pools: cacheAffinity \"warm\" keeps the account that wrote the cache;",
+            "       rotateAfterRequests bounds how long it is kept.",
             "Route triggers: turn, failure, quota (only a 429 retry moves on), overflow.",
             "A route target is any physical provider/model; pick one in /router or type it.",
             "Sources: static (per-account apiKey in config or models.json).",
@@ -1437,6 +1502,9 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
           emit(ctx, arg ? `Cleared health for pool ${arg}.` : "Cleared all router health and pins.");
           return;
         }
+        case "why":
+          emit(ctx, formatTrace(trace, Date.now()));
+          return;
         case "reload": {
           reloadRoutes(ctx);
           emit(ctx, configErrors.length
