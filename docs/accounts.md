@@ -42,6 +42,17 @@ Config is read from the global `<agent-dir>/account-router.json` and then the pr
 
 **Routing.** A target is `provider/modelId`; a model id may contain slashes (`openrouter/meta/llama-3`). A failed target moves to the end so the retry tries the next model. Tool continuations stay on the model that answered the turn, which keeps prompt caches and thinking signatures valid; set `"sticky": false` on a route to opt out. A target may pin a `thinking` level.
 
+**Failover during an agent request does not depend on automatic retry being enabled.**
+Pi's normal retry/backoff runs first. If it declines an error (for example an
+invalid credential) or exhausts its retry budget, the router continues the
+original request on a remaining usable target. Recovery tracks failures within
+that request and stops when no remaining target can resolve; it never loops
+through the same exhausted chain indefinitely. Cancelling a request never starts
+fallback. The virtual `router/<name>` stays selected while the sidebar follows
+the physical target. Raw failure entries remain in session history, but are
+omitted from the backup model's context. Direct model-registry calls outside the
+agent loop still rely on the caller's retry policy.
+
 **Routing methods** (`method`, default `priority`) decide the order of the candidates:
 
 | Method | Order |
@@ -60,6 +71,10 @@ Config is read from the global `<agent-dir>/account-router.json` and then the pr
 | `failure` | Keep the answering model across user turns; only a retry moves on. |
 | `quota` | Like `failure`, but a retry moves on only when the failure is a quota wall/`429`; anything else retries the same target. |
 | `overflow` | Like `failure`, but a retry moves on only after a context overflow. |
+
+These trigger restrictions apply to final-boundary recovery too: `quota` does
+not fall back for an authentication error, and `overflow` does not fall back for
+a rate limit. Use `turn` or `failure` to advance for any provider error.
 
 Ordering happens before advancing, so a `cheapest` route cannot re-pick the model that just failed for being cheapest. A trigger's quota/overflow condition is judged from the failed request's own error message, which is the only place it is visible. `fastest` is deliberately absent: the extension only wraps pooled requests, so it cannot measure latency for a plain route target, and a method that guessed would be worse than none.
 
@@ -212,4 +227,4 @@ A pool whose `provider` names an **account family** (`"provider": "openrouter"` 
 
 Route targets and pools are additive to the existing `/provider` wizard: use `/provider` to define a custom endpoint, then a pool or route to share or fall back across it. Errors are reported, never silently ignored: `/router` lists config warnings and the last error, and a route with no usable target fails the request with the reason instead of picking something arbitrary.
 
-Verification: `node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/provider/account-pools.test.ts tests/provider/account-sources.test.ts tests/provider/model-routes.test.ts tests/provider/cache-routing.test.ts tests/provider/route-trace.test.ts tests/provider/router-config-write.test.ts tests/provider/router-settings.test.ts tests/provider/router-settings-popup.test.ts tests/account-router-runtime.test.ts` covers config validation and projects-over-global merging, every selection strategy, cooldowns, failure budgets, exhaustion, state persistence and permissions, corrupt-state recovery, static/`antigravity-accounts` credential resolution, token refresh and re-login errors, routes and fallback chains, **the five routing methods and the full trigger matrix**, the route writer (pools and unknown keys preserved, broken files refused, atomic writes), the editor popup (keys, refusals, narrow terminals), plus **real Pi sessions** proving that a pool rotates accounts across requests, that a `429` cools one account and the next request succeeds on another, that a route skips an unavailable provider, that `cheapest` outranks declaration order, that a `round-robin` route rotates across user turns, that `when: "failure"` keeps the answering model, that a deleted route is unregistered, that `/router` reports status headlessly, that a cache route keeps a warm target until a cheaper one repays its write, that `cacheAffinity` holds an account across prompts until the TTL lapses (and that a quota wall still moves at once), and that `/router why` explains a cache non-switch and a failed fallback. Tests use fixture credentials and stub providers; no real inference or account is used.
+Verification: `node --experimental-strip-types --import ./tests/isolate-env.mjs --test tests/provider/account-pools.test.ts tests/provider/account-sources.test.ts tests/provider/model-routes.test.ts tests/provider/cache-routing.test.ts tests/provider/route-trace.test.ts tests/provider/router-config-write.test.ts tests/provider/router-settings.test.ts tests/provider/router-settings-popup.test.ts tests/account-router-runtime.test.ts` covers config validation and projects-over-global merging, every selection strategy, cooldowns, failure budgets, exhaustion, state persistence and permissions, corrupt-state recovery, static/`antigravity-accounts` credential resolution, token refresh and re-login errors, routes and fallback chains, **the five routing methods and the full trigger matrix**, the route writer (pools and unknown keys preserved, broken files refused, atomic writes), the editor popup (keys, refusals, narrow terminals), plus **real Pi sessions** proving that a pool rotates accounts across requests, that a `429` cools one account and the next request succeeds on another, that a route skips an unavailable provider, that actual provider failures fall back with retries disabled or exhausted, that recovery preserves raw history and live sidebar state, that cancellation and narrow triggers do not switch models, that exhausted chains terminate and new prompts have a fresh recovery budget, that `cheapest` outranks declaration order, that a `round-robin` route rotates across user turns, that `when: "failure"` keeps the answering model, that a deleted route is unregistered, that `/router` reports status headlessly, that a cache route keeps a warm target until a cheaper one repays its write, that `cacheAffinity` holds an account across prompts until the TTL lapses (and that a quota wall still moves at once), and that `/router why` explains a cache non-switch and a failed fallback. Tests use fixture credentials and stub providers; no real inference or account is used.

@@ -890,30 +890,40 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     });
   };
 
+  // Automatic retries are host policy; final-boundary recovery also covers errors
+  // the host does not retry. Keep exclusions local to this user request.
+  const failedThisRequest = new Set<string>();
+  let pendingRecovery: {
+    route: string;
+    failed: { provider: string; modelId: string };
+    failedClass: RouteFailureClass;
+  } | undefined;
+
   const choose = (
     ctx: ExtensionContext,
     route: RouteConfig,
-    request: { reason: "user" | "continuation" | "retry" | "direct"; failedClass?: RouteFailureClass },
+    request: { reason: "user" | "continuation" | "retry" | "direct"; failedClass?: RouteFailureClass; exclude?: ReadonlySet<string> },
     previous?: { provider: string; modelId: string },
     failed?: { provider: string; modelId: string },
   ): { model: Model<Api>; thinking?: string; via?: string } | { error: string } => {
+    if (request.reason === "user") failedThisRequest.clear();
     const problems: string[] = [];
     // One clock for the whole decision: warmth and cooldowns must agree.
     const now = Date.now();
     if (request.reason === "retry" && failed) {
-      // The host already waited out its backoff for this failure; remember it so
-      // the next turn does not start on the same broken target again.
-      const cooldown = targetCooldownMs(request.failedClass);
-      if (cooldown > 0 && routeDecision(route, request).advance) {
-        for (const target of routeTargets(route).flatMap((entry) => expandTarget(ctx, route, entry))) {
-          if (targetMatches(route, target, failed.provider, failed.modelId)) {
-            targetCooldowns.set(cooldownKey(route, target), Date.now() + cooldown);
-          }
-        }
+      // Remember failures from host retries and final-boundary recovery, so the
+      // next turn does not start on the same broken target again.
+      const cooldown = routeDecision(route, request).advance ? targetCooldownMs(request.failedClass) : 0;
+      for (const target of routeTargets(route).flatMap((entry) => expandTarget(ctx, route, entry))) {
+        if (!targetMatches(route, target, failed.provider, failed.modelId)) continue;
+        failedThisRequest.add(cooldownKey(route, target));
+        if (cooldown > 0) targetCooldowns.set(cooldownKey(route, target), now + cooldown);
       }
     }
-    const chain = candidateChain(ctx, route, request, previous, failed, now);
-    const rejected: { target: string; why: string }[] = [];
+    const candidates = candidateChain(ctx, route, request, previous, failed, now);
+    const chain = candidates.filter(target => !request.exclude?.has(cooldownKey(route, target)));
+    const rejected = candidates.filter(target => request.exclude?.has(cooldownKey(route, target)))
+      .map(target => ({ target: describeTarget(target), why: "failed earlier in this request" }));
     for (const target of chain) {
       const resolved = resolveTarget(ctx, route, target);
       if ("error" in resolved) {
@@ -1043,12 +1053,15 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
           const failed = request.failed
             ? { provider: request.failed.model.provider, modelId: request.failed.model.id }
             : undefined;
+          const recovery = request.reason !== "direct" && pendingRecovery?.route === route.name ? pendingRecovery : undefined;
+          if (recovery) pendingRecovery = undefined;
           const picked = choose(ctx as unknown as ExtensionContext, route, {
-            reason: request.reason,
-            // The trigger's quota/overflow conditions are judged from the failed
-            // request's own message, which is the only place the reason lives.
-            ...(request.failed ? { failedClass: classifyFailure(request.failed.message?.errorMessage) } : {}),
-          }, previous, failed);
+            reason: recovery ? "retry" : request.reason,
+            // Final-boundary recovery has no host retry message; carry the
+            // original failure so trigger policy and cooldowns still apply.
+            failedClass: recovery?.failedClass ?? (request.failed ? classifyFailure(request.failed.message?.errorMessage) : undefined),
+            ...(recovery ? { exclude: failedThisRequest } : {}),
+          }, previous, recovery?.failed ?? failed);
           if ("error" in picked) {
             lastError = picked.error;
             throw new Error(picked.error);
@@ -1181,7 +1194,37 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
   // A new prompt (or the end of one) is where rotation resumes.
   pi.on("agent_start", () => { runAccount.clear(); runActive = true; });
   pi.on("agent_end", () => { runAccount.clear(); runActive = false; });
+  pi.on("agent_settled", () => { pendingRecovery = undefined; failedThisRequest.clear(); });
+  pi.on("agent_before_settle", (event, ctx) => {
+    if (event.outcome !== "error" || ctx.model?.provider !== table.provider) return;
+    const route = findRoute(table, ctx.model.id);
+    const entry = event.context.contextEntries.findLast(entry => entry.messages.some(message => message.role === "assistant"));
+    const message = entry?.messages.at(-1);
+    if (!route || !entry || message?.role !== "assistant" || message.stopReason !== "error") return;
+    const failed = { provider: message.provider, modelId: message.model };
+    const chain = routeTargets(route).flatMap(target => expandTarget(ctx, route, target));
+    const matches = chain.filter(target => targetMatches(route, target, failed.provider, failed.modelId));
+    if (!matches.length) return; // A routing error is not a failed physical request.
+    for (const target of matches) failedThisRequest.add(cooldownKey(route, target));
+    recordDecision({
+      route, reason: "retry", chain,
+      rejected: matches.map(target => ({ target: describeTarget(target), why: message.errorMessage ?? "request failed" })),
+      error: message.errorMessage ?? "request failed", now: Date.now(),
+    });
+    publishRouterPanel(ctx);
+    const failedClass = classifyFailure(message.errorMessage);
+    if (!routeDecision(route, { reason: "retry", failedClass }).advance) return;
+    const remaining = chain.filter(target => !failedThisRequest.has(cooldownKey(route, target)));
+    if (!remaining.some(target => !("error" in resolveTarget(ctx, route, target)))) return;
+    pendingRecovery = { route: route.name, failed, failedClass };
+    return {
+      entries: [...event.entries, { type: "context_edit" as const, targetId: entry.sourceEntry.id, replacement: null }],
+      continue: true,
+    };
+  });
   pi.on("model_select", (_event, ctx) => {
+    pendingRecovery = undefined;
+    failedThisRequest.clear();
     uiCtx = ctx;
     webCtx = ctx;
     updateSidebar();

@@ -14,6 +14,8 @@ type Seen = { key: string; model: string; provider: string; context: any; option
 
 function fakeProvider(id: string, modelIds: string[], seen: Seen[], options: {
   failWith?: (key: string) => string | undefined;
+  failureStopReason?: "error" | "aborted";
+  throwFailure?: boolean;
   inputTokens?: number;
   outputTokens?: number;
   /** Catalog price per token; a route's `cheapest` method ranks targets by it. */
@@ -42,6 +44,7 @@ function fakeProvider(id: string, modelIds: string[], seen: Seen[], options: {
         const key = String(opts?.apiKey ?? "");
         seen.push({ key, model: m.id, provider: m.provider, context, options: opts });
         const failure = options.failWith?.(key);
+        if (failure && options.throwFailure) throw new Error(failure);
         const stream = createAssistantMessageEventStream();
         const cacheId = `${key}/${m.id}`;
         const warm = written.has(cacheId);
@@ -58,11 +61,11 @@ function fakeProvider(id: string, modelIds: string[], seen: Seen[], options: {
           role: "assistant", api: m.api, provider: m.provider, model: m.id,
           timestamp: Date.now(), content: [],
           usage: { ...usage, totalTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite },
-          stopReason: failure ? "error" : "stop",
+          stopReason: failure ? options.failureStopReason ?? "error" : "stop",
           ...(failure ? { errorMessage: failure } : { content: [{ type: "text", text: `ok:${key}` }] }),
         };
         stream.push({ type: "start", partial: message });
-        if (failure) stream.push({ type: "error", reason: "error", error: message });
+        if (failure) stream.push({ type: "error", reason: options.failureStopReason ?? "error", error: message });
         else stream.push({ type: "done", reason: "stop", message });
         void context;
         return stream;
@@ -73,7 +76,7 @@ function fakeProvider(id: string, modelIds: string[], seen: Seen[], options: {
 
 async function withSession(
   run: (ctx: { dir: string; seen: Seen[]; session: any; registry: any; eventBus?: any }) => Promise<void>,
-  setup: (seen: Seen[]) => { providers: Array<{ name: string; config: any }>; config: unknown; routerState?: unknown },
+  setup: (seen: Seen[]) => { providers: Array<{ name: string; config: any }>; config: unknown; routerState?: unknown; retry?: { enabled: boolean; maxRetries: number; baseDelayMs: number } },
 ) {
   const dir = await mkdtemp(join(tmpdir(), "pi-account-router-rt-"));
   let session: any;
@@ -96,12 +99,12 @@ async function withSession(
           expires: Date.now() + 3_600_000, projectId: "proj" },
       },
     }));
-    const { providers, config, modelsConfig, routerState } = setup(seen) as any;
+    const { providers, config, modelsConfig, routerState, retry } = setup(seen) as any;
     if (routerState) await writeFile(join(dir, "account-router-state.json"), JSON.stringify(routerState));
     if (modelsConfig) await writeFile(join(dir, "models.json"), JSON.stringify(modelsConfig));
     if (config) await writeFile(join(dir, "account-router.json"), JSON.stringify(config));
     const settings = SettingsManager.inMemory({
-      compaction: { enabled: false }, retry: { enabled: false }, cacheWarming: "off",
+      compaction: { enabled: false }, retry: retry ?? { enabled: false }, cacheWarming: "off",
     });
     const loader = new DefaultResourceLoader({
       cwd: dir, agentDir: dir, settingsManager: settings,
@@ -362,6 +365,129 @@ test("a route falls back to the next provider when one is unregistered", { timeo
         targets: ["missing-primary/ghost-model", "secondary/backup-model"],
       }],
     },
+  }));
+});
+
+test("a failed provider falls through to the next model even when automatic retry is disabled", { timeout: 20000 }, async () => {
+  await withSession(async ({ seen, session, registry, eventBus }) => {
+    const views: any[] = [];
+    eventBus.on("web-plugin:view", (payload: any) => { if (payload?.pluginId === "router") views.push(payload.view); });
+    await session.setModel(registry.getModel("router", "auto"));
+    await session.prompt("answer using the route");
+    assert.deepEqual(seen.map(entry => entry.provider), ["primary", "secondary"]);
+    assert.equal(session.messages.at(-1)?.stopReason, "stop");
+    assert.equal(session.messages.at(-1)?.provider, "secondary");
+    assert.equal(session.model.provider, "router", "failover preserves the virtual selection");
+    assert.ok(session.sessionManager.getBranch().some((entry: any) => entry.type === "message" && entry.message.errorMessage === "HTTP 401 invalid API key"), "the append-only transcript retains the original failure");
+    assert.equal(seen[1].context.messages.some((message: any) => message.errorMessage), false, "the backup receives the original request without a failed assistant response");
+    assert.equal(views.at(-1)?.nodes.find((node: any) => node.status === "active")?.label, "secondary/backup-model");
+  }, seen => ({
+    providers: [
+      { name: "primary", config: fakeProvider("primary", ["main-model"], seen, { failWith: () => "HTTP 401 invalid API key" }).config },
+      { name: "secondary", config: fakeProvider("secondary", ["backup-model"], seen).config },
+    ],
+    config: { routes: [{ name: "auto", targets: ["primary/main-model", "secondary/backup-model"] }] },
+  }));
+});
+
+const failureScenarios: {
+  name: string; failures: (string | undefined)[]; calls: number;
+  when?: string; failureStopReason?: "error" | "aborted"; repeat?: boolean; throwFailure?: boolean;
+  retry?: { enabled: boolean; maxRetries: number; baseDelayMs: number };
+}[] = [
+  { name: "fallback traverses successive provider failures until a model succeeds", failures: ["HTTP 401 invalid API key", "HTTP 500 internal server error", undefined], calls: 3 },
+  { name: "exhausting the host retry budget still reaches the remaining backup", failures: ["HTTP 503 unavailable", "HTTP 503 unavailable", undefined], calls: 3, retry: { enabled: true, maxRetries: 1, baseDelayMs: 1 } },
+  { name: "fallback stops after every configured target fails, and a new prompt has a fresh budget", failures: ["HTTP 401 invalid API key", "HTTP 500 server error", "HTTP 503 unavailable"], calls: 3, repeat: true },
+  { name: "a thrown transport error falls through to the backup", failures: ["socket disconnected", undefined], calls: 2, throwFailure: true },
+  { name: "one failed target never causes an endless fallback loop", failures: ["HTTP 401 invalid API key"], calls: 1 },
+  { name: "an aborted provider response never falls back", failures: ["request cancelled", undefined], calls: 1, failureStopReason: "aborted" },
+  { name: "a quota-only route advances after a rate limit without host retries", failures: ["HTTP 429 quota exceeded", undefined], calls: 2, when: "quota" },
+  { name: "a quota-only route does not advance after an unrelated error", failures: ["HTTP 401 invalid API key", undefined], calls: 1, when: "quota" },
+  { name: "an overflow-only route advances after a context overflow", failures: ["context length exceeded", undefined], calls: 2, when: "overflow" },
+  { name: "an overflow-only route does not advance after an unrelated error", failures: ["HTTP 401 invalid API key", undefined], calls: 1, when: "overflow" },
+  { name: "a last-good failure-triggered route advances after a provider error", failures: ["HTTP 400 model is unavailable", undefined], calls: 2, when: "failure" },
+];
+
+for (const scenario of failureScenarios) {
+  test(scenario.name, { timeout: 20000 }, async () => {
+    await withSession(async ({ seen, session, registry, eventBus }) => {
+      const views: any[] = [];
+      eventBus.on("web-plugin:view", (payload: any) => { if (payload?.pluginId === "router") views.push(payload.view); });
+      await session.setModel(registry.getModel("router", "auto"));
+      await session.prompt("answer using the fallback chain");
+      assert.deepEqual(seen.map(entry => entry.model), Array.from({ length: scenario.calls }, (_, index) => `model-${index}`));
+      const failure = scenario.failures[scenario.calls - 1];
+      assert.equal(session.messages.at(-1)?.stopReason, failure ? scenario.failureStopReason ?? "error" : "stop");
+      if (failure && scenario.failureStopReason !== "aborted") {
+        assert.equal(views.at(-1)?.nodes.some((node: any) => node.status === "active"), false, "an exhausted or policy-stopped route never claims a model is serving");
+      }
+      if (scenario.repeat) {
+        await session.prompt("try the route again");
+        assert.equal(seen.length, scenario.calls * 2);
+        assert.equal(new Set(seen.slice(scenario.calls).map(entry => entry.model)).size, scenario.calls);
+      }
+    }, seen => ({
+      providers: scenario.failures.map((failure, index) => ({
+        name: `fallback-${index}`,
+        config: fakeProvider(`fallback-${index}`, [`model-${index}`], seen, { failWith: () => failure, failureStopReason: scenario.failureStopReason, throwFailure: scenario.throwFailure }).config,
+      })),
+      config: { routes: [{ name: "auto", method: "last-good", when: scenario.when, targets: scenario.failures.map((_, index) => `fallback-${index}/model-${index}`) }] },
+      retry: scenario.retry,
+    }));
+  });
+}
+
+test("a failing pooled route target can recover on a non-pooled backup", { timeout: 20000 }, async () => {
+  await withSession(async ({ seen, session, registry }) => {
+    await session.setModel(registry.getModel("router", "auto"));
+    await session.prompt("recover from the pooled provider");
+    assert.deepEqual(seen.map(entry => entry.provider), ["primary", "secondary"]);
+    assert.equal(seen[0].key, "bad-key");
+    assert.equal(session.messages.at(-1)?.provider, "secondary");
+    assert.equal(session.messages.at(-1)?.stopReason, "stop");
+  }, seen => ({
+    providers: [
+      { name: "primary", config: fakeProvider("primary", ["main-model"], seen, { failWith: () => "HTTP 401 invalid API key" }).config },
+      { name: "secondary", config: fakeProvider("secondary", ["backup-model"], seen).config },
+    ],
+    config: {
+      pools: { primary: { provider: "primary", accounts: [{ id: "bad", apiKey: "bad-key" }] } },
+      routes: [{ name: "auto", targets: [{ model: "primary/main-model", pool: "primary" }, "secondary/backup-model"] }],
+    },
+  }));
+});
+
+test("router recovery never retries an unrelated physical-model selection", { timeout: 20000 }, async () => {
+  await withSession(async ({ seen, session, registry }) => {
+    await session.setModel(registry.getModel("primary", "main-model"));
+    await session.prompt("use the physical model");
+    assert.deepEqual(seen.map(entry => entry.provider), ["primary"]);
+    assert.equal(session.messages.at(-1)?.errorMessage, "HTTP 401 invalid API key");
+  }, seen => ({
+    providers: [
+      { name: "primary", config: fakeProvider("primary", ["main-model"], seen, { failWith: () => "HTTP 401 invalid API key" }).config },
+      { name: "secondary", config: fakeProvider("secondary", ["backup-model"], seen).config },
+    ],
+    config: { routes: [{ name: "auto", targets: ["primary/main-model", "secondary/backup-model"] }] },
+  }));
+});
+
+test("a previously successful last-good model falls back when it fails on the next prompt", { timeout: 20000 }, async () => {
+  await withSession(async ({ seen, session, registry }) => {
+    await session.setModel(registry.getModel("router", "auto"));
+    await session.prompt("first prompt succeeds");
+    await session.prompt("second prompt needs a backup");
+    assert.deepEqual(seen.map(entry => entry.provider), ["primary", "primary", "secondary"]);
+    assert.equal(session.messages.at(-1)?.provider, "secondary");
+    assert.equal(session.messages.at(-1)?.stopReason, "stop");
+  }, seen => ({
+    providers: [
+      { name: "primary", config: fakeProvider("primary", ["main-model"], seen, {
+        failWith: () => seen.filter(entry => entry.provider === "primary").length > 1 ? "HTTP 400 model unavailable" : undefined,
+      }).config },
+      { name: "secondary", config: fakeProvider("secondary", ["backup-model"], seen).config },
+    ],
+    config: { routes: [{ name: "auto", method: "last-good", when: "failure", targets: ["primary/main-model", "secondary/backup-model"] }] },
   }));
 });
 
