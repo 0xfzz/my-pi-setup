@@ -20,6 +20,8 @@ import { deactivationOrder, requiredDependents, resolvePlugins, type ResolverInp
 import { PluginRouteRegistry, type PluginRouteHandler } from "./routes.ts";
 import { ServiceRegistry } from "./services.ts";
 import { PluginStorage, type ScopedStorage } from "./storage.ts";
+import type { ChildProcess } from "node:child_process";
+import { createProcessRegistry, type ChildSpawnOptions, type PluginProcessRegistry } from "./processes.ts";
 import { markActivating, markCleanShutdown, clearSafeMode, recordBoot, recoverInterruptedActivation, setPluginState, type WebPluginsState } from "./state.ts";
 import type { WebView } from "../view.ts";
 
@@ -68,6 +70,31 @@ export interface PluginUi {
   widget(sessionId: string, lines: string[] | null, placement?: "aboveEditor" | "belowEditor"): boolean;
 }
 
+/**
+ * OS resources this plugin owns, with the kernel as the owner of record.
+ *
+ * A plugin can be reloaded, disabled or quarantined at any moment, so anything
+ * that outlives a JS object — a child process, a timer, an abort controller —
+ * must not be left to the plugin's own memory. Everything created here is
+ * disposed with the plugin, in the same LIFO order as `register`.
+ *
+ * This is a durability contract, not a sandbox: plugin code runs in-process and
+ * could call `child_process` directly. A child spawned outside `spawn` is
+ * invisible to the kernel and survives its plugin.
+ */
+export interface PluginResources {
+  /** A child process owned by this plugin. Needs the `exec` grant; never detached. */
+  spawn(command: string, args?: readonly string[], options?: ChildSpawnOptions): ChildProcess;
+  /** An interval cleared on deactivate. Unref'd, so a leaked one cannot keep the host alive. */
+  interval(callback: () => void, everyMs: number): NodeJS.Timeout;
+  /** A one-shot timer cleared on deactivate. */
+  timeout(callback: () => void, afterMs: number): NodeJS.Timeout;
+  /** A controller aborted when the plugin stops — for fetch, streams, and long loops. */
+  signal(): AbortController;
+  /** Kill this plugin's children now, without waiting for deactivate. */
+  release(): Promise<void>;
+}
+
 /** HTTP route registration for this plugin's own backend surface. */
 export interface PluginRoutes {
   /** `ctx.routes.register("GET", "summary/:id", handler)` mounts /api/p/<pluginId>/summary/<id>. */
@@ -83,7 +110,12 @@ export interface PluginContext {
   readonly id: string;
   readonly signal: AbortSignal;
   /** Register cleanup. Everything registered is disposed LIFO on deactivate or rollback. */
-  register(dispose: () => void): void;
+  register(dispose: PluginDisposer): void;
+  /**
+   * Owned OS resources: child processes, timers, abort controllers. Disposed
+   * with the plugin, so a hot-reload cannot leave one behind.
+   */
+  readonly resources: PluginResources;
   readonly hooks: PluginHooks;
   /**
    * Read-only subscription to live session activity (`session.lifecycle`,
@@ -110,6 +142,13 @@ export interface PluginContext {
   assert(capability: string): void;
   log(message: string): void;
 }
+
+/**
+ * Cleanup registered by a plugin. Its result is awaited, so a disposer that
+ * kills a child can wait for the child to be gone; a disposer that returns a
+ * plain value (a push, a log) is simply awaited as well.
+ */
+export type PluginDisposer = () => unknown;
 
 /** The server half of a plugin. Every member is optional; a descriptor-only plugin has none. */
 export interface PluginRuntime {
@@ -150,6 +189,11 @@ export interface ManagerOptions {
   services?: ServiceRegistry;
   routes?: PluginRouteRegistry;
   storage?: PluginStorage;
+  /**
+   * Owner of record for the child processes plugin code starts. Without it a
+   * plugin can still spawn, but nothing reclaims what it leaves behind.
+   */
+  processes?: PluginProcessRegistry;
 }
 
 export interface BootReport {
@@ -179,7 +223,9 @@ interface Slot {
   plugin: DiscoveredPlugin;
   life: PluginLifecycle;
   runtime?: PluginRuntime;
-  disposers: Array<() => void>;
+  disposers: PluginDisposer[];
+  /** Built once per activation; its timers and children are disposed with the slot. */
+  resources?: PluginResources;
   breaker: CircuitBreaker;
   grants: Capability[];
   pending: Capability[];
@@ -214,6 +260,7 @@ export class PluginManager {
   private readonly services: ServiceRegistry;
   private readonly routes: PluginRouteRegistry;
   private readonly storage: PluginStorage;
+  private readonly processes: PluginProcessRegistry;
   private state: WebPluginsState;
   private safeMode = false;
 
@@ -235,6 +282,7 @@ export class PluginManager {
     this.services = options.services ?? new ServiceRegistry();
     this.routes = options.routes ?? new PluginRouteRegistry();
     this.storage = options.storage ?? new PluginStorage();
+    this.processes = options.processes ?? createProcessRegistry();
     this.hooks.setFailureHandler((failure) => {
       void this.reportFailure(failure.pluginId, `${failure.point} ${failure.reason}: ${failure.message}`);
     });
@@ -639,14 +687,8 @@ export class PluginManager {
     return {
       id,
       signal,
-      register: (dispose) => {
-        if (slot.disposed) {
-          this.audit.append("failure", id, "registration after disposal refused");
-          dispose();
-          return;
-        }
-        slot.disposers.push(dispose);
-      },
+      register: (dispose) => this.addDisposer(slot, dispose),
+      resources: this.resourcesFor(slot),
       hooks: {
         event: (point, handler, priority) => this.track(slot, () => this.hooks.register(owner, "event", point, handler, priority)),
         waterfall: (point, handler, priority) => this.track(slot, () => this.hooks.register(owner, "waterfall", point, handler, priority)),
@@ -684,17 +726,82 @@ export class PluginManager {
       assert: (capability) => {
         const parsed = parseCapability(capability);
         if (!parsed.ok) throw new Error(`Plugin "${id}": ${parsed.error}`);
-        try {
-          assertGranted(id, slot.grants, parsed.value);
-        } catch (error) {
-          this.audit.append("capability-denied", id, capability);
-          throw error;
-        }
+        this.assertGrant(slot, parsed.value);
       },
       log: (message) => {
         this.audit.append("lifecycle", id, message);
       },
     };
+  }
+
+  /**
+   * Add a disposer, or run it immediately when the plugin is already disposed.
+   *
+   * A timed-out activation keeps running: `runWithBudget` abandons it, the
+   * disposers are drained, and the still-running `activate` may then register a
+   * timer, a child or a route for a plugin that is no longer live. Running the
+   * disposer on the spot is what keeps that leak out of the machine; a refusal
+   * is audited, never thrown into the plugin's own code path.
+   */
+  private addDisposer(slot: Slot, dispose: PluginDisposer): void {
+    if (!slot.disposed) {
+      slot.disposers.push(dispose);
+      return;
+    }
+    this.audit.append("failure", slot.plugin.id, "registration after disposal refused");
+    try {
+      void dispose();
+    } catch (error) {
+      this.audit.append("failure", slot.plugin.id, `late dispose threw: ${errorText(error)}`);
+    }
+  }
+
+  private assertGrant(slot: Slot, capability: Capability): void {
+    try {
+      assertGranted(slot.plugin.id, slot.grants, capability);
+    } catch (error) {
+      this.audit.append("capability-denied", slot.plugin.id, formatCapability(capability));
+      throw error;
+    }
+  }
+
+  /**
+   * The slot's owned resources. Built once per activation so a timer or child
+   * created during `setup` is disposed by the same slot that created it.
+   */
+  private resourcesFor(slot: Slot): PluginResources {
+    if (slot.resources !== undefined) return slot.resources;
+    const id = slot.plugin.id;
+    const resources: PluginResources = {
+      spawn: (command, args = [], options = {}) => {
+        // Starting a process is a sensitive capability: it stays pending until
+        // the operator grants it, exactly like reaching the network.
+        this.assertGrant(slot, { kind: "exec" });
+        return this.processes.spawn(id, command, args, options);
+      },
+      interval: (callback, everyMs) => {
+        const timer = setInterval(callback, everyMs);
+        // A plugin timer must never be the reason the host cannot exit.
+        timer.unref();
+        this.addDisposer(slot, () => clearInterval(timer));
+        return timer;
+      },
+      timeout: (callback, afterMs) => {
+        const timer = setTimeout(callback, afterMs);
+        this.addDisposer(slot, () => clearTimeout(timer));
+        return timer;
+      },
+      signal: () => {
+        const controller = new AbortController();
+        this.addDisposer(slot, () => controller.abort());
+        return controller;
+      },
+      release: async () => {
+        await this.processes.release(id);
+      },
+    };
+    slot.resources = resources;
+    return resources;
   }
 
   /**
@@ -712,8 +819,15 @@ export class PluginManager {
     }
   }
 
-  /** Dispose registrations LIFO. A throwing disposer is audited and does not stop the rest. */
-  private disposeAll(slot: Slot): void {
+  /**
+   * Dispose registrations LIFO, waiting for the ones that need it.
+   *
+   * Disposers may be async — killing a child and waiting for it to exit is the
+   * normal case — so the whole drain runs under the deactivate budget instead
+   * of being fire-and-forget. A throwing or overrunning disposer is audited and
+   * does not stop the rest.
+   */
+  private async disposeAll(slot: Slot): Promise<void> {
     slot.disposed = true;
     this.hooks.removeOwner(slot.plugin.id);
     this.events.removeOwner(slot.plugin.id);
@@ -721,13 +835,20 @@ export class PluginManager {
     this.ui.removeOwner(slot.plugin.id);
     this.services.removeOwner(slot.plugin.id);
     this.routes.removeOwner(slot.plugin.id);
-    while (slot.disposers.length) {
-      const dispose = slot.disposers.pop()!;
-      try {
-        dispose();
-      } catch (error) {
-        this.audit.append("failure", slot.plugin.id, `dispose threw: ${errorText(error)}`);
+    slot.resources = undefined;
+    const pending = slot.disposers.splice(0).reverse();
+    if (pending.length === 0) return;
+    const outcome = await runWithBudget(`${slot.plugin.id} dispose`, this.deactivateMs, async () => {
+      for (const dispose of pending) {
+        try {
+          await dispose();
+        } catch (error) {
+          this.audit.append("failure", slot.plugin.id, `dispose threw: ${errorText(error)}`);
+        }
       }
+    });
+    if (!outcome.ok) {
+      this.audit.append("failure", slot.plugin.id, `dispose ${outcome.reason}: ${outcome.error}`);
     }
   }
 
@@ -776,7 +897,10 @@ export class PluginManager {
     this.state = markActivating(this.state, this.state.activating.filter((other) => other !== id));
     this.save();
     if (!outcome.ok) {
-      this.disposeAll(slot);
+      // An abandoned activation may already have spawned a child: nothing else
+      // in the failure path would ever release it.
+      await this.processes.release(id);
+      await this.disposeAll(slot);
       const reason = outcome.reason === "timeout" ? outcome.error : `activate threw: ${outcome.error}`;
       return this.fail(slot, reason, options.countFailure ?? true, "activate-fail");
     }
@@ -816,7 +940,10 @@ export class PluginManager {
       });
       if (!outcome.ok) this.audit.append("failure", id, `deactivate ${outcome.reason}: ${outcome.error}`);
     }
-    this.disposeAll(slot);
+    // The safety net: whatever this plugin started dies with it, even if it
+    // never registered a disposer for it.
+    await this.processes.release(id);
+    await this.disposeAll(slot);
     slot.life.dispatch("disposed");
     this.audit.append("lifecycle", id, `deactivated (${why})`);
   }
