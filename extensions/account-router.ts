@@ -70,10 +70,21 @@ import { ensureProviderInScope } from "../lib/provider/router-scope.ts";
 import {
   describeDecision, formatTrace, pushDecision, type DecisionRecord,
 } from "../lib/provider/route-trace.ts";
+import {
+  routerWebStart, routerWebStep, routerWebView,
+  type RouterActionWrite, type RouterWebContext, type RouterWebScreen,
+} from "../lib/provider/router-web.ts";
 import { RouterSettingsPopup } from "../lib/ui/router-settings.ts";
 import { overlayRows, popupOverlayOptions } from "../lib/popup/frame.ts";
 import { providerModelPicker } from "../lib/provider/provider-model-picker.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
+import { ROUTER_PLUGIN_ID, ROUTER_WEB_COMMAND } from "../web/plugins/router/contract.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
+import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
+import {
+  WEB_PLUGIN_COMMANDS_EVENT, WEB_PLUGIN_WEB_COMMAND_EVENT, webCommandRequest,
+} from "../web/core/plugin-contracts/web-commands.ts";
+import { WEB_PLUGIN_UI_SYNC_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
 
 const STATE_ENTRY = "account-router:v1";
 const DEFAULT_ROUTER_PROVIDER = "router";
@@ -1138,6 +1149,8 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
 
   pi.on("session_start", (_event, ctx) => {
     uiCtx = ctx;
+    webCtx = ctx;
+    announceRouterWeb();
     sanitizeSessionEntries(ctx);
     if (ctx.cwd) activeCwd = ctx.cwd;
     loadConfig(activeCwd);
@@ -1179,7 +1192,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     return undefined;
   });
 
-  pi.on("session_shutdown", () => { persistState(); uiCtx = undefined; });
+  pi.on("session_shutdown", () => { persistState(); uiCtx = undefined; webCtx = undefined; webScreen = undefined; });
 
   pi.events?.on(REFRESH_EVENT, () => { updateSidebar(); });
   pi.events?.on("account-router:open", () => {
@@ -1310,7 +1323,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
    * The editor never touches disk: this is the single path from a keypress to a
    * written route, and it is the same writer and reload `/router reload` uses.
    */
-  const applyRouterAction = (action: RouterAction, ctx: ExtensionCommandContext): string => {
+  const applyRouterAction = (action: RouterAction, ctx: ExtensionContext): string => {
     const paths = routePaths();
     const file = pathForFile(action.file);
     if (action.kind === "delete") {
@@ -1339,7 +1352,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
    * on its first request. The catalog facts travel with each choice so the
    * decision is made with the same information `/models` shows.
    */
-  const routeModelChoices = (ctx: ExtensionCommandContext) => {
+  const routeModelChoices = (ctx: ExtensionContext) => {
     const registry = ctx.modelRegistry;
     const models = typeof registry?.getAvailable === "function"
       ? registry.getAvailable()
@@ -1420,6 +1433,118 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
       if (!await pickModelsForDraft(result.draft, ctx)) return;
     }
   };
+
+  // ── Route editor (web) ─────────────────────────────────────────────────────
+
+  /**
+   * The shared model-settings dialog's "Router" page embeds the screen
+   * published here, so the draft lives in this process and the browser only
+   * answers. The write still goes through `applyRouterAction`: one path from an
+   * edit to a written route, whichever surface asked for it.
+   */
+  let webScreen: RouterWebScreen | undefined;
+  /** The context a web answer is applied on, captured when the session started. */
+  let webCtx: ExtensionContext | undefined;
+
+  /** What the web screens read: the same table the TUI popup renders, plus the catalogue. */
+  const webRouterContext = (ctx: ExtensionContext): RouterWebContext => {
+    const view = routerView();
+    const now = Date.now();
+    const warmth: Record<string, string> = {};
+    for (const row of view.rows) {
+      for (const target of row.route.targets) {
+        if (warmth[target.model] !== undefined) continue;
+        // Only a live entry earns a line: "no cache" on every model would be
+        // noise in a picker that is about choosing, not diagnosing.
+        if (bestWarmth(cacheKeysOf(row.route, target)) === undefined) continue;
+        warmth[target.model] = describeTargetCache(row.route, target, now);
+      }
+    }
+    return { view, models: routeModelChoices(ctx).map((choice) => choice.id), warmth };
+  };
+
+  const publishRouterWeb = (ctx: ExtensionContext): void => {
+    if (webScreen === undefined) return;
+    publishWebView(pi, ROUTER_PLUGIN_ID, routerWebView(webScreen, webRouterContext(ctx)));
+  };
+
+  /** Show a screen, or close the pane when the editor is done. */
+  const showRouterWeb = (screen: RouterWebScreen | undefined, ctx: ExtensionContext): void => {
+    webScreen = screen;
+    if (screen === undefined) {
+      publishWebView(pi, ROUTER_PLUGIN_ID, { type: "dialog", open: false });
+      return;
+    }
+    publishRouterWeb(ctx);
+  };
+
+  /**
+   * Announce the page the shared model-settings dialog offers.
+   *
+   * Announced rather than registered in a shared module: pi evaluates each
+   * extension with `moduleCache: false`, so the bridge cannot call into this one
+   * directly. It announces the descriptor and runs the command when the bridge
+   * asks for it back, with the context captured at session start.
+   */
+  const announceRouterWeb = (): void => {
+    pi.events?.emit(WEB_PLUGIN_COMMANDS_EVENT, {
+      commands: [{
+        name: ROUTER_WEB_COMMAND,
+        description: "Routes, routing methods and account pools (web)",
+        // A route is a model, so this belongs beside "Models" and "Provider".
+        // It deliberately does not claim `addsModels`: only the provider editor
+        // puts a model *into* the catalogue, so only it is the picker's add
+        // entry.
+        managesModels: true,
+        settingsEntry: "Router",
+        settingsPlugin: ROUTER_PLUGIN_ID,
+      }],
+    });
+  };
+
+  /** Apply one write from the editor, then show what it left behind. */
+  const commitRouterWeb = (write: RouterActionWrite, screen: RouterWebScreen, ctx: ExtensionContext): void => {
+    // Stored before the write so a re-publish from inside the reload cannot
+    // show a table the write is about to change.
+    webScreen = screen;
+    try {
+      const message = applyRouterAction(write, ctx);
+      webScreen = screen.kind === "list" ? { ...screen, notice: message } : screen;
+    } catch (error) {
+      webScreen = { kind: "list", problem: errorMessage(error) };
+    }
+    publishRouterWeb(ctx);
+  };
+
+  const handleRouterWebAction = (request: Partial<ActionRequestPayload>, ctx: ExtensionContext): void => {
+    const result = routerWebStep({
+      screen: webScreen ?? routerWebStart(),
+      action: {
+        id: typeof request.actionId === "string" ? request.actionId : "",
+        ...(request.values !== undefined ? { values: request.values } : {}),
+      },
+      context: webRouterContext(ctx),
+    });
+    if (result.kind === "close") { showRouterWeb(undefined, ctx); return; }
+    if (result.kind === "write") { commitRouterWeb(result.action, result.screen, ctx); return; }
+    showRouterWeb(result.screen, ctx);
+  };
+
+  pi.events?.on(WEB_PLUGIN_UI_SYNC_EVENT, () => { announceRouterWeb(); });
+  pi.events?.on(WEB_PLUGIN_WEB_COMMAND_EVENT, (payload: unknown) => {
+    const request = webCommandRequest(payload);
+    if (request === undefined || request.name !== ROUTER_WEB_COMMAND) return;
+    const ctx = webCtx ?? uiCtx;
+    if (ctx === undefined) return;
+    showRouterWeb(routerWebStart(), ctx);
+  });
+  pi.events?.on(WEB_PLUGIN_ACTION_REQUEST_EVENT, (data: unknown) => {
+    const request = data as Partial<ActionRequestPayload> | undefined;
+    if (request?.pluginId !== ROUTER_PLUGIN_ID) return;
+    const ctx = webCtx ?? uiCtx;
+    if (ctx === undefined) return;
+    handleRouterWebAction(request, ctx);
+  });
 
   pi.registerCommand(COMMAND, {
     description: "Account router: status, accounts, why, use, reset, reload",
@@ -1517,6 +1642,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
           return;
         case "reload": {
           reloadRoutes(ctx);
+          publishRouterWeb(ctx);
           emit(ctx, configErrors.length
             ? `Reloaded with ${configErrors.length} warning(s):\n${configErrors.join("\n")}`
             : `Reloaded ${table.routes.length} route(s) and ${Object.keys(config.pools).length} pool(s).`,

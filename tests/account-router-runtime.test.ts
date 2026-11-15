@@ -992,3 +992,149 @@ test("compaction forgets the cache, because the prefix it described is gone", { 
     config: { routes: [{ name: "auto", targets: ["primary/main-model"] }] },
   }));
 });
+
+// ── The web route editor ─────────────────────────────────────────────────────
+
+/** Every view the router published to the web bus, newest last. */
+function routerViews(eventBus: any): any[] {
+  const views: any[] = [];
+  eventBus.on("web-plugin:view", (payload: any) => {
+    if (payload?.pluginId === "router") views.push(payload.view);
+  });
+  return views;
+}
+
+test("the web editor lists the routes and creates one through the dialog", { timeout: 20000 }, async () => {
+  await withSession(async ({ dir, eventBus }) => {
+    const views = routerViews(eventBus);
+    const commands: any[] = [];
+    eventBus.on("web-plugin:commands", (payload: any) => commands.push(...(payload?.commands ?? [])));
+
+    // The extension announces its page; the shared dialog lists it beside
+    // "Models" and "Provider".
+    eventBus.emit("web-plugin:ui-sync", {});
+    const announced = commands.find((command) => command.name === "router");
+    assert.equal(announced?.managesModels, true, "it gets a page in the shared settings dialog");
+    assert.equal(announced?.settingsEntry, "Router");
+    assert.equal(announced?.settingsPlugin, "router");
+    assert.equal(announced?.addsModels, undefined, "the picker's add entry stays the provider editor's");
+
+    // Opening the page shows the table.
+    eventBus.emit("web-plugin:web-command", { name: "router", args: "" });
+    const list = views.at(-1);
+    assert.equal(list?.id, "router-editor:list");
+    assert.equal(list?.items?.[0]?.label, "router/auto");
+
+    // A new route: the form, then the picker, then a save that writes the file.
+    eventBus.emit("web-plugin:action-request", { pluginId: "router", actionId: "router-open" });
+    const form = views.at(-1);
+    assert.equal(form?.id, "router-editor:form:new");
+    assert.equal(form?.fields?.find((field: any) => field.name === "name")?.value, "route-1");
+
+    eventBus.emit("web-plugin:action-request", {
+      pluginId: "router", actionId: "router-targets",
+      values: { name: "fast", file: "project", method: "cache", when: "quota" },
+    });
+    const picker = views.at(-1);
+    assert.equal(picker?.id, "router-editor:targets:new");
+
+    eventBus.emit("web-plugin:action-request", {
+      pluginId: "router", actionId: "router-toggle",
+      values: { model: "primary/main-model" },
+    });
+    assert.equal(views.at(-1)?.items?.find((item: any) => item.label === "primary/main-model")?.selected, true);
+
+    eventBus.emit("web-plugin:action-request", { pluginId: "router", actionId: "router-back" });
+    eventBus.emit("web-plugin:action-request", {
+      pluginId: "router", actionId: "router-save",
+      values: { name: "fast", method: "cache", when: "quota" },
+    });
+
+    const saved = JSON.parse(await readFile(join(dir, ".pi", "account-router.json"), "utf8"));
+    // A target with no pool or thinking level is written in the short form the
+    // hand-written files use, so the editor does not churn a config.
+    assert.deepEqual(saved.routes, [{
+      name: "fast",
+      targets: ["primary/main-model"],
+      method: "cache",
+      when: "quota",
+    }]);
+    assert.match(views.at(-1)?.lines?.join("\n") ?? "", /Saved router\/fast/);
+    assert.equal(views.at(-1)?.id, "router-editor:list", "a save lands back on the table");
+
+    // The new route is registered as a virtual model immediately.
+    assert.ok(views.at(-1)?.items?.some((item: any) => item.label === "router/fast"));
+  }, (seen) => ({
+    providers: [{ name: "primary", config: fakeProvider("primary", ["main-model"], seen).config }],
+    config: { routes: [{ name: "auto", targets: ["primary/main-model"] }] },
+  }));
+});
+
+test("the web editor deletes only after the confirmation screen", { timeout: 20000 }, async () => {
+  await withSession(async ({ dir, eventBus }) => {
+    const views = routerViews(eventBus);
+    eventBus.emit("web-plugin:web-command", { name: "router", args: "" });
+    eventBus.emit("web-plugin:action-request", {
+      pluginId: "router", actionId: "router-open", values: { route: "auto" },
+    });
+    assert.equal(views.at(-1)?.id, "router-editor:form:auto");
+
+    eventBus.emit("web-plugin:action-request", { pluginId: "router", actionId: "router-delete" });
+    assert.equal(views.at(-1)?.title, "Delete router/auto?");
+    // The route was read from the global file, so that is the one it is
+    // removed from — the editor rewrites a route where it found it.
+    const globalFile = join(dir, "account-router.json");
+    let file = JSON.parse(await readFile(globalFile, "utf8"));
+    assert.equal(file.routes.length, 1, "asking is not deleting");
+
+    eventBus.emit("web-plugin:action-request", { pluginId: "router", actionId: "router-delete-confirm" });
+    file = JSON.parse(await readFile(globalFile, "utf8"));
+    assert.deepEqual(file.routes, []);
+    assert.match(views.at(-1)?.lines?.join("\n") ?? "", /Removed router\/auto/);
+  }, (seen) => ({
+    providers: [{ name: "primary", config: fakeProvider("primary", ["main-model"], seen).config }],
+    config: { routes: [{ name: "auto", targets: ["primary/main-model"] }] },
+  }));
+});
+
+test("the web editor refuses a name that is taken without writing", { timeout: 20000 }, async () => {
+  await withSession(async ({ dir, eventBus }) => {
+    const views = routerViews(eventBus);
+    eventBus.emit("web-plugin:web-command", { name: "router", args: "" });
+    eventBus.emit("web-plugin:action-request", { pluginId: "router", actionId: "router-open" });
+    eventBus.emit("web-plugin:action-request", {
+      pluginId: "router", actionId: "router-targets",
+      values: { name: "auto", file: "project", method: "priority", when: "turn" },
+    });
+    eventBus.emit("web-plugin:action-request", {
+      pluginId: "router", actionId: "router-toggle", values: { model: "primary/main-model" },
+    });
+    // Done returns to the form with the pick, which is where Save lives.
+    eventBus.emit("web-plugin:action-request", { pluginId: "router", actionId: "router-back" });
+    assert.equal(views.at(-1)?.id, "router-editor:form:new", "Done returns to the route");
+    eventBus.emit("web-plugin:action-request", {
+      pluginId: "router", actionId: "router-save",
+      values: { name: "auto", method: "priority", when: "turn" },
+    });
+    assert.equal(views.at(-1)?.id, "router-editor:form:new", "the refusal stays on the form");
+    assert.match(views.at(-1)?.lines?.join("\n") ?? "", /already exists/);
+    const file = JSON.parse(await readFile(join(dir, "account-router.json"), "utf8"));
+    assert.equal(file.routes.length, 1, "nothing was written");
+  }, (seen) => ({
+    providers: [{ name: "primary", config: fakeProvider("primary", ["main-model"], seen).config }],
+    config: { routes: [{ name: "auto", targets: ["primary/main-model"] }] },
+  }));
+});
+
+test("closing the web editor publishes a closed view so the pane returns to the picker", { timeout: 20000 }, async () => {
+  await withSession(async ({ eventBus }) => {
+    const views = routerViews(eventBus);
+    eventBus.emit("web-plugin:web-command", { name: "router", args: "" });
+    assert.equal(views.at(-1)?.open, true, "the pane renders an open view");
+    eventBus.emit("web-plugin:action-request", { pluginId: "router", actionId: "router-back" });
+    assert.equal(views.at(-1)?.open, false);
+  }, (seen) => ({
+    providers: [{ name: "primary", config: fakeProvider("primary", ["main-model"], seen).config }],
+    config: { routes: [{ name: "auto", targets: ["primary/main-model"] }] },
+  }));
+});
