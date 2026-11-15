@@ -834,6 +834,12 @@ Plugins need no request-tracking dependency: the host wraps browser fetch
 before authentication and plugin requests start. Persistent EventSource
 connections do not keep this indicator spinning forever.
 
+The status is revealed for work that is actually slow, never for a blink: a
+request must stay outstanding for a moment before the card appears, and once
+shown it stays long enough to be read. A prompt fires several quick
+overlapping requests, and publishing each one made the card flicker in and out
+of the corner, so the reveal and the minimum visible time are deliberate.
+
 Sessions, conversation history, directory browsing and lazy file viewers have
 local loading messages instead of premature empty states. Native image and
 media previews show loading until decoding/metadata is ready, and media

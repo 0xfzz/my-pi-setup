@@ -520,6 +520,45 @@ async function run() {
     // The toast expires client-side.
     await fixtureToast.waitFor({ state: "hidden", timeout: 12_000 });
 
+    step("4d-2: a quick request never blips the loading card");
+    // 4d-2. The anti-flicker guarantee. A prompt fires several quick
+    //       overlapping requests, and publishing each one mounted the loading
+    //       card for a few frames — it blinked in and out of the corner. Count
+    //       mounts with a mutation observer, proving the observer first
+    //       against a held request that must mount the card.
+    await page.evaluate(() => {
+      window.__loadingMounts = 0;
+      window.__loadingObserver = new MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of record.addedNodes) {
+            if (node instanceof Element && node.matches('[data-testid="request-loading"]')) window.__loadingMounts += 1;
+          }
+        }
+      });
+      window.__loadingObserver.observe(document.body, { childList: true });
+    });
+    await page.route(/\/api\/plugins\?probe=/, async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      await route.fulfill({ json: { plugins: [] } });
+    });
+    const heldMounts = await page.evaluate(async () => {
+      await fetch("/api/plugins?probe=slow").then((res) => res.json());
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      return window.__loadingMounts;
+    });
+    assert.ok(heldMounts >= 1, "a held request mounts the card");
+    await page.unroute(/\/api\/plugins\?probe=/);
+    await page.getByTestId("request-loading").waitFor({ state: "hidden" });
+    const quickMounts = await page.evaluate(async () => {
+      window.__loadingMounts = 0;
+      await fetch("/api/plugins").then((res) => res.json());
+      // Longer than the reveal delay, so a card that was going to appear did.
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      window.__loadingObserver.disconnect();
+      return window.__loadingMounts;
+    });
+    assert.equal(quickMounts, 0, "a quick request never blips the loading card");
+
     step("4b: realtime streaming + markdown + tool calls");
     // 4b. Realtime streaming, markdown and collapsible tool calls: the
     //     fixture session simulates a full agent turn when prompted (its
