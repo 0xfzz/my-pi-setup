@@ -147,7 +147,14 @@ export type SessionDirectoryEvent =
   | { type: "session_added"; session: SessionInfo }
   | { type: "session_removed"; id: string }
   | { type: "session_renamed"; id: string; name: string }
-  | { type: "code_changes"; message: string };
+  | { type: "code_changes"; message: string }
+  /**
+   * The served plugin registry changed (enable, disable, reload, quarantine,
+   * safe mode). The client fetches `/api/plugins` once per page load, so
+   * without this frame an open tab keeps the plugin set it was opened with —
+   * and two tabs opened at different times disagree about what is installed.
+   */
+  | { type: "plugins_changed" };
 
 /**
  * Unique identity of this server process. The directory stream sends it on
@@ -163,6 +170,11 @@ export function getServerBootId(): string {
 /** Tell connected browsers that code changed and the web is reloading. */
 export function announceCodeChanges(message = "There are code changes — reloading…"): void {
   emitDirectory({ type: "code_changes", message });
+}
+
+/** Tell connected browsers to re-read `/api/plugins`: the served set changed. */
+export function announcePluginsChanged(): void {
+  emitDirectory({ type: "plugins_changed" });
 }
 
 const directoryListeners = new Set<(event: SessionDirectoryEvent) => void>();

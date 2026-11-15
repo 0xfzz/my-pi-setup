@@ -297,6 +297,24 @@ export function usePiSession() {
     }
   }, []);
 
+  // The plugin registry is fetched once per page load; the surfaces it declares
+  // drive slots, pages and shortcut bindings. The server pushes
+  // `plugins_changed` when the served set moves (enable, disable, reload,
+  // quarantine, safe mode), so an open tab converges instead of keeping the
+  // registry it was opened with.
+  const refreshPlugins = useCallback(() => {
+    void fetch("/api/plugins")
+      .then((res) => res.json() as Promise<{ plugins?: WebPluginDescriptor[] }>)
+      .then((body) => setPlugins(body.plugins ?? []))
+      .catch(() => {
+        // Registry fetch is best-effort; empty means no plugin surfaces.
+      });
+  }, []);
+
+  useEffect(() => {
+    refreshPlugins();
+  }, [refreshPlugins]);
+
   // The session list is push-driven: one directory EventSource carries the
   // full snapshot on connect, then only running/idle and add/remove
   // transitions — no polling. A failed stream (server restart) reconnects
@@ -325,6 +343,12 @@ export function usePiSession() {
           }
           setSessions(body.sessions ?? []);
           setSessionsLoading(false);
+          break;
+        }
+        case "plugins_changed": {
+          // The served registry moved: re-read it so this tab lists the same
+          // plugins as every other tab and as the server.
+          refreshPlugins();
           break;
         }
         case "code_changes": {
@@ -391,7 +415,7 @@ export function usePiSession() {
       }
     };
     return () => source.close();
-  }, []);
+  }, [refreshPlugins]);
 
   const fetchState = useCallback(async (id: string) => {
     try {
@@ -432,23 +456,6 @@ export function usePiSession() {
     } catch {
       // The picker falls back to what the SSE already delivered.
     }
-  }, []);
-
-  // The plugin registry is static per page load; the surfaces it declares
-  // drive slots, pages and shortcut bindings.
-  useEffect(() => {
-    let cancelled = false;
-    void fetch("/api/plugins")
-      .then((res) => res.json() as Promise<{ plugins?: WebPluginDescriptor[] }>)
-      .then((body) => {
-        if (!cancelled) setPlugins(body.plugins ?? []);
-      })
-      .catch(() => {
-        // Registry fetch is best-effort; empty means no plugin surfaces.
-      });
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   // Open the event stream (and load history) whenever the selection changes.

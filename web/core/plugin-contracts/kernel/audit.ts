@@ -35,6 +35,7 @@ export class AuditLog {
   private readonly limit: number;
   private readonly clock: () => number;
   private readonly entries: AuditEntry[] = [];
+  private readonly listeners = new Set<(entry: AuditEntry) => void>();
   private nextSeq = 1;
 
   constructor(options: { limit?: number; clock?: () => number } = {}) {
@@ -46,7 +47,28 @@ export class AuditLog {
     const entry: AuditEntry = { seq: this.nextSeq++, at: this.clock(), kind, pluginId, detail };
     this.entries.push(entry);
     if (this.entries.length > this.limit) this.entries.splice(0, this.entries.length - this.limit);
+    // A snapshot: a listener that subscribes or unsubscribes during append must
+    // not change the set of observers this entry reaches.
+    for (const listener of Array.from(this.listeners)) {
+      try {
+        listener(entry);
+      } catch {
+        // An observer (the registry broadcast) cannot break the log.
+      }
+    }
     return entry;
+  }
+
+  /**
+   * Observe every appended entry. Lifecycle moves all land here, which makes
+   * this the one place that sees "the served plugin set may have changed" —
+   * an operator action, a boot, a breaker quarantine alike.
+   */
+  subscribe(listener: (entry: AuditEntry) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   /** Snapshot copy, oldest first. */

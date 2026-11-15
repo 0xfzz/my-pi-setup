@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { startWebServer } from "./main.ts";
 import {
+  announcePluginsChanged,
   clearSessionsForTests,
   registerSession,
   setSessionRunning,
@@ -241,6 +242,26 @@ test("the reload notice route broadcasts code_changes to directory streams", asy
     const bare = await fetch(`http://127.0.0.1:${handle.port}/api/reload-notice`, { method: "POST" });
     assert.equal(bare.status, 200);
     await readUntil((text) => (text.match(/code_changes/g) ?? []).length >= 2);
+
+    await reader.cancel();
+  } finally {
+    await handle.close();
+  }
+});
+test("a registry change is broadcast to every open directory stream", async () => {
+  const { core } = directoryCore("dir-plugins");
+  registerSession(core, "/tmp/project");
+  const handle = await startWebServer({ port: 0, host: "127.0.0.1" });
+  try {
+    const res = await fetch(`http://127.0.0.1:${handle.port}/api/sessions/events`);
+    assert.ok(res.body !== null);
+    const reader = res.body.getReader();
+    const readUntil = createFrameReader(reader);
+    await readUntil((text) => text.includes("sessions_snapshot"));
+
+    announcePluginsChanged();
+    const frame = await readUntil((text) => text.includes("\"type\":\"plugins_changed\""));
+    assert.match(frame, /"type":"plugins_changed"/);
 
     await reader.cancel();
   } finally {
