@@ -148,6 +148,8 @@ export function routerWebStart(): RouterWebScreen {
 export type RouterPanelContext = {
   view: RouterSettingsView;
   warmth?: Readonly<Record<string, string>>;
+  /** The model the route is currently answering from, keyed by route name. */
+  current?: Readonly<Record<string, string>>;
 };
 
 /** The key a panel warmth reading is filed under. */
@@ -165,11 +167,14 @@ export function warmthKey(routeName: string, model: string): string {
  */
 export function routerPanelView(context: RouterPanelContext): ListWebView {
   const { view } = context;
-  const items: ListItem[] = view.rows.map((row) => ({
-    text: row.id,
-    status: panelStatus(row),
-    detail: panelDetail(row, context),
-  }));
+  const items: ListItem[] = view.rows.map((row) => {
+    const current = context.current?.[row.route.name];
+    return {
+      text: current ? `${row.id} · ${current}` : row.id,
+      status: panelStatus(row),
+      detail: panelDetail(row, context, current),
+    };
+  });
   for (const row of view.shadowed) {
     items.push({
       text: `${row.id} (hidden)`,
@@ -205,8 +210,10 @@ function panelStatus(row: RouterRow): ListStatus {
 }
 
 /** One route's detail: its policy, its chain with warmth, and anything wrong. */
-function panelDetail(row: RouterRow, context: RouterPanelContext): string {
-  const blocks: string[] = [`**${row.policy}**`];
+function panelDetail(row: RouterRow, context: RouterPanelContext, current?: string): string {
+  const blocks: string[] = [];
+  if (current) blocks.push(`**now:** \`${current}\``);
+  blocks.push(`**${row.policy}**`);
   const chain = row.route.targets.map((target) => {
     const warmth = context.warmth?.[warmthKey(row.route.name, target.model)];
     const suffix = warmth === undefined ? "" : ` · ${warmth}`;

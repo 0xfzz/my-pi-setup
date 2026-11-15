@@ -464,6 +464,26 @@ test("the panel lists one row per route, healthy or blocked", () => {
   ]);
 });
 
+test("the panel names the model a route is currently answering from", () => {
+  const context: RouterPanelContext = {
+    view: viewWith(ROUTE, ROUTE_2),
+    current: { auto: "primary/main-model", cheap: "budget/model" },
+  };
+  const view = routerPanelView(context);
+  assert.deepEqual(view.items.map((item) => (typeof item === "string" ? item : item.text)), [
+    "router/auto · primary/main-model",
+    "router/cheap · budget/model",
+  ]);
+  const detail = typeof view.items[0] === "object" ? view.items[0].detail ?? "" : "";
+  assert.match(detail, /\*\*now:\*\* `primary\/main-model`/);
+});
+
+test("a route with no decision yet shows no current model", () => {
+  const context: RouterPanelContext = { view: viewWith(ROUTE) };
+  const view = routerPanelView(context);
+  assert.equal(typeof view.items[0] === "object" ? view.items[0].text : "", "router/auto");
+});
+
 test("a route with a config problem is blocked, not silently healthy", () => {
   const context: RouterPanelContext = {
     view: viewWith({ ...ROUTE, targets: [{ model: "a/b", pool: "gone" }] }),

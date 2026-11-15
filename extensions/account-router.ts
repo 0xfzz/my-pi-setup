@@ -928,10 +928,12 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
         persistState();
       }
       recordDecision({ route, reason: request.reason, chain, chosen: target, rejected, now });
+      publishRouterPanel(ctx);
       return { model: resolved.model, thinking: target.thinking, via: resolved.via };
     }
     const error = problems[0] ?? `route "${route.name}" has no usable target`;
     recordDecision({ route, reason: request.reason, chain, rejected, error, now });
+    publishRouterPanel(ctx);
     return { error };
   };
 
@@ -1187,6 +1189,11 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     const msg = event.message as any;
     if (msg?.usage) ensureUsageCost(msg.usage);
     observeMessage(msg, Date.now());
+    // The panel's warmth column changes when a request lands: a cold target
+    // becomes warm, and a warm one's TTL resets. Republish so the sidebar
+    // tracks the conversation instead of the config.
+    const ctx = webCtx ?? uiCtx;
+    if (ctx !== undefined) publishRouterPanel(ctx);
   });
 
   // The prefix comparison needs the request body, which only this event carries.
@@ -1475,6 +1482,15 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
   };
 
   /** The resting view the right sidebar renders: the route table and its warmth. */
+  /** The model each route last answered from, derived from the in-memory trace. */
+  const currentByRoute = (): Record<string, string> => {
+    const current: Record<string, string> = {};
+    for (const record of trace) {
+      if (record.chosen) current[record.route] = record.chosen;
+    }
+    return current;
+  };
+
   const publishRouterPanel = (ctx: ExtensionContext): void => {
     const registry = ctx.modelRegistry as { getAvailable?: () => unknown[]; getAll?: () => unknown[] } | undefined;
     if (registry === undefined || (typeof registry.getAvailable !== "function" && typeof registry.getAll !== "function")) return;
@@ -1489,6 +1505,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     publishWebView(pi, ROUTER_PLUGIN_ID, routerPanelView({
       view: context.view,
       warmth: panelWarmth,
+      current: currentByRoute(),
     }));
   };
 
