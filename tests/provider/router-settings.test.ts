@@ -5,6 +5,7 @@ import {
   fileChoiceOf, formatTokens, mergeTargets, moveTarget, replaceTarget, routeIssues, routeNameProblem,
   routerModelChoices, routerRows, suggestRouteName, whenOf, withPolicy,
 } from "../../lib/provider/router-settings.ts";
+import { ROUTE_METHODS, type RouteMethod } from "../../lib/provider/model-routes.ts";
 import type { SourcedRoute } from "../../lib/provider/router-config.ts";
 
 const sourced = (name: string, targets: string[], extra: Partial<SourcedRoute["route"]> = {}): SourcedRoute => ({
@@ -82,8 +83,19 @@ test("replacing a target with undefined removes exactly that entry", () => {
 test("cycles walk their whole vocabulary and wrap", () => {
   assert.equal(cycleValue(["a", "b", "c"], "c"), "a");
   assert.equal(cycleMethod("priority"), "round-robin");
-  assert.equal(cycleMethod("last-good"), "priority");
+  assert.equal(cycleMethod("last-good"), "cache");
+  assert.equal(cycleMethod("cache"), "priority", "the walk returns to the default");
   assert.equal(cycleWhen("overflow"), "turn");
+});
+
+test("every method is reachable by cycling, so none is declared but unpickable", () => {
+  const seen = new Set<RouteMethod>();
+  let method: RouteMethod = "priority";
+  for (let step = 0; step < ROUTE_METHODS.length; step++) {
+    seen.add(method);
+    method = cycleMethod(method);
+  }
+  assert.deepEqual([...seen].sort(), [...ROUTE_METHODS].sort());
 });
 
 test("a saved route drops the fields that only restate the defaults", () => {

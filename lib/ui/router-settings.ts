@@ -651,7 +651,8 @@ export class RouterSettingsPopup implements Component, Focusable {
 /** Selectable rows in the list are every route plus one "add" entry. */
 
 function cycleMethodOrUndefined(current: RouteMethod): RouteMethod | undefined {
-  const order: Array<RouteMethod | undefined> = ["priority", "round-robin", "cheapest", "last-good", undefined];
+  // Walking the list past the end restores the default (no `method` key).
+  const order: Array<RouteMethod | undefined> = [...ROUTE_METHODS, undefined];
   const index = order.indexOf(current);
   return order[(index + 1) % order.length];
 }

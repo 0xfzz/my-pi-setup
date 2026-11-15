@@ -4,8 +4,8 @@ import test from "node:test";
 import { fingerprint } from "../../lib/payload-fingerprint.ts";
 import {
   cacheIdentityOf, cacheKey, DEFAULT_CACHE_CONFIG, describeWarmth, duration, emptyLedger, isWarm,
-  MAX_LEDGER_ENTRIES, normalizeCacheConfig, normalizeLedger, observe, prefixUnchanged, promptTokens,
-  ttlFor, withWarmth, type Warmth,
+  MAX_LEDGER_ENTRIES, normalizeCacheConfig, normalizeLedger, observe, prefixUnchanged, pricesOf,
+  promptTokens, rankByCache, switchVerdict, ttlFor, withWarmth, type Warmth,
 } from "../../lib/provider/cache-routing.ts";
 
 const TTL = 300_000;
@@ -205,4 +205,90 @@ test("a cache block that is not an object is reported, not silently ignored", ()
   const { config, errors } = normalizeCacheConfig([1, 2]);
   assert.deepEqual(config, DEFAULT_CACHE_CONFIG);
   assert.deepEqual(errors, ['"cache" must be an object']);
+});
+
+// ── Cost of a decision ───────────────────────────────────────────────────────
+
+const CACHE = { ...DEFAULT_CACHE_CONFIG, horizon: 3 };
+/** A target priced at `input` per token, with no cache prices of its own. */
+const priced = (input: number, warm = false) => ({ cost: { input, output: 0 }, warm });
+const rates = (input: number) => pricesOf(priced(input), CACHE);
+
+test("prices fall back to the configured ratios when the catalog is silent", () => {
+  assert.deepEqual(rates(1), { input: 1, read: 0.1, write: 1.25 });
+  // A catalog that does report cache prices wins over the ratio.
+  assert.deepEqual(
+    pricesOf({ cost: { input: 1, output: 0, cacheRead: 0.3, cacheWrite: 2 } }, CACHE),
+    { input: 1, read: 0.3, write: 2 },
+  );
+  // An unpriced target loses every comparison rather than winning by accident.
+  assert.equal(pricesOf(undefined, CACHE).read, Number.POSITIVE_INFINITY);
+  assert.equal(pricesOf({ cost: { input: Number.NaN, output: 0 } }, CACHE).write, Number.POSITIVE_INFINITY);
+});
+
+test("the break-even table of the PRD holds: a warm target is kept under ~5x", () => {
+  // Each row is a price gap between the warm current target and a cold candidate.
+  const rows: Array<{ gap: number; switchAt3: boolean; switchAt1: boolean }> = [
+    { gap: 1.2, switchAt3: false, switchAt1: false },
+    { gap: 2, switchAt3: false, switchAt1: false },
+    { gap: 4, switchAt3: false, switchAt1: false },
+    { gap: 5.2, switchAt3: true, switchAt1: false },
+    { gap: 10, switchAt3: true, switchAt1: false },
+  ];
+  for (const row of rows) {
+    const current = { prices: rates(row.gap), warm: true };
+    assert.equal(switchVerdict(current, rates(1), 3).switch, row.switchAt3, `gap ${row.gap} at H=3`);
+    assert.equal(switchVerdict(current, rates(1), 1).switch, row.switchAt1, `gap ${row.gap} at H=1`);
+  }
+});
+
+test("break-even turns are write(u) / (read(t) − read(u))", () => {
+  const current = { prices: rates(10), warm: true };
+  const verdict = switchVerdict(current, rates(1), 3);
+  assert.equal(verdict.breakEvenTurns, 1.25 / (1 - 0.1));
+  assert.equal(verdict.switch, true, "1.4 turns repays well inside a 3-turn horizon");
+  assert.equal(switchVerdict(current, rates(1), 1).switch, false, "a single turn never repays a write");
+});
+
+test("a cold current target compares like price, because it pays its own write anyway", () => {
+  const current = { prices: rates(2), warm: false };
+  assert.equal(switchVerdict(current, rates(1), 3).switch, true, "the cheaper target wins");
+  assert.equal(switchVerdict(current, rates(3), 3).switch, false, "the dearer one does not");
+  // Equal prices: no reason to move.
+  assert.equal(switchVerdict({ prices: rates(1), warm: false }, rates(1), 3).switch, false);
+});
+
+test("an unpriced current target is abandoned for any priced one; an unpriced candidate is never taken", () => {
+  const unknown = pricesOf(undefined, CACHE);
+  assert.equal(switchVerdict({ prices: unknown, warm: true }, rates(1), 1).switch, true);
+  assert.equal(switchVerdict({ prices: rates(1), warm: true }, unknown, 99).switch, false);
+});
+
+test("rankByCache keeps a warm target when nothing repays the move", () => {
+  const facts = (target: string) => target === "warm" ? priced(4, true) : priced(1);
+  assert.deepEqual(rankByCache(["warm", "cold"], facts, CACHE), ["warm", "cold"], "a 4x gap does not repay 1.25 writes in 3 turns");
+  assert.deepEqual(rankByCache(["warm", "cold"], facts, { ...CACHE, horizon: 20 }), ["cold", "warm"], "a long horizon does");
+});
+
+test("rankByCache is plain price order when nothing is warm", () => {
+  const facts = (target: string) => priced(Number(target));
+  assert.deepEqual(rankByCache(["4", "1", "2"], facts, CACHE), ["1", "2", "4"]);
+  assert.deepEqual(rankByCache(["2", "1", "1"], facts, CACHE), ["1", "1", "2"], "ties keep declaration order");
+});
+
+test("rankByCache puts the cheapest warm target first and unpriced targets last", () => {
+  const facts = (target: string) => {
+    if (target === "unpriced") return undefined;
+    if (target === "warm-dear") return priced(5, true);
+    if (target === "warm-cheap") return priced(2, true);
+    return priced(9);
+  };
+  const ranked = rankByCache(["unpriced", "warm-dear", "cold", "warm-cheap"], facts, { ...CACHE, horizon: 1 });
+  assert.equal(ranked[0], "warm-cheap", "the cheapest warm entry is the one to keep");
+  assert.equal(ranked.at(-1), "unpriced", "an unpriced target never wins");
+  assert.deepEqual(ranked.slice(1, -1), ["warm-dear", "cold"], "the tail is price order, so a fallback is the cheapest left");
+});
+
+test("rankByCache leaves a one-target chain alone", () => {
+  assert.deepEqual(rankByCache(["only"], () => priced(1), CACHE), ["only"]);
 });

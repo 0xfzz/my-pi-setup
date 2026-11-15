@@ -13,6 +13,7 @@
 // (`priority` + `turn`), so an older config routes exactly as it did.
 
 import { existsSync, readFileSync } from "node:fs";
+import { DEFAULT_CACHE_CONFIG, rankByCache, type CacheConfig } from "./cache-routing.ts";
 
 /**
  * How a route's candidates are ordered before a request picks one.
@@ -21,8 +22,11 @@ import { existsSync, readFileSync } from "node:fs";
  * - `round-robin`: rotate per user turn, carrying a cursor across turns.
  * - `cheapest`: ascending catalog price, unknown price last.
  * - `last-good`: the model that answered the previous turn first (LKGP).
+ * - `cache`: ascending *expected* cost, where a target that still holds this
+ *   conversation's prompt cache is kept unless a cheaper one repays the cache
+ *   write within `cache.horizon` turns. On a cold chain it is `cheapest`.
  */
-export type RouteMethod = "priority" | "round-robin" | "cheapest" | "last-good";
+export type RouteMethod = "priority" | "round-robin" | "cheapest" | "last-good" | "cache";
 
 /**
  * When the chain is re-decided instead of kept on the answering model.
@@ -57,10 +61,12 @@ export type RouteDecision = {
 /** Catalog facts the ordering needs; keeps this module free of Pi imports. */
 export type TargetFacts = {
   /** Price per token, as the model catalog reports it. */
-  cost?: { input: number; output: number };
+  cost?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
+  /** Whether the next request would read this target's prompt cache. */
+  warm?: boolean;
 };
 
-export const ROUTE_METHODS: readonly RouteMethod[] = ["priority", "round-robin", "cheapest", "last-good"];
+export const ROUTE_METHODS: readonly RouteMethod[] = ["priority", "round-robin", "cheapest", "last-good", "cache"];
 export const ROUTE_WHENS: readonly RouteWhen[] = ["turn", "failure", "quota", "overflow"];
 
 /** One vocabulary for the command, the status report and the TUI. */
@@ -69,6 +75,7 @@ export const METHOD_LABELS: Record<RouteMethod, string> = {
   "round-robin": "round-robin",
   "cheapest": "cheapest",
   "last-good": "last-good",
+  "cache": "cache",
 };
 
 export const WHEN_LABELS: Record<RouteWhen, string> = {
@@ -83,6 +90,7 @@ export const METHOD_HINTS: Record<RouteMethod, string> = {
   "round-robin": "rotate the head on each user turn",
   "cheapest": "ascending catalog price; unknown price last",
   "last-good": "the model that answered last time goes first",
+  "cache": "expected cost: keep a warm prompt cache unless moving pays for itself",
 };
 
 export const WHEN_HINTS: Record<RouteWhen, string> = {
@@ -293,11 +301,13 @@ export function targetPool(route: RouteConfig, target: RouteTarget): string | un
  * - `cheapest` sorts by catalog price, keeping declaration order for ties and
  *   placing targets whose price is unknown last.
  * - `last-good` promotes the target that answered the last successful response.
+ * - `cache` ranks by expected cost including cache writes, keeping a warm
+ *   target unless a candidate repays its write inside the horizon.
  */
 export function orderTargets(
   route: RouteConfig,
   facts: (target: RouteTarget) => TargetFacts | undefined,
-  context: { cursor?: string; previous?: string } = {},
+  context: { cursor?: string; previous?: string; cache?: CacheConfig } = {},
 ): RouteTarget[] {
   const base = route.targets;
   if (base.length < 2) return base;
@@ -312,6 +322,8 @@ export function orderTargets(
       priced.sort((a, b) => (a.price === b.price ? a.index - b.index : a.price - b.price));
       return priced.map((entry) => entry.target);
     }
+    case "cache":
+      return rankByCache(base, (target) => facts(target), context.cache ?? DEFAULT_CACHE_CONFIG);
     case "last-good": {
       const index = context.previous === undefined ? -1 : base.findIndex((target) => target.model === context.previous);
       if (index <= 0) return base;

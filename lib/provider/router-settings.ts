@@ -12,7 +12,7 @@
  */
 import type { ModelChoice } from "./provider-model-picker.ts";
 import {
-  describeRoutePolicy, routeMethod, routeWhen,
+  describeRoutePolicy, ROUTE_METHODS, routeMethod, routeWhen,
   type RouteConfig, type RouteFailureClass, type RouteMethod, type RouteTarget, type RouteWhen,
 } from "./model-routes.ts";
 import type { RouteSource, SourcedRoute } from "./router-config.ts";
@@ -174,7 +174,8 @@ export function cycleValue<T>(values: readonly T[], current: T): T {
 }
 
 export function cycleMethod(current: RouteMethod): RouteMethod {
-  return cycleValue<RouteMethod>(["priority", "round-robin", "cheapest", "last-good"], current);
+  // One vocabulary: a new method must not need a second list to be reachable.
+  return cycleValue<RouteMethod>(ROUTE_METHODS, current);
 }
 
 export function cycleWhen(current: RouteWhen): RouteWhen {

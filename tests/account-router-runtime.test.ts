@@ -798,3 +798,37 @@ test("the ledger rides in the virtual model's state, so a branch switch restores
     config: { routes: [{ name: "auto", targets: ["primary/main-model"] }] },
   }));
 });
+
+test("a cache route keeps the warm target until a cheaper one repays its cache write", { timeout: 20000 }, async () => {
+  const routes = (horizon: number) => ({
+    cache: { horizon },
+    routes: [
+      // Warm the expensive target through a plain route: warmth belongs to the
+      // conversation and the model, not to the route that happened to use it.
+      { name: "warmup", targets: ["primary/main-model"] },
+      { name: "auto", method: "cache", targets: ["primary/main-model", "secondary/backup-model"] },
+    ],
+  });
+  await withSession(async ({ registry, session, dir }) => {
+    const runner = session._extensionRunner;
+    const messages = [{ role: "user", content: [{ type: "text", text: "hello" }] }];
+    const warmup = registry.getModel("router", "warmup")!;
+    for (const _ of [1, 2]) {
+      const message = await registry.completeSimple(warmup, { messages });
+      await runner.emit({ type: "message_end", message });
+    }
+    const auto = registry.getModel("router", "auto")!;
+    const pick = async () => (await (registry as any).resolveModel(auto, messages, { reason: "user", thinkingLevel: "off" })).model.provider;
+    assert.equal(await pick(), "primary", "2x dearer is kept while its cache is warm");
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(join(dir, "account-router.json"), JSON.stringify(routes(20)));
+    await routerText(session, "reload", dir);
+    assert.equal(await pick(), "secondary", "over 20 turns the cheap target repays its write");
+  }, (seen) => ({
+    providers: [
+      { name: "primary", config: fakeProvider("primary", ["main-model"], seen, { cache: { promptTokens: 60_000 }, cost: { input: 2, output: 0 } }).config },
+      { name: "secondary", config: fakeProvider("secondary", ["backup-model"], seen, { cost: { input: 1, output: 0 } }).config },
+    ],
+    config: routes(3),
+  }));
+});

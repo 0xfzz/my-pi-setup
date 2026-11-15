@@ -77,7 +77,6 @@ export type CacheConfig = {
   /** Write price as a fraction of the input price, when the catalog reports none. */
   writeRatio: number;
 };
-
 export const DEFAULT_CACHE_CONFIG: CacheConfig = {
   horizon: 3,
   minCacheableTokens: 1024,
@@ -294,17 +293,24 @@ export function normalizeCacheConfig(raw: unknown): { config: CacheConfig; error
   };
 }
 
-/** Read the `cache` block from a config file; a missing file keeps the defaults. */
-export function readCacheConfig(path: string): { config: CacheConfig; errors: string[] } {
-  if (!existsSync(path)) return { config: DEFAULT_CACHE_CONFIG, errors: [] };
+/**
+ * Read the `cache` block from a config file.
+ *
+ * `declared` says whether this file holds one at all: unlike `pools`, `cache` is
+ * a single document rather than a per-name map, so a project file that omits it
+ * must not reset the global one to the defaults.
+ */
+export function readCacheConfig(path: string): { config: CacheConfig; errors: string[]; declared: boolean } {
+  if (!existsSync(path)) return { config: DEFAULT_CACHE_CONFIG, errors: [], declared: false };
   try {
     const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-      return { config: DEFAULT_CACHE_CONFIG, errors: [`${path}: expected a JSON object`] };
+      return { config: DEFAULT_CACHE_CONFIG, errors: [`${path}: expected a JSON object`], declared: false };
     }
-    return normalizeCacheConfig((raw as Record<string, unknown>).cache);
+    const block = (raw as Record<string, unknown>).cache;
+    return { ...normalizeCacheConfig(block), declared: block !== undefined };
   } catch (error) {
-    return { config: DEFAULT_CACHE_CONFIG, errors: [`${path}: ${(error as Error).message}`] };
+    return { config: DEFAULT_CACHE_CONFIG, errors: [`${path}: ${(error as Error).message}`], declared: false };
   }
 }
 
@@ -337,4 +343,151 @@ export function normalizeLedger(raw: unknown): CacheLedger {
 
 function timeOf(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+// ── Cost of a decision ───────────────────────────────────────────────────────
+
+/** Catalog prices per token, plus whether the next request would read a cache. */
+export type CacheFacts = {
+  cost?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
+  /** True when the next request would read this target's entry, not write it. */
+  warm?: boolean;
+};
+
+/** Per-token prices a decision compares. `Infinity` means the catalog is silent. */
+export type Prices = { input: number; read: number; write: number };
+
+const finite = (value: number): boolean => Number.isFinite(value);
+
+function ratioPrice(declared: number | undefined, ratio: number, input: number): number {
+  return typeof declared === "number" && finite(declared) && declared > 0 ? declared : ratio * input;
+}
+
+/**
+ * Prices for one target.
+ *
+ * A catalog that reports no cache prices is common; the configured ratios are
+ * then applied to the input price, which is the relationship the major
+ * providers actually bill. An unpriced target is `Infinity` everywhere, so it
+ * loses every comparison instead of winning one by accident.
+ */
+export function pricesOf(facts: CacheFacts | undefined, config: CacheConfig): Prices {
+  const input = facts?.cost?.input;
+  if (typeof input !== "number" || !finite(input)) {
+    return { input: Number.POSITIVE_INFINITY, read: Number.POSITIVE_INFINITY, write: Number.POSITIVE_INFINITY };
+  }
+  return {
+    input,
+    read: ratioPrice(facts?.cost?.cacheRead, config.readRatio, input),
+    write: ratioPrice(facts?.cost?.cacheWrite, config.writeRatio, input),
+  };
+}
+
+/** One request on a target that has to write the prefix first. */
+export function coldPrice(prices: Prices): number {
+  return prices.write;
+}
+
+/** One request on a target that reads the prefix from cache. */
+export function warmPrice(prices: Prices): number {
+  return prices.read;
+}
+
+export type Verdict = {
+  /** Whether the candidate is cheaper over the horizon than staying put. */
+  switch: boolean;
+  /** Turns until the switch repays its cache write; `Infinity` when never. */
+  breakEvenTurns: number;
+  /** Prompt cost of staying on the current target for the whole horizon. */
+  stayCost: number;
+  /** Prompt cost of moving now and staying on the candidate afterwards. */
+  moveCost: number;
+};
+
+export type Candidate = { prices: Prices; warm: boolean };
+
+/**
+ * Compare staying on the current target with moving to a candidate.
+ *
+ * `stayCost = H·warm(t)` when the prefix is warm there, and
+ * `cold(t) + (H−1)·warm(t)` when it is not: a cold current target pays its own
+ * write either way, which is why the comparison then degenerates to price.
+ * `moveCost = cold(u) + (H−1)·warm(u)`.
+ *
+ * The request's own new tokens are not counted. They favour whichever target is
+ * cheaper per token, so leaving them out can only make a switch look *worse*
+ * than it is — the verdict stays conservative without guessing a delta.
+ */
+export function switchVerdict(current: Candidate, candidate: Prices, horizon: number): Verdict {
+  const stayCost = current.warm
+    ? horizon * warmPrice(current.prices)
+    : coldPrice(current.prices) + (horizon - 1) * warmPrice(current.prices);
+  const moveCost = coldPrice(candidate) + (horizon - 1) * warmPrice(candidate);
+  if (!finite(candidate.write) || !finite(candidate.read)) {
+    return { switch: false, breakEvenTurns: Number.POSITIVE_INFINITY, stayCost, moveCost };
+  }
+  if (!finite(current.prices.read)) {
+    // The current target has no known price, so any priced candidate is better.
+    return { switch: true, breakEvenTurns: 0, stayCost, moveCost };
+  }
+  // N = write(u) / (read(t) − read(u)); a cold current target already paid its
+  // own write, so only the difference in write prices counts.
+  const paid = current.warm ? 0 : current.prices.write;
+  const saved = current.prices.read - candidate.read;
+  const breakEvenTurns = saved > 0
+    ? (candidate.write - paid) / saved
+    : Number.POSITIVE_INFINITY;
+  return { switch: moveCost < stayCost, breakEvenTurns, stayCost, moveCost };
+}
+
+/** What one more request costs on a target, used to order cold candidates. */
+function orderCost(facts: CacheFacts | undefined, config: CacheConfig): number {
+  return coldPrice(pricesOf(facts, config));
+}
+
+/** Ascending cost, declaration order for ties, unpriced last. */
+function byCost<T>(
+  items: readonly { item: T; index: number }[],
+  facts: (target: T) => CacheFacts | undefined,
+  config: CacheConfig,
+): T[] {
+  return [...items]
+    .map((entry) => ({ ...entry, cost: orderCost(facts(entry.item), config) }))
+    .sort((a, b) => (a.cost === b.cost ? a.index - b.index : a.cost - b.cost))
+    .map((entry) => entry.item);
+}
+
+/**
+ * Order a chain by expected cost, keeping a warm target unless moving pays.
+ *
+ * With nothing warm the order is plain price order, so a `cache` route on a
+ * fresh conversation behaves exactly like `cheapest`. With a warm target the
+ * chain starts there unless a candidate repays its cache write inside the
+ * horizon (see {@link switchVerdict}); the rest of the chain is then ordered by
+ * price so a fallback is still the cheapest of what is left.
+ */
+export function rankByCache<T>(
+  chain: readonly T[],
+  facts: (target: T) => CacheFacts | undefined,
+  config: CacheConfig,
+): T[] {
+  if (chain.length < 2) return [...chain];
+  const indexed = chain.map((item, index) => ({ item, index }));
+  const isPricedWarm = (item: T): boolean =>
+    facts(item)?.warm === true && finite(pricesOf(facts(item), config).read);
+  const warm = indexed.filter((entry) => isPricedWarm(entry.item));
+  const kept = byCost(warm, facts, config)[0];
+  if (kept === undefined) return byCost(indexed, facts, config);
+  const keptEntry = indexed.find((entry) => entry.item === kept)!;
+
+  const current: Candidate = { prices: pricesOf(facts(kept), config), warm: true };
+  let best: { index: number; moveCost: number } | undefined;
+  for (const entry of indexed) {
+    if (entry.index === keptEntry.index) continue;
+    const verdict = switchVerdict(current, pricesOf(facts(entry.item), config), config.horizon);
+    if (!verdict.switch) continue;
+    if (!best || verdict.moveCost < best.moveCost) best = { index: entry.index, moveCost: verdict.moveCost };
+  }
+  const head = best === undefined ? keptEntry : indexed.find((entry) => entry.index === best.index)!;
+  return [head.item, ...byCost(indexed.filter((entry) => entry.index !== head.index), facts, config)];
 }

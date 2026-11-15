@@ -159,23 +159,24 @@ switch      ⇔  move(t,u,H) < stay(t,H)
 reduces to a price-gap threshold:
 
 ```text
-break-even turns  N = writePrice(u) / (readPrice(t) − readPrice(u))
+N = (writePrice(u) − readPrice(u)) / (readPrice(t) − readPrice(u))
 with read = 0.1·input and write = 1.25·input:
-                  N ≈ 12.5·input(u) / (input(t) − input(u))
+N = 11.5·input(u) / (input(t) − input(u))
 ```
 
 | Gap `input(t)/input(u)` | Break-even turns `N` | Verdict at `H = 3` |
 | --- | --- | --- |
-| 1.2× | 62.5 | stay |
-| 2× | 12.5 | stay |
-| 4× | 4.2 | stay (borderline) |
-| 5.2× | 3.0 | break-even |
-| 10× | 1.4 | switch |
+| 1.2× | 57.5 | stay |
+| 2× | 11.5 | stay |
+| 4× | 3.8 | stay (borderline) |
+| 4.8× | 3.0 | break-even |
+| 10× | 1.3 | switch |
 
 Solving the same inequality for `H` gives the rule of thumb in G3: a three-turn
-horizon only moves off a warm target when the candidate is about **5× cheaper**.
-Anything under that gap stays, which is the behaviour a `cheapest` route cannot
-express.
+horizon only moves off a warm target when the candidate is about **5× cheaper**
+(4.8× exactly). Anything under that gap stays, which is the behaviour a
+`cheapest` route cannot express. `lib/provider/cache-routing.ts` implements this
+exact form; the price-gap figures above are what `switchVerdict` returns.
 
 When the current target is **cold** the write premium is already paid or already
 lost, so the comparison degenerates to price — `method: "cache"` on a cold chain
@@ -226,7 +227,7 @@ first, then by effective cost, ties in declaration order). `TargetFacts` grows
 the cache fields it needs; `model-routes.ts` stays pure.
 
 **Accept.** With a warm `primary` (10× more expensive) and a cold `secondary`:
-`H = 1` keeps `primary`; `H = 3` moves to `secondary` (break-even is 1.4 turns);
+`H = 1` keeps `primary`; `H = 3` moves to `secondary` (break-even is 1.3 turns);
 when `primary`'s entry has expired both orders agree with `cheapest`.
 
 ### R4 — Cache-aware pool affinity

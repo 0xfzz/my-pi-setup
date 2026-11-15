@@ -49,7 +49,7 @@ import {
   type SourceContext,
 } from "../lib/provider/account-sources.ts";
 import {
-  cacheIdentityOf, cacheKey, DEFAULT_CACHE_CONFIG, describeWarmth, emptyLedger, normalizeLedger,
+  cacheIdentityOf, cacheKey, DEFAULT_CACHE_CONFIG, describeWarmth, emptyLedger, isWarm, normalizeLedger,
   observe, prefixUnchanged, readCacheConfig, ttlFor, warmthFor, withWarmth,
   type CacheConfig, type CacheLedger, type Warmth,
 } from "../lib/provider/cache-routing.ts";
@@ -189,7 +189,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     // only when it declares one.
     const cache = readCacheConfig(projectPath);
     const globalCache = readCacheConfig(globalPath);
-    cacheConfig = cache.errors.length ? globalCache.config : cache.config;
+    cacheConfig = cache.declared ? cache.config : globalCache.config;
     configErrors = [
       ...global.errors, ...project.errors,
       ...readRouteTable(globalPath, DEFAULT_ROUTER_PROVIDER).errors,
@@ -765,6 +765,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     request: { reason: "user" | "continuation" | "retry" | "direct"; failedClass?: RouteFailureClass },
     previous?: { provider: string; modelId: string },
     failed?: { provider: string; modelId: string },
+    now = Date.now(),
   ): RouteTarget[] => {
     const expanded = routeTargets(route).flatMap((target) => expandTarget(ctx, route, target));
     const isFailed = failed
@@ -789,10 +790,11 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     }
     const ordered = orderTargets(
       { ...route, targets: expanded },
-      (target) => targetFacts(ctx, route, target),
+      (target) => targetFacts(ctx, route, target, now),
       {
         cursor: state.cursor[routeCursorKey(route.name)],
         previous: previous ? `${previous.provider}/${previous.modelId}` : undefined,
+        cache: cacheConfig,
       },
     );
     const chain = decision.advance && isFailed ? rotatePast(ordered, isFailed) : ordered;
@@ -800,16 +802,32 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
   };
 
   /**
-   * Catalog facts for the cost-aware method.
+   * Catalog and cache facts for the cost-aware methods.
    *
    * A target that cannot be resolved (unknown provider, no credentials) is not
    * cheaper by virtue of being broken, so it sorts last like an unpriced model.
+   * `warm` is the fact the `cache` method turns on: the next request would read
+   * this target's entry instead of writing it.
    */
-  const targetFacts = (ctx: ExtensionContext, route: RouteConfig, target: RouteTarget) => {
+  const targetFacts = (ctx: ExtensionContext, route: RouteConfig, target: RouteTarget, now: number) => {
     const resolved = resolveTarget(ctx, route, target);
     if ("error" in resolved) return undefined;
     const cost = resolved.model.cost;
-    return { cost: { input: cost?.input ?? Number.POSITIVE_INFINITY, output: cost?.output ?? Number.POSITIVE_INFINITY } };
+    const parsed = parseModelRef(target.model);
+    const warmth = bestWarmth(cacheKeysOf(route, target));
+    return {
+      cost: {
+        input: cost?.input ?? Number.POSITIVE_INFINITY,
+        output: cost?.output ?? Number.POSITIVE_INFINITY,
+        ...(typeof cost?.cacheRead === "number" ? { cacheRead: cost.cacheRead } : {}),
+        ...(typeof cost?.cacheWrite === "number" ? { cacheWrite: cost.cacheWrite } : {}),
+      },
+      warm: isWarm(warmth, {
+        now,
+        ttlMs: ttlFor(cacheConfig, parsed?.provider ?? ""),
+        minCacheableTokens: cacheConfig.minCacheableTokens,
+      }),
+    };
   };
 
   const choose = (
@@ -820,6 +838,8 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     failed?: { provider: string; modelId: string },
   ): { model: Model<Api>; thinking?: string; via?: string } | { error: string } => {
     const problems: string[] = [];
+    // One clock for the whole decision: warmth and cooldowns must agree.
+    const now = Date.now();
     if (request.reason === "retry" && failed) {
       // The host already waited out its backoff for this failure; remember it so
       // the next turn does not start on the same broken target again.
@@ -832,7 +852,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
         }
       }
     }
-    for (const target of candidateChain(ctx, route, request, previous, failed)) {
+    for (const target of candidateChain(ctx, route, request, previous, failed, now)) {
       const resolved = resolveTarget(ctx, route, target);
       if ("error" in resolved) { problems.push(resolved.error); continue; }
       if (routeMethod(route) === "round-robin" && request.reason !== "continuation") {
