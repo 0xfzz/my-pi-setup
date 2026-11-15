@@ -841,3 +841,114 @@ test("/web start: rebuild forces a build even when output exists", async () => {
     await rm(tmp, { recursive: true, force: true }).catch(() => {});
   }
 });
+
+test("session start converges a server that was started from older sources", async () => {
+  const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+  const mockPi: any = {
+    registerCommand: () => undefined,
+    on: (name: string, handler: (event: unknown, ctx: unknown) => unknown) => {
+      handlers.set(name, handler);
+    },
+  };
+  const calls: string[] = [];
+  let up = true;
+  let state: WebUiState | null = {
+    pid: 1111,
+    port: DEFAULT_WEB_UI_PORT,
+    url: DEFAULT_WEB_UI_URL,
+    startedBy: "an-older-session",
+    startedAt: "2026-11-05T00:00:00.000Z",
+  };
+  const deps: Partial<WebUiDeps> = {
+    checkServerDir: () => true,
+    hasBuild: () => true,
+    fetchHealth: async () => up,
+    readState: async () => state,
+    isPidAlive: () => up,
+    killProcess: (pid: number) => {
+      calls.push(`kill ${pid}`);
+      up = false;
+    },
+    forceKillProcess: () => {},
+    stopGraceMs: 1,
+    removeState: async () => {
+      calls.push("removeState");
+      state = null;
+    },
+    writeState: async (_path, next) => {
+      state = next;
+    },
+    spawnServer: () => {
+      calls.push("spawn");
+      up = true;
+      return { pid: 2222, unref: () => {} };
+    },
+    buildServer: async () => {
+      calls.push("build");
+      return { ok: true };
+    },
+    // The server runs the build recorded at its start; the sources moved on since.
+    fingerprints: async () => ({ build: "b2", runtime: "r" }),
+    readRecord: async () => ({ build: "b", runtime: "r", builtAt: "t" }),
+    writeRecord: async () => {},
+    acquireReloadLock: () => () => {},
+    notifyReloading: async () => {},
+    pollIntervalMs: 1,
+    startupTimeoutMs: 1000,
+    sleep: async () => {},
+  };
+
+  webExtension(mockPi, { deps });
+  const ctx: any = {
+    sessionManager: { getSessionId: () => "joining-session" },
+    hasUI: false,
+    ui: { notify: () => undefined },
+  };
+
+  handlers.get("session_start")!({}, ctx);
+  // The convergence runs in the background so a slow rebuild never blocks the session.
+  const deadline = Date.now() + 2_000;
+  while (!calls.includes("spawn") && Date.now() < deadline) await new Promise((resolve) => setImmediate(resolve));
+  handlers.get("session_shutdown")!({}, ctx);
+
+  assert.deepEqual(calls, ["kill 1111", "removeState", "build", "spawn"], "the stale server is rebuilt and restarted");
+});
+
+test("session start leaves a server that already matches the sources alone", async () => {
+  const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+  const mockPi: any = {
+    registerCommand: () => undefined,
+    on: (name: string, handler: (event: unknown, ctx: unknown) => unknown) => {
+      handlers.set(name, handler);
+    },
+  };
+  const calls: string[] = [];
+  const deps: Partial<WebUiDeps> = {
+    fetchHealth: async () => true,
+    readState: async () => null,
+    isPidAlive: () => true,
+    killProcess: () => calls.push("kill"),
+    removeState: async () => {
+      calls.push("removeState");
+    },
+    spawnServer: () => {
+      calls.push("spawn");
+      return { pid: 2222, unref: () => {} };
+    },
+    buildServer: async () => {
+      calls.push("build");
+      return { ok: true };
+    },
+    fingerprints: async () => ({ build: "b", runtime: "r" }),
+    readRecord: async () => ({ build: "b", runtime: "r", builtAt: "t" }),
+    acquireReloadLock: () => () => {},
+  };
+
+  webExtension(mockPi, { deps });
+  const ctx: any = { sessionManager: { getSessionId: () => "joining-session" }, hasUI: false, ui: { notify: () => undefined } };
+  handlers.get("session_start")!({}, ctx);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  handlers.get("session_shutdown")!({}, ctx);
+
+  assert.deepEqual(calls, [], "an up-to-date server is not restarted by a joining session");
+});

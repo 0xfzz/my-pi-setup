@@ -1541,6 +1541,12 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
         },
       });
     }
+    // A server outlives the session that started it, and the watcher only sees
+    // edits made while this session runs. Without a check here, a session that
+    // joins a server started from older sources attaches to a web UI rendering
+    // the previous build — the same page showing two plugin versions depending
+    // on which session started the server. Converge once, at start.
+    if (autoReloadEnabled) void autoReload(ctx);
     // Sync this live session with the web UI whenever the server is up.
     void attachBridge(ctx);
   });
