@@ -9,8 +9,14 @@ import type { PluginStatus } from "../plugin-contracts/kernel/manager.ts";
 /** The operator endpoints (`web/core/server/plugin-admin.ts`). */
 export const PLUGIN_MANAGER_API = "/api/plugin-manager";
 
-export const PLUGIN_MANAGER_ACTIONS = ["enable", "disable", "reload", "clear-quarantine"] as const;
+export const PLUGIN_MANAGER_ACTIONS = ["enable", "disable", "reload", "clear-quarantine", "clear-safe-mode"] as const;
 export type PluginManagerAction = (typeof PLUGIN_MANAGER_ACTIONS)[number];
+
+/**
+ * A kernel-level action has no plugin id; the route still needs one path
+ * segment, so the operator sends this reserved id and the handler ignores it.
+ */
+export const KERNEL_MANAGER_ID = "kernel";
 
 /**
  * Capability actions carry the capability string in the request body. They are

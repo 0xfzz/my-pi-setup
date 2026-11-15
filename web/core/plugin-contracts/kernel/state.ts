@@ -140,6 +140,16 @@ export function markCleanShutdown(state: WebPluginsState): WebPluginsState {
 }
 
 /**
+ * Leave safe mode deliberately: forget the recent starts so the next boot is a
+ * normal one. The operator asked for this, so it is not a crash-loop signal any
+ * more — without it, a host that restarts twice quickly (a dev reload, a
+ * supervisor restart) has no way back except hand-editing this file.
+ */
+export function clearSafeMode(state: WebPluginsState): WebPluginsState {
+  return { ...state, boots: [] };
+}
+
+/**
  * A plugin still marked `activating` from the previous process died mid-activation.
  * Returns the ids to mark `failed` and the state with that marker cleared.
  */

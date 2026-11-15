@@ -47,6 +47,21 @@ export async function applyManagerAction(
   return postJson<PluginManagerOutcome>(url, capability === undefined ? undefined : { capability });
 }
 
+/**
+ * What the safe-mode banner offers.
+ *
+ * Safe mode is the one kernel state where a plugin's actions are refused while
+ * its views still render, which reads as "the plugin is broken". The page must
+ * therefore offer the way out, and name the button after the action.
+ */
+export function safeModeBanner(report: Pick<PluginManagerReport, "safeMode">): { visible: boolean; label: string; busyLabel: string } {
+  return {
+    visible: report.safeMode,
+    label: "Leave safe mode",
+    busyLabel: "Leaving safe mode…",
+  };
+}
+
 /** Which actions make sense for a plugin in this state — a pure decision. */
 export function availableActions(state: string): PluginManagerAction[] {
   switch (state) {

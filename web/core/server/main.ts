@@ -12,6 +12,7 @@ import { seedPluginFixtures } from "./plugin-fixtures.ts";
 import { handleApi } from "./routes.ts";
 import { sendJson } from "./http.ts";
 import { createAuthHttp, type AuthHttp, type AuthHttpOptions } from "./auth.ts";
+import { getPluginHost } from "./plugin-host.ts";
 import { webAuthConfigPath } from "../auth/config.ts";
 import { WebAuthService } from "../auth/service.ts";
 
@@ -51,8 +52,7 @@ export interface WebServerHandle {
 
 export interface StartWebServerOptions {
   host?: string;
-  port?: number;
-  clientDist?: string;
+  port?: number;  clientDist?: string;
   /** The password/token service. Defaults to the one configured by `/web set-password`. */
   auth?: WebAuthService;
   /** Cookie, proxy and origin policy for the auth routes. Defaults come from PI_WEB_* env vars. */
@@ -212,6 +212,40 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
   });
 }
 
+/**
+ * Exit deliberately, and say so.
+ *
+ * The kernel's crash-loop guard counts process starts: two inside a minute
+ * boots safe mode, where only `core.*` plugins activate and every other
+ * plugin's actions answer 404 while its views still render. A restart the
+ * operator asked for (a dev reload, a supervisor restart, Ctrl-C) is not a
+ * crash, so the plugin host records an orderly shutdown first — without this
+ * hook `markCleanShutdown` was never reached and every restart looked like one.
+ */
+function installShutdownHandlers(handle: WebServerHandle): void {
+  let stopping = false;
+  const stop = (signal: string): void => {
+    if (stopping) return;
+    stopping = true;
+    void (async () => {
+      try {
+        await handle.close();
+      } catch {
+        // A server that is already closing needs no second attempt.
+      }
+      try {
+        await getPluginHost()?.shutdown();
+      } catch {
+        // Never let teardown turn a deliberate exit into a crash exit code.
+      }
+      console.log(`[pi-web-minimal] stopped (${signal})`);
+      process.exit(0);
+    })();
+  };
+  process.once("SIGTERM", () => stop("SIGTERM"));
+  process.once("SIGINT", () => stop("SIGINT"));
+}
+
 export async function main(): Promise<void> {
   // A stable process title: the /web command's unmanaged-instance cleanup
   // matches it with pkill -f "pi-web-minimal" and nothing else. main() only
@@ -219,6 +253,7 @@ export async function main(): Promise<void> {
   process.title = "pi-web-minimal";
   const auth = defaultAuthService();
   const handle = await startWebServer({ auth });
+  installShutdownHandlers(handle);
   console.log(`[pi-web-minimal] listening on http://${handle.host}:${handle.port}`);
   const mode = auth.mode();
   if (mode === "enabled") {

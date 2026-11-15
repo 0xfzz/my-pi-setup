@@ -68,6 +68,42 @@ test("safe mode hides first-party descriptors that are not core.* plugins", asyn
   });
 });
 
+test("clearing safe mode re-activates the plugins it parked", async () => {
+  await withState(async (statePath) => {
+    const host = createPluginHost({ descriptors, descriptorDir: "/repo/web-plugins", statePath, env: { PI_WEB_SAFE_MODE: "1" } });
+    const report = await host.ready;
+    assert.equal(report.safeMode, true);
+    assert.deepEqual(host.visible(), [], "safe mode parks every non-core plugin");
+
+    const cleared = await host.manager.clearSafeMode();
+    assert.equal(cleared.ok, true);
+    assert.deepEqual(cleared.activated.sort(), ["subagent-graph", "todo"]);
+    assert.equal(host.manager.isSafeMode(), false);
+    assert.deepEqual(host.visible().map((d) => d.id).sort(), ["subagent-graph", "todo"], "the actions route resolves them again");
+    assert.equal(host.descriptor("todo")?.title, "Todo");
+    await host.shutdown();
+
+    // The cleared boot history means the next start is a normal one.
+    const persisted = JSON.parse(readFileSync(statePath, "utf8"));
+    assert.deepEqual(persisted.boots, []);
+    const next = createPluginHost({ descriptors, descriptorDir: "/repo/web-plugins", statePath, now: () => Date.now() + 120_000 });
+    const nextReport = await next.ready;
+    assert.equal(nextReport.safeMode, false);
+    assert.deepEqual(next.visible().map((d) => d.id).sort(), ["subagent-graph", "todo"]);
+    await next.shutdown();
+  });
+});
+
+test("clearing safe mode when it is off changes nothing", async () => {
+  await withState(async (statePath) => {
+    const host = createPluginHost({ descriptors, descriptorDir: "/repo/web-plugins", statePath });
+    await host.ready;
+    assert.deepEqual(await host.manager.clearSafeMode(), { ok: true, activated: [], failed: {} });
+    assert.deepEqual(host.visible().map((d) => d.id).sort(), ["subagent-graph", "todo"]);
+    await host.shutdown();
+  });
+});
+
 test("a corrupt state file is reported as a warning and boots with defaults", async () => {
   await withState(async (statePath) => {
     writeFileSync(statePath, "{ broken");

@@ -1,16 +1,18 @@
 // The plugin manager page: the operator surface for the kernel (PRD R21). It
 // lists every installed plugin with its lifecycle state, granted/pending
 // capabilities and mounted backend routes, and drives enable / disable / reload
-// / clear-quarantine through the operator endpoints. Read-only rendering — the
-// kernel decides, the page reports.
+// / clear-quarantine / clear-safe-mode through the operator endpoints.
+// Read-only rendering — the kernel decides, the page reports.
 
 import { useCallback, useEffect, useState } from "react";
 import { ArrowsClockwise, Plugs, WarningCircle } from "@phosphor-icons/react";
+import { KERNEL_MANAGER_ID } from "../../core/shared/plugin-manager.ts";
 import {
   applyManagerAction,
   availableActions,
   fetchPluginManagerReport,
   groupBySource,
+  safeModeBanner,
   type PluginCapabilityAction,
   type PluginManagerAction,
   type PluginManagerCommand,
@@ -23,6 +25,7 @@ const ACTION_LABELS: Record<PluginManagerAction, string> = {
   disable: "Disable",
   reload: "Reload",
   "clear-quarantine": "Clear quarantine",
+  "clear-safe-mode": "Leave safe mode",
 };
 
 export function PluginManagerPage() {
@@ -63,7 +66,7 @@ export function PluginManagerPage() {
 
   return (
     <div className="plugin-manager">
-      <PluginManagerHeader report={report} onRefresh={() => void refresh()} />
+      <PluginManagerHeader report={report} busy={busy} onRefresh={() => void refresh()} onLeaveSafeMode={() => void run(KERNEL_MANAGER_ID, "clear-safe-mode")} />
       {error !== null ? <p className="plugin-manager-error" role="alert">{error}</p> : null}
       {groupBySource(report.plugins).map((group) => (
         <section key={group.source} className="plugin-manager-group">
@@ -85,15 +88,34 @@ export function PluginManagerPage() {
   );
 }
 
-function PluginManagerHeader({ report, onRefresh }: { report: PluginManagerReport; onRefresh: () => void }) {
+function PluginManagerHeader({
+  report,
+  busy,
+  onRefresh,
+  onLeaveSafeMode,
+}: {
+  report: PluginManagerReport;
+  busy: string | null;
+  onRefresh: () => void;
+  onLeaveSafeMode: () => void;
+}) {
   return (
     <div className="plugin-manager-header">
       <p className="plugin-manager-count">
         {report.plugins.length} installed · {report.plugins.filter((row) => row.state === "active").length} active
       </p>
-      {report.safeMode ? (
+      {safeModeBanner(report).visible ? (
         <p className="plugin-manager-warning" role="status">
-          <WarningCircle size={14} aria-hidden="true" /> Safe mode: only <code>core.*</code> plugins start automatically.
+          <WarningCircle size={14} aria-hidden="true" /> Safe mode: only <code>core.*</code> plugins start
+          automatically, so every other plugin's actions are refused.
+          <button
+            type="button"
+            className="plugin-manager-refresh"
+            disabled={busy !== null}
+            onClick={onLeaveSafeMode}
+          >
+            {busy === `${KERNEL_MANAGER_ID}:clear-safe-mode:` ? safeModeBanner(report).busyLabel : safeModeBanner(report).label}
+          </button>
         </p>
       ) : null}
       {report.warnings.length > 0 ? (

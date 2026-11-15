@@ -6,8 +6,10 @@ import { join } from "node:path";
 
 import {
   defaultState,
+  clearSafeMode,
   loadState,
   markActivating,
+  markCleanShutdown,
   parseState,
   recordBoot,
   recoverInterruptedActivation,
@@ -89,6 +91,30 @@ test("re-recording the same process does not count as a second start", () => {
   const again = recordBoot(first.state, 2_000, {}, 77);
   assert.equal(again.safeMode, false);
   assert.equal(again.state.boots.length, 1);
+});
+
+test("an orderly shutdown keeps the next start out of safe mode", () => {
+  // A dev reload or supervisor restart ends the previous process deliberately;
+  // that start must not count toward the crash-loop window, or every restart
+  // looks like a crash and only core plugins come back.
+  const first = recordBoot(defaultState(), 1_000_000, {}, 101);
+  const clean = markCleanShutdown(first.state);
+  assert.equal(clean.boots.length, 0);
+  const restart = recordBoot(clean, 1_000_000 + 5_000, {}, 102);
+  assert.equal(restart.safeMode, false, "a deliberate restart is not a crash");
+  // Two unannounced starts in a row still trip it: that is the crash loop.
+  const crashed = recordBoot(restart.state, 1_000_000 + 9_000, {}, 103);
+  assert.equal(crashed.safeMode, true, "an unannounced restart still trips the guard");
+});
+
+test("clearing safe mode forgets the recent starts so the next boot is normal", () => {
+  const first = recordBoot(defaultState(), 1_000_000, {}, 101);
+  const tripped = recordBoot(first.state, 1_000_000 + 1_000, {}, 102);
+  assert.equal(tripped.safeMode, true);
+  const cleared = clearSafeMode(tripped.state);
+  assert.deepEqual(cleared.boots, []);
+  assert.equal(recordBoot(cleared, 1_000_000 + 2_000, {}, 103).safeMode, false);
+  assert.deepEqual(cleared.plugins, tripped.state.plugins, "operator enablement is untouched");
 });
 
 test("PI_WEB_SAFE_MODE=1 forces safe mode on the first start", () => {

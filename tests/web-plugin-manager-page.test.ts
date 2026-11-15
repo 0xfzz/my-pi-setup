@@ -12,7 +12,8 @@ import { join } from "node:path";
 import { startWebServer } from "../web/core/server/main.ts";
 import { registerWebPlugins } from "../web/core/server/plugin-host.ts";
 import { WEB_PLUGINS } from "../web/plugins/index.ts";
-import { availableActions, groupBySource } from "../web/plugins/plugin-manager/lib/plugin-manager-api.ts";
+import { availableActions, groupBySource, safeModeBanner } from "../web/plugins/plugin-manager/lib/plugin-manager-api.ts";
+import { KERNEL_MANAGER_ID, PLUGIN_MANAGER_ACTIONS } from "../web/core/shared/plugin-manager.ts";
 import type { PluginManagerRow } from "../web/core/shared/plugin-manager.ts";
 import type { PluginState } from "../web/core/plugin-contracts/kernel/lifecycle.ts";
 import type { PluginSource } from "../web/core/plugin-contracts/kernel/discovery.ts";
@@ -142,6 +143,27 @@ function row(id: string, state: PluginState, source: PluginSource = "repo"): Plu
     routes: [],
   };
 }
+
+test("clear-safe-mode is an operator action, and the banner only offers it in safe mode", async () => {
+  assert.ok(PLUGIN_MANAGER_ACTIONS.includes("clear-safe-mode"));
+  assert.equal(safeModeBanner({ safeMode: true }).visible, true);
+  assert.equal(safeModeBanner({ safeMode: false }).visible, false);
+  assert.equal(safeModeBanner({ safeMode: true }).label, "Leave safe mode");
+  await withServer(async (baseUrl) => {
+    // Not in safe mode here: the action is a no-op that still answers 200, so a
+    // stale banner click cannot fail confusingly.
+    const res = await fetch(`${baseUrl}/api/plugin-manager/${KERNEL_MANAGER_ID}/clear-safe-mode`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(res.status, 200);
+    const outcome = (await res.json()) as { ok: boolean };
+    assert.equal(outcome.ok, true);
+    const report = (await (await fetch(`${baseUrl}/api/plugin-manager`)).json()) as { safeMode: boolean };
+    assert.equal(report.safeMode, false);
+  });
+});
 
 test("availableActions follows the lifecycle state", () => {
   assert.deepEqual(availableActions("active"), ["disable", "reload"]);

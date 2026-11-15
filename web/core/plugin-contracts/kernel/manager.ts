@@ -20,7 +20,7 @@ import { deactivationOrder, requiredDependents, resolvePlugins, type ResolverInp
 import { PluginRouteRegistry, type PluginRouteHandler } from "./routes.ts";
 import { ServiceRegistry } from "./services.ts";
 import { PluginStorage, type ScopedStorage } from "./storage.ts";
-import { markActivating, markCleanShutdown, recordBoot, recoverInterruptedActivation, setPluginState, type WebPluginsState } from "./state.ts";
+import { markActivating, markCleanShutdown, clearSafeMode, recordBoot, recoverInterruptedActivation, setPluginState, type WebPluginsState } from "./state.ts";
 import type { WebView } from "../view.ts";
 
 /** Hook registration for this plugin. Each call returns an unregister function. */
@@ -511,6 +511,43 @@ export class PluginManager {
 
   isSafeMode(): boolean {
     return this.safeMode;
+  }
+
+  /**
+   * Leave safe mode deliberately, without waiting for the next restart.
+   *
+   * The crash-loop guard trips on two starts inside its window, which also
+   * catches a dev reload or a supervisor restart — restarts that are not
+   * crashes. Until this action existed the only way out was hand-editing the
+   * state file, so a stuck host looked like a broken plugin: views still render
+   * but every action answers 404. Enabled plugins that safe mode parked are
+   * activated here, in dependency order.
+   */
+  async clearSafeMode(): Promise<{ ok: boolean; activated: string[]; failed: Record<string, string> }> {
+    if (!this.safeMode) return { ok: true, activated: [], failed: {} };
+    this.safeMode = false;
+    this.state = clearSafeMode(this.state);
+    this.audit.append("safe-mode", "kernel", "cleared by the operator");
+    const activated: string[] = [];
+    const failed: Record<string, string> = {};
+    for (const id of this.resolvedOrder()) {
+      const slot = this.slots.get(id)!;
+      if (!this.state.plugins[id]?.enabled || isLive(slot.life.state) || slot.life.state === "quarantined") continue;
+      if (slot.unresolvedReason !== undefined) continue;
+      slot.waiting = undefined;
+      try {
+        // The safe-mode branch of start() left these slots parked before the
+        // enable transition; activateSlot only runs from `enabled`.
+        slot.life.dispatch("enable");
+        await this.activateSlot(slot);
+        if (isLive(slot.life.state)) activated.push(id);
+        else if (slot.lastError !== undefined) failed[id] = slot.lastError;
+      } catch (error) {
+        failed[id] = error instanceof Error ? error.message : String(error);
+      }
+    }
+    this.save();
+    return { ok: true, activated, failed };
   }
 
   /** Record a hook bail veto in the bounded audit log (PRD R24). */

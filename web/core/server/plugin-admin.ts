@@ -21,7 +21,6 @@ import {
   type PluginManagerReport,
   type PluginManagerRow,
 } from "../shared/plugin-manager.ts";
-
 /** The whole kernel state the manager page needs, in one read. */
 export function pluginManagerReport(): PluginManagerReport | null {
   const host = getPluginHost();
@@ -73,6 +72,16 @@ export async function applyPluginManagerAction(
     return { ok: false, state: "unknown", error: "plugin host not started" };
   }
   const manager = host.manager;
+  // Safe mode is kernel state, not a plugin's: it gates every non-core plugin,
+  // so it is cleared at the kernel level rather than per id.
+  if (action === "clear-safe-mode") {
+    const result = await manager.clearSafeMode();
+    return {
+      ok: result.ok,
+      state: "active",
+      ...(Object.keys(result.failed).length > 0 ? { error: `some plugins failed: ${Object.keys(result.failed).join(", ")}` } : {}),
+    };
+  }
   if (action === "enable") return manager.enable(pluginId);
   if (action === "disable") return manager.disable(pluginId);
   if (action === "reload") return manager.reload(pluginId);

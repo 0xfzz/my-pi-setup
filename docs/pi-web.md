@@ -640,8 +640,24 @@ without adding subject-specific rendering or operations to the host.
 starts within 60s boot the plugin kernel in safe mode: only `core.*` plugins
 activate, `/api/plugins` hides the rest, and every plugin action answers 404
 "Plugin not found" while published views still render — so the UI looks alive
-but clicks do nothing. Space restarts at least a minute apart (or clearing the
-`boots` list in the plugin state file) restores normal activation.
+but clicks do nothing.
+
+A deliberate exit no longer counts: `main()` installs SIGTERM/SIGINT handlers
+that close the server and shut the plugin host down, and that shutdown forgets
+the start it is ending, so a reload or supervisor restart is not a crash. An
+unannounced start still counts, which is what the guard is for.
+
+To leave safe mode without restarting, use the operator action — the plugin
+manager page shows a **Leave safe mode** button, and the same action is
+available over HTTP:
+
+```sh
+curl -X POST http://127.0.0.1:<port>/api/plugin-manager/kernel/clear-safe-mode \
+  -H 'content-type: application/json' -b '<your session cookie>' -d '{}'
+```
+
+It clears the recorded starts and activates the enabled plugins that safe mode
+parked, in dependency order.
 
 A dialog may also declare **`fields`** — a form of typed answers (`text`, a
 masked `secret`, or a `select` menu) — and a `submitsInput` action then
