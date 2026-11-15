@@ -151,17 +151,37 @@ function subscribeViews(sessionId: string, bus: MinimalEventBus): () => void {
 }
 
 /**
+ * Merge an announcement into what the session already announced.
+ *
+ * Keyed by command name, not by announcement: several extensions contribute
+ * commands (the provider editor and the router both do) and each announces only
+ * its own list, so replacing the list wholesale would let whichever extension
+ * spoke last erase the others — the symptom is a settings page or a picker
+ * entry that silently disappears. A name announced again keeps the newest
+ * descriptor, which is how a `/reload` re-announcement does not list a command
+ * twice. The bridge's own contributed-command registry merges by name for the
+ * same reason.
+ */
+export function mergeAnnouncedCommands(
+  current: readonly WebCommandDescriptor[],
+  announced: readonly WebCommandDescriptor[],
+): WebCommandDescriptor[] {
+  const merged = new Map(current.map((command) => [command.name, command]));
+  for (const command of announced) merged.set(command.name, command);
+  return [...merged.values()];
+}
+
+/**
  * The commands a session's extensions contribute to the web.
  *
  * Announced rather than read: the registry is a module in the extension's own
- * module graph. An announcement replaces the previous one, so an extension
- * that re-registers (a `/reload`) is not listed twice.
+ * module graph.
  */
 function subscribeCommands(sessionId: string, bus: MinimalEventBus): () => void {
   return bus.on(WEB_PLUGIN_COMMANDS_EVENT, (payload: unknown) => {
     const announced = announcedCommandList(payload);
     if (announced.length === 0) return;
-    sessionCommands.set(sessionId, announced);
+    sessionCommands.set(sessionId, mergeAnnouncedCommands(announcedWebCommands(sessionId), announced));
   });
 }
 
