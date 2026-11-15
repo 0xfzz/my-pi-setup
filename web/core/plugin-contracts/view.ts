@@ -103,6 +103,9 @@ export interface DialogField {
 }
 
 /** A form stays small enough to read on one screen. */
+/** A dialog id is an identity, not prose: no spaces, no separators beyond ":" and "-". */
+export const DIALOG_ID_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9:_-]{0,119}$/;
+
 export const DIALOG_MAX_FIELDS = 12;
 export const DIALOG_MAX_FIELD_CHOICES = 40;
 export const DIALOG_FIELD_NAME_REGEX = /^[a-z][a-zA-Z0-9_-]*$/;
@@ -116,6 +119,13 @@ export const DIALOG_FIELD_NAME_REGEX = /^[a-z][a-zA-Z0-9_-]*$/;
  */
 export interface DialogWebView {
   type: "dialog";
+  /**
+   * Stable identity of this dialog. A publisher that reuses the id keeps the
+   * user's typed answer (a refusal corrected in place); a new id is a new
+   * dialog, which is how a wizard advances step by step. Defaults to the
+   * publishing plugin's id.
+   */
+  id?: string;
   title?: string;
   /** Markdown body. */
   body?: string;
@@ -331,6 +341,9 @@ export function validateView(input: unknown): ValidateViewResult {
       if (raw.body !== undefined && typeof raw.body !== "string") {
         return { ok: false, error: "dialog body must be a string" };
       }
+      if (raw.id !== undefined && (typeof raw.id !== "string" || !DIALOG_ID_REGEX.test(raw.id))) {
+        return { ok: false, error: `dialog id must match ${String(DIALOG_ID_REGEX)}` };
+      }
       if (raw.lines !== undefined) {
         if (!Array.isArray(raw.lines) || raw.lines.some((line) => typeof line !== "string")) {
           return { ok: false, error: "dialog lines must be an array of strings" };
@@ -383,6 +396,7 @@ export function validateView(input: unknown): ValidateViewResult {
       if ("error" in fields) return { ok: false, error: fields.error };
       const view: DialogWebView = {
         type: "dialog",
+        ...(raw.id !== undefined ? { id: clampId(raw.id as string, "Dialog id", warnings) } : {}),
         ...(cleanTitle !== undefined ? { title: cleanTitle } : {}),
         ...(raw.body !== undefined ? { body: clampDetail(raw.body, "Dialog body", warnings) } : {}),
         ...(raw.lines !== undefined
