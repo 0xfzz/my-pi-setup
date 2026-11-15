@@ -76,8 +76,9 @@ through the same writer as everything else and never edits a file in place.
 
 - **The right sidebar** has a **Router** panel showing only the selected route:
   a hub on the left fans out through curved connections to model pills on the
-  right. The latest chosen target and its connection turn green, with a moving
-  dot along the selected branch. Each routing decision updates the diagram live
+  right. The latest chosen target and its connection use the web theme's accent,
+  with inverse text and a moving dot along the selected branch. Colors follow
+  the app's shared tokens in both light and dark mode. Each routing decision updates the diagram live
   without moving its nodes or resetting the viewport. The canvas fills the
   sidebar; drag to pan, scroll or use the small overlay controls to zoom, and
   **Fit** restores the whole diagram. Hover a node for its full model reference

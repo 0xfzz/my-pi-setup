@@ -68,6 +68,39 @@ async function waitForHealth(baseUrl, timeoutMs = 30_000, serverExitCode = () =>
   throw new Error(`server did not become healthy\n${logs.join("")}`);
 }
 
+async function assertRoutingTheme(page) {
+  const originalTheme = await page.locator("html").getAttribute("data-theme");
+  try {
+    for (const theme of ["light", "dark"]) {
+      const colors = await page.evaluate((theme) => {
+        document.documentElement.dataset.theme = theme;
+        const probe = document.createElement("span");
+        probe.style.cssText = "background: var(--accent); color: var(--bg)";
+        document.body.append(probe);
+        try {
+          const expected = getComputedStyle(probe);
+          const active = getComputedStyle(document.querySelector(".router-graph-node.is-live"));
+          return {
+            expected: { hub: expected.backgroundColor, background: expected.backgroundColor, text: expected.color, edge: expected.backgroundColor, packet: expected.backgroundColor },
+            actual: {
+              hub: getComputedStyle(document.querySelector(".router-node-input")).backgroundColor,
+              background: active.backgroundColor, text: active.color,
+              edge: getComputedStyle(document.querySelector(".router-edge.is-live")).stroke,
+              packet: getComputedStyle(document.querySelector(".router-packet")).fill,
+            },
+          };
+        } finally { probe.remove(); }
+      }, theme);
+      assert.deepEqual(colors.actual, colors.expected, `router uses shared theme colors with readable inverse text (${theme})`);
+    }
+  } finally {
+    await page.locator("html").evaluate((element, theme) => {
+      if (theme === null) element.removeAttribute("data-theme");
+      else element.setAttribute("data-theme", theme);
+    }, originalTheme);
+  }
+}
+
 async function assertRoutingCanvas(page) {
   await page.getByRole("button", { name: "More panels", exact: true }).click();
   await page.getByRole("menuitem", { name: "Router", exact: true }).press("ArrowRight");
@@ -78,6 +111,7 @@ async function assertRoutingCanvas(page) {
   assert.equal(await panel.locator(".router-edges path[data-from]").count(), 3);
   const target = panel.locator('[data-node-id="target:0"]');
   assert.equal(await target.getAttribute("data-status"), "active");
+  await assertRoutingTheme(page);
   const standby = panel.getByRole("button", { name: "Highlight secondary/deepseek-v4.1-flash", exact: true });
   await standby.click();
   assert.equal(await standby.getAttribute("aria-pressed"), "true");
