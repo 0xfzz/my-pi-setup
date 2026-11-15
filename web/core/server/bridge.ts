@@ -50,7 +50,7 @@ export interface BridgeState {
 export type BridgeCommand =
   | { type: "prompt"; message: string; images?: Array<{ data: string; mimeType: string }> }
   | { type: "abort" }
-  | { type: "action"; requestId: string; pluginId: string; actionId: string; confirm?: string }
+  | { type: "action"; requestId: string; pluginId: string; actionId: string; confirm?: string; values?: Record<string, string> }
   | { type: "set_model"; provider: string; id: string }
   | { type: "set_thinking"; level: string }
   | { type: "web_command"; name: string; args?: string }
@@ -199,14 +199,24 @@ export function attachBridge(options: {
         connection.sendCommand({ type: "ui_sync" });
         return;
       }
-      const request = data as { requestId?: unknown; pluginId?: unknown; actionId?: unknown; confirm?: unknown };
+      const request = data as {
+        requestId?: unknown;
+        pluginId?: unknown;
+        actionId?: unknown;
+        confirm?: unknown;
+        values?: unknown;
+      };
       if (typeof request?.pluginId === "string" && typeof request?.actionId === "string") {
+        const values = request.values !== undefined && typeof request.values === "object" && request.values !== null
+          ? (request.values as Record<string, string>)
+          : undefined;
         connection.sendCommand({
           type: "action",
           requestId: typeof request.requestId === "string" ? request.requestId : "",
           pluginId: request.pluginId,
           actionId: request.actionId,
           ...(typeof request.confirm === "string" && request.confirm !== "" ? { confirm: request.confirm } : {}),
+          ...(values !== undefined && Object.keys(values).length > 0 ? { values } : {}),
         });
       }
     },

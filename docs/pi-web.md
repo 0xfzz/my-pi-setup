@@ -615,6 +615,17 @@ action pipeline back to the extension. That, plus slots, region overrides,
 pages, toasts, statuses, widgets and the ui.* events, is the full kit an
 extension uses to extend the web UI.
 
+A dialog may also declare **`fields`** — a form of typed answers (`text`, a
+masked `secret`, or a `select` menu) — and a `submitsInput` action then
+carries them back as `values` (a name→value record), so a multi-step dialog
+is possible without the host knowing anything about its subject: the
+extension publishes one step and receives the answers. A `secret` field may
+not carry a value (a pre-filled credential would live in the event stream),
+a `select` needs its choices, and a dialog declares `input` or `fields`, not
+both. Give each step its own dialog `id`: a new id starts a fresh form, while
+a re-publish of the same id keeps what the user typed (which is how a
+refused value is corrected in place).
+
 ## Minimalist workspace
 
 The shell uses a Claude Code-inspired split layout: a quiet 232px session

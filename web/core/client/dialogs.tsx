@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, X } from "@phosphor-icons/react";
 import { MarkdownBody } from "./plugin-system/markdown.tsx";
 import { postPluginAction } from "./plugin-system/actionClient.ts";
-import type { DialogWebView } from "./plugin-system/contract.ts";
+import type { DialogField, DialogWebView } from "./plugin-system/contract.ts";
 import type { PiAuthLoginState, PiSettingEntry, PiTrustState } from "../shared/pi-api.ts";
 
 export interface ModelRefLike {
@@ -1187,6 +1187,226 @@ export function InfoDialog({
  * popups. Actions dispatch through the plugin action pipeline; the extension
  * closes a dialog by publishing the view with `open: false`.
  */
+/** A published plugin dialog: the modal, its form, and its actions.
+ *
+ * Per-dialog state lives here (not in DialogLayer) so two dialogs never share
+ * typed text, and so a form's answers reset when the extension publishes a new
+ * dialog id — which is how a wizard advances: each step is a dialog id, and a
+ * new step starts empty while a re-publish of the same step keeps what the
+ * user typed.
+ */
+function PluginDialog({
+  pluginId,
+  dialogId,
+  view,
+  sessionId,
+  onDismiss,
+}: {
+  pluginId: string;
+  dialogId: string;
+  view: DialogWebView & { id?: string };
+  sessionId: string;
+  onDismiss?: (dialogId: string, view: unknown) => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [typed, setTyped] = useState("");
+  const [answers, setAnswers] = useState<Record<string, string>>(() =>
+    initialFieldValues(view.fields)
+  );
+  const publishedId = viewDialogId(view.id) ?? dialogId;
+
+  // A new step (a new dialog id) is a new form; the extension's own draft is
+  // what fills it, so stale text from the previous step cannot leak in.
+  useEffect(() => {
+    setAnswers(initialFieldValues(view.fields));
+  }, [publishedId, view.fields]);
+
+  const fields = view.fields;
+  const missingRequired = (fields ?? []).some(
+    (field) => field.required === true && (answers[field.name] ?? "").trim() === "",
+  );
+  const submitAction = view.actions?.find((action) => action.submitsInput && action.tone === "primary")
+    ?? view.actions?.find((action) => action.submitsInput);
+
+  const runAction = async (
+    action: { id: string; label: string; submitsInput?: boolean },
+    values?: Record<string, string>,
+  ): Promise<void> => {
+    const text = typed.trim();
+    if (action.submitsInput && values === undefined && text === "") return;
+    if (action.submitsInput && values !== undefined && missingRequired) return;
+    // A submitsInput action carries the typed text or the form's answers; a
+    // choice button carries its label so a static descriptor action id
+    // ("answer-option") still resolves the exact option the user clicked.
+    const confirm = action.submitsInput && values === undefined ? text : action.label;
+    setBusy(`${action.id}:${action.label}`);
+    try {
+      const { data } = await postPluginAction(sessionId, pluginId, {
+        id: action.id,
+        confirm,
+        ...(values !== undefined ? { values } : {}),
+      });
+      if (!data.ok) {
+        // Surface the failure where the user just clicked.
+        window.dispatchEvent(new CustomEvent("pi-web:dialog-error", { detail: data.error ?? "action failed" }));
+      } else if (action.submitsInput && values === undefined) {
+        setTyped("");
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const submitValues = (action: { id: string; label: string; submitsInput?: boolean }): void => {
+    // Every declared field travels, filled or not: the extension owns the
+    // validation and says why a value is refused, in the same dialog.
+    const values = Object.fromEntries(
+      (fields ?? []).map((field) => [field.name, answers[field.name] ?? field.value ?? ""]),
+    );
+    void runAction(action, values);
+  };
+
+  return (
+    <div className="app-dialog-backdrop">
+      <div className="app-dialog" role="dialog" aria-modal="true" aria-label={view.title ?? dialogId}>
+        <div className="app-dialog-head">
+          <span className="app-dialog-title">{view.title ?? dialogId}</span>
+          {onDismiss !== undefined ? (
+            <button
+              type="button"
+              className="app-dialog-close"
+              aria-label="Dismiss dialog"
+              onClick={() => onDismiss(dialogId, view)}
+            >
+              <X size={14} />
+            </button>
+          ) : null}
+        </div>
+        <div className="app-dialog-body">
+          {view.body !== undefined ? (
+            <div className="app-dialog-markdown">
+              <MarkdownBody text={view.body} />
+            </div>
+          ) : null}
+          {view.lines !== undefined ? (
+            <pre className="app-dialog-lines">{view.lines.join("\n")}</pre>
+          ) : null}
+          {view.input !== undefined ? (
+            <input
+              type="text"
+              className="app-dialog-input"
+              aria-label={view.input.placeholder ?? "Type your answer"}
+              placeholder={view.input.placeholder ?? "Type your own answer…"}
+              value={typed}
+              onChange={(event) => setTyped(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && submitAction !== undefined && typed.trim() !== "") {
+                  event.preventDefault();
+                  void runAction(submitAction);
+                }
+              }}
+            />
+          ) : null}
+          {fields !== undefined ? (
+            <div className="app-dialog-form">
+              {fields.map((field) => (
+                <DialogFieldControl
+                  key={field.name}
+                  field={field}
+                  value={answers[field.name] ?? field.value ?? ""}
+                  onChange={(value) => setAnswers((prev) => ({ ...prev, [field.name]: value }))}
+                  onSubmit={() => {
+                    if (submitAction !== undefined && !missingRequired) submitValues(submitAction);
+                  }}
+                />
+              ))}
+            </div>
+          ) : null}
+        </div>
+        {view.actions !== undefined && view.actions.length > 0 ? (
+          <div className="app-dialog-foot app-dialog-actions">
+            {view.actions.map((action, index) => {
+              const key = `${action.id}:${index}:${action.label}`;
+              const isBusy = busy === `${action.id}:${action.label}`;
+              const disabled = isBusy
+                || (action.submitsInput === true && fields !== undefined && missingRequired)
+                || (action.submitsInput === true && fields === undefined && typed.trim() === "");
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className={`app-dialog-action app-dialog-action-${action.tone ?? "default"}`}
+                  disabled={disabled}
+                  onClick={() => {
+                    if (action.submitsInput === true && fields !== undefined) submitValues(action);
+                    else void runAction(action);
+                  }}
+                >
+                  {isBusy ? "…" : action.label}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** The form's starting answers: each field's published value, or empty. */
+function initialFieldValues(fields: DialogField[] | undefined): Record<string, string> {
+  return Object.fromEntries((fields ?? []).map((field) => [field.name, field.value ?? ""]));
+}
+
+/** One field of a dialog form, by kind: text, a masked secret, or a menu. */
+function DialogFieldControl({
+  field,
+  value,
+  onChange,
+  onSubmit,
+}: {
+  field: DialogField;
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  const id = `app-dialog-field-${field.name}`;
+  return (
+    <div className="app-dialog-field">
+      <label className="app-dialog-field-label" htmlFor={id}>{field.label}</label>
+      {field.kind === "select" ? (
+        <select
+          id={id}
+          className="app-dialog-field-control"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        >
+          {(field.choices ?? []).map((choice) => (
+            <option key={choice} value={choice}>{choice}</option>
+          ))}
+        </select>
+      ) : (
+        <input
+          id={id}
+          className="app-dialog-field-control"
+          type={field.kind === "secret" ? "password" : "text"}
+          value={value}
+          placeholder={field.placeholder ?? ""}
+          autoComplete={field.kind === "secret" ? "new-password" : "off"}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              onSubmit();
+            }
+          }}
+        />
+      )}
+      {field.help !== undefined ? <span className="app-dialog-field-help">{field.help}</span> : null}
+    </div>
+  );
+}
+
 export function DialogLayer({
   pluginViews,
   sessionId,
@@ -1201,9 +1421,6 @@ export function DialogLayer({
   dismissed: ReadonlyMap<string, unknown>;
   onDismiss?: (dialogId: string, view: unknown) => void;
 }) {
-  const [busy, setBusy] = useState<string | null>(null);
-  // Typed answers per dialog, keyed so two dialogs never share text.
-  const [inputs, setInputs] = useState<Record<string, string>>({});
   const entries = Object.entries(pluginViews).filter(([, view]) => {
     if (typeof view !== "object" || view === null) return false;
     if ((view as { type?: unknown }).type !== "dialog") return false;
@@ -1215,107 +1432,19 @@ export function DialogLayer({
 
   if (entries.length === 0 || sessionId === null) return null;
 
-  const runAction = async (
-    pluginId: string,
-    dialogId: string,
-    action: { id: string; label: string; submitsInput?: boolean },
-  ): Promise<void> => {
-    const typed = (inputs[dialogId] ?? "").trim();
-    if (action.submitsInput && typed === "") return;
-    // A submitsInput action carries the typed text; a choice button carries
-    // its label so a static descriptor action id ("answer-option") still
-    // resolves the exact option the user clicked.
-    const confirm = action.submitsInput ? typed : action.label;
-    setBusy(`${action.id}:${action.label}`);
-    try {
-      const { data } = await postPluginAction(sessionId, pluginId, { id: action.id, confirm });
-      if (!data.ok) {
-        // Surface the failure where the user just clicked.
-        window.dispatchEvent(new CustomEvent("pi-web:dialog-error", { detail: data.error ?? "action failed" }));
-      } else if (action.submitsInput) {
-        setInputs((prev) => ({ ...prev, [dialogId]: "" }));
-      }
-    } finally {
-      setBusy(null);
-    }
-  };
-
   return (
     <>
       {entries.map(([pluginId, view]) => {
         const dialogId = viewDialogId(view.id) ?? pluginId;
-        const typed = inputs[dialogId] ?? "";
-        const submitAction = view.actions?.find((action) => action.submitsInput && action.tone === "primary")
-          ?? view.actions?.find((action) => action.submitsInput);
         return (
-          <div key={dialogId} className="app-dialog-backdrop">
-            <div className="app-dialog" role="dialog" aria-modal="true" aria-label={view.title ?? dialogId}>
-              <div className="app-dialog-head">
-                <span className="app-dialog-title">{view.title ?? dialogId}</span>
-                {onDismiss !== undefined ? (
-                  <button
-                    type="button"
-                    className="app-dialog-close"
-                    aria-label="Dismiss dialog"
-                    onClick={() => onDismiss(dialogId, view)}
-                  >
-                    <X size={14} />
-                  </button>
-                ) : null}
-              </div>
-              <div className="app-dialog-body">
-                {view.body !== undefined ? (
-                  <div className="app-dialog-markdown">
-                    <MarkdownBody text={view.body} />
-                  </div>
-                ) : null}
-                {view.lines !== undefined ? (
-                  <pre className="app-dialog-lines">{view.lines.join("\n")}</pre>
-                ) : null}
-                {view.input !== undefined ? (
-                  <input
-                    type="text"
-                    className="app-dialog-input"
-                    aria-label={view.input.placeholder ?? "Type your answer"}
-                    placeholder={view.input.placeholder ?? "Type your own answer…"}
-                    value={typed}
-                    onChange={(event) => {
-                      const next = event.target.value;
-                      setInputs((prev) => ({ ...prev, [dialogId]: next }));
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" && submitAction !== undefined && typed.trim() !== "") {
-                        event.preventDefault();
-                        void runAction(pluginId, dialogId, submitAction);
-                      }
-                    }}
-                  />
-                ) : null}
-              </div>
-              {view.actions !== undefined && view.actions.length > 0 ? (
-                <div className="app-dialog-foot app-dialog-actions">
-                  {view.actions.map((action, index) => {
-                    const key = `${action.id}:${index}:${action.label}`;
-                    const isBusy = busy === `${action.id}:${action.label}`;
-                    const disabled = isBusy || (action.submitsInput === true && typed.trim() === "");
-                    return (
-                      <button
-                        key={key}
-                        type="button"
-                        className={`app-dialog-action app-dialog-action-${action.tone ?? "default"}`}
-                        disabled={disabled}
-                        onClick={() => {
-                          void runAction(pluginId, dialogId, action);
-                        }}
-                      >
-                        {isBusy ? "…" : action.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-          </div>
+          <PluginDialog
+            key={dialogId}
+            pluginId={pluginId}
+            dialogId={dialogId}
+            view={view}
+            sessionId={sessionId}
+            {...(onDismiss !== undefined ? { onDismiss } : {})}
+          />
         );
       })}
     </>

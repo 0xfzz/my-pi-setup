@@ -34,6 +34,47 @@ export interface ActionRequestPayload {
    * and is never relayed.
    */
   confirm?: string;
+  /**
+   * The dialog form's answers, keyed by `DialogField.name`. Present only when
+   * the dialog declared `fields` and the action submits them; the single
+   * `confirm` value stays the label/typed-text channel, so an extension can
+   * read either shape without a mode switch.
+   */
+  values?: Record<string, string>;
+}
+
+/** A submitted form carries a bounded number of bounded strings. */
+export const MAX_ACTION_VALUES = 16;
+export const MAX_ACTION_VALUE_CHARS = 4000;
+
+/**
+ * Validate a form submission from the browser.
+ *
+ * The browser is untrusted: keys must be plain field names and every value a
+ * bounded string, so an extension can read `values[step]` without defending
+ * against a prototype key or a megabyte payload.
+ */
+export function validateActionValues(input: unknown): { ok: true; values?: Record<string, string> } | { ok: false; error: string } {
+  if (input === undefined) return { ok: true };
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return { ok: false, error: "values must be an object" };
+  }
+  const entries = Object.entries(input as Record<string, unknown>);
+  if (entries.length > MAX_ACTION_VALUES) {
+    return { ok: false, error: `values cannot exceed ${MAX_ACTION_VALUES} entries` };
+  }
+  const values: Record<string, string> = {};
+  for (const [key, value] of entries) {
+    if (!/^[a-z][a-zA-Z0-9_-]*$/.test(key)) {
+      return { ok: false, error: `values key "${key}" must be a plain field name` };
+    }
+    if (typeof value !== "string") return { ok: false, error: `values["${key}"] must be a string` };
+    if (value.length > MAX_ACTION_VALUE_CHARS) {
+      return { ok: false, error: `values["${key}"] cannot exceed ${MAX_ACTION_VALUE_CHARS} characters` };
+    }
+    values[key] = value;
+  }
+  return { ok: true, values };
 }
 
 export type ValidateActionsResult =

@@ -64,12 +64,48 @@ export interface DialogAction {
   /** Visual weight; "primary" is the suggested confirm. */
   tone?: "default" | "primary" | "danger";
   /**
-   * Submits the dialog input's typed text as the action value. Only
-   * meaningful when the dialog declares `input`; the host disables the
-   * action while the input is empty.
+   * Submits the dialog's typed answer as the action value: the `input` text,
+   * or every `fields` value as a name→value record. Only meaningful when the
+   * dialog declares one of them; the host disables the action while a
+   * required value is empty.
    */
   submitsInput?: boolean;
 }
+
+/** What a dialog field collects. */
+export const DIALOG_FIELD_KINDS = ["text", "secret", "select"] as const;
+export type DialogFieldKind = (typeof DIALOG_FIELD_KINDS)[number];
+
+/**
+ * One field of a dialog form.
+ *
+ * A form is what makes a multi-step dialog possible: the extension publishes
+ * one step (its fields, its labels, its help) and receives the submitted
+ * values back through the action pipeline, so the wizard's state lives in the
+ * extension rather than in the host. Nothing here is provider- or
+ * command-specific — any extension that needs more than one typed answer uses
+ * the same shape.
+ */
+export interface DialogField {
+  /** Key this field's value is submitted under. */
+  name: string;
+  label: string;
+  kind?: DialogFieldKind;
+  /** Pre-filled value. A `secret` field may not carry one. */
+  value?: string;
+  placeholder?: string;
+  /** One line of guidance, rendered under the field. */
+  help?: string;
+  /** The options of a `select`; ignored by the other kinds. */
+  choices?: string[];
+  /** The host refuses to submit while this field is empty. */
+  required?: boolean;
+}
+
+/** A form stays small enough to read on one screen. */
+export const DIALOG_MAX_FIELDS = 12;
+export const DIALOG_MAX_FIELD_CHOICES = 40;
+export const DIALOG_FIELD_NAME_REGEX = /^[a-z][a-zA-Z0-9_-]*$/;
 
 /**
  * A modal dialog — the extension surface for web popups. The body is
@@ -93,6 +129,13 @@ export interface DialogWebView {
   input?: {
     placeholder?: string;
   };
+  /**
+   * A form: several typed answers submitted together. `submitsInput` actions
+   * carry them as a name→value record; Enter submits the first (or primary)
+   * one, exactly like `input`. A dialog declares `input` or `fields`, not
+   * both — one place for the answer keeps the submit path unambiguous.
+   */
+  fields?: DialogField[];
   /** `true` (default) shows the dialog; `false` closes it. */
   open?: boolean;
 }
@@ -156,6 +199,89 @@ function clampId(text: string, fieldName: string, warnings: string[]): string {
   return text.slice(0, GRAPH_MAX_ID_CHARS);
 }
 
+/**
+ * Validate a dialog form.
+ *
+ * Two rules are structural rather than cosmetic: a `secret` field may not
+ * carry a value (a pre-filled credential would be re-published on every
+ * render, so it would live in the event stream and the browser), and a
+ * `select` needs its choices (a menu with nothing to pick is a dead end).
+ */
+function validateDialogFields(
+  input: unknown,
+  warnings: string[],
+): { fields?: DialogField[] } | { error: string } {
+  if (input === undefined) return {};
+  if (!Array.isArray(input)) return { error: "dialog fields must be an array" };
+  if (input.length > DIALOG_MAX_FIELDS) {
+    return { error: `dialog fields cannot exceed ${DIALOG_MAX_FIELDS} fields (got ${input.length})` };
+  }
+  const fields: DialogField[] = [];
+  const seen = new Set<string>();
+  for (const [index, item] of input.entries()) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      return { error: `dialog field at index ${index} must be an object` };
+    }
+    const raw = item as Record<string, unknown>;
+    if (typeof raw.name !== "string" || !DIALOG_FIELD_NAME_REGEX.test(raw.name)) {
+      return { error: `dialog field at index ${index}: name must match ${String(DIALOG_FIELD_NAME_REGEX)}` };
+    }
+    if (seen.has(raw.name)) return { error: `dialog field "${raw.name}" is declared twice` };
+    seen.add(raw.name);
+    if (typeof raw.label !== "string" || raw.label.trim() === "") {
+      return { error: `dialog field "${raw.name}": label is missing or empty` };
+    }
+    const kind = raw.kind === undefined ? "text" : raw.kind;
+    if (!DIALOG_FIELD_KINDS.includes(kind as DialogFieldKind)) {
+      return { error: `dialog field "${raw.name}": unknown kind ${String(raw.kind)}` };
+    }
+    const choices = validateFieldChoices(raw.name, kind as DialogFieldKind, raw.choices, warnings);
+    if ("error" in choices) return { error: choices.error };
+    if (kind === "secret" && typeof raw.value === "string" && raw.value !== "") {
+      return { error: `dialog field "${raw.name}": a secret field cannot carry a value` };
+    }
+    fields.push({
+      name: raw.name,
+      label: clampCell(raw.label, `Dialog field "${raw.name}" label`, warnings),
+      ...(raw.kind !== undefined ? { kind: kind as DialogFieldKind } : {}),
+      ...(typeof raw.value === "string"
+        ? { value: clampDetail(raw.value, `Dialog field "${raw.name}" value`, warnings) }
+        : {}),
+      ...(typeof raw.placeholder === "string"
+        ? { placeholder: clampCell(raw.placeholder, `Dialog field "${raw.name}" placeholder`, warnings) }
+        : {}),
+      ...(typeof raw.help === "string"
+        ? { help: clampCell(raw.help, `Dialog field "${raw.name}" help`, warnings) }
+        : {}),
+      ...(choices.choices !== undefined ? { choices: choices.choices } : {}),
+      ...(raw.required === true ? { required: true } : {}),
+    });
+  }
+  return { fields };
+}
+
+function validateFieldChoices(
+  name: string,
+  kind: DialogFieldKind,
+  input: unknown,
+  warnings: string[],
+): { choices?: string[] } | { error: string } {
+  if (input === undefined) {
+    return kind === "select" ? { error: `dialog field "${name}": a select needs choices` } : {};
+  }
+  if (!Array.isArray(input) || input.some((choice) => typeof choice !== "string" || choice === "")) {
+    return { error: `dialog field "${name}": choices must be an array of non-empty strings` };
+  }
+  if (input.length > DIALOG_MAX_FIELD_CHOICES) {
+    return { error: `dialog field "${name}": choices cannot exceed ${DIALOG_MAX_FIELD_CHOICES} entries` };
+  }
+  return {
+    choices: input.map((choice: string, index) =>
+      clampCell(choice, `Dialog field "${name}" choice ${index}`, warnings)
+    ),
+  };
+}
+
 function byteLength(obj: unknown): number {
   return new TextEncoder().encode(JSON.stringify(obj)).length;
 }
@@ -216,10 +342,11 @@ export function validateView(input: unknown): ValidateViewResult {
       if (
         raw.body === undefined
         && raw.lines === undefined
+        && raw.fields === undefined
         && (raw.actions === undefined || (Array.isArray(raw.actions) && raw.actions.length === 0))
         && raw.open !== false
       ) {
-        return { ok: false, error: "dialog needs a body, lines, or actions" };
+        return { ok: false, error: "dialog needs a body, lines, fields, or actions" };
       }
       if (raw.actions !== undefined) {
         if (!Array.isArray(raw.actions) || raw.actions.length > 8) {
@@ -249,6 +376,11 @@ export function validateView(input: unknown): ValidateViewResult {
           return { ok: false, error: "dialog input must be {placeholder?} with a string placeholder" };
         }
       }
+      if (raw.fields !== undefined && raw.input !== undefined) {
+        return { ok: false, error: "dialog declares input or fields, not both" };
+      }
+      const fields = validateDialogFields(raw.fields, warnings);
+      if ("error" in fields) return { ok: false, error: fields.error };
       const view: DialogWebView = {
         type: "dialog",
         ...(cleanTitle !== undefined ? { title: cleanTitle } : {}),
@@ -275,6 +407,7 @@ export function validateView(input: unknown): ValidateViewResult {
               : {},
           }
           : {}),
+        ...(fields.fields !== undefined ? { fields: fields.fields } : {}),
         open: raw.open !== false,
       };
       return {

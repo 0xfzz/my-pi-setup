@@ -1419,6 +1419,44 @@ a:focus-visible {
   border-color: var(--accent);
 }
 
+.app-dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.app-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.app-dialog-field-label {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.app-dialog-field-control {
+  width: 100%;
+  background: var(--bg-input);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.app-dialog-field-control:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.app-dialog-field-help {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
 .app-dialog-actions {
   justify-content: flex-end;
   flex-wrap: wrap;

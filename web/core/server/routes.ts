@@ -17,6 +17,7 @@ import {
   pluginsWhenReady,
 } from "./plugin-host.ts";
 import { checkAndSetInFlightAction, recordActionAudit } from "./plugin-actions.ts";
+import { validateActionValues } from "../plugin-contracts/actions.ts";
 import { isKnownSession, relayActionRequest } from "./plugin-sessions.ts";
 import { recordPluginView } from "./plugin-views.ts";
 import {
@@ -124,7 +125,13 @@ const HOST_DIALOG_CHANNEL = "web-core";
  * session, then audit + relay over the session bus.
  */
 async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  let body: { sessionId?: unknown; pluginId?: unknown; actionId?: unknown; confirm?: unknown };
+  let body: {
+    sessionId?: unknown;
+    pluginId?: unknown;
+    actionId?: unknown;
+    confirm?: unknown;
+    values?: unknown;
+  };
   try {
     body = (await readJsonBody(req)) as typeof body;
   } catch {
@@ -132,6 +139,13 @@ async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Pr
     return;
   }
   const { sessionId, pluginId, actionId, confirm } = body ?? {};
+  // A dialog form's answers: bounded field names and values, so an extension
+  // can read them without defending against a prototype key or a huge body.
+  const submitted = validateActionValues(body?.values);
+  if (!submitted.ok) {
+    sendJson(res, 400, { error: submitted.error });
+    return;
+  }
 
   // 1. Validate: sessionId/pluginId/actionId known (404 before anything else).
   if (typeof sessionId !== "string" || !isKnownSession(sessionId)) {
@@ -197,6 +211,9 @@ async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Pr
     && confirm.length <= MAX_ACTION_VALUE_LENGTH
     ? confirm
     : undefined;
+  // A declared confirm is the byte-match check, so a form's answers are
+  // relayed only for an instant action — the same rule as `confirm`.
+  const relayedValues = action?.confirm === undefined ? submitted.values : undefined;
   if (isHostChannel) {
     // The picker closes here, server-side: the picked action's side effect
     // (a fork, a tree navigation) can switch the pi's session and rebind
@@ -205,7 +222,7 @@ async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Pr
     // extension (the TUI-side dialog close).
     recordPluginView(sessionId, HOST_DIALOG_CHANNEL, { type: "dialog", open: false });
   }
-  const { relayed } = relayActionRequest(sessionId, pluginId, actionId, requestId, relayedConfirm);
+  const { relayed } = relayActionRequest(sessionId, pluginId, actionId, requestId, relayedConfirm, relayedValues);
   sendJson(res, 200, { ok: true, requestId, relayed });
 }
 

@@ -193,7 +193,8 @@ export interface RelayResult {
  *
  * `confirm` travels only when present: the typed answer of an instant
  * ask-style action. A *declared* confirm is the byte-match check and never
- * reaches this point.
+ * reaches this point. `values` is the same channel for a dialog form: the
+ * field answers, already bounded and validated by the action route.
  */
 export function relayActionRequest(
   sessionId: string,
@@ -201,13 +202,20 @@ export function relayActionRequest(
   actionId: string,
   requestId?: string,
   confirm?: string,
+  values?: Record<string, string>,
 ): RelayResult {
   if (!sessionId || !pluginId || !actionId) return { relayed: false };
   const bus = sessionBuses.get(sessionId);
   if (bus?.emit === undefined) return { relayed: false };
 
   const rid = requestId || crypto.randomUUID();
-  const payload = { pluginId, actionId, requestId: rid, ...(confirm !== undefined ? { confirm } : {}) };
+  const payload = {
+    pluginId,
+    actionId,
+    requestId: rid,
+    ...(confirm !== undefined ? { confirm } : {}),
+    ...(values !== undefined && Object.keys(values).length > 0 ? { values } : {}),
+  };
   try {
     webUiStore.publish(sessionId, "ui.plugin.action-requested", payload, pluginId, "host");
     bus.emit(WEB_PLUGIN_ACTION_REQUEST_EVENT, { ...payload, sessionId });

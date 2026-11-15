@@ -19,7 +19,7 @@ export interface ActionPostOutcome {
 export async function postPluginAction(
   sessionId: string,
   pluginId: string,
-  action: Pick<ActionDescriptor, "id" | "confirm">,
+  action: Pick<ActionDescriptor, "id" | "confirm"> & { values?: Record<string, string> },
 ): Promise<ActionPostOutcome> {
   const response = await fetch("/api/plugins/action", {
     method: "POST",
@@ -29,6 +29,7 @@ export async function postPluginAction(
       pluginId,
       actionId: action.id,
       ...(action.confirm !== undefined ? { confirm: action.confirm } : {}),
+      ...(action.values !== undefined ? { values: action.values } : {}),
     }),
   });
   const data = (await response.json().catch(() => ({}))) as ActionPostResult;

@@ -160,6 +160,23 @@ test("relayActionRequest emits the request on the session bus", () => {
   assert.equal(relayActionRequest("no-bus-session", "todo", "sync").relayed, false);
 });
 
+test("relayActionRequest forwards a dialog form's answers", () => {
+  const { emissions } = attach("relay-values-session");
+  relayActionRequest("relay-values-session", "providers", "continue", "req-43", undefined, {
+    api: "openai-completions",
+  });
+
+  const request = emissions.find((e) => e.ch === WEB_PLUGIN_ACTION_REQUEST_EVENT);
+  assert.ok(request, "action request must be emitted");
+  assert.deepEqual(request.data, {
+    requestId: "req-43",
+    sessionId: "relay-values-session",
+    pluginId: "providers",
+    actionId: "continue",
+    values: { api: "openai-completions" },
+  });
+});
+
 /** The minimum a registry read needs from a host. */
 function descriptor(id: string): WebPluginDescriptor {
   return { id, title: id, extension: id, surfaces: [] };

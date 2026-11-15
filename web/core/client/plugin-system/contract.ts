@@ -12,6 +12,8 @@ export type {
   ListStatus,
   DialogWebView,
   DialogAction,
+  DialogField,
+  DialogFieldKind,
 } from "../../plugin-contracts/view.ts";
 export type { ActionDescriptor } from "../../plugin-contracts/actions.ts";
 export type { WebPluginDescriptor, WebPluginIcon } from "../../plugin-contracts/descriptor.ts";
