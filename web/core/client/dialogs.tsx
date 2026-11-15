@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, X } from "@phosphor-icons/react";
 import { MarkdownBody } from "./plugin-system/markdown.tsx";
-import { postPluginAction } from "./plugin-system/actionClient.ts";
+import { actionFailureMessage, NO_RESPONSE_MESSAGE, postPluginAction } from "./plugin-system/actionClient.ts";
 import type { DialogField, DialogWebView } from "./plugin-system/contract.ts";
 import type { PiAuthLoginState, PiSettingEntry, PiTrustState } from "../shared/pi-api.ts";
 
@@ -1348,11 +1348,23 @@ export function PluginDialog({
   embedded?: boolean;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
+  /** Why the last click did nothing; rendered where the user clicked. */
+  const [actionError, setActionError] = useState<string | null>(null);
   const [typed, setTyped] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>(() =>
     initialFieldValues(view.fields)
   );
   const publishedId = viewDialogId(view.id) ?? dialogId;
+
+  // The publisher answers a click by publishing a new view. Remember the view
+  // that was on screen when the click left, so a reply that never arrives can
+  // be told apart from one that did.
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const replyWatchdog = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (replyWatchdog.current !== null) window.clearTimeout(replyWatchdog.current);
+  }, []);
 
   // A refusal republishes new field objects with the same identity: keep
   // typed answers until the publisher moves to a different screen.
@@ -1382,17 +1394,27 @@ export function PluginDialog({
     // ("answer-option") still resolves the exact option the user clicked.
     const confirm = action.submitsInput && values === undefined ? text : action.label;
     setBusy(`${action.id}:${action.label}`);
+    setActionError(null);
+    const sentView = viewRef.current;
     try {
-      const { data } = await postPluginAction(sessionId, pluginId, {
+      const { status, data } = await postPluginAction(sessionId, pluginId, {
         id: action.id,
         confirm,
         ...(values !== undefined ? { values } : {}),
       });
       if (!data.ok) {
-        // Surface the failure where the user just clicked.
-        window.dispatchEvent(new CustomEvent("pi-web:dialog-error", { detail: data.error ?? "action failed" }));
+        setActionError(actionFailureMessage(status, data));
       } else if (action.submitsInput && values === undefined) {
         setTyped("");
+      }
+      if (data.ok && data.relayed !== false) {
+        // A relayed action with no reply means the extension ignored it, which
+        // is silent by nature; say so instead of leaving the click inert.
+        if (replyWatchdog.current !== null) window.clearTimeout(replyWatchdog.current);
+        replyWatchdog.current = window.setTimeout(() => {
+          replyWatchdog.current = null;
+          if (viewRef.current === sentView) setActionError(NO_RESPONSE_MESSAGE);
+        }, 4000);
       }
     } finally {
       setBusy(null);
@@ -1448,6 +1470,9 @@ export function PluginDialog({
         ) : null}
       </div>
       <div className="app-dialog-body">
+          {actionError !== null ? (
+            <div className="app-dialog-error" role="alert">{actionError}</div>
+          ) : null}
           {view.body !== undefined ? (
             <div className="app-dialog-markdown">
               <MarkdownBody text={view.body} />

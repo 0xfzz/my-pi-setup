@@ -16,6 +16,32 @@ export interface ActionPostOutcome {
   data: ActionPostResult;
 }
 
+/**
+ * What to tell the user when an action does not take effect.
+ *
+ * A plugin action can fail in ways the browser cannot see: the plugin may be
+ * inactive (404), the host may refuse the submission (403/409), or the action
+ * may be relayed to an extension that does not know it — a session started
+ * before the plugin's current build. Silence is the worst answer, because the
+ * click looks broken rather than stale.
+ */
+export function actionFailureMessage(status: number, data: ActionPostResult): string {
+  if (status === 404) {
+    return "This plugin is not active in this session, so the click did nothing. Start a new session and retry. If the web server was restarted twice within a minute, the plugin kernel is in safe mode until the next restart.";
+  }
+  if (status === 403) return "The host refused this action (confirmation did not match). Reopen the dialog and try again.";
+  if (status === 409) return "That action is still running; wait for it to finish before trying again.";
+  if (data.error !== undefined && data.error !== "") return data.error;
+  return "The action failed.";
+}
+
+/**
+ * The action reached the session but produced no new view: the extension that
+ * owns it is a build without this action (a session older than the plugin).
+ */
+export const NO_RESPONSE_MESSAGE =
+  "The session did not respond. It may be running an older build of this extension — start a new session to pick up the current one.";
+
 export async function postPluginAction(
   sessionId: string,
   pluginId: string,
