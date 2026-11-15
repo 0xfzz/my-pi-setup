@@ -25,12 +25,18 @@ export interface WebCommand {
   /** TUI-only: rendered in the interactive transcript, not dispatchable from the web. */
   tuiOnly?: boolean;
   /**
-   * The command manages the model catalogue, so the model picker offers it as
-   * its "add models" entry. Set by the extension that registers the command
-   * (it arrives on the session's `web_commands` list), never by this policy
-   * table.
+   * The command manages the model catalogue, so the shared model-settings
+   * dialog gives it a sidebar page. Set by the extension that registers the
+   * command (it arrives on the session's `web_commands` list), never by this
+   * policy table.
    */
   managesModels?: boolean;
+  /**
+   * The command is the model picker's "+ Add models" entry: the one that
+   * puts a model into the catalogue. At most one command claims it, so a
+   * second catalogue editor (the router) cannot take the picker's entry.
+   */
+  addsModels?: boolean;
   /**
    * The sidebar label this command gets inside the shared model-settings
    * dialog (the dialog with the Models / Provider / … nav). Only meaningful
@@ -89,6 +95,7 @@ export interface ContributedCommand {
   name: string;
   description?: string;
   managesModels?: boolean;
+  addsModels?: boolean;
   settingsEntry?: string;
   settingsPlugin?: string;
 }
@@ -130,10 +137,13 @@ export function annotateContributedCommands(
 }
 
 /** The model-settings flags a contributed command declared, if any. */
-function modelSettingsFlags(declared: ContributedCommand): Pick<WebCommand, "managesModels" | "settingsEntry" | "settingsPlugin"> {
+function modelSettingsFlags(
+  declared: ContributedCommand,
+): Pick<WebCommand, "managesModels" | "addsModels" | "settingsEntry" | "settingsPlugin"> {
   if (declared.managesModels !== true) return {};
   return {
     managesModels: true,
+    ...(declared.addsModels === true ? { addsModels: true } : {}),
     ...(declared.settingsEntry !== undefined ? { settingsEntry: declared.settingsEntry } : {}),
     ...(declared.settingsPlugin !== undefined ? { settingsPlugin: declared.settingsPlugin } : {}),
   };

@@ -575,6 +575,10 @@ export default function providers(pi: ExtensionAPI) {
         name: PROVIDERS_WEB_COMMAND,
         description: "Add a provider or a model to models.json (web)",
         managesModels: true,
+        // This is the command that puts a model *into* the catalogue, so it is
+        // the model picker's "+ Add models" entry. A second catalogue editor
+        // (the router) gets a settings page but must not take that entry.
+        addsModels: true,
         // The shared model-settings dialog's sidebar entry for this command.
         settingsEntry: "Provider",
         settingsPlugin: PROVIDERS_PLUGIN_ID,

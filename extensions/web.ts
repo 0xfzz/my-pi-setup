@@ -437,20 +437,22 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   /**
    * The model-settings flags a contributed command declared: the shared
    * model-settings dialog lists every `managesModels` command as a sidebar
-   * page, labelled by its `settingsEntry` (the command name when absent).
+   * page, labelled by its `settingsEntry` (the command name when absent), and
+   * the one that declares `addsModels` is the picker's "+ Add models" entry.
    */
   const modelSettingsCommandFlags = (
     command: WebCommandDescriptor,
-  ): { managesModels?: boolean; settingsEntry?: string; settingsPlugin?: string } => {
+  ): { managesModels?: boolean; addsModels?: boolean; settingsEntry?: string; settingsPlugin?: string } => {
     if (command.managesModels !== true) return {};
     return {
       managesModels: true,
+      ...(command.addsModels === true ? { addsModels: true } : {}),
       ...(command.settingsEntry !== undefined ? { settingsEntry: command.settingsEntry } : {}),
       ...(command.settingsPlugin !== undefined ? { settingsPlugin: command.settingsPlugin } : {}),
     };
   };
 
-  const bridgeCommandList = (): Array<{ name: string; description?: string; web?: boolean; managesModels?: boolean; settingsEntry?: string; settingsPlugin?: string }> => [
+  const bridgeCommandList = (): Array<{ name: string; description?: string; web?: boolean; managesModels?: boolean; addsModels?: boolean; settingsEntry?: string; settingsPlugin?: string }> => [
     // pi core commands (extension, prompt templates, skills) — the web
     // dispatches these as prompt text through the session's
     // expandPromptTemplates path.

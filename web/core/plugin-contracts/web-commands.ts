@@ -33,11 +33,23 @@ export interface WebCommandDescriptor {
   name: string;
   description: string;
   /**
-   * This command manages the model catalogue, so the web's model picker
-   * offers it as its "add models" entry. A presentation flag, not a
-   * capability: the command runs exactly like any other.
+   * This command manages the model catalogue, so the web's shared
+   * model-settings dialog gives it a sidebar page (labelled by
+   * `settingsEntry`). A presentation flag, not a capability: the command runs
+   * exactly like any other.
+   *
+   * Several commands can say this — the provider editor and the router both
+   * do — which is why it is *not* what picks the model picker's "+ Add
+   * models" entry. That is `addsModels`.
    */
   managesModels?: boolean;
+  /**
+   * This command is what the model picker's "+ Add models" entry dispatches:
+   * the one command that puts a model *into* the catalogue. Only meaningful
+   * with `managesModels`, and only one command should claim it — a picker
+   * entry that opens a page which cannot add a model is a dead end.
+   */
+  addsModels?: boolean;
   /**
    * The sidebar label this command gets inside the web's shared model-settings
    * dialog (the dialog with the Models / Provider / … nav). Only meaningful
@@ -54,6 +66,7 @@ function isDescriptor(value: unknown): value is WebCommandDescriptor {
     name?: unknown;
     description?: unknown;
     managesModels?: unknown;
+    addsModels?: unknown;
     settingsEntry?: unknown;
     settingsPlugin?: unknown;
   };
@@ -61,6 +74,7 @@ function isDescriptor(value: unknown): value is WebCommandDescriptor {
     && entry.name !== ""
     && typeof entry.description === "string"
     && (entry.managesModels === undefined || typeof entry.managesModels === "boolean")
+    && (entry.addsModels === undefined || typeof entry.addsModels === "boolean")
     && (entry.settingsEntry === undefined || typeof entry.settingsEntry === "string")
     && (entry.settingsPlugin === undefined || (typeof entry.settingsPlugin === "string" && entry.settingsPlugin !== ""));
 }

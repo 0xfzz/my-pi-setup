@@ -46,14 +46,15 @@ test("the built-in coverage policy: every pi built-in has a web disposition", ()
 test("a contributed web command's flags land on its pi entry, not a duplicate", () => {
   const commands = annotateBuiltinCommands([{ name: "provider", description: "Manage providers" }]);
   const merged = annotateContributedCommands(commands, [
-    { name: "provider", description: "Manage providers", managesModels: true },
+    { name: "provider", description: "Manage providers", managesModels: true, addsModels: true },
     { name: "only-web", description: "Contributed, not a pi command" },
   ]);
 
   const provider = merged.filter((command) => command.name === "provider");
   assert.equal(provider.length, 1, "the command is listed once");
   assert.equal(provider[0]?.web, true, "the palette dispatches it through web_command");
-  assert.equal(provider[0]?.managesModels, true, "the model picker offers it as its add entry");
+  assert.equal(provider[0]?.managesModels, true, "it gets a page in the shared settings dialog");
+  assert.equal(provider[0]?.addsModels, true, "it is the picker's add entry");
   assert.equal(provider[0]?.description, "Manage providers");
 
   const appended = merged.find((command) => command.name === "only-web");
@@ -74,6 +75,7 @@ test("a managesModels command carries its settingsEntry sidebar label", () => {
   const router = merged.find((command) => command.name === "router");
   assert.equal(router?.managesModels, true);
   assert.equal(router?.settingsEntry, undefined, "no label declared, the command name is the label");
+  assert.equal(router?.addsModels, undefined, "a second catalogue page must not claim the picker's add entry");
   const notModels = merged.find((command) => command.name === "not-models");
   assert.equal(
     notModels?.settingsEntry,

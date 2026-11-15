@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SidebarSimple } from "@phosphor-icons/react";
 import { usePiSession } from "./use-session.ts";
-import { needsSettingsDispatch, settingsDialog, settingsPluginIds } from "./model-settings.ts";
+import { addEntryCommand, needsSettingsDispatch, settingsDialog, settingsPages, settingsPluginIds } from "./model-settings.ts";
 import { useVisualViewport } from "./use-visual-viewport.ts";
 import { Transcript } from "./transcript.tsx";
 import { Composer } from "./composer.tsx";
@@ -308,18 +308,9 @@ export function AppShell() {
   };
 
   // Every command that manages the model catalogue gets a page in the shared
-  // model-settings dialog: "Models" is the picker, "Provider" (today) the
-  // provider editor, and a future router announces its own entry the same way.
-  const modelSettingsEntries = [
-    { id: "models", label: "Models" },
-    ...(session.sessionCommands ?? [])
-      .filter((command) => command.managesModels === true)
-      .map((command) => ({
-        id: command.name,
-        label: command.settingsEntry ?? command.name,
-
-      })),
-  ];
+  // model-settings dialog: "Models" is the picker, "Provider" the provider
+  // editor, "Router" the route editor.
+  const modelSettingsEntries = settingsPages(session.sessionCommands);
   // The managesModels command behind the active settings page, if it is not
   // the picker itself. Navigating to a plugin's page dispatches the command
   // once, so the extension publishes its dialog (the pane renders it).
@@ -362,11 +353,10 @@ export function AppShell() {
       sawSettingsView.current = true;
     }
   }, [modelPickerOpen, modelSettingsPage, modelSettingsView]);
-  // A command that manages the model catalogue (the provider editor, for
-  // instance) gets the model picker's header entry: pick, or add.
-  const manageModelsCommand = session.sessionCommands?.find(
-    (command) => command.managesModels === true,
-  );
+  // The model picker's header entry: pick, or add. Only the command that
+  // *adds* a model claims it, so a second catalogue page (the router) cannot
+  // take it.
+  const manageModelsCommand = addEntryCommand(session.sessionCommands);
 
   // A settings plugin's dialog has exactly one home (the model-settings pane),
   // so the standalone layer never draws it — whether or not the pane is open.

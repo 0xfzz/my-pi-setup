@@ -20,7 +20,7 @@ import { once } from "node:events";
 interface FakeBridge {
   url: string;
   /** The `web_commands` event the extension posted, if any. */
-  commands(): Array<{ name?: string; description?: string; web?: boolean; managesModels?: boolean; settingsEntry?: string }>;
+  commands(): Array<{ name?: string; description?: string; web?: boolean; managesModels?: boolean; addsModels?: boolean; settingsEntry?: string }>;
   sendCommand(command: Record<string, unknown>): void;
   close(): Promise<void>;
 }
@@ -73,6 +73,8 @@ async function startFakeBridgeServer(): Promise<FakeBridge> {
         description?: string;
         web?: boolean;
         managesModels?: boolean;
+        addsModels?: boolean;
+        settingsEntry?: string;
       }>;
     },
     sendCommand(command: Record<string, unknown>) {
@@ -197,13 +199,14 @@ test("an announced command is listed for the web with its flags", async () => {
     await waitFor(() => bridge.commands().length > 0);
 
     harness.announce([
-      { name: "test-manage-models", description: "Manage the catalogue", managesModels: true },
+      { name: "test-manage-models", description: "Manage the catalogue", managesModels: true, addsModels: true },
     ]);
 
     await waitFor(() => bridge.commands().some((command) => command.name === "test-manage-models"));
     const listed = bridge.commands().find((command) => command.name === "test-manage-models");
     assert.equal(listed?.web, true, "it dispatches through the web_command channel");
-    assert.equal(listed?.managesModels, true, "the picker's add entry rides the same flag");
+    assert.equal(listed?.managesModels, true, "it gets a page in the shared settings dialog");
+    assert.equal(listed?.addsModels, true, "the picker's add entry rides its own flag");
     assert.equal(listed?.description, "Manage the catalogue");
   });
 });
@@ -225,6 +228,7 @@ test("a managesModels announcement carries its sidebar label to the web", async 
     const listed = bridge.commands().find((command) => command.name === "test-settings-page");
     assert.equal(listed?.managesModels, true);
     assert.equal(listed?.settingsEntry, "Router", "the shared dialog's sidebar label");
+    assert.equal(listed?.addsModels, undefined, "a page is not the picker's add entry unless it says so");
   });
 });
 
