@@ -24,6 +24,11 @@
     "tests/runtime.test.ts",
     "tests/stream-recovery-runtime.test.ts",
     "tests/subagent-runtime.test.ts",
-    "tests/web-bridge-shutdown.test.ts"
+    "tests/web-bridge-shutdown.test.ts",
+    "tests/web-plugin-orphans.test.ts",
+    "tests/web-plugin-processes.test.ts",
+    "tests/web-plugin-resources.test.ts",
+    "tests/web-server-lifecycle.test.ts",
+    "tests/web-shutdown-budget.test.ts"
   ]
 }
