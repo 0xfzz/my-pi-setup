@@ -1,0 +1,7 @@
+{
+  "name": "@pi-web-plugin/providers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Provider wizard dialogs for /provider: add a provider or a model to models.json from the web model picker."
+}

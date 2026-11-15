@@ -7,6 +7,7 @@ import { exampleOverridePlugin } from "./example-override/descriptor.ts";
 import { mcpManagerPlugin } from "./mcp-manager/descriptor.ts";
 import { modesPlugin } from "./modes/descriptor.ts";
 import { pluginManagerPlugin } from "./plugin-manager/descriptor.ts";
+import { providersPlugin } from "./providers/descriptor.ts";
 import { subagentCheckpointsPlugin } from "./subagent-checkpoints/descriptor.ts";
 import { subagentGraphPlugin } from "./subagent-graph/descriptor.ts";
 import { todoPlugin } from "./todo/descriptor.ts";
@@ -24,6 +25,7 @@ export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [
   askUserPlugin,
   mcpManagerPlugin,
   pluginManagerPlugin,
+  providersPlugin,
   exampleOverridePlugin,
 ];
 
@@ -46,8 +48,6 @@ export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {
     "Downscaled image previews for terminal rendering; TUI-only media optimization",
   "prompt-ui":
     "Interactive popup prompt selector and editor; TUI-only dialog",
-  providers:
-    "Model provider discovery, configuration editor, and credential storage; interactive TUI editors",
   sidebar:
     "TUI-only sidebar layout, chrome, aquarium animation, and split rendering",
   "smart-timeout":

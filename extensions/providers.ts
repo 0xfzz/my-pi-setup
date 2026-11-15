@@ -1,5 +1,10 @@
 import { join } from "node:path";
-import { getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import {
+  getAgentDir,
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import {
   endpoint, environmentKey, findProviderAccounts, listProviderFamilies, nextProviderSlot, parseProviderSlot,
   positiveInteger, providerId, putModel, readConfig, saveConfig,
@@ -12,6 +17,29 @@ import { providerModelPicker } from "../lib/provider/provider-model-picker.ts";
 import { accountPlan, apiKeyFromInput, draftToProvider, withAccount, withoutModel } from "../lib/provider/provider-settings.ts";
 import { overlayRows, popupOverlayOptions } from "../lib/popup/frame.ts";
 import { isSubagentChildSession } from "../lib/subagent-context.ts";
+import {
+  backWizard,
+  savedView,
+  startWizard,
+  stepCount,
+  submitWizard,
+  unreadableFileView,
+  wizardResult,
+  wizardView,
+  type WizardState,
+} from "../lib/provider/provider-web.ts";
+import {
+  PROVIDERS_BACK_ACTION,
+  PROVIDERS_CANCEL_ACTION,
+  PROVIDERS_FIELD,
+  PROVIDERS_NEXT_ACTION,
+  PROVIDERS_PLUGIN_ID,
+  PROVIDERS_WEB_COMMAND,
+} from "../web/plugins/providers/contract.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
+import { WEB_MODELS_CHANGED_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
+import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
+import { registerWebCommand } from "../web/core/plugin-contracts/web-commands.ts";
 import {
   ProviderSettingsPopup,
   type ProviderAction,
@@ -207,7 +235,7 @@ async function addModels(ctx: ExtensionCommandContext, config: ModelsConfig, id:
 const modelsFile = (): string => join(getAgentDir(), "models.json");
 
 /** Write the file and make Pi load it; the editor's single write path. */
-async function commitConfig(ctx: ExtensionCommandContext, snapshot: ConfigSnapshot, config: ModelsConfig): Promise<void> {
+async function commitConfig(ctx: ExtensionContext, snapshot: ConfigSnapshot, config: ModelsConfig): Promise<void> {
   if (!ctx.isIdle()) throw new Error("Pi became busy while the editor was open; nothing was saved. Retry when idle.");
   await saveConfig(snapshot, config);
   // Reload native configuration, not a competing extension-owned provider registry.
@@ -311,8 +339,155 @@ async function openEditor(ctx: ExtensionCommandContext): Promise<void> {
   }
 }
 
+/**
+ * The web surface: the same wizard, one dialog step at a time.
+ *
+ * The TUI popup owns its draft because it owns the screen. The web has no such
+ * owner — every step is a dialog the extension publishes and every answer comes
+ * back through the action pipeline — so the draft lives here, between two
+ * dialogs, and the extension is what advances it. The plugin id, the command
+ * name and the action ids come from the plugin's contract
+ * (web/plugins/providers/contract.ts): that descriptor is what lets the host
+ * relay these actions at all.
+ */
+
 export default function providers(pi: ExtensionAPI) {
   let active = false;
+
+  // ---- web wizard ---------------------------------------------------------
+
+  /** The draft in flight on the web, and the context that will save it. */
+  let webWizard: WizardState | null = null;
+  let webContext: ExtensionContext | null = null;
+  let webProblem: string | undefined;
+
+  const closeWebWizard = (): void => {
+    webWizard = null;
+    webContext = null;
+    webProblem = undefined;
+    publishWebView(pi, PROVIDERS_PLUGIN_ID, { type: "dialog", open: false });
+  };
+
+  const showWizardProblem = (config: ModelsConfig, problem: string): void => {
+    if (webWizard === null) return;
+    webProblem = problem;
+    publishWebView(pi, PROVIDERS_PLUGIN_ID, wizardView(webWizard, config.providers, { problem }));
+  };
+
+  /** Publish the current step; a step is a dialog id, so the form resets per step. */
+  const publishWizard = (config: ModelsConfig): void => {
+    if (webWizard === null) return;
+    const options = webProblem === undefined ? {} : { problem: webProblem };
+    publishWebView(pi, PROVIDERS_PLUGIN_ID, wizardView(webWizard, config.providers, options));
+  };
+
+  /** Read the file the wizard will write, or report why it cannot. */
+  const readWizardConfig = async (): Promise<ConfigSnapshot | undefined> => {
+    try {
+      return await readConfig(modelsFile());
+    } catch (error) {
+      webWizard = null;
+      publishWebView(pi, PROVIDERS_PLUGIN_ID, unreadableFileView((error as Error).message));
+      return undefined;
+    }
+  };
+
+  const startWebWizard = async (ctx: ExtensionContext): Promise<void> => {
+    const snapshot = await readWizardConfig();
+    if (snapshot === undefined) return;
+    webContext = ctx;
+    webProblem = undefined;
+    // With providers configured the wizard opens on the provider menu, whose
+    // last entry is "new provider": the model picker is the only doorway, so
+    // it has to reach both answers.
+    const ids = Object.keys(snapshot.config.providers).sort();
+    webWizard = startWizard(ids.length > 0 ? { mode: "existing-provider", providerId: ids[0]! } : {});
+    publishWizard(snapshot.config);
+  };
+
+  /** Write the finished draft and tell the bridge to re-read the catalogue. */
+  const saveWebWizard = async (snapshot: ConfigSnapshot): Promise<void> => {
+    if (webWizard === null) return;
+    const ctx = webContext;
+    if (ctx === null) {
+      showWizardProblem(snapshot.config, "The session context is gone; reopen the picker and retry.");
+      return;
+    }
+    const built = wizardResult(webWizard, snapshot.config.providers);
+    if (!built.ok) {
+      showWizardProblem(snapshot.config, built.problem);
+      return;
+    }
+    const config = structuredClone(snapshot.config);
+    config.providers[built.providerId] = built.provider;
+    try {
+      await commitConfig(ctx, snapshot, config);
+    } catch (error) {
+      showWizardProblem(snapshot.config, (error as Error).message);
+      return;
+    }
+    closeWebWizard();
+    publishWebView(pi, PROVIDERS_PLUGIN_ID, savedView(built.providerId, built.modelId));
+    // The picker's list is the bridge's cache: ask for a fresh one.
+    pi.events?.emit(WEB_MODELS_CHANGED_EVENT, {});
+  };
+
+  const submitWebWizard = async (value: string): Promise<void> => {
+    if (webWizard === null) return;
+    const snapshot = await readWizardConfig();
+    if (snapshot === undefined) return;
+    const result = submitWizard(webWizard, value, snapshot.config.providers);
+    if (!result.ok) {
+      showWizardProblem(snapshot.config, result.problem);
+      return;
+    }
+    webProblem = undefined;
+    webWizard = result.state;
+    if (webWizard.step >= stepCount(webWizard)) {
+      await saveWebWizard(snapshot);
+      return;
+    }
+    publishWizard(snapshot.config);
+  };
+
+  const stepBack = async (): Promise<void> => {
+    if (webWizard === null) return;
+    const snapshot = await readWizardConfig();
+    if (snapshot === undefined) return;
+    webProblem = undefined;
+    webWizard = backWizard(webWizard);
+    publishWizard(snapshot.config);
+  };
+
+  // The web command the model picker's "+ Add models" entry dispatches.
+  registerWebCommand<ExtensionContext>({
+    name: PROVIDERS_WEB_COMMAND,
+    description: "Add a provider or a model to models.json (web)",
+    managesModels: true,
+    // The args are informational: the wizard opens on the provider menu, whose
+    // last entry configures a new one.
+    handler: (_args, ctx) => {
+      void startWebWizard(ctx);
+    },
+  });
+
+  pi.events?.on(WEB_PLUGIN_ACTION_REQUEST_EVENT, (data: unknown) => {
+    const request = data as Partial<ActionRequestPayload> | undefined;
+    if (request?.pluginId !== PROVIDERS_PLUGIN_ID) return;
+    const actionId = typeof request.actionId === "string" ? request.actionId : "";
+    // Every step is one field named `value`: a form answer, or the label of a
+    // menu pick for an older client that only sends `confirm`.
+    const submitted = request.values?.[PROVIDERS_FIELD];
+    const value = typeof submitted === "string"
+      ? submitted
+      : typeof request.confirm === "string" ? request.confirm : "";
+    if (actionId === PROVIDERS_NEXT_ACTION) void submitWebWizard(value);
+    else if (actionId === PROVIDERS_BACK_ACTION) void stepBack();
+    else if (actionId === PROVIDERS_CANCEL_ACTION) closeWebWizard();
+  });
+
+  // ---- the TUI command ----------------------------------------------------
+
   const handler = async (args: string, ctx: ExtensionCommandContext) => {
     if (!ctx.hasUI || isSubagentChildSession(ctx)) {
       ctx.ui.notify("/provider needs a main interactive Pi session (or an RPC client supporting dialogs).", "warning");

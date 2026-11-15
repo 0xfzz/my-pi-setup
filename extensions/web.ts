@@ -46,7 +46,7 @@ import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 import { buildWebTree, type PiTreeNodeLike } from "../lib/web-tree.ts";
 import { findModelRef, uniqueModelRefs, type ModelRef } from "../lib/model-ref.ts";
 import { sseFrameData, takeSseFrames } from "../lib/web-sse.ts";
-import { WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
+import { WEB_MODELS_CHANGED_EVENT, WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
 import { registeredWebCommand, registeredWebCommands } from "../web/core/plugin-contracts/web-commands.ts";
 import { defaultIsPidAlive, defaultReadState, defaultServerDir, defaultWebUiStatePath, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiCommandResult, type WebUiDeps } from "../lib/web-ui.ts";
 import { repoRootFromServerDir, sourceWatchRoots, watchSources, type SourceWatcher } from "../lib/web-ui-reload.ts";
@@ -877,6 +877,11 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   });
   pi.events?.on(WEB_UI_EVENT, (payload: unknown) => {
     bridgePoster?.post({ type: "web_ui_event", payload });
+  });
+  // An extension wrote models.json: re-post the picker's list, or the web
+  // keeps offering the catalogue it saw at the last attach.
+  pi.events?.on(WEB_MODELS_CHANGED_EVENT, () => {
+    if (lastCtxForCommands !== null) postModelsEvent(lastCtxForCommands);
   });
 
   // ── The web core command registry ────────────────────────────────────────

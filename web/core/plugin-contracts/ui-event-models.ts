@@ -10,6 +10,14 @@ export const WEB_UI_EVENT = "web-ui:event";
  * same values the session already held. The request itself carries no data.
  */
 export const WEB_PLUGIN_UI_SYNC_EVENT = "web-plugin:ui-sync";
+/**
+ * The model catalogue changed: an extension wrote models.json (or otherwise
+ * added or removed a provider or model). The bridge answers by re-posting the
+ * picker's list, so the web picker shows what the file now holds instead of
+ * waiting for the next turn's state push. The event carries no data — the
+ * registry is the source of truth.
+ */
+export const WEB_MODELS_CHANGED_EVENT = "web-plugin:models-changed";
 export interface WorkingModel { message: string | null; visible: boolean; frames: string[] | null; intervalMs: number; messageSegments?: WorkingSegment[] | null; frameColors?: (string | null)[] | null }
 /** A segment of colored working text; `color` is a CSS hex color, or null to inherit. */
 export interface WorkingSegment { text: string; color: string | null; bold?: boolean }
