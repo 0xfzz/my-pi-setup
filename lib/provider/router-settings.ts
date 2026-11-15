@@ -84,6 +84,26 @@ export function describeChain(route: RouteConfig): string {
 }
 
 /**
+ * Cache findings for a route policy.
+ *
+ * Both are warnings, not errors: the route works, it just pays for the prompt
+ * cache more than it saves on price. The numbers are the ones
+ * `docs/prds/cache-aware-routing.md` derives — a cache write costs ~12x a cache
+ * read, so a policy that re-writes every turn needs a ~5x price gap to break
+ * even.
+ */
+export function cacheIssues(route: RouteConfig): string[] {
+  const issues: string[] = [];
+  if (routeMethod(route) === "round-robin" && routeWhen(route) === "turn") {
+    issues.push("rotates the head every turn; each turn re-writes the prompt cache (≈12× prompt cost)");
+  }
+  if (routeMethod(route) === "cheapest" && route.targets.length > 1) {
+    issues.push("a price gap under ~5× costs more in cache re-writes than it saves; consider method: \"cache\"");
+  }
+  return issues;
+}
+
+/**
  * Problems a route row should show.
  *
  * These are warnings, not load errors: a route naming a pool that no longer
@@ -91,7 +111,7 @@ export function describeChain(route: RouteConfig): string {
  * editor says so up front instead of hiding it until a request.
  */
 export function routeIssues(route: RouteConfig, pools: readonly string[]): string[] {
-  const issues: string[] = [];
+  const issues: string[] = [...cacheIssues(route)];
   const known = new Set(pools);
   const poolName = route.pool;
   if (poolName && !known.has(poolName)) issues.push(`route pool "${poolName}" is not configured`);

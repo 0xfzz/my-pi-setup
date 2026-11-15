@@ -60,7 +60,7 @@ import {
   type RouteConfig, type RouteFailureClass, type RouteTable, type RouteTarget,
 } from "../lib/provider/model-routes.ts";
 import {
-  classifyFailure, describeTarget, mergeTargets, routerModelChoices, routerRows,
+  classifyFailure, describeTarget, mergeTargets, routeIssues, routerModelChoices, routerRows,
   type RouterAction, type RouterDraft, type RouterPopupResult, type RouterSettingsView,
 } from "../lib/provider/router-settings.ts";
 import {
@@ -1137,6 +1137,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     }
     const lines: string[] = [];
     const now = Date.now();
+    const poolNames = Object.keys(config.pools);
     if (table.routes.length) {
       lines.push(`Routes (virtual provider "${table.provider}"):`);
       for (const route of table.routes) {
@@ -1149,9 +1150,11 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
         for (const [index, target] of route.targets.entries()) {
           lines.push(`    ${labels[index]!.padEnd(width)}  ${describeTargetCache(route, target, now)}`);
         }
+        // The same warnings the editor shows: a policy that re-writes the cache
+        // every turn is invisible in a request, so it is said up front.
+        for (const issue of routeIssues(route, poolNames)) lines.push(`    ⚠ ${issue}`);
       }
     }
-    const poolNames = Object.keys(config.pools);
     if (poolNames.length) {
       lines.push("Pools:");
       for (const name of poolNames) {

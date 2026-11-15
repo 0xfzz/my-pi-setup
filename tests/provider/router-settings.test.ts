@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  classifyFailure, cycleMethod, cycleValue, cycleWhen, describeChain, describeModelFacts, describeTarget,
+  cacheIssues, classifyFailure, cycleMethod, cycleValue, cycleWhen, describeChain, describeModelFacts, describeTarget,
   fileChoiceOf, formatTokens, mergeTargets, moveTarget, replaceTarget, routeIssues, routeNameProblem,
   routerModelChoices, routerRows, suggestRouteName, whenOf, withPolicy,
 } from "../../lib/provider/router-settings.ts";
@@ -46,6 +46,29 @@ test("row issues name an unknown pool and a duplicated target instead of hiding 
   assert.ok(issues.some((issue) => /target a\/one names unknown pool "ghost"/.test(issue)));
   assert.ok(issues.some((issue) => /a\/one is listed twice/.test(issue)));
   assert.deepEqual(routeIssues({ name: "ok", targets: [{ model: "a/one", pool: "ag" }] }, ["ag"]), []);
+});
+
+test("a policy that re-writes the prompt cache every turn is warned about, and only that policy", () => {
+  const targets = [{ model: "a/one" }, { model: "b/two" }];
+  assert.deepEqual(cacheIssues({ name: "r", targets, method: "round-robin" }), [
+    "rotates the head every turn; each turn re-writes the prompt cache (≈12× prompt cost)",
+  ]);
+  assert.deepEqual(cacheIssues({ name: "r", targets, method: "round-robin", when: "failure" }), [],
+    "keeping the answering model is cache-friendly");
+  assert.deepEqual(cacheIssues({ name: "r", targets, method: "cheapest" }), [
+    'a price gap under ~5× costs more in cache re-writes than it saves; consider method: "cache"',
+  ]);
+  assert.deepEqual(cacheIssues({ name: "r", targets: [{ model: "a/one" }], method: "cheapest" }), [],
+    "one target cannot switch, so there is no gap to warn about");
+  assert.deepEqual(cacheIssues({ name: "r", targets, method: "cache" }), [],
+    "the cache method is the answer, not the problem");
+  assert.deepEqual(cacheIssues({ name: "r", targets, method: "last-good" }), []);
+});
+
+test("cache warnings ride along with the other row issues", () => {
+  const issues = routeIssues({ name: "r", targets: [{ model: "a/one" }, { model: "b/two" }], method: "round-robin" }, []);
+  assert.equal(issues.length, 1);
+  assert.match(issues[0]!, /re-writes the prompt cache/);
 });
 
 test("a global route maps to the global file, everything else to the project file", () => {

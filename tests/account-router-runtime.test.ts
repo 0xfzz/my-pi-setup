@@ -905,3 +905,23 @@ test("a quota wall still moves the pool at once, affinity or not, and the new ac
     config: affinityConfig(300_000),
   }));
 });
+
+test("/router status warns about a route policy that re-writes the prompt cache every turn", { timeout: 20000 }, async () => {
+  await withSession(async ({ session, dir }) => {
+    const status = await routerText(session, "status", dir);
+    assert.match(status, /rotates the head every turn; each turn re-writes the prompt cache/);
+    assert.match(status, /a price gap under ~5× costs more in cache re-writes than it saves; consider method: "cache"/);
+  }, (seen) => ({
+    providers: [
+      { name: "primary", config: fakeProvider("primary", ["main-model"], seen).config },
+      { name: "secondary", config: fakeProvider("secondary", ["backup-model"], seen).config },
+    ],
+    config: {
+      routes: [
+        { name: "spin", method: "round-robin", targets: ["primary/main-model", "secondary/backup-model"] },
+        { name: "cheap", method: "cheapest", targets: ["primary/main-model", "secondary/backup-model"] },
+        { name: "auto", method: "cache", targets: ["primary/main-model", "secondary/backup-model"] },
+      ],
+    },
+  }));
+});
