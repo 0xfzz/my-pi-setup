@@ -1354,9 +1354,12 @@ export function PluginDialog({
   );
   const publishedId = viewDialogId(view.id) ?? dialogId;
 
-  // A new step (a new dialog id) is a new form; the extension's own draft is
-  // what fills it, so stale text from the previous step cannot leak in.
+  // A refusal republishes new field objects with the same identity: keep
+  // typed answers until the publisher moves to a different screen.
+  const answersId = useRef(publishedId);
   useEffect(() => {
+    if (answersId.current === publishedId) return;
+    answersId.current = publishedId;
     setAnswers(initialFieldValues(view.fields));
   }, [publishedId, view.fields]);
 
@@ -1452,6 +1455,22 @@ export function PluginDialog({
           ) : null}
           {view.lines !== undefined ? (
             <pre className="app-dialog-lines">{view.lines.join("\n")}</pre>
+          ) : null}
+          {view.items !== undefined ? (
+            <div className="app-dialog-list" aria-label={view.title ?? "Items"}>
+              {view.items.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="app-dialog-item app-plugin-dialog-item"
+                  disabled={busy !== null}
+                  onClick={() => void runAction({ id: item.actionId, label: item.label }, item.values)}
+                >
+                  <span className="app-dialog-item-id">{item.label}</span>
+                  {item.detail !== undefined ? <span className="app-dialog-item-provider">{item.detail}</span> : null}
+                </button>
+              ))}
+            </div>
           ) : null}
           {view.input !== undefined ? (
             <input

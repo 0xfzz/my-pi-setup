@@ -47,6 +47,21 @@ test("header action placement survives validation and rejects unknown locations"
   assert.equal(validateView({ type: "dialog", actions: [{ ...actions[0], placement: "overlay" }] }).ok, false);
 });
 
+test("clickable dialog items carry bounded action values without exposing arbitrary markup", () => {
+  const items = [{ id: "acme", label: "Acme", detail: "1 model", actionId: "manage", values: { providerId: "acme" } }];
+  const result = validateView({ type: "dialog", items });
+  assert.equal(result.ok, true);
+  if (result.ok && result.view.type === "dialog") assert.deepEqual(result.view.items, items);
+  assert.equal(validateView({ type: "dialog", items: [{ ...items[0], values: { id: 42 } }] }).ok, false);
+});
+
+test("dialog items reject ambiguous identities, dead actions and oversized lists", () => {
+  const item = { id: "row", label: "Row", actionId: "select" };
+  for (const items of [[item, item], [{ ...item, id: "" }], [{ ...item, actionId: " " }], [{ ...item, label: "" }], Array.from({ length: 201 }, (_, index) => ({ ...item, id: `row-${index}` }))]) {
+    assert.equal(validateView({ type: "dialog", items }).ok, false);
+  }
+});
+
 test("a form is enough on its own, without a body or lines", () => {
   const result = validateView({
     type: "dialog",

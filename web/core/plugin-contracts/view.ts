@@ -1,3 +1,5 @@
+import { validateActionValues } from "./actions.ts";
+
 export const WEB_PLUGIN_VIEW_EVENT = "web-plugin:view";
 
 export const VIEW_MAX_ROWS = 200;
@@ -74,6 +76,15 @@ export interface DialogAction {
   placement?: "header" | "footer";
 }
 
+/** A selectable row whose action belongs to the publishing plugin. */
+export interface DialogItem {
+  id: string;
+  label: string;
+  detail?: string;
+  actionId: string;
+  values?: Record<string, string>;
+}
+
 /** What a dialog field collects. */
 export const DIALOG_FIELD_KINDS = ["text", "secret", "select"] as const;
 export type DialogFieldKind = (typeof DIALOG_FIELD_KINDS)[number];
@@ -134,6 +145,8 @@ export interface DialogWebView {
   /** Plain-line body when markdown is overkill. */
   lines?: string[];
   actions?: DialogAction[];
+  /** Selectable rows, independent of the small footer action bar. */
+  items?: DialogItem[];
   /**
    * A single-line typed answer. `submitsInput` actions carry the text as
    * the action value; Enter submits the first (or primary) one.
@@ -209,6 +222,36 @@ function clampId(text: string, fieldName: string, warnings: string[]): string {
   }
   warnings.push(`${fieldName} truncated to ${GRAPH_MAX_ID_CHARS} characters`);
   return text.slice(0, GRAPH_MAX_ID_CHARS);
+}
+
+/** Rows use the same payload ceiling and unsafe-key checks as button actions. */
+function validateDialogItems(input: unknown): { items?: DialogItem[] } | { error: string } {
+  if (input === undefined) return {};
+  if (!Array.isArray(input) || input.length > VIEW_MAX_ROWS) return { error: "dialog items must be a bounded array" };
+  const items: DialogItem[] = [];
+  const ids = new Set<string>();
+  for (const row of input) {
+    if (row === null || typeof row !== "object" || typeof row.id !== "string"
+      || typeof row.label !== "string" || typeof row.actionId !== "string"
+      || (row.detail !== undefined && typeof row.detail !== "string")) {
+      return { error: "dialog items need id, label, actionId and optional detail strings" };
+    }
+    const id = row.id.slice(0, VIEW_MAX_CELL_CHARS);
+    if (!id.trim() || !row.label.trim() || !row.actionId.trim() || ids.has(id)) {
+      return { error: "dialog items need nonempty labels/actions and unique nonempty IDs" };
+    }
+    ids.add(id);
+    const values = validateActionValues(row.values);
+    if (!values.ok) return { error: values.error };
+    items.push({
+      id,
+      label: row.label.slice(0, VIEW_MAX_CELL_CHARS),
+      actionId: row.actionId.slice(0, VIEW_MAX_CELL_CHARS),
+      ...(row.detail !== undefined ? { detail: row.detail.slice(0, VIEW_MAX_CELL_CHARS) } : {}),
+      ...(values.values !== undefined ? { values: values.values } : {}),
+    });
+  }
+  return { items };
 }
 
 /**
@@ -358,6 +401,7 @@ export function validateView(input: unknown): ValidateViewResult {
         raw.body === undefined
         && raw.lines === undefined
         && raw.fields === undefined
+        && raw.items === undefined
         && (raw.actions === undefined || (Array.isArray(raw.actions) && raw.actions.length === 0))
         && raw.open !== false
       ) {
@@ -381,6 +425,8 @@ export function validateView(input: unknown): ValidateViewResult {
           }
         }
       }
+      const items = validateDialogItems(raw.items);
+      if ("error" in items) return { ok: false, error: items.error };
       if (raw.input !== undefined) {
         if (
           typeof raw.input !== "object"
@@ -426,6 +472,7 @@ export function validateView(input: unknown): ValidateViewResult {
           }
           : {}),
         ...(fields.fields !== undefined ? { fields: fields.fields } : {}),
+        ...(items.items !== undefined ? { items: items.items } : {}),
         open: raw.open !== false,
       };
       return {

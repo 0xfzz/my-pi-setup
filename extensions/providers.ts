@@ -19,6 +19,7 @@ import { overlayRows, popupOverlayOptions } from "../lib/popup/frame.ts";
 import { isSubagentChildSession } from "../lib/subagent-context.ts";
 import {
   backWizard,
+  modelWizard,
   savedView,
   startWizard,
   stepCount,
@@ -35,9 +36,11 @@ import {
   PROVIDERS_CANCEL_ACTION,
   PROVIDERS_FIELD,
   PROVIDERS_NEXT_ACTION,
+  PROVIDERS_MANAGE_ACTION,
   PROVIDERS_PLUGIN_ID,
   PROVIDERS_WEB_COMMAND,
 } from "../web/plugins/providers/contract.ts";
+import { ProviderWebManager } from "../lib/provider/provider-web-controller.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
 import { WEB_MODELS_CHANGED_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
 import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
@@ -367,10 +370,15 @@ export default function providers(pi: ExtensionAPI) {
   let webWizard: WizardState | null = null;
   let webContext: ExtensionContext | null = null;
   let webProblem: string | undefined;
+  let webReturnToProvider: string | null = null;
+  let webOpeningSnapshot: ConfigSnapshot | null = null;
 
   const closeWebWizard = (): void => {
     webWizard = null;
     webProblem = undefined;
+    webReturnToProvider = null;
+    webOpeningSnapshot = null;
+    manager.reset();
     publishWebView(pi, PROVIDERS_PLUGIN_ID, { type: "dialog", open: false });
   };
 
@@ -403,11 +411,43 @@ export default function providers(pi: ExtensionAPI) {
     if (snapshot === undefined) return;
     webContext = ctx;
     webProblem = undefined;
+    webReturnToProvider = null;
+    webOpeningSnapshot = snapshot;
+    manager.reset();
     // The plugin's landing page is the configured-provider list. The host
     // supplies only the container; this plugin decides what goes inside it.
     webWizard = startWizard();
     publishWizard(snapshot.config);
   };
+
+  const manager = new ProviderWebManager({
+    read: () => readConfig(modelsFile()),
+    commit: async (snapshot, config) => {
+      if (webContext === null) throw new Error("Session context is gone; reopen Provider.");
+      await commitConfig(webContext, snapshot, config);
+      pi.events?.emit(WEB_MODELS_CHANGED_EVENT, {});
+    },
+    auth: (id) => ({
+      configured: webContext?.modelRegistry.getProviderAuthStatus(id).configured ?? false,
+      source: webContext?.modelRegistry.getProviderAuthStatus(id).source,
+      registered: webContext?.modelRegistry.getRegisteredProviderIds().includes(id) ?? false,
+    }),
+    publish: (view) => publishWebView(pi, PROVIDERS_PLUGIN_ID, view),
+    list: async () => { if (webContext !== null) await startWebWizard(webContext); },
+    model: (id, modelId) => {
+      void readConfig(modelsFile()).then((snapshot) => {
+        const provider = snapshot.config.providers[id];
+        if (provider === undefined) return;
+        webOpeningSnapshot = snapshot;
+        webReturnToProvider = id;
+        webWizard = modelWizard({ providerId: id, provider, ...(modelId !== undefined ? { modelId } : {}) });
+        webProblem = undefined;
+        publishWizard(snapshot.config);
+      }).catch((error: unknown) => {
+        publishWebView(pi, PROVIDERS_PLUGIN_ID, unreadableFileView(error instanceof Error ? error.message : "Cannot read models.json."));
+      });
+    },
+  });
 
   /** Write the finished draft and tell the bridge to re-read the catalogue. */
   const saveWebWizard = async (snapshot: ConfigSnapshot): Promise<void> => {
@@ -417,23 +457,32 @@ export default function providers(pi: ExtensionAPI) {
       showWizardProblem(snapshot.config, "The session context is gone; reopen the picker and retry.");
       return;
     }
-    const built = wizardResult(webWizard, snapshot.config.providers);
+    const opening = webOpeningSnapshot ?? snapshot;
+    const built = wizardResult(webWizard, opening.config.providers);
     if (!built.ok) {
       showWizardProblem(snapshot.config, built.problem);
       return;
     }
-    const config = structuredClone(snapshot.config);
+    const config = structuredClone(opening.config);
     config.providers[built.providerId] = built.provider;
     try {
-      await commitConfig(ctx, snapshot, config);
+      await commitConfig(ctx, opening, config);
     } catch (error) {
       showWizardProblem(snapshot.config, (error as Error).message);
       return;
     }
+    // Both new and updated models invalidate the built-in picker's cache.
+    pi.events?.emit(WEB_MODELS_CHANGED_EVENT, {});
+    if (webReturnToProvider !== null) {
+      const id = webReturnToProvider;
+      webWizard = null;
+      webReturnToProvider = null;
+      webOpeningSnapshot = null;
+      await manager.open(id, `Saved model ${built.modelId}.`);
+      return;
+    }
     closeWebWizard();
     publishWebView(pi, PROVIDERS_PLUGIN_ID, savedView(built.providerId, built.modelId));
-    // The picker's list is the bridge's cache: ask for a fresh one.
-    pi.events?.emit(WEB_MODELS_CHANGED_EVENT, {});
   };
 
   /**
@@ -464,11 +513,21 @@ export default function providers(pi: ExtensionAPI) {
     const snapshot = await readWizardConfig();
     if (snapshot === undefined) return;
     webProblem = undefined;
+    webReturnToProvider = null;
+    webOpeningSnapshot = snapshot;
+    manager.reset();
     webWizard = { ...startWizard({ mode: "new-provider" }), step: 1 };
     publishWizard(snapshot.config);
   };
 
   const cancelWebWizard = async (): Promise<void> => {
+    if (webReturnToProvider !== null) {
+      const id = webReturnToProvider;
+      webWizard = null;
+      webReturnToProvider = null;
+      await manager.open(id);
+      return;
+    }
     if (webWizard === null || webWizard.step === 0) {
       closeWebWizard();
       return;
@@ -479,6 +538,10 @@ export default function providers(pi: ExtensionAPI) {
 
   const stepBack = async (): Promise<void> => {
     if (webWizard === null) return;
+    if (webReturnToProvider !== null && webWizard.step === 2) {
+      await cancelWebWizard();
+      return;
+    }
     const snapshot = await readWizardConfig();
     if (snapshot === undefined) return;
     webProblem = undefined;
@@ -535,7 +598,8 @@ export default function providers(pi: ExtensionAPI) {
     // current value (the action label is not an answer).
     const submitted = request.values?.[PROVIDERS_FIELD];
     const value = typeof submitted === "string" ? submitted : undefined;
-    if (actionId === PROVIDERS_ADD_ACTION) void addWebProvider();
+    if (actionId === PROVIDERS_MANAGE_ACTION) void manager.action(request);
+    else if (actionId === PROVIDERS_ADD_ACTION) void addWebProvider();
     else if (actionId === PROVIDERS_NEXT_ACTION) void submitWebWizard(value);
     else if (actionId === PROVIDERS_BACK_ACTION) void stepBack();
     else if (actionId === PROVIDERS_CANCEL_ACTION) void cancelWebWizard();

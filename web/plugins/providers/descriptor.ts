@@ -4,6 +4,7 @@ import {
   PROVIDERS_BACK_ACTION,
   PROVIDERS_CANCEL_ACTION,
   PROVIDERS_NEXT_ACTION,
+  PROVIDERS_MANAGE_ACTION,
   PROVIDERS_PLUGIN_ID,
 } from "./contract.ts";
 
@@ -24,6 +25,7 @@ export const providersPlugin: WebPluginDescriptor = {
   surfaces: [{ kind: "dialog" }],
   actions: [
     { id: PROVIDERS_ADD_ACTION, title: "Add provider" },
+    { id: PROVIDERS_MANAGE_ACTION, title: "Manage configured provider" },
     { id: PROVIDERS_NEXT_ACTION, title: "Continue to the next step" },
     { id: PROVIDERS_BACK_ACTION, title: "Go back one step" },
     { id: PROVIDERS_CANCEL_ACTION, title: "Close without saving" },

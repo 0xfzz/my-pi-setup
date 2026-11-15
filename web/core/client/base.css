@@ -1329,6 +1329,26 @@ a:focus-visible {
   min-width: 0;
 }
 
+.app-plugin-dialog-item {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.app-plugin-dialog-item .app-dialog-item-id,
+.app-plugin-dialog-item .app-dialog-item-provider {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.app-plugin-dialog-item:hover,
+.app-plugin-dialog-item:focus-visible {
+  background: var(--bg-input);
+  color: var(--fg);
+  border-color: var(--border);
+}
+
 .app-dialog-item.is-active {
   background: var(--bg-input);
   color: var(--fg);

@@ -22,6 +22,7 @@ import {
   PROVIDERS_FIELD,
   PROVIDERS_FILE_DIALOG,
   PROVIDERS_NEXT_ACTION,
+  PROVIDERS_MANAGE_ACTION,
   PROVIDERS_SAVED_DIALOG,
   providersDialogId,
 } from "../../web/plugins/providers/contract.ts";
@@ -31,6 +32,7 @@ import {
   draftToProvider,
   PROVIDER_APIS,
   stepProblem,
+  providerRows,
   type DraftContext,
   type DraftStep,
   type DraftStepKey,
@@ -108,6 +110,25 @@ export function startWizard(options: {
     draft: { id: "", name: "", api: PROVIDER_APIS[0], baseUrl: "", apiKey: "" },
     providerId: options.providerId ?? "",
     model: { ...DEFAULT_MODEL },
+  };
+}
+
+/** Existing model metadata pre-fills the same wizard used for new models. */
+export function modelWizard(options: { providerId: string; provider: ProviderConfig; modelId?: string }): WizardState {
+  const state = { ...startWizard({ mode: "existing-provider", providerId: options.providerId }), step: 2 };
+  if (options.modelId === undefined) return state;
+  const overrides = options.provider.modelOverrides as Record<string, JsonObject> | undefined;
+  const model = { ...options.provider.models?.find((entry) => entry.id === options.modelId), ...overrides?.[options.modelId] };
+  return {
+    ...state,
+    model: {
+      id: options.modelId,
+      name: typeof model.name === "string" ? model.name : options.modelId,
+      contextWindow: String(model.contextWindow ?? 128000),
+      maxTokens: String(model.maxTokens ?? 8192),
+      reasoning: model.reasoning === true ? "Yes" : "No",
+      input: Array.isArray(model.input) && model.input.includes("image") ? "Text + images" : "Text",
+    },
   };
 }
 
@@ -295,7 +316,7 @@ export function wizardView(
   return {
     type: "dialog",
     id: wizardDialogId(state),
-    title: step.key === HOME_STEP_KEY ? "Providers" : last ? "Add model" : "Add provider",
+    title: state.mode === "existing-provider" ? "Add/update model" : "Add provider",
     lines,
     fields: [
       {
@@ -330,21 +351,23 @@ function providerListView(
   providers: Record<string, ProviderConfig>,
   options: { problem?: string; notice?: string },
 ): DialogWebView {
-  const rows = Object.keys(providers).sort().map((id) => {
-    const provider = providers[id]!;
-    const count = Array.isArray(provider.models) ? provider.models.length : 0;
-    const name = typeof provider.name === "string" ? `${provider.name} (${id})` : id;
-    return `${name} · ${count} model${count === 1 ? "" : "s"}`;
-  });
+  const rows = providerRows(providers);
   return {
     type: "dialog",
     id: providersDialogId(HOME_STEP_KEY),
     title: "Providers",
     lines: [
-      ...(rows.length > 0 ? rows : ["No providers configured yet. Add a provider to get started."]),
+      ...(rows.length > 0 ? [] : ["No providers configured yet. Add a provider to get started."]),
       ...(options.notice !== undefined ? [options.notice] : []),
       ...(options.problem !== undefined ? [`Problem: ${options.problem}`] : []),
     ],
+    items: rows.map((row) => ({
+      id: row.id,
+      label: row.name === row.id ? row.id : `${row.name} (${row.id})`,
+      detail: `${row.models} model${row.models === 1 ? "" : "s"} · ${row.api}`,
+      actionId: PROVIDERS_MANAGE_ACTION,
+      values: { providerId: row.id },
+    })),
     actions: [
       { id: PROVIDERS_ADD_ACTION, label: "Add provider", tone: "primary", placement: "header" },
       ...(rows.length > 0 ? [{ id: PROVIDERS_NEXT_ACTION, label: "Add model to existing provider" }] : []),

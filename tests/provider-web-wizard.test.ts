@@ -21,10 +21,12 @@ const WEB_COMMAND_EVENT = "web-plugin:web-command";
 interface Harness {
   /** Every published view for the providers plugin, in order. */
   views: Array<Record<string, unknown>>;
+  signals: { modelChanges: number };
   /** Publish the wizard's first step. */
   start(): Promise<void>;
   /** Answer the current step. */
   submit(value: string): Promise<void>;
+  manage(label: string, values?: Record<string, string>): Promise<void>;
   add(): Promise<void>;
   back(): Promise<void>;
   cancel(): Promise<void>;
@@ -40,6 +42,7 @@ async function makeHarness(models: unknown = { providers: {} }): Promise<Harness
   process.env.PI_CODING_AGENT_DIR = dir;
 
   const views: Array<Record<string, unknown>> = [];
+  const signals = { modelChanges: 0 };
   const listeners = new Map<string, Array<(data: unknown) => void>>();
   const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
   const mockPi = {
@@ -50,6 +53,7 @@ async function makeHarness(models: unknown = { providers: {} }): Promise<Harness
     getCommands: () => [],
     events: {
       emit: (channel: string, data: unknown) => {
+        if (channel === "web-plugin:models-changed") signals.modelChanges += 1;
         if (channel === VIEW_EVENT) {
           const payload = data as { pluginId?: string; view?: Record<string, unknown> };
           if (payload.pluginId === "providers" && payload.view !== undefined) views.push(payload.view);
@@ -101,13 +105,14 @@ async function makeHarness(models: unknown = { providers: {} }): Promise<Harness
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
   };
-  const act = async (actionId: string, values?: Record<string, string>): Promise<void> => {
+  const act = async (actionId: string, values?: Record<string, string>, confirm?: string): Promise<void> => {
     const before = views.length;
     mockPi.events.emit(ACTION_EVENT, {
       requestId: `req-${actionId}`,
       sessionId: "provider-web-test",
       pluginId: "providers",
       actionId,
+      ...(confirm !== undefined ? { confirm } : {}),
       ...(values !== undefined ? { values } : {}),
     });
     await waitForView(before);
@@ -115,6 +120,7 @@ async function makeHarness(models: unknown = { providers: {} }): Promise<Harness
 
   return {
     views,
+    signals,
     async start() {
       // The bridge asks for the announced command by name; the extension runs
       // it on the context it captured at session start.
@@ -123,6 +129,7 @@ async function makeHarness(models: unknown = { providers: {} }): Promise<Harness
       await waitForView(before);
     },
     submit: (value) => act("provider-next", { value }),
+    manage: (label, values) => act("provider-manage", values, label),
     add: () => act("provider-add"),
     back: () => act("provider-back"),
     cancel: () => act("provider-cancel"),
@@ -301,7 +308,9 @@ test("the provider page lists all configured providers and owns its top-right Ad
     acme: { name: "Acme", models: [{ id: "model-a" }] },
   } });
   await harness.start();
-  assert.deepEqual(linesOf(harness.lastView()), ["Acme (acme) · 1 model", "Zeta (zeta) · 0 models"]);
+  const items = harness.lastView().items as Array<Record<string, unknown>>;
+  assert.deepEqual(items.map((item) => item.label).sort(), ["Acme (acme)", "Zeta (zeta)"]);
+  assert.deepEqual(items.find((item) => item.id === "acme")?.values, { providerId: "acme" });
   assert.equal(harness.lastView().fields, undefined);
   assert.ok(!JSON.stringify(harness.lastView()).includes("fixture-secret"));
   const actions = harness.lastView().actions as Array<Record<string, unknown>>;
@@ -331,6 +340,116 @@ test("cancelling returns to the list and writes nothing", async () => {
   await harness.cancel();
   assert.equal(harness.lastView().open, false, "closing the list returns to Models");
   assert.deepEqual(await harness.models(), { providers: {} });
+});
+
+test("selecting an existing provider opens management in the plugin pane", async () => {
+  const harness = await makeHarness({ providers: { acme: { name: "Acme", apiKey: "fixture-secret" } } });
+  await harness.start();
+  await harness.manage("Acme", { providerId: "acme" });
+  assert.equal(harness.lastView().title, "Acme");
+  const actions = harness.lastView().actions as Array<Record<string, unknown>>;
+  for (const label of ["Edit connection", "Add/update model", "Clone with a new key", "Remove model", "Remove provider"]) {
+    assert.ok(actions.some((action) => action.label === label), label);
+  }
+  assert.ok(!JSON.stringify(harness.lastView()).includes("fixture-secret"));
+});
+
+test("editing a provider preserves authentication and advanced fields", async () => {
+  const harness = await makeHarness({ providers: { acme: {
+    name: "Acme", api: "openai-completions", baseUrl: "https://acme.test/v1", apiKey: "fixture-secret", headers: { "x-fixture": "yes" },
+  } } });
+  await harness.start();
+  await harness.manage("Acme", { providerId: "acme" });
+  await harness.manage("Edit connection");
+  assert.ok(!JSON.stringify(harness.lastView()).includes("fixture-secret"));
+  await harness.manage("Save connection", { name: "Renamed", api: "openai-completions", baseUrl: "https://acme.test/v1", apiKey: "" });
+  const acme = (await harness.models()).providers as Record<string, Record<string, unknown>>;
+  assert.equal(acme.acme?.name, "Renamed");
+  assert.equal(acme.acme?.apiKey, "fixture-secret");
+  assert.deepEqual(acme.acme?.headers, { "x-fixture": "yes" });
+});
+
+test("an endpoint edit requires trust confirmation before any write", async () => {
+  const harness = await makeHarness({ providers: { acme: {
+    name: "Acme", api: "openai-completions", baseUrl: "https://acme.test/v1", apiKey: "fixture-secret",
+  } } });
+  await harness.start();
+  await harness.manage("Acme", { providerId: "acme" });
+  await harness.manage("Edit connection");
+  await harness.manage("Save connection", { name: "Acme", api: "openai-completions", baseUrl: "https://new.test/v1", apiKey: "" });
+  assert.match(linesOf(harness.lastView()).join(" "), /https:\/\/new.test\/v1/);
+  assert.equal(((await harness.models()).providers as Record<string, Record<string, unknown>>).acme?.baseUrl, "https://acme.test/v1");
+  await harness.manage("Trust endpoint and save");
+  assert.equal(((await harness.models()).providers as Record<string, Record<string, unknown>>).acme?.baseUrl, "https://new.test/v1");
+});
+
+test("provider removal is confirmed and refuses a stale editor snapshot", async () => {
+  const harness = await makeHarness({ providers: { acme: { name: "Acme" } } });
+  await harness.start();
+  await harness.manage("Acme", { providerId: "acme" });
+  await harness.manage("Remove provider");
+  assert.ok(((await harness.models()).providers as Record<string, unknown>).acme);
+  await writeFile(join(dir, "models.json"), JSON.stringify({ providers: { acme: { name: "Changed elsewhere" } } }));
+  await harness.manage("Remove configuration");
+  assert.match(linesOf(harness.lastView()).join(" "), /Problem:/);
+  assert.equal(((await harness.models()).providers as Record<string, Record<string, unknown>>).acme?.name, "Changed elsewhere");
+});
+
+test("model removal drops both model and override after confirmation", async () => {
+  const harness = await makeHarness({ providers: { acme: {
+    models: [{ id: "demo" }], modelOverrides: { demo: { maxTokens: 4000 } },
+  } } });
+  await harness.start();
+  await harness.manage("acme", { providerId: "acme" });
+  await harness.manage("Remove model");
+  await harness.manage("Review removal", { modelId: "demo" });
+  await harness.manage("Remove model configuration");
+  const acme = ((await harness.models()).providers as Record<string, Record<string, unknown>>).acme!;
+  assert.deepEqual(acme.models, []);
+  assert.equal(acme.modelOverrides, undefined);
+});
+
+test("selecting a model pre-fills its editor and returns to its provider after saving", async () => {
+  const harness = await makeHarness({ providers: { acme: {
+    name: "Acme", api: "openai-completions", baseUrl: "https://acme.test/v1", apiKey: "pi-local",
+    models: [{ id: "demo", name: "Demo", contextWindow: 64000, maxTokens: 4096, reasoning: true, input: ["text", "image"] }],
+  } } });
+  await harness.start();
+  await harness.manage("Acme", { providerId: "acme" });
+  await harness.manage("Demo", { modelId: "demo" });
+  assert.equal(fieldOf(harness.lastView()).value, "demo");
+  for (const value of ["demo", "Updated", "64000", "4096", "Yes", "Text + images"]) await harness.submit(value);
+  assert.equal(harness.lastView().title, "Acme");
+  assert.equal(harness.views.some((view) => view.open === false), false, "returning from a saved model must not close and reopen the plugin pane");
+  assert.equal(harness.signals.modelChanges, 1, "updating a model must invalidate the built-in picker's cache too");
+  const acme = ((await harness.models()).providers as Record<string, Record<string, unknown>>).acme!;
+  assert.equal((acme.models as Array<Record<string, unknown>>)[0]?.name, "Updated");
+});
+
+test("cloning from management saves a separate key and keeps the inherited model list", async () => {
+  const harness = await makeHarness({ providers: { acme: {
+    name: "Acme", api: "openai-completions", baseUrl: "https://acme.test/v1", apiKey: "$FIRST_KEY", models: [{ id: "demo" }],
+  } } });
+  await harness.start();
+  await harness.manage("Acme", { providerId: "acme" });
+  await harness.manage("Clone with a new key");
+  assert.match(linesOf(harness.lastView()).join(" "), /acme-2/);
+  await harness.manage("Save new account", { name: "Second account", apiKey: "$SECOND_KEY" });
+  const providers = (await harness.models()).providers as Record<string, Record<string, unknown>>;
+  assert.equal(providers["acme-1"]?.apiKey, "$FIRST_KEY");
+  assert.equal(providers["acme-2"]?.apiKey, "$SECOND_KEY");
+  assert.deepEqual(providers["acme-2"]?.models, [{ id: "demo" }]);
+  assert.equal(harness.lastView().title, "Second account");
+});
+
+test("confirmed provider removal returns to the list without deleting credentials elsewhere", async () => {
+  const harness = await makeHarness({ providers: { acme: { name: "Acme" }, local: { name: "Local" } } });
+  await harness.start();
+  await harness.manage("Acme", { providerId: "acme" });
+  await harness.manage("Remove provider");
+  await harness.manage("Remove configuration");
+  assert.equal(harness.lastView().id, "provider-wizard:home");
+  assert.deepEqual(await harness.models(), { providers: { local: { name: "Local" } } });
 });
 
 test("an unreadable models.json is reported instead of overwritten", async () => {

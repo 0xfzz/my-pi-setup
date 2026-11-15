@@ -22,6 +22,8 @@ export const PROVIDERS_WEB_COMMAND = "provider";
 export const PROVIDERS_NEXT_ACTION = "provider-next";
 /** Replace the provider list with a fresh connection wizard. */
 export const PROVIDERS_ADD_ACTION = "provider-add";
+/** Open or act on a configured provider; state and validation stay in the plugin. */
+export const PROVIDERS_MANAGE_ACTION = "provider-manage";
 /** Go back one step, keeping every answer. */
 export const PROVIDERS_BACK_ACTION = "provider-back";
 /** Close the wizard; nothing is written. */

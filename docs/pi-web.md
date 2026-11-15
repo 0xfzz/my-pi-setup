@@ -631,6 +631,10 @@ in the right content pane. The host suppresses that publisher's standalone
 popup while the shared dialog owns it; plugin-specific UI stays in the plugin.
 Dialog actions may declare `placement: "header"` to appear beside the pane's
 title (for example, **Add provider**); other actions stay in the footer.
+A dialog can also publish `items`: selectable text rows with `id`, `label`,
+optional `detail`, `actionId` and bounded `values`. Clicking a row uses the same
+plugin action pipeline as a button. This lets plugins supply interactive lists
+without adding subject-specific rendering or operations to the host.
 
 A dialog may also declare **`fields`** — a form of typed answers (`text`, a
 masked `secret`, or a `select` menu) — and a `submitsInput` action then
