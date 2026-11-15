@@ -47,7 +47,12 @@ import { buildWebTree, type PiTreeNodeLike } from "../lib/web-tree.ts";
 import { findModelRef, uniqueModelRefs, type ModelRef } from "../lib/model-ref.ts";
 import { sseFrameData, takeSseFrames } from "../lib/web-sse.ts";
 import { WEB_MODELS_CHANGED_EVENT, WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
-import { registeredWebCommand, registeredWebCommands } from "../web/core/plugin-contracts/web-commands.ts";
+import {
+  WEB_PLUGIN_COMMANDS_EVENT,
+  WEB_PLUGIN_WEB_COMMAND_EVENT,
+  announcedCommandList,
+  type WebCommandDescriptor,
+} from "../web/core/plugin-contracts/web-commands.ts";
 import { defaultIsPidAlive, defaultReadState, defaultServerDir, defaultWebUiStatePath, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiCommandResult, type WebUiDeps } from "../lib/web-ui.ts";
 import { repoRootFromServerDir, sourceWatchRoots, watchSources, type SourceWatcher } from "../lib/web-ui-reload.ts";
 import { WebAuthConfigCache, loadWebAuthConfig, removeWebPassword, webAuthConfigPath, writeWebPassword } from "../web/core/auth/config.ts";
@@ -408,8 +413,33 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     });
   };
 
+  /**
+   * Web commands other extensions contributed to this session.
+   *
+   * Announced on the bus (a process-global registry cannot work: pi evaluates
+   * every extension with `moduleCache: false`, so no two extensions share a
+   * module instance). A name announced twice keeps the newest descriptor.
+   */
+  const contributedCommands = new Map<string, WebCommandDescriptor>();
+
   // The session's dispatchable slash commands, for the web composer's palette.
-  const bridgeCommandList = (): Array<{ name: string; description?: string; web?: boolean }> => [
+  /**
+   * The model-settings flags a contributed command declared: the shared
+   * model-settings dialog lists every `managesModels` command as a sidebar
+   * page, labelled by its `settingsEntry` (the command name when absent).
+   */
+  const modelSettingsCommandFlags = (
+    command: WebCommandDescriptor,
+  ): { managesModels?: boolean; settingsEntry?: string; settingsPlugin?: string } => {
+    if (command.managesModels !== true) return {};
+    return {
+      managesModels: true,
+      ...(command.settingsEntry !== undefined ? { settingsEntry: command.settingsEntry } : {}),
+      ...(command.settingsPlugin !== undefined ? { settingsPlugin: command.settingsPlugin } : {}),
+    };
+  };
+
+  const bridgeCommandList = (): Array<{ name: string; description?: string; web?: boolean; managesModels?: boolean; settingsEntry?: string; settingsPlugin?: string }> => [
     // pi core commands (extension, prompt templates, skills) — the web
     // dispatches these as prompt text through the session's
     // expandPromptTemplates path.
@@ -433,11 +463,11 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     // Commands another extension contributed (web/core/plugin-contracts/
     // web-commands.ts): the same channel, with whatever presentation flags
     // the contributor declared.
-    ...registeredWebCommands().map((command) => ({
+    ...[...contributedCommands.values()].map((command) => ({
       name: command.name,
       description: command.description,
       web: true,
-      ...(command.managesModels === true ? { managesModels: true } : {}),
+      ...modelSettingsCommandFlags(command),
     })),
   ];
 
@@ -694,21 +724,15 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       // captured session context. A command another extension registered
       // (web/core/plugin-contracts/web-commands.ts) is always direct.
       const args = typeof command.args === "string" ? command.args : "";
-      const contributed = registeredWebCommand(command.name);
-      if (contributed !== undefined) {
-        const registeredCtx = lastCtxForCommands;
-        if (registeredCtx === null) {
-          ctxNotify(`web command ${command.name}: no session context yet`);
-          return;
-        }
-        void Promise.resolve(contributed.handler(args, registeredCtx)).catch((error: unknown) => {
-          ctxNotify(`web command ${command.name} failed: ${String(error)}`);
-        });
-        return;
-      }
       const entry = webCoreCommand(command.name);
       if (entry === undefined) {
-        ctxNotify(`unknown web command: ${command.name}`);
+        // Not one of ours: hand it back to whichever extension announced it.
+        // The contributor runs it with the context it captured itself.
+        if (!contributedCommands.has(command.name)) {
+          ctxNotify(`unknown web command: ${command.name}`);
+          return;
+        }
+        pi.events?.emit(WEB_PLUGIN_WEB_COMMAND_EVENT, { name: command.name, args });
         return;
       }
       if (entry.dispatch === "runner") {
@@ -877,6 +901,17 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   });
   pi.events?.on(WEB_UI_EVENT, (payload: unknown) => {
     bridgePoster?.post({ type: "web_ui_event", payload });
+  });
+  // Another extension announced its web commands: add them to the list this
+  // session offers and re-post it, so the palette and the model picker's add
+  // entry appear without waiting for a re-attach.
+  pi.events?.on(WEB_PLUGIN_COMMANDS_EVENT, (payload: unknown) => {
+    const announced = announcedCommandList(payload);
+    if (announced.length === 0) return;
+    for (const command of announced) contributedCommands.set(command.name, command);
+    if (bridgeStreaming) {
+      bridgePoster?.post({ type: "web_commands", commands: bridgeCommandList() });
+    }
   });
   // An extension wrote models.json: re-post the picker's list, or the web
   // keeps offering the catalogue it saw at the last attach.

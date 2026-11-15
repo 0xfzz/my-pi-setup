@@ -20,6 +20,8 @@ export const PROVIDERS_WEB_COMMAND = "provider";
 
 /** Answer the current step; the value travels in `values.value`. */
 export const PROVIDERS_NEXT_ACTION = "provider-next";
+/** Replace the provider list with a fresh connection wizard. */
+export const PROVIDERS_ADD_ACTION = "provider-add";
 /** Go back one step, keeping every answer. */
 export const PROVIDERS_BACK_ACTION = "provider-back";
 /** Close the wizard; nothing is written. */

@@ -1370,6 +1370,102 @@ a:focus-visible {
   padding: 12px 4px;
 }
 
+/* The shared model-settings dialog: sidebar nav (Models / Provider / …) and
+   the active entry's content beside it. */
+.app-dialog-columns {
+  flex: 1;
+  min-height: min(360px, 60dvh);
+  display: flex;
+  flex-direction: row;
+}
+
+.app-dialog-sidebar {
+  flex: none;
+  width: 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-right: 14px;
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.app-dialog-sidebar-entry {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+.app-dialog-sidebar-entry:hover {
+  color: var(--fg);
+  background: var(--bg-input);
+}
+
+.app-dialog-sidebar-entry.is-active {
+  color: var(--fg);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.app-dialog-sidebar-entry-hint {
+  display: block;
+  color: var(--fg-faint);
+  font-size: 10.5px;
+  margin-top: 1px;
+}
+
+.app-dialog-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* An embedded PluginDialog (a sidebar pane's content): pane-head above, then
+   the dialog body/actions with no frame of their own. */
+.app-dialog-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-dialog-head-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.app-dialog-pane-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.app-dialog-pane-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-dialog.wide {
+  width: min(720px, calc(100vw - 32px));
+}
+
 .app-dialog-foot {
   flex: none;
   margin-top: 10px;

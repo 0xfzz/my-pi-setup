@@ -31,6 +31,14 @@ export interface WebCommand {
    * table.
    */
   managesModels?: boolean;
+  /**
+   * The sidebar label this command gets inside the shared model-settings
+   * dialog (the dialog with the Models / Provider / … nav). Only meaningful
+   * with `managesModels`; defaults to the command name.
+   */
+  settingsEntry?: string;
+  /** The plugin publisher rendered inside this settings page. */
+  settingsPlugin?: string;
 }
 
 /** The web's presentation flags per built-in name — policy, not data. */
@@ -76,7 +84,62 @@ export function annotateBuiltinCommands(
   }));
 }
 
-/** Commands whose name starts with the given prefix, best matches first. */
+/** A command another extension contributed, with the flags it declared. */
+export interface ContributedCommand {
+  name: string;
+  description?: string;
+  managesModels?: boolean;
+  settingsEntry?: string;
+  settingsPlugin?: string;
+}
+
+/**
+ * Merge contributed web commands into a session's command list.
+ *
+ * A pi command and a contributed web command can be the same thing — the
+ * provider editor registers `/provider` with pi *and* declares it as a web
+ * command, because the web's palette dispatches it through the `web_command`
+ * channel rather than as prompt text. The contributed flags therefore land on
+ * the existing entry instead of listing the command twice; a contributed
+ * command pi does not know about is appended.
+ */
+export function annotateContributedCommands(
+  commands: readonly WebCommand[],
+  contributed: readonly ContributedCommand[],
+): WebCommand[] {
+  const flags = new Map(contributed.map((command) => [command.name, command]));
+  const merged = commands.map((command) => {
+    const declared = flags.get(command.name);
+    if (declared === undefined) return command;
+    flags.delete(command.name);
+    return {
+      ...command,
+      web: true,
+      ...modelSettingsFlags(declared),
+    };
+  });
+  for (const declared of flags.values()) {
+    merged.push({
+      name: declared.name,
+      ...(declared.description !== undefined ? { description: declared.description } : {}),
+      web: true,
+      ...modelSettingsFlags(declared),
+    });
+  }
+  return merged;
+}
+
+/** The model-settings flags a contributed command declared, if any. */
+function modelSettingsFlags(declared: ContributedCommand): Pick<WebCommand, "managesModels" | "settingsEntry" | "settingsPlugin"> {
+  if (declared.managesModels !== true) return {};
+  return {
+    managesModels: true,
+    ...(declared.settingsEntry !== undefined ? { settingsEntry: declared.settingsEntry } : {}),
+    ...(declared.settingsPlugin !== undefined ? { settingsPlugin: declared.settingsPlugin } : {}),
+  };
+}
+
+/** Commands whose name starts with the given prefix, plus the given prefix. */
 export function filterCommands(commands: readonly WebCommand[], prefix: string): WebCommand[] {
   const needle = prefix.toLowerCase();
   return commands

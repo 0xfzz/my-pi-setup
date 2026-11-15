@@ -26,6 +26,82 @@ export interface DialogHeadAction {
   onClick: () => void;
 }
 
+/** One entry of a SidebarDialog's nav: a page that lives in the same dialog. */
+export interface SidebarEntry {
+  id: string;
+  label: string;
+  /** One line under the label (e.g. the plugin that contributes the page). */
+  hint?: string;
+}
+
+/**
+ * The shared settings dialog: a sidebar of pages and one content pane.
+ *
+ * The model picker is the first page ("Models"); every extension that manages
+ * the model catalogue contributes its own page beside it ("Provider" today,
+ * a router tomorrow) by announcing a `managesModels` web command. The host
+ * renders the active page's node in the content pane — the pane is a
+ * container, so a page is any JSX, not a fixed shape.
+ */
+export function SidebarDialog({
+  title,
+  entries,
+  active,
+  onNavigate,
+  onClose,
+  footer,
+  children,
+}: {
+  title: string;
+  entries: readonly SidebarEntry[];
+  active: string;
+  onNavigate: (id: string) => void;
+  onClose: () => void;
+  footer?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="app-dialog-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <div className="app-dialog wide" role="dialog" aria-modal="true" aria-label={title}>
+        <div className="app-dialog-head">
+          <span className="app-dialog-title">{title}</span>
+        </div>
+        <div className="app-dialog-columns">
+          <div className="app-dialog-sidebar" role="tablist" aria-label={`${title} pages`}>
+            {entries.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                role="tab"
+                aria-selected={entry.id === active}
+                className={`app-dialog-sidebar-entry${entry.id === active ? " is-active" : ""}`}
+                onClick={() => onNavigate(entry.id)}
+              >
+                {entry.label}
+                {entry.hint !== undefined ? (
+                  <span className="app-dialog-sidebar-entry-hint">{entry.hint}</span>
+                ) : null}
+              </button>
+            ))}
+          </div>
+          <div className="app-dialog-content">{children}</div>
+        </div>
+        {footer !== undefined ? <div className="app-dialog-foot">{footer}</div> : null}
+      </div>
+    </div>
+  );
+}
+
 /** Shared modal frame: scrim, centered panel, Esc closes, title header. */
 function DialogFrame({
   title,
@@ -258,6 +334,7 @@ export function ModelPickerDialog({
   busy,
   error,
   onManageModels,
+  inline,
 }: {
   models: ModelRefLike[];
   /** Every registry model; the "All models" tab, falling back to `models`. */
@@ -273,6 +350,8 @@ export function ModelPickerDialog({
    * away instead of a different command nobody knows to type.
    */
   onManageModels?: () => void;
+  /** Rendered inside the shared SidebarDialog (no own frame/scrim). */
+  inline?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
@@ -290,6 +369,28 @@ export function ModelPickerDialog({
     && allList.some((ref, position) => ref.provider !== models[position]?.provider || ref.id !== models[position]?.id)
   );
   const activeTab = tab === "all" || !scopingActive ? "all" : "scoped";
+  const tabs = scopingActive ? (
+    <div className="app-dialog-tabs" role="tablist" aria-label="Model list scope">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={activeTab === "scoped"}
+        className={`app-dialog-tab${activeTab === "scoped" ? " is-active" : ""}`}
+        onClick={() => setTab("scoped")}
+      >
+        Scoped ({models.length})
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={activeTab === "all"}
+        className={`app-dialog-tab${activeTab === "all" ? " is-active" : ""}`}
+        onClick={() => setTab("all")}
+      >
+        All models ({allList.length})
+      </button>
+    </div>
+  ) : null;
   const shown = activeTab === "all" ? allList : models;
 
   const results = useMemo(() => {
@@ -338,6 +439,61 @@ export function ModelPickerDialog({
     }
   };
 
+  // Inline is the shared settings dialog's content pane: no own frame, scrim
+  // or Escape — the SidebarDialog owns those.
+  const search = (
+    <input
+      ref={inputRef}
+      className="app-dialog-search"
+      type="text"
+      value={query}
+      placeholder="Search models (provider/id)…"
+      onChange={(event) => setQuery(event.target.value)}
+      onKeyDown={onKeyDown}
+      aria-label="Search models"
+    />
+  );
+  const list = (
+    <div className="app-dialog-list" ref={listRef} role="listbox" aria-label="Models">
+      {results.length === 0 ? (
+        <div className="app-dialog-empty">
+          {shown.length === 0
+            ? (activeTab === "all" ? "No models available." : "No models posted by this session yet — try All models.")
+            : "No matches."}
+        </div>
+      ) : results.map((model, position) => {
+        const isCurrent = current !== undefined && model.provider === current.provider && model.id === current.id;
+        return (
+          <button
+            key={`${model.provider}/${model.id}`}
+            type="button"
+            role="option"
+            aria-selected={position === index}
+            data-index={position}
+            className={`app-dialog-item${position === index ? " is-active" : ""}${isCurrent ? " is-current" : ""}`}
+            onMouseEnter={() => setIndex(position)}
+            onClick={() => pick(model)}
+          >
+            <span className="app-dialog-item-provider">{model.provider}</span>
+            <span className="app-dialog-item-id">{model.id}</span>
+            {isCurrent ? <span className="app-dialog-item-current">current</span> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  if (inline) {
+    return (
+      <>
+        {error !== null && error !== undefined ? <div className="app-dialog-error" role="alert">{error}</div> : null}
+        {tabs}
+        {search}
+        {list}
+      </>
+    );
+  }
+
   return (
     <DialogFrame
       title="Model"
@@ -358,65 +514,9 @@ export function ModelPickerDialog({
       }
     >
       {error !== null && error !== undefined ? <div className="app-dialog-error" role="alert">{error}</div> : null}
-      {scopingActive ? (
-        <div className="app-dialog-tabs" role="tablist" aria-label="Model list scope">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "scoped"}
-            className={`app-dialog-tab${activeTab === "scoped" ? " is-active" : ""}`}
-            onClick={() => setTab("scoped")}
-          >
-            Scoped ({models.length})
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "all"}
-            className={`app-dialog-tab${activeTab === "all" ? " is-active" : ""}`}
-            onClick={() => setTab("all")}
-          >
-            All models ({allList.length})
-          </button>
-        </div>
-      ) : null}
-      <input
-        ref={inputRef}
-        className="app-dialog-search"
-        type="text"
-        value={query}
-        placeholder="Search models (provider/id)…"
-        onChange={(event) => setQuery(event.target.value)}
-        onKeyDown={onKeyDown}
-        aria-label="Search models"
-      />
-      <div className="app-dialog-list" ref={listRef} role="listbox" aria-label="Models">
-        {results.length === 0 ? (
-          <div className="app-dialog-empty">
-            {shown.length === 0
-              ? (activeTab === "all" ? "No models available." : "No models posted by this session yet — try All models.")
-              : "No matches."}
-          </div>
-        ) : results.map((model, position) => {
-          const isCurrent = current !== undefined && model.provider === current.provider && model.id === current.id;
-          return (
-            <button
-              key={`${model.provider}/${model.id}`}
-              type="button"
-              role="option"
-              aria-selected={position === index}
-              data-index={position}
-              className={`app-dialog-item${position === index ? " is-active" : ""}${isCurrent ? " is-current" : ""}`}
-              onMouseEnter={() => setIndex(position)}
-              onClick={() => pick(model)}
-            >
-              <span className="app-dialog-item-provider">{model.provider}</span>
-              <span className="app-dialog-item-id">{model.id}</span>
-              {isCurrent ? <span className="app-dialog-item-current">current</span> : null}
-            </button>
-          );
-        })}
-      </div>
+      {tabs}
+      {search}
+      {list}
     </DialogFrame>
   );
 }
@@ -1231,18 +1331,21 @@ export function InfoDialog({
  * new step starts empty while a re-publish of the same step keeps what the
  * user typed.
  */
-function PluginDialog({
+export function PluginDialog({
   pluginId,
   dialogId,
   view,
   sessionId,
   onDismiss,
+  embedded,
 }: {
   pluginId: string;
   dialogId: string;
   view: DialogWebView & { id?: string };
   sessionId: string;
   onDismiss?: (dialogId: string, view: unknown) => void;
+  /** Rendered inside a SidebarDialog pane: no own backdrop or dialog box. */
+  embedded?: boolean;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [typed, setTyped] = useState("");
@@ -1302,23 +1405,46 @@ function PluginDialog({
     void runAction(action, values);
   };
 
-  return (
-    <div className="app-dialog-backdrop">
-      <div className="app-dialog" role="dialog" aria-modal="true" aria-label={view.title ?? dialogId}>
-        <div className="app-dialog-head">
-          <span className="app-dialog-title">{view.title ?? dialogId}</span>
-          {onDismiss !== undefined ? (
-            <button
-              type="button"
-              className="app-dialog-close"
-              aria-label="Dismiss dialog"
-              onClick={() => onDismiss(dialogId, view)}
-            >
-              <X size={14} />
-            </button>
-          ) : null}
-        </div>
-        <div className="app-dialog-body">
+  const actionButtons = (placement: "header" | "footer") => (view.actions ?? [])
+    .filter((action) => (action.placement ?? "footer") === placement)
+    .map((action, index) => {
+      const isBusy = busy === `${action.id}:${action.label}`;
+      const disabled = busy !== null
+        || (action.submitsInput === true && fields !== undefined && missingRequired)
+        || (action.submitsInput === true && fields === undefined && typed.trim() === "");
+      return (
+        <button
+          key={`${action.id}:${index}:${action.label}`}
+          type="button"
+          className={`app-dialog-action app-dialog-action-${action.tone ?? "default"}`}
+          disabled={disabled}
+          onClick={() => {
+            if (action.submitsInput === true && fields !== undefined) submitValues(action);
+            else void runAction(action);
+          }}
+        >
+          {isBusy ? "…" : action.label}
+        </button>
+      );
+    });
+
+  const content = (
+    <>
+      <div className={embedded === true ? "app-dialog-pane-head" : "app-dialog-head"}>
+        <span className="app-dialog-title">{view.title ?? dialogId}</span>
+        <div className="app-dialog-head-actions">{actionButtons("header")}</div>
+        {embedded !== true && onDismiss !== undefined ? (
+          <button
+            type="button"
+            className="app-dialog-close"
+            aria-label="Dismiss dialog"
+            onClick={() => onDismiss(dialogId, view)}
+          >
+            <X size={14} />
+          </button>
+        ) : null}
+      </div>
+      <div className="app-dialog-body">
           {view.body !== undefined ? (
             <div className="app-dialog-markdown">
               <MarkdownBody text={view.body} />
@@ -1359,31 +1485,21 @@ function PluginDialog({
             </div>
           ) : null}
         </div>
-        {view.actions !== undefined && view.actions.length > 0 ? (
-          <div className="app-dialog-foot app-dialog-actions">
-            {view.actions.map((action, index) => {
-              const key = `${action.id}:${index}:${action.label}`;
-              const isBusy = busy === `${action.id}:${action.label}`;
-              const disabled = isBusy
-                || (action.submitsInput === true && fields !== undefined && missingRequired)
-                || (action.submitsInput === true && fields === undefined && typed.trim() === "");
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  className={`app-dialog-action app-dialog-action-${action.tone ?? "default"}`}
-                  disabled={disabled}
-                  onClick={() => {
-                    if (action.submitsInput === true && fields !== undefined) submitValues(action);
-                    else void runAction(action);
-                  }}
-                >
-                  {isBusy ? "…" : action.label}
-                </button>
-              );
-            })}
-          </div>
+        {view.actions?.some((action) => action.placement !== "header") ? (
+          <div className="app-dialog-foot app-dialog-actions">{actionButtons("footer")}</div>
         ) : null}
+    </>
+  );
+
+  // Embedded: the pane's own head/body/actions, no backdrop or dialog box —
+  // the SidebarDialog that hosts it owns the screen.
+  if (embedded === true) {
+    return <div className="app-dialog-pane-body">{content}</div>;
+  }
+  return (
+    <div className="app-dialog-backdrop">
+      <div className="app-dialog" role="dialog" aria-modal="true" aria-label={view.title ?? dialogId}>
+        {content}
       </div>
     </div>
   );
@@ -1448,6 +1564,7 @@ export function DialogLayer({
   sessionId,
   dismissed,
   onDismiss,
+  suppressed,
 }: {
   pluginViews: Record<string, unknown>;
   sessionId: string | null;
@@ -1456,8 +1573,13 @@ export function DialogLayer({
    * own close path is open: false. */
   dismissed: ReadonlyMap<string, unknown>;
   onDismiss?: (dialogId: string, view: unknown) => void;
+  /** Plugin ids whose dialogs are rendered elsewhere (a sidebar pane), so
+   * their standalone popups stay hidden while that surface owns the view. */
+  suppressed?: readonly string[];
 }) {
-  const entries = Object.entries(pluginViews).filter(([, view]) => {
+  const hidden = new Set(suppressed ?? []);
+  const entries = Object.entries(pluginViews).filter(([pluginId, view]) => {
+    if (hidden.has(pluginId)) return false;
     if (typeof view !== "object" || view === null) return false;
     if ((view as { type?: unknown }).type !== "dialog") return false;
     if ((view as { open?: unknown }).open === false) return false;

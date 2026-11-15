@@ -53,6 +53,42 @@ count and endpoint, and an `+ add a provider…` row:
 
 Every edit re-reads the file first and `saveConfig` compares that snapshot with what is on disk, so a change made elsewhere while the popup was open is detected instead of overwritten. The dialog commands below remain for RPC clients, print mode, and scripted use.
 
+## The web wizard
+
+The model dialog keeps **Models** as its built-in picker and adds **Provider**
+as a plugin-contributed sidebar entry. Provider opens the configured-provider
+list in the dialog's right pane, with **Add provider** at the top right.
+That button replaces the list with connection and model steps in the same pane;
+**Cancel** returns to the list. No second popup is opened. The plugin owns the
+list, buttons and wizard; the core only provides the reusable container.
+
+- **One dialog per step.** Each step is published under its own dialog id, so
+  the client's form starts empty on the next step; a *refused* answer
+  re-publishes the **same** id, which keeps the text you typed and adds a
+  `Problem:` line, so a bad id or URL is corrected in place instead of
+  restarting the wizard. `← Back` walks the answers back without losing them.
+- **Same write path as the TUI.** A finished wizard goes through `saveConfig`
+  (private temp file, atomic replace, pi's mutation queue, stale-dialog check)
+  and `modelRegistry.refresh`, and touches nothing it did not edit. A
+  `models.json` that is not strict JSON is reported in a dialog instead of
+  being rewritten.
+- **The picker refreshes itself** afterwards: the extension emits
+  `web-plugin:models-changed` and the bridge re-posts the picker's list, so the
+  model you just added is selectable without waiting for a turn.
+- **No discovery yet.** The web wizard asks for the limits by hand; the TUI's
+  `/provider add` and `/provider model` still fetch the provider's model list.
+
+The bridge is a first-class web plugin, not a special case in the host:
+`web/plugins/providers/contract.ts` owns the plugin id, the `provider` web
+command name and the three action ids, `web/plugins/providers/descriptor.ts`
+declares them (a plugin the host does not know cannot have its actions
+relayed), `lib/provider/provider-web.ts` holds the pure step/validation state,
+and `extensions/providers.ts` owns the draft between two dialogs and the write.
+The extension announces the command on the session bus and runs it when the
+bridge asks for it back — pi evaluates each extension with `moduleCache: false`,
+so a shared module registry would read empty on the other side.
+
+
 Supports OpenAI Chat Completions (`openai-completions`), OpenAI Responses (`openai-responses`), Anthropic Messages, and Google Generative AI compatible endpoints. For Ollama/LM Studio/vLLM and gateways, use the exact base URL (including `/v1` when required).
 
 **Setup flow:** enter the provider **ID**, its separate **display name**, and an **API key** in a masked input. Then select the API protocol and enter the base URL (these are required to contact a custom service). The wizard fetches its model list. Select a model and save—returned context/output limits and explicit capabilities are applied automatically, without retyping them.

@@ -8,11 +8,15 @@
  * steps and their validation are pure functions here: the extension supplies
  * the file and the registry, this module decides what the next screen is.
  *
- * Two entry points, because the model picker is the doorway: add a model to an
- * existing provider, or configure a new provider and its first model.
+ * The first step is the TUI editor's own home screen — two choices, nothing
+ * else: open the list of configured providers, or start a new connection. Both
+ * end in the same model steps, because the model picker is the doorway: the
+ * question is only whether the model lands on an existing provider or on one
+ * being created.
  */
 import type { DialogWebView } from "../../web/core/plugin-contracts/view.ts";
 import {
+  PROVIDERS_ADD_ACTION,
   PROVIDERS_BACK_ACTION,
   PROVIDERS_CANCEL_ACTION,
   PROVIDERS_FIELD,
@@ -33,7 +37,15 @@ import {
   type ProviderDraft,
 } from "./provider-settings.ts";
 
-export type WizardMode = "new-provider" | "existing-provider";
+/** Where the wizard is heading: the home screen decides, the answer sets it. */
+export type WizardMode = "home" | "new-provider" | "existing-provider";
+
+/** The home screen's two choices, worded like the TUI editor's menu. */
+export const LIST_PROVIDERS_CHOICE = "List available providers";
+export const ADD_PROVIDER_CHOICE = "Add a new provider…";
+
+/** The home step's key: always the first step of every mode. */
+const HOME_STEP_KEY = "home";
 
 /** The model the wizard adds, as typed text. */
 export interface ModelDraft {
@@ -91,7 +103,7 @@ export function startWizard(options: {
   providerId?: string;
 } = {}): WizardState {
   return {
-    mode: options.mode ?? "new-provider",
+    mode: options.mode ?? "home",
     step: 0,
     draft: { id: "", name: "", api: PROVIDER_APIS[0], baseUrl: "", apiKey: "" },
     providerId: options.providerId ?? "",
@@ -99,12 +111,19 @@ export function startWizard(options: {
   };
 }
 
-/** The step keys in order, which is what makes `step` an index. */
+/**
+ * The step keys in order, which is what makes `step` an index.
+ *
+ * The home step is always first and the model steps are always last, so only
+ * the middle changes when the home answer switches the mode — and going back
+ * from the first connection or provider step lands on home, not nowhere.
+ */
 export function stepKeys(state: WizardState): string[] {
-  const providerSteps = state.mode === "new-provider"
+  if (state.mode === "home") return [HOME_STEP_KEY];
+  const middle = state.mode === "new-provider"
     ? draftSteps(state.draft, false).map((step) => step.key)
     : [PROVIDER_CHOICE_KEY];
-  return [...providerSteps, ...MODEL_STEP_KEYS];
+  return [HOME_STEP_KEY, ...middle, ...MODEL_STEP_KEYS];
 }
 
 export function stepCount(state: WizardState): number {
@@ -125,6 +144,7 @@ export function wizardDialogId(state: WizardState): string {
  */
 export function wizardStep(state: WizardState, providers: Record<string, ProviderConfig>): WizardStep {
   const key = stepKeys(state)[state.step] ?? MODEL_STEP_KEYS[0];
+  if (key === HOME_STEP_KEY) return homeStep(providers);
   if (state.mode === "new-provider") {
     const draftStep = draftSteps(state.draft, false).find((step) => step.key === key);
     if (draftStep !== undefined) return draftStepToWizardStep(draftStep);
@@ -159,10 +179,28 @@ export function submitWizard(
   if (key === undefined) return { ok: false, problem: "The wizard has no current step." };
   const text = value.trim();
 
+  if (key === HOME_STEP_KEY) {
+    // The two choices of the TUI editor's home screen. "List" opens the
+    // provider menu (with its own "+ New provider…" row); "Add" goes straight
+    // to the connection wizard. Either way the model steps follow, because a
+    // provider with no model is not selectable in the picker.
+    if (text === ADD_PROVIDER_CHOICE) {
+      return { ok: true, state: { ...state, mode: "new-provider", step: 1 } };
+    }
+    if (text !== LIST_PROVIDERS_CHOICE) {
+      return { ok: false, problem: `Choose "${LIST_PROVIDERS_CHOICE}" or "${ADD_PROVIDER_CHOICE}".` };
+    }
+    const first = Object.keys(providers).sort()[0];
+    return {
+      ok: true,
+      state: { ...state, mode: "existing-provider", providerId: first ?? "", step: 1 },
+    };
+  }
   if (key === PROVIDER_CHOICE_KEY) {
     if (text === NEW_PROVIDER_CHOICE) {
-      // Back to step 0 of the connection wizard, same draft.
-      return { ok: true, state: { ...state, mode: "new-provider", step: 0 } };
+      // Step 1: the connection wizard's first question, same draft. (Step 0
+      // is the home screen the wizard already passed through.)
+      return { ok: true, state: { ...state, mode: "new-provider", step: 1 } };
     }
     if (providers[text] === undefined) return { ok: false, problem: `${text || "(nothing)"} is not a configured provider.` };
     return { ok: true, state: { ...state, providerId: text, step: state.step + 1 } };
@@ -170,7 +208,13 @@ export function submitWizard(
   if (state.mode === "new-provider" && isDraftKey(key)) {
     const problem = stepProblem(key as DraftStepKey, value, draftContext(state, providers));
     if (problem !== undefined) return { ok: false, problem };
-    const draft: ProviderDraft = { ...state.draft, [key]: value };
+    // The masked step is never pre-filled, so a blank answer there means the
+    // user walked back over a key already typed: keep it rather than silently
+    // turning a keyed provider into a local one.
+    const answered = key === "apiKey" && text === "" && state.draft.apiKey !== ""
+      ? state.draft.apiKey
+      : value;
+    const draft: ProviderDraft = { ...state.draft, [key]: answered };
     // A provider named after its id is the common case; typing it twice is not.
     if (key === "id" && draft.name.trim() === "") draft.name = text;
     return { ok: true, state: { ...state, draft, step: state.step + 1 } };
@@ -240,6 +284,7 @@ export function wizardView(
   providers: Record<string, ProviderConfig>,
   options: { problem?: string; notice?: string } = {},
 ): DialogWebView {
+  if (stepKeys(state)[state.step] === HOME_STEP_KEY) return providerListView(providers, options);
   const step = wizardStep(state, providers);
   const last = state.step >= stepCount(state) - 1;
   const lines = [
@@ -250,13 +295,16 @@ export function wizardView(
   return {
     type: "dialog",
     id: wizardDialogId(state),
-    title: last ? "Add model" : "Add provider",
+    title: step.key === HOME_STEP_KEY ? "Providers" : last ? "Add model" : "Add provider",
     lines,
     fields: [
       {
         name: PROVIDERS_FIELD,
         label: step.title,
-        value: step.value,
+        // A masked step never publishes its value: a credential in a view would
+        // ride the event stream to the browser. The draft keeps it instead, and
+        // an empty answer on that step means "keep what was typed".
+        ...(step.masked ? {} : { value: step.value }),
         help: step.help,
         ...(step.masked ? { kind: "secret" as const } : {}),
         ...(step.choices !== undefined ? { kind: "select" as const, choices: [...step.choices] } : {}),
@@ -273,6 +321,34 @@ export function wizardView(
       },
       ...(state.step > 0 ? [{ id: PROVIDERS_BACK_ACTION, label: "← Back" }] : []),
       { id: PROVIDERS_CANCEL_ACTION, label: "Cancel" },
+    ],
+  };
+}
+
+/** The plugin's landing page, rendered in the host's existing content pane. */
+function providerListView(
+  providers: Record<string, ProviderConfig>,
+  options: { problem?: string; notice?: string },
+): DialogWebView {
+  const rows = Object.keys(providers).sort().map((id) => {
+    const provider = providers[id]!;
+    const count = Array.isArray(provider.models) ? provider.models.length : 0;
+    const name = typeof provider.name === "string" ? `${provider.name} (${id})` : id;
+    return `${name} · ${count} model${count === 1 ? "" : "s"}`;
+  });
+  return {
+    type: "dialog",
+    id: providersDialogId(HOME_STEP_KEY),
+    title: "Providers",
+    lines: [
+      ...(rows.length > 0 ? rows : ["No providers configured yet. Add a provider to get started."]),
+      ...(options.notice !== undefined ? [options.notice] : []),
+      ...(options.problem !== undefined ? [`Problem: ${options.problem}`] : []),
+    ],
+    actions: [
+      { id: PROVIDERS_ADD_ACTION, label: "Add provider", tone: "primary", placement: "header" },
+      ...(rows.length > 0 ? [{ id: PROVIDERS_NEXT_ACTION, label: "Add model to existing provider" }] : []),
+      { id: PROVIDERS_CANCEL_ACTION, label: "Close" },
     ],
   };
 }
@@ -324,6 +400,26 @@ function draftStepToWizardStep(step: DraftStep): WizardStep {
     // Only the id is mandatory: a blank key means a local server and a blank
     // name falls back to the id.
     required: step.key === "id",
+  };
+}
+
+/**
+ * The home screen: the two things you can do, nothing else — the TUI editor's
+ * first page, with the configured-provider count as its detail.
+ */
+function homeStep(providers: Record<string, ProviderConfig>): WizardStep {
+  const count = Object.keys(providers).length;
+  return {
+    key: HOME_STEP_KEY,
+    title: "What would you like to do?",
+    help: count === 0
+      ? "No providers configured yet — add one, then give it a model."
+      : `${count} configured provider${count === 1 ? "" : "s"} — open the list to add a model to one.`,
+    value: LIST_PROVIDERS_CHOICE,
+    placeholder: "",
+    masked: false,
+    choices: [LIST_PROVIDERS_CHOICE, ADD_PROVIDER_CHOICE],
+    required: true,
   };
 }
 

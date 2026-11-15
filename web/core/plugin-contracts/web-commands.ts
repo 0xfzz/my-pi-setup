@@ -1,20 +1,35 @@
 /**
  * Extension-contributed web commands.
  *
- * The web's `web_command` channel runs a command in the pi process, with the
+ * The web's `web_command` channel runs a command in the pi process, on the
  * live session's context. The bridge owns its own built-ins (compact, fork,
- * tree, …); this registry is how *another* extension adds one without editing
- * the bridge: it registers the entry next to the code that implements it, and
- * the bridge lists and dispatches it like any other.
+ * tree, …); this contract is how *another* extension adds one without editing
+ * the bridge.
  *
- * A registered command is always "direct": it runs on the session's extension
- * context, never through pi's command runner. An extension that needs the
- * runner registers a real pi command instead.
+ * It is a two-way conversation on the session's event bus, because that is the
+ * only channel that survives pi's extension loader: each extension is
+ * evaluated with `moduleCache: false`, so two extensions never share a module
+ * instance and a process-global registry would be read empty. So:
+ *
+ *   1. the contributor announces its commands (`WEB_PLUGIN_COMMANDS_EVENT`) —
+ *      descriptors only, never a handler;
+ *   2. the bridge lists them for the browser and, when one is dispatched,
+ *      asks for it back (`WEB_PLUGIN_WEB_COMMAND_EVENT`), and the contributor
+ *      that owns the name runs it.
+ *
+ * Both directions carry plain data, so a session, a `/reload`, or a second
+ * frontend can never end up holding a stale function.
  */
 
-/** One web command an extension contributes. */
-export interface WebCommandEntry<TContext> {
-  /** Dispatch name (`web_command.name`), unique across the registry. */
+/** Extension → bridge/host: "these are the web commands I contribute". */
+export const WEB_PLUGIN_COMMANDS_EVENT = "web-plugin:commands";
+
+/** Bridge/host → extension: "run this web command" (`{ name, args }`). */
+export const WEB_PLUGIN_WEB_COMMAND_EVENT = "web-plugin:web-command";
+
+/** One contributed command, as it travels: a name and its presentation flags. */
+export interface WebCommandDescriptor {
+  /** Dispatch name (`web_command.name`), unique across the session. */
   name: string;
   description: string;
   /**
@@ -23,35 +38,48 @@ export interface WebCommandEntry<TContext> {
    * capability: the command runs exactly like any other.
    */
   managesModels?: boolean;
-  handler: (args: string, ctx: TContext) => void | Promise<void>;
+  /**
+   * The sidebar label this command gets inside the web's shared model-settings
+   * dialog (the dialog with the Models / Provider / … nav). Only meaningful
+   * with `managesModels`; the command name is the label when absent.
+   */
+  settingsEntry?: string;
+  /** Publisher whose dialog is embedded in this settings page. */
+  settingsPlugin?: string;
+}
+
+function isDescriptor(value: unknown): value is WebCommandDescriptor {
+  if (value === null || typeof value !== "object") return false;
+  const entry = value as {
+    name?: unknown;
+    description?: unknown;
+    managesModels?: unknown;
+    settingsEntry?: unknown;
+    settingsPlugin?: unknown;
+  };
+  return typeof entry.name === "string"
+    && entry.name !== ""
+    && typeof entry.description === "string"
+    && (entry.managesModels === undefined || typeof entry.managesModels === "boolean")
+    && (entry.settingsEntry === undefined || typeof entry.settingsEntry === "string")
+    && (entry.settingsPlugin === undefined || (typeof entry.settingsPlugin === "string" && entry.settingsPlugin !== ""));
 }
 
 /**
- * Handlers are stored with their context type erased: the registry's contract
- * is that the dispatcher passes the context the registrant declared, so the
- * cast is the registry's own promise, made once here rather than at every
- * call site.
+ * The commands in an announcement, or an empty list.
+ *
+ * The payload is untrusted like every other bus payload: a malformed entry is
+ * dropped rather than failing the session.
  */
-const entries: Array<WebCommandEntry<unknown>> = [];
-
-export function registerWebCommand<TContext>(entry: WebCommandEntry<TContext>): void {
-  const existing = entries.findIndex((candidate) => candidate.name === entry.name);
-  const erased = entry as WebCommandEntry<unknown>;
-  if (existing >= 0) entries[existing] = erased;
-  else entries.push(erased);
+export function announcedCommandList(payload: unknown): WebCommandDescriptor[] {
+  const commands = (payload as { commands?: unknown } | undefined)?.commands;
+  if (!Array.isArray(commands)) return [];
+  return commands.filter(isDescriptor);
 }
 
-/** Every registered command, in registration order. */
-export function registeredWebCommands(): ReadonlyArray<WebCommandEntry<unknown>> {
-  return [...entries];
-}
-
-/** The command with this name, or undefined. */
-export function registeredWebCommand(name: string): WebCommandEntry<unknown> | undefined {
-  return entries.find((entry) => entry.name === name);
-}
-
-/** Test seam: drop every registration. */
-export function clearWebCommands(): void {
-  entries.length = 0;
+/** The `{ name, args }` a dispatch request carries, or undefined when malformed. */
+export function webCommandRequest(payload: unknown): { name: string; args: string } | undefined {
+  const request = payload as { name?: unknown; args?: unknown } | undefined;
+  if (typeof request?.name !== "string" || request.name === "") return undefined;
+  return { name: request.name, args: typeof request.args === "string" ? request.args : "" };
 }

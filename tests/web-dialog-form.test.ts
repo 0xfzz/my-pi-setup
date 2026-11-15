@@ -39,6 +39,14 @@ test("a dialog form carries typed, masked and menu fields", () => {
   ]);
 });
 
+test("header action placement survives validation and rejects unknown locations", () => {
+  const actions = [{ id: "add", label: "Add item", placement: "header" }];
+  const result = validateView({ type: "dialog", actions });
+  assert.equal(result.ok, true);
+  if (result.ok && result.view.type === "dialog") assert.deepEqual(result.view.actions, actions);
+  assert.equal(validateView({ type: "dialog", actions: [{ ...actions[0], placement: "overlay" }] }).ok, false);
+});
+
 test("a form is enough on its own, without a body or lines", () => {
   const result = validateView({
     type: "dialog",

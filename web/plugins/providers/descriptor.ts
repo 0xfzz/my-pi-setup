@@ -1,5 +1,6 @@
 import type { WebPluginDescriptor } from "../../core/plugin-contracts/descriptor.ts";
 import {
+  PROVIDERS_ADD_ACTION,
   PROVIDERS_BACK_ACTION,
   PROVIDERS_CANCEL_ACTION,
   PROVIDERS_NEXT_ACTION,
@@ -22,6 +23,7 @@ export const providersPlugin: WebPluginDescriptor = {
     "Add a provider or a model to models.json as a step-by-step dialog, opened from the model picker.",
   surfaces: [{ kind: "dialog" }],
   actions: [
+    { id: PROVIDERS_ADD_ACTION, title: "Add provider" },
     { id: PROVIDERS_NEXT_ACTION, title: "Continue to the next step" },
     { id: PROVIDERS_BACK_ACTION, title: "Go back one step" },
     { id: PROVIDERS_CANCEL_ACTION, title: "Close without saving" },

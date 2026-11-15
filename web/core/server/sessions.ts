@@ -23,6 +23,9 @@ import type { WebPluginDescriptor } from "../plugin-contracts/descriptor.ts";
 import { attachSessionPlugins } from "./plugin-sessions.ts";
 import { publishSessionTapEvent } from "./session-tap.ts";
 import { createHeadlessWebUiContext } from "./web-ui-context.ts";
+import { annotateContributedCommands } from "../shared/commands.ts";
+import { WEB_PLUGIN_WEB_COMMAND_EVENT } from "../plugin-contracts/web-commands.ts";
+import { announcedWebCommands, sessionBus } from "./plugin-sessions.ts";
 
 export interface SessionStateLite {
   sessionId: string;
@@ -235,12 +238,19 @@ export function isBridgeOwned(id: string): boolean {
 
 function toCore(inner: AgentSession): SessionCore {
   const getCommands = (): Array<{ name: string; description?: string }> =>
-    inner.extensionRunner
-      .getRegisteredCommands()
-      .map((command) => ({
-        name: command.invocationName,
-        ...(command.description !== undefined ? { description: command.description } : {}),
-      }));
+    // The contributed web commands carry the flags the web needs (dispatch
+    // channel, the picker's add entry). A bridged session gets them from the
+    // extension's `web_commands` post; an in-process session reads the same
+    // registry, so both frontends see the same list.
+    annotateContributedCommands(
+      inner.extensionRunner
+        .getRegisteredCommands()
+        .map((command) => ({
+          name: command.invocationName,
+          ...(command.description !== undefined ? { description: command.description } : {}),
+        })),
+      announcedWebCommands(inner.sessionId),
+    );
   // The same list the TUI's /model picker offers: scoped models when
   // scoping is active, otherwise the available catalogue snapshot.
   const modelRefs = (): Array<{ provider: string; id: string }> => {
@@ -326,6 +336,12 @@ function toCore(inner: AgentSession): SessionCore {
     setThinkingLevel: async (level: string) => {
       await inner.setThinkingLevel(level as never, { persist: false });
       return true;
+    },
+    webCommand: async (name: string, args: string) => {
+      // A command an extension contributed: it runs in the extension that
+      // announced it, on the session bus (the only channel that reaches it —
+      // pi evaluates each extension with its own module graph).
+      sessionBus(inner.sessionId)?.emit?.(WEB_PLUGIN_WEB_COMMAND_EVENT, { name, args });
     },
   };
 }

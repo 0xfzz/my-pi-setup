@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { annotateBuiltinCommands, filterCommands, type WebCommand } from "./commands.ts";
+import {
+  annotateBuiltinCommands,
+  annotateContributedCommands,
+  filterCommands,
+  type WebCommand,
+} from "./commands.ts";
 
 test("annotateBuiltinCommands merges pi's runtime list with the web's presentation flags", () => {
   // pi's BUILTIN_SLASH_COMMANDS shape (a subset).
@@ -36,6 +41,45 @@ test("the built-in coverage policy: every pi built-in has a web disposition", ()
   // tuiOnly.
   assert.equal(dispatchable.length, 24);
   assert.deepEqual(tuiOnly.map((command) => command.name).sort(), []);
+});
+
+test("a contributed web command's flags land on its pi entry, not a duplicate", () => {
+  const commands = annotateBuiltinCommands([{ name: "provider", description: "Manage providers" }]);
+  const merged = annotateContributedCommands(commands, [
+    { name: "provider", description: "Manage providers", managesModels: true },
+    { name: "only-web", description: "Contributed, not a pi command" },
+  ]);
+
+  const provider = merged.filter((command) => command.name === "provider");
+  assert.equal(provider.length, 1, "the command is listed once");
+  assert.equal(provider[0]?.web, true, "the palette dispatches it through web_command");
+  assert.equal(provider[0]?.managesModels, true, "the model picker offers it as its add entry");
+  assert.equal(provider[0]?.description, "Manage providers");
+
+  const appended = merged.find((command) => command.name === "only-web");
+  assert.equal(appended?.web, true);
+  assert.equal(appended?.managesModels, undefined);
+});
+
+test("a managesModels command carries its settingsEntry sidebar label", () => {
+  const merged = annotateContributedCommands([], [
+    { name: "provider", description: "Manage providers", managesModels: true, settingsEntry: "Provider", settingsPlugin: "providers" },
+    { name: "router", description: "Manage routers", managesModels: true },
+    { name: "not-models", description: "Not a catalogue command", settingsEntry: "Nope" },
+  ]);
+
+  const provider = merged.find((command) => command.name === "provider");
+  assert.equal(provider?.settingsEntry, "Provider", "the declared label travels");
+  assert.equal(provider?.settingsPlugin, "providers", "the explicit pane owner travels");
+  const router = merged.find((command) => command.name === "router");
+  assert.equal(router?.managesModels, true);
+  assert.equal(router?.settingsEntry, undefined, "no label declared, the command name is the label");
+  const notModels = merged.find((command) => command.name === "not-models");
+  assert.equal(
+    notModels?.settingsEntry,
+    undefined,
+    "a settingsEntry without managesModels is meaningless and dropped",
+  );
 });
 
 test("filterCommands ranks by prefix position", () => {

@@ -617,12 +617,20 @@ extension uses to extend the web UI.
 
 **Extensions can contribute web commands too.** The `web_command` channel runs
 a command in the pi process on the session's context. The bridge owns its own
-built-ins; another extension registers an entry next to its implementation
-(`web/core/plugin-contracts/web-commands.ts`), and the bridge lists it with the
-flags the contributor declared and dispatches it the same way. One flag is
-presentation only: `managesModels` makes the model picker offer that command as
-its **"+ Add models"** header action, so a catalogue that is missing a model is
-one click from the picker instead of a command nobody knows to type.
+built-ins; another extension contributes one through a two-way conversation on
+the session bus (`web/core/plugin-contracts/web-commands.ts`): it announces
+descriptors (`web-plugin:commands`) and runs the command when the bridge asks
+for it back by name (`web-plugin:web-command`). A shared module registry cannot
+work here — pi evaluates every extension with `moduleCache: false`, so no two
+extensions share a module instance. The host re-asks on each `ui_sync`, so a
+consumer attaching late still sees the list. One flag is presentation only:
+`managesModels` contributes a page beside the built-in **Models** picker in
+its shared sidebar dialog. `settingsEntry` supplies the sidebar label and
+`settingsPlugin` explicitly names the plugin publisher whose dialog is embedded
+in the right content pane. The host suppresses that publisher's standalone
+popup while the shared dialog owns it; plugin-specific UI stays in the plugin.
+Dialog actions may declare `placement: "header"` to appear beside the pane's
+title (for example, **Add provider**); other actions stay in the footer.
 
 A dialog may also declare **`fields`** — a form of typed answers (`text`, a
 masked `secret`, or a `select` menu) — and a `submitsInput` action then

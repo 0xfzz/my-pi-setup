@@ -4,16 +4,17 @@
 // declares { kind: "override", region } replaces the base region while its
 // view is published, and the built-in region returns when it is not.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SidebarSimple } from "@phosphor-icons/react";
 import { usePiSession } from "./use-session.ts";
+import { settingsDialog } from "./model-settings.ts";
 import { useVisualViewport } from "./use-visual-viewport.ts";
 import { Transcript } from "./transcript.tsx";
 import { Composer } from "./composer.tsx";
 import { SessionSidebar } from "./sidebar.tsx";
 import { NewSessionDialog } from "./new-session-dialog.tsx";
 import { CustomPopups, EditorWidgets, ReloadingBanner, StatusChips, ToastStack, UiPromptBanner } from "./popups.tsx";
-import { DialogLayer, InfoDialog, LoginDialog, LogoutDialog, ModelPickerDialog, ScopedModelsDialog, SettingsDialog, ThinkingPickerDialog, TreeSelectorDialog, TrustDialog } from "./dialogs.tsx";
+import { DialogLayer, InfoDialog, LoginDialog, LogoutDialog, ModelPickerDialog, PluginDialog, ScopedModelsDialog, SettingsDialog, SidebarDialog, ThinkingPickerDialog, TreeSelectorDialog, TrustDialog } from "./dialogs.tsx";
 import type { WebTreeNode } from "../shared/tree.ts";
 import { SlotHost } from "./plugin-system/slots.tsx";
 import { AnchorHost } from "./plugin-system/AnchorHost.tsx";
@@ -87,6 +88,9 @@ export function AppShell() {
 
   // The web-ported TUI dialogs. One open dialog at a time — like the TUI.
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  /** The shared model-settings dialog's active page: "models" or a
+   * contributes command's name ("provider" today, a router tomorrow). */
+  const [modelSettingsPage, setModelSettingsPage] = useState("models");
   const [treeNodes, setTreeNodes] = useState<WebTreeNode[] | null>(null);
   const [treeError, setTreeError] = useState<string | null>(null);
   const [thinkingPickerOpen, setThinkingPickerOpen] = useState(false);
@@ -293,11 +297,80 @@ export function AppShell() {
     }
   };
 
+  // Every command that manages the model catalogue gets a page in the shared
+  // model-settings dialog: "Models" is the picker, "Provider" (today) the
+  // provider editor, and a future router announces its own entry the same way.
+  const modelSettingsEntries = [
+    { id: "models", label: "Models" },
+    ...(session.sessionCommands ?? [])
+      .filter((command) => command.managesModels === true)
+      .map((command) => ({
+        id: command.name,
+        label: command.settingsEntry ?? command.name,
+
+      })),
+  ];
+  // The managesModels command behind the active settings page, if it is not
+  // the picker itself. Navigating to a plugin's page dispatches the command
+  // once, so the extension publishes its dialog (the pane renders it).
+  const modelSettingsCommand = modelSettingsPage === "models"
+    ? undefined
+    : (session.sessionCommands ?? []).find(
+      (command) => command.name === modelSettingsPage && command.managesModels === true,
+    );
+  const modelSettingsRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (modelPickerOpen === false || modelSettingsCommand === undefined) return;
+    if (modelSettingsRef.current === modelSettingsPage) return;
+    modelSettingsRef.current = modelSettingsPage;
+    void session.sendWebCommand(modelSettingsCommand.name, "");
+  }, [modelPickerOpen, modelSettingsCommand, modelSettingsPage, session]);
+  // The command explicitly names its publisher. Dialog-only plugins need
+  // not appear in the panel catalogue, and another popup is never this page.
+  const modelSettingsDialog = useMemo(
+    () => settingsDialog(modelSettingsCommand, session.pluginViews),
+    [modelSettingsCommand, session.pluginViews],
+  );
+  // The wizard's own close (Cancel, or Save) — its view goes `open: false` —
+  // lands back on the picker, the way the TUI's editor closes to its menu. A
+  // view that has not arrived yet is a dispatch in flight, not a close.
+  const modelSettingsView = modelSettingsDialog?.view;
+  const sawSettingsView = useRef(false);
+  useEffect(() => {
+    if (!modelPickerOpen || modelSettingsPage === "models") {
+      sawSettingsView.current = false;
+      modelSettingsRef.current = null;
+      return;
+    }
+    if (modelSettingsView?.open === false && sawSettingsView.current) {
+      sawSettingsView.current = false;
+      setModelSettingsPage("models");
+    } else if (modelSettingsView !== undefined && modelSettingsView.open !== false) {
+      sawSettingsView.current = true;
+    }
+  }, [modelPickerOpen, modelSettingsPage, modelSettingsView]);
   // A command that manages the model catalogue (the provider editor, for
   // instance) gets the model picker's header entry: pick, or add.
   const manageModelsCommand = session.sessionCommands?.find(
     (command) => command.managesModels === true,
   );
+
+  const settingsPluginIds = (session.sessionCommands ?? []).flatMap(
+    (command) => command.managesModels && command.settingsPlugin ? [command.settingsPlugin] : [],
+  );
+  const closeModelSettings = (): void => {
+    setDismissedDialogs((previous) => {
+      const dismissed = new Map(previous);
+      for (const pluginId of settingsPluginIds) {
+        const dialog = settingsDialog({ settingsPlugin: pluginId }, session.pluginViews);
+        if (dialog !== undefined) dismissed.set(dialog.view.id ?? pluginId, session.pluginViews[pluginId]);
+      }
+      return dismissed;
+    });
+    setModelPickerOpen(false);
+    setModelError(null);
+    setModelSettingsPage("models");
+  };
 
   const pickThinking = async (level: string): Promise<void> => {
     const error = await session.setThinking(level);
@@ -697,29 +770,51 @@ export function AppShell() {
       <ToastStack notifications={session.notifications} />
       {/* The web-ported TUI dialogs. */}
       {modelPickerOpen ? (
-        <ModelPickerDialog
-          models={session.models.models}
-          allModels={session.models.all}
-          current={session.models.current ?? session.sessionState?.model}
-          busy={modelBusy}
-          error={modelError}
-          onPick={(provider, id) => {
-            void pickModel(provider, id);
-          }}
-          {...(manageModelsCommand !== undefined
-            ? {
-              onManageModels: () => {
-                setModelPickerOpen(false);
-                setModelError(null);
-                void session.sendWebCommand(manageModelsCommand.name, "");
-              },
-            }
-            : {})}
-          onClose={() => {
-            setModelPickerOpen(false);
-            setModelError(null);
-          }}
-        />
+        <SidebarDialog
+          title="Model"
+          entries={modelSettingsEntries}
+          active={modelSettingsPage}
+          onNavigate={setModelSettingsPage}
+          onClose={closeModelSettings}
+        >
+          {modelSettingsPage === "models" || modelSettingsCommand === undefined ? (
+            <ModelPickerDialog
+              models={session.models.models}
+              allModels={session.models.all}
+              current={session.models.current ?? session.sessionState?.model}
+              busy={modelBusy}
+              error={modelError}
+              onPick={(provider, id) => {
+                void pickModel(provider, id);
+              }}
+              {...(manageModelsCommand !== undefined
+                ? {
+                  onManageModels: () => {
+                    setModelError(null);
+                    setModelSettingsPage(manageModelsCommand.name);
+                  },
+                }
+                : {})}
+              inline
+              onClose={closeModelSettings}
+            />
+          ) : modelSettingsDialog !== undefined && session.selectedId !== null ? (
+            /* The contributing plugin's dialog as the content pane: the same
+               PluginDialog the standalone layer renders, minus its own
+               backdrop — the shared dialog owns the screen. */
+            <div className="app-dialog-pane">
+              <PluginDialog
+                pluginId={modelSettingsDialog.pluginId}
+                dialogId={modelSettingsDialog.pluginId}
+                view={modelSettingsDialog.view}
+                sessionId={session.selectedId}
+                embedded
+              />
+            </div>
+          ) : (
+            <div className="app-dialog-empty">Loading…</div>
+          )}
+        </SidebarDialog>
       ) : null}
       {thinkingPickerOpen ? (
         <ThinkingPickerDialog
@@ -790,6 +885,7 @@ export function AppShell() {
         pluginViews={session.pluginViews}
         sessionId={session.selectedId}
         dismissed={dismissedDialogs}
+        {...(modelPickerOpen ? { suppressed: settingsPluginIds } : {})}
         onDismiss={(dialogId, view) => {
           setDismissedDialogs((prev) => new Map(prev).set(dialogId, view));
         }}

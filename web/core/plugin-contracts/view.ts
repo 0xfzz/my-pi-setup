@@ -70,6 +70,8 @@ export interface DialogAction {
    * required value is empty.
    */
   submitsInput?: boolean;
+  /** Header actions sit beside the title; other actions remain in the footer. */
+  placement?: "header" | "footer";
 }
 
 /** What a dialog field collects. */
@@ -373,8 +375,9 @@ export function validateView(input: unknown): ValidateViewResult {
             || typeof action.label !== "string"
             || (action.tone !== undefined && !["default", "primary", "danger"].includes(action.tone))
             || (action.submitsInput !== undefined && typeof action.submitsInput !== "boolean")
+            || (action.placement !== undefined && !["header", "footer"].includes(action.placement))
           ) {
-            return { ok: false, error: "dialog actions must be {id, label, tone?, submitsInput?}" };
+            return { ok: false, error: "dialog actions must be {id, label, tone?, submitsInput?, placement?}" };
           }
         }
       }
@@ -405,11 +408,12 @@ export function validateView(input: unknown): ValidateViewResult {
         ...(raw.actions !== undefined
           ? {
             actions: raw.actions.map(
-              (action: { id: string; label: string; tone?: string; submitsInput?: boolean }) => ({
+              (action: DialogAction) => ({
                 id: clampId(action.id, "Action id", warnings),
                 label: clampCell(action.label, "Action label", warnings),
                 ...(action.tone !== undefined ? { tone: action.tone as DialogAction["tone"] } : {}),
                 ...(action.submitsInput !== undefined ? { submitsInput: action.submitsInput } : {}),
+                ...(action.placement !== undefined ? { placement: action.placement } : {}),
               }),
             ),
           }

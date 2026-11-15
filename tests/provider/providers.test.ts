@@ -83,7 +83,13 @@ test("stale dialogs and overlapping writers cannot silently overwrite configurat
 
 function harness(inputs: Array<string | undefined>, choices: Array<string | string[] | undefined>, confirms: boolean[] = [], keys: Array<string | undefined> = [""]) {
   const commands = new Map<string, any>();
-  providers({ registerCommand: (name: string, command: any) => commands.set(name, command) } as any);
+  // The extension also announces its web command on the session bus; this
+  // harness drives the TUI path, so the bus is an inert stand-in.
+  providers({
+    registerCommand: (name: string, command: any) => commands.set(name, command),
+    on: () => undefined,
+    events: { emit: () => undefined, on: () => () => undefined },
+  } as any);
   const notices: string[] = [];
   const prompts: string[] = [];
   let refreshes = 0;
@@ -768,7 +774,11 @@ test("/provider model offers to sync updated models to other accounts in the fam
 /** A ctx whose `ui.custom` drives the popup with a script, one script per open. */
 function editor(scripts: Array<(component: any) => void>) {
   const commands = new Map<string, any>();
-  providers({ registerCommand: (name: string, command: any) => commands.set(name, command) } as any);
+  providers({
+    registerCommand: (name: string, command: any) => commands.set(name, command),
+    on: () => undefined,
+    events: { emit: () => undefined, on: () => () => undefined },
+  } as any);
   const notices: string[] = [];
   let opens = 0;
   let refreshes = 0;

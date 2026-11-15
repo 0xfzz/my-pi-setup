@@ -9,6 +9,11 @@
 import { WEB_PLUGIN_VIEW_EVENT } from "../plugin-contracts/view.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../plugin-contracts/actions.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT, type WebUiType } from "../plugin-contracts/ui-event-models.ts";
+import {
+  WEB_PLUGIN_COMMANDS_EVENT,
+  announcedCommandList,
+  type WebCommandDescriptor,
+} from "../plugin-contracts/web-commands.ts";
 import { contributionsOf } from "../plugin-contracts/ui-contracts.ts";
 import { getPluginDescriptor } from "./plugin-host.ts";
 import { recordPluginView } from "./plugin-views.ts";
@@ -23,11 +28,25 @@ export interface MinimalEventBus {
 
 const knownSessions = new Set<string>();
 const sessionBuses = new Map<string, MinimalEventBus>();
+/**
+ * The web commands a session announced (WEB_PLUGIN_COMMANDS_EVENT).
+ *
+ * The extension's registry lives in its own module graph, so the host learns
+ * the list from this announcement instead of reading that module — the same
+ * reason views and ui.* events arrive over the bus.
+ */
+const sessionCommands = new Map<string, WebCommandDescriptor[]>();
 
 /** Test-only reset: the bridge keeps no state worth preserving across a suite. */
 export function clearPluginSessionState(): void {
   knownSessions.clear();
   sessionBuses.clear();
+  sessionCommands.clear();
+}
+
+/** The web commands this session announced, if any. */
+export function announcedWebCommands(sessionId: string): WebCommandDescriptor[] {
+  return sessionCommands.get(sessionId) ?? [];
 }
 
 /** The live session bus for `sessionId`, if that session has attached. */
@@ -50,6 +69,7 @@ export function detachSessionBus(sessionId: string, bus?: MinimalEventBus): void
   if (bus !== undefined && sessionBuses.get(sessionId) !== bus) return;
   sessionBuses.delete(sessionId);
   knownSessions.delete(sessionId);
+  sessionCommands.delete(sessionId);
   releaseInFlightActions(sessionId);
 }
 
@@ -131,6 +151,21 @@ function subscribeViews(sessionId: string, bus: MinimalEventBus): () => void {
 }
 
 /**
+ * The commands a session's extensions contribute to the web.
+ *
+ * Announced rather than read: the registry is a module in the extension's own
+ * module graph. An announcement replaces the previous one, so an extension
+ * that re-registers (a `/reload`) is not listed twice.
+ */
+function subscribeCommands(sessionId: string, bus: MinimalEventBus): () => void {
+  return bus.on(WEB_PLUGIN_COMMANDS_EVENT, (payload: unknown) => {
+    const announced = announcedCommandList(payload);
+    if (announced.length === 0) return;
+    sessionCommands.set(sessionId, announced);
+  });
+}
+
+/**
  * Subscribe a session wrapper to its plugin view and UI events.
  *
  * The returned cleanup detaches the session (a later attach works again). A
@@ -153,6 +188,7 @@ export function attachSessionPlugins(wrapper: unknown): () => void {
 
   const unsubUi = subscribeUi(sessionId, bus);
   const unsubViews = subscribeViews(sessionId, bus);
+  const unsubCommands = subscribeCommands(sessionId, bus);
 
   let detached = false;
   const detach = (): void => {
@@ -160,6 +196,7 @@ export function attachSessionPlugins(wrapper: unknown): () => void {
     detached = true;
     unsubUi();
     unsubViews();
+    unsubCommands();
     unsubOnEvent?.();
     detachSessionBus(sessionId, bus);
   };

@@ -2,30 +2,25 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { once } from "node:events";
-import {
-  clearWebCommands,
-  registerWebCommand,
-  registeredWebCommand,
-} from "../web/core/plugin-contracts/web-commands.ts";
 
 /**
  * Another extension can contribute a web command without editing the bridge.
  *
  * The bridge owns its own built-ins (compact, fork, tree, …) and dispatches
  * them from a private list, so an extension such as the provider editor had no
- * way to run code from the web's command channel. It now registers an entry
- * next to its own implementation; the bridge lists it (with whatever
- * presentation flags the contributor declared) and dispatches it on the
- * session's context.
+ * way to run code from the web's command channel.
  *
- * These tests drive the real extension over a fake bridge and push
- * `web_command` frames down the attach stream, exactly as the server does.
+ * The contract cannot be a shared module: pi evaluates every extension with
+ * `moduleCache: false`, so two extensions never share a module instance and a
+ * process-global registry reads empty from the other side. It is a bus
+ * conversation instead — the contributor announces descriptors, the bridge
+ * lists them and asks for one back by name — which these tests pin.
  */
 
 interface FakeBridge {
   url: string;
   /** The `web_commands` event the extension posted, if any. */
-  commands(): Array<{ name?: string; description?: string; web?: boolean; managesModels?: boolean }>;
+  commands(): Array<{ name?: string; description?: string; web?: boolean; managesModels?: boolean; settingsEntry?: string }>;
   sendCommand(command: Record<string, unknown>): void;
   close(): Promise<void>;
 }
@@ -103,20 +98,37 @@ async function waitFor(check: () => boolean, timeoutMs = 5000): Promise<void> {
 }
 
 interface Harness {
-  /** Every handler call: args plus whether the session context was passed. */
-  calls: Array<{ args: string; hasContext: boolean }>;
+  /** Every dispatch request the bridge asked for, in order. */
+  dispatches: Array<{ name: string; args: string }>;
+  /** Announce web commands, as a contributing extension would. */
+  announce(commands: unknown): void;
   stop(): void;
 }
 
+/** Load the real extension and attach a session, with a bus the test can drive. */
 async function attachExtension(): Promise<Harness> {
   const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+  const listeners = new Map<string, Array<(data: unknown) => void>>();
+  const dispatches: Array<{ name: string; args: string }> = [];
   const mockPi = {
     registerCommand: () => undefined,
     on: (name: string, handler: (event: unknown, ctx: unknown) => unknown) => {
       handlers.set(name, handler);
     },
     getCommands: () => [],
-    events: { emit: () => undefined, on: () => () => undefined },
+    events: {
+      emit: (channel: string, data: unknown) => {
+        for (const listener of listeners.get(channel) ?? []) listener(data);
+      },
+      on: (channel: string, handler: (data: unknown) => void) => {
+        const list = listeners.get(channel) ?? [];
+        list.push(handler);
+        listeners.set(channel, list);
+        return () => {
+          listeners.set(channel, (listeners.get(channel) ?? []).filter((entry) => entry !== handler));
+        };
+      },
+    },
     setModel: async () => true,
     setThinkingLevel: () => undefined,
   };
@@ -139,8 +151,21 @@ async function attachExtension(): Promise<Harness> {
   assert.ok(onSessionStart !== undefined, "the extension registers session_start");
   onSessionStart({ type: "session_start", reason: "new" }, mockCtx);
 
+  // Watch the channel the bridge asks a contributor to run its command on.
+  listeners.set("web-plugin:web-command", [
+    (data: unknown) => {
+      const request = data as { name?: string; args?: string };
+      if (typeof request?.name === "string") {
+        dispatches.push({ name: request.name, args: request.args ?? "" });
+      }
+    },
+  ]);
+
   return {
-    calls: [],
+    dispatches,
+    announce: (commands) => {
+      mockPi.events.emit("web-plugin:commands", { commands });
+    },
     stop: () => {
       handlers.get("session_shutdown")?.({ type: "session_shutdown" }, mockCtx);
     },
@@ -160,7 +185,6 @@ async function withBridgedExtension(
     await fn(bridge, harness);
   } finally {
     harness?.stop();
-    clearWebCommands();
     if (testContext === undefined) delete process.env.NODE_TEST_CONTEXT;
     else process.env.NODE_TEST_CONTEXT = testContext;
     delete process.env.PI_WEB_URL;
@@ -168,65 +192,79 @@ async function withBridgedExtension(
   }
 }
 
-test("a registered command is listed for the web with its flags", async () => {
-  clearWebCommands();
-  registerWebCommand({
-    name: "test-manage-models",
-    description: "Manage the catalogue",
-    managesModels: true,
-    handler: () => undefined,
-  });
-
-  await withBridgedExtension(async (bridge) => {
+test("an announced command is listed for the web with its flags", async () => {
+  await withBridgedExtension(async (bridge, harness) => {
     await waitFor(() => bridge.commands().length > 0);
 
+    harness.announce([
+      { name: "test-manage-models", description: "Manage the catalogue", managesModels: true },
+    ]);
+
+    await waitFor(() => bridge.commands().some((command) => command.name === "test-manage-models"));
     const listed = bridge.commands().find((command) => command.name === "test-manage-models");
-    assert.ok(listed, "the bridge posts the contributed command");
-    assert.equal(listed.web, true, "it dispatches through the web_command channel");
-    assert.equal(listed.managesModels, true, "the picker's add entry rides the same flag");
-    assert.equal(listed.description, "Manage the catalogue");
+    assert.equal(listed?.web, true, "it dispatches through the web_command channel");
+    assert.equal(listed?.managesModels, true, "the picker's add entry rides the same flag");
+    assert.equal(listed?.description, "Manage the catalogue");
   });
 });
 
-test("a registered command runs on the session context", async () => {
-  clearWebCommands();
-  const seen: string[] = [];
-  registerWebCommand<{ cwd: string }>({
-    name: "test-run",
-    description: "Run it",
-    handler: (args, ctx) => {
-      seen.push(`${args}|${ctx.cwd}`);
-    },
-  });
+test("a managesModels announcement carries its sidebar label to the web", async () => {
+  await withBridgedExtension(async (bridge, harness) => {
+    await waitFor(() => bridge.commands().length > 0);
 
-  await withBridgedExtension(async (bridge) => {
+    harness.announce([
+      {
+        name: "test-settings-page",
+        description: "Manage the catalogue",
+        managesModels: true,
+        settingsEntry: "Router",
+      },
+    ]);
+
+    await waitFor(() => bridge.commands().some((command) => command.name === "test-settings-page"));
+    const listed = bridge.commands().find((command) => command.name === "test-settings-page");
+    assert.equal(listed?.managesModels, true);
+    assert.equal(listed?.settingsEntry, "Router", "the shared dialog's sidebar label");
+  });
+});
+
+test("a dispatched contributed command is asked for back on the bus", async () => {
+  await withBridgedExtension(async (bridge, harness) => {
+    await waitFor(() => bridge.commands().length > 0);
+    harness.announce([{ name: "test-run", description: "Run it" }]);
     await waitFor(() => bridge.commands().some((command) => command.name === "test-run"));
 
     bridge.sendCommand({ type: "web_command", name: "test-run", args: "hello" });
 
-    await waitFor(() => seen.length > 0);
-    assert.deepEqual(seen, [`hello|${process.cwd()}`], "the handler gets the args and the session ctx");
+    // The bridge cannot call the contributor's handler: it asks, by name.
+    await waitFor(() => harness.dispatches.length > 0);
+    assert.deepEqual(harness.dispatches, [{ name: "test-run", args: "hello" }]);
   });
 });
 
-test("an unknown web command is reported, not silently dropped", async () => {
-  clearWebCommands();
-  assert.equal(registeredWebCommand("test-missing"), undefined);
-
-  await withBridgedExtension(async (bridge) => {
+test("a web command nobody announced is not asked for", async () => {
+  await withBridgedExtension(async (bridge, harness) => {
     await waitFor(() => bridge.commands().length > 0);
-    // No throw: an unknown command answers through the session's own notice
-    // channel, so the bridge keeps working.
+
     bridge.sendCommand({ type: "web_command", name: "test-missing" });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.equal(registeredWebCommand("test-missing"), undefined);
+
+    // Give the frame time to arrive; nothing must be dispatched or thrown.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(harness.dispatches, []);
   });
 });
 
-test("registering the same name twice replaces the entry", () => {
-  clearWebCommands();
-  registerWebCommand({ name: "test-replace", description: "first", handler: () => undefined });
-  registerWebCommand({ name: "test-replace", description: "second", handler: () => undefined });
-  assert.equal(registeredWebCommand("test-replace")?.description, "second");
-  clearWebCommands();
+test("a malformed announcement is ignored instead of breaking the list", async () => {
+  await withBridgedExtension(async (bridge, harness) => {
+    await waitFor(() => bridge.commands().length > 0);
+
+    harness.announce([{ name: "", description: "no name" }, { description: "no name at all" }, 42]);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(
+      bridge.commands().filter((command) => command.description === "no name"),
+      [],
+      "an entry without a name never reaches the picker",
+    );
+  });
 });

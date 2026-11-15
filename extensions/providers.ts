@@ -25,10 +25,12 @@ import {
   submitWizard,
   unreadableFileView,
   wizardResult,
+  wizardStep,
   wizardView,
   type WizardState,
 } from "../lib/provider/provider-web.ts";
 import {
+  PROVIDERS_ADD_ACTION,
   PROVIDERS_BACK_ACTION,
   PROVIDERS_CANCEL_ACTION,
   PROVIDERS_FIELD,
@@ -39,7 +41,12 @@ import {
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
 import { WEB_MODELS_CHANGED_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
 import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
-import { registerWebCommand } from "../web/core/plugin-contracts/web-commands.ts";
+import {
+  WEB_PLUGIN_COMMANDS_EVENT,
+  WEB_PLUGIN_WEB_COMMAND_EVENT,
+  webCommandRequest,
+} from "../web/core/plugin-contracts/web-commands.ts";
+import { WEB_PLUGIN_UI_SYNC_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
 import {
   ProviderSettingsPopup,
   type ProviderAction,
@@ -363,7 +370,6 @@ export default function providers(pi: ExtensionAPI) {
 
   const closeWebWizard = (): void => {
     webWizard = null;
-    webContext = null;
     webProblem = undefined;
     publishWebView(pi, PROVIDERS_PLUGIN_ID, { type: "dialog", open: false });
   };
@@ -397,11 +403,9 @@ export default function providers(pi: ExtensionAPI) {
     if (snapshot === undefined) return;
     webContext = ctx;
     webProblem = undefined;
-    // With providers configured the wizard opens on the provider menu, whose
-    // last entry is "new provider": the model picker is the only doorway, so
-    // it has to reach both answers.
-    const ids = Object.keys(snapshot.config.providers).sort();
-    webWizard = startWizard(ids.length > 0 ? { mode: "existing-provider", providerId: ids[0]! } : {});
+    // The plugin's landing page is the configured-provider list. The host
+    // supplies only the container; this plugin decides what goes inside it.
+    webWizard = startWizard();
     publishWizard(snapshot.config);
   };
 
@@ -432,11 +436,17 @@ export default function providers(pi: ExtensionAPI) {
     pi.events?.emit(WEB_MODELS_CHANGED_EVENT, {});
   };
 
-  const submitWebWizard = async (value: string): Promise<void> => {
+  /**
+   * Apply one answer. `value` is undefined when the client submitted the
+   * step's action without a typed answer — pressing Continue on what is shown
+   * means "accept it", which is also what a pre-filled menu step expects.
+   */
+  const submitWebWizard = async (value: string | undefined): Promise<void> => {
     if (webWizard === null) return;
     const snapshot = await readWizardConfig();
     if (snapshot === undefined) return;
-    const result = submitWizard(webWizard, value, snapshot.config.providers);
+    const answered = value ?? wizardStep(webWizard, snapshot.config.providers).value;
+    const result = submitWizard(webWizard, answered, snapshot.config.providers);
     if (!result.ok) {
       showWizardProblem(snapshot.config, result.problem);
       return;
@@ -450,6 +460,23 @@ export default function providers(pi: ExtensionAPI) {
     publishWizard(snapshot.config);
   };
 
+  const addWebProvider = async (): Promise<void> => {
+    const snapshot = await readWizardConfig();
+    if (snapshot === undefined) return;
+    webProblem = undefined;
+    webWizard = { ...startWizard({ mode: "new-provider" }), step: 1 };
+    publishWizard(snapshot.config);
+  };
+
+  const cancelWebWizard = async (): Promise<void> => {
+    if (webWizard === null || webWizard.step === 0) {
+      closeWebWizard();
+      return;
+    }
+    const ctx = webContext;
+    if (ctx !== null) await startWebWizard(ctx);
+  };
+
   const stepBack = async (): Promise<void> => {
     if (webWizard === null) return;
     const snapshot = await readWizardConfig();
@@ -459,16 +486,43 @@ export default function providers(pi: ExtensionAPI) {
     publishWizard(snapshot.config);
   };
 
-  // The web command the model picker's "+ Add models" entry dispatches.
-  registerWebCommand<ExtensionContext>({
-    name: PROVIDERS_WEB_COMMAND,
-    description: "Add a provider or a model to models.json (web)",
-    managesModels: true,
-    // The args are informational: the wizard opens on the provider menu, whose
-    // last entry configures a new one.
-    handler: (_args, ctx) => {
-      void startWebWizard(ctx);
-    },
+  /**
+   * The web command the model picker's "+ Add models" entry dispatches.
+   *
+   * Announced rather than registered in a shared module: pi evaluates each
+   * extension with `moduleCache: false`, so the bridge cannot call into this
+   * one directly. It announces the descriptor, and runs the command when the
+   * bridge asks for it back — with the context captured here, at session
+   * start.
+   */
+  const announceWebCommand = (): void => {
+    pi.events?.emit(WEB_PLUGIN_COMMANDS_EVENT, {
+      commands: [{
+        name: PROVIDERS_WEB_COMMAND,
+        description: "Add a provider or a model to models.json (web)",
+        managesModels: true,
+        // The shared model-settings dialog's sidebar entry for this command.
+        settingsEntry: "Provider",
+        settingsPlugin: PROVIDERS_PLUGIN_ID,
+      }],
+    });
+  };
+  pi.on("session_start", (_event, ctx) => {
+    webContext = ctx;
+    announceWebCommand();
+  });
+  // The host asks every producer to re-emit its current values when it
+  // attaches a consumer (the same request views answer). The session_start
+  // announcement can land before that subscription exists, so repeat it here.
+  pi.events?.on(WEB_PLUGIN_UI_SYNC_EVENT, () => {
+    announceWebCommand();
+  });
+  pi.events?.on(WEB_PLUGIN_WEB_COMMAND_EVENT, (payload: unknown) => {
+    const request = webCommandRequest(payload);
+    if (request === undefined || request.name !== PROVIDERS_WEB_COMMAND) return;
+    const ctx = webContext;
+    if (ctx === null) return;
+    void startWebWizard(ctx);
   });
 
   pi.events?.on(WEB_PLUGIN_ACTION_REQUEST_EVENT, (data: unknown) => {
@@ -477,13 +531,14 @@ export default function providers(pi: ExtensionAPI) {
     const actionId = typeof request.actionId === "string" ? request.actionId : "";
     // Every step is one field named `value`: a form answer, or the label of a
     // menu pick for an older client that only sends `confirm`.
+    // The form's answer; a client that only sends `confirm` gets the step's
+    // current value (the action label is not an answer).
     const submitted = request.values?.[PROVIDERS_FIELD];
-    const value = typeof submitted === "string"
-      ? submitted
-      : typeof request.confirm === "string" ? request.confirm : "";
-    if (actionId === PROVIDERS_NEXT_ACTION) void submitWebWizard(value);
+    const value = typeof submitted === "string" ? submitted : undefined;
+    if (actionId === PROVIDERS_ADD_ACTION) void addWebProvider();
+    else if (actionId === PROVIDERS_NEXT_ACTION) void submitWebWizard(value);
     else if (actionId === PROVIDERS_BACK_ACTION) void stepBack();
-    else if (actionId === PROVIDERS_CANCEL_ACTION) closeWebWizard();
+    else if (actionId === PROVIDERS_CANCEL_ACTION) void cancelWebWizard();
   });
 
   // ---- the TUI command ----------------------------------------------------
