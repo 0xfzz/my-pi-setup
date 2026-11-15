@@ -149,6 +149,12 @@ export type SessionDirectoryEvent =
   | { type: "session_renamed"; id: string; name: string }
   | { type: "code_changes"; message: string }
   /**
+   * The client bundle on disk changed (a rebuild without a restart). The page
+   * compares `buildId` with the id stamped into its own HTML and reloads onto
+   * the newer bundle.
+   */
+  | { type: "build_changed"; buildId: string }
+  /**
    * The served plugin registry changed (enable, disable, reload, quarantine,
    * safe mode). The client fetches `/api/plugins` once per page load, so
    * without this frame an open tab keeps the plugin set it was opened with —
@@ -175,6 +181,11 @@ export function announceCodeChanges(message = "There are code changes — reload
 /** Tell connected browsers to re-read `/api/plugins`: the served set changed. */
 export function announcePluginsChanged(): void {
   emitDirectory({ type: "plugins_changed" });
+}
+
+/** Tell connected browsers a newer client bundle is on disk. */
+export function announceBuildChanged(buildId: string): void {
+  emitDirectory({ type: "build_changed", buildId });
 }
 
 const directoryListeners = new Set<(event: SessionDirectoryEvent) => void>();

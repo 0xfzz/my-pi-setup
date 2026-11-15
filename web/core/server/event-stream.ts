@@ -24,6 +24,7 @@ import {
 import { recordExtensionUi, webUiStore } from "./ui-store.ts";
 import type { PluginStateFrame } from "../shared/plugin-state.ts";
 import { sessionBus } from "./plugin-sessions.ts";
+import { servedClientBuild } from "./client-build.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT } from "../plugin-contracts/ui-event-models.ts";
 
 const TOOL_UPDATE_COALESCE_MS = 150;
@@ -331,14 +332,14 @@ export function attachSessionsEventStream(req: IncomingMessage, res: ServerRespo
   void buildSessionsSnapshot()
     .then((sessions) => {
       if (closed) return;
-      send({ type: "sessions_snapshot", bootId: getServerBootId(), sessions });
+      send({ type: "sessions_snapshot", bootId: getServerBootId(), buildId: servedClientBuild()?.buildId ?? null, sessions });
       announced = true;
       for (const event of buffered) send(event);
       buffered.length = 0;
     })
     .catch(() => {
       if (closed) return;
-      send({ type: "sessions_snapshot", bootId: getServerBootId(), sessions: [] });
+      send({ type: "sessions_snapshot", bootId: getServerBootId(), buildId: servedClientBuild()?.buildId ?? null, sessions: [] });
       announced = true;
       for (const event of buffered) send(event);
       buffered.length = 0;

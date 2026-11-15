@@ -38,6 +38,7 @@ import { piBuiltinCommands } from "../pi-api/index.ts";
 import { annotateBuiltinCommands } from "../shared/commands.ts";
 import { attachAgentEventStream, attachSessionsEventStream } from "./event-stream.ts";
 import { handlePluginManagerCommand, handlePluginManagerReport } from "./plugin-admin.ts";
+import { servedClientBuild } from "./client-build.ts";
 import { handlePluginRoute } from "./plugin-routes.ts";
 import { readJsonBody, sendJson } from "./http.ts";
 
@@ -87,7 +88,15 @@ const MAX_ACTION_VALUE_LENGTH = 2000;
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 async function handleHealth(ctx: ApiRouteContext): Promise<void> {
-  sendJson(ctx.res, 200, { ok: true, service: "pi-web-minimal", bootId: getServerBootId() });
+  sendJson(ctx.res, 200, {
+    ok: true,
+    service: "pi-web-minimal",
+    bootId: getServerBootId(),
+    // Which client bundle this server is serving. A page compares it with the
+    // id stamped into its own HTML: a mismatch means the page is older than
+    // the bundle and reloads onto it.
+    buildId: servedClientBuild()?.buildId ?? null,
+  });
 }
 
 async function handleReloadNotice(ctx: ApiRouteContext): Promise<void> {

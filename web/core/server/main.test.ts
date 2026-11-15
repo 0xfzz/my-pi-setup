@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolve } from "node:path";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { startWebServer, resolveStaticPath } from "./main.ts";
 import { registerWebPlugins } from "./plugin-host.ts";
 import { WEB_PLUGINS } from "../../plugins/index.ts";
@@ -16,6 +18,27 @@ registerWebPlugins(WEB_PLUGINS);
 test.afterEach(() => {
   clearSessionsForTests();
 });
+
+/** Read SSE frames from a stream until `predicate` matches the buffered text. */
+function createFrameReader(reader: ReadableStreamDefaultReader<Uint8Array>) {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  return async function readUntil(predicate: (text: string) => boolean, timeoutMs = 5000): Promise<string> {
+    if (predicate(buffer)) return buffer;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      const chunk = await Promise.race([
+        reader.read(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), remaining)),
+      ]);
+      if (chunk === null || chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      if (predicate(buffer)) return buffer;
+    }
+    throw new Error(`timed out waiting for SSE frame; received: ${JSON.stringify(buffer.slice(0, 500))}`);
+  };
+}
 
 async function withServer(
   fn: (baseUrl: string) => Promise<void>,
@@ -229,4 +252,77 @@ test("agent routes return 404 for unknown sessions", async () => {
     const state = await fetch(`${baseUrl}/api/agent/never-seen`);
     assert.equal(state.status, 404);
   });
+});
+
+test("the served shell carries the build id, and health reports the same one", async () => {
+  // A temporary dist with a build record: the id the server reports must be the
+  // one stamped into the HTML, or every page would reload on a loop.
+  const dist = await mkdtemp(join(tmpdir(), "pi-web-build-"));
+  try {
+    await writeFile(join(dist, "index.html"), "<!doctype html><html><head></head><body></body></html>", "utf8");
+    await writeFile(join(dist, "build.json"), JSON.stringify({ buildId: "abc123", builtAt: "t" }), "utf8");
+    const handle = await startWebServer({ port: 0, host: "127.0.0.1", clientDist: dist });
+    try {
+      const baseUrl = `http://127.0.0.1:${handle.port}`;
+      const health = (await (await fetch(`${baseUrl}/api/health`)).json()) as { buildId?: unknown };
+      assert.equal(health.buildId, "abc123");
+
+      const html = await (await fetch(`${baseUrl}/`)).text();
+      assert.match(html, /<meta name="pi-web-build" content="abc123" \/>/);
+
+      // An SPA route falls back to the same stamped shell.
+      const route = await (await fetch(`${baseUrl}/plugins/todo`)).text();
+      assert.match(route, /<meta name="pi-web-build" content="abc123" \/>/);
+    } finally {
+      await handle.close();
+    }
+  } finally {
+    await rm(dist, { recursive: true, force: true });
+  }
+});
+
+test("a server without a build record reports no build id and stamps nothing", async () => {
+  const dist = await mkdtemp(join(tmpdir(), "pi-web-nobuild-"));
+  try {
+    await writeFile(join(dist, "index.html"), "<!doctype html><html><head></head><body></body></html>", "utf8");
+    const handle = await startWebServer({ port: 0, host: "127.0.0.1", clientDist: dist });
+    try {
+      const baseUrl = `http://127.0.0.1:${handle.port}`;
+      const health = (await (await fetch(`${baseUrl}/api/health`)).json()) as { buildId?: unknown };
+      assert.equal(health.buildId, null);
+      const html = await (await fetch(`${baseUrl}/`)).text();
+      assert.doesNotMatch(html, /pi-web-build/);
+    } finally {
+      await handle.close();
+    }
+  } finally {
+    await rm(dist, { recursive: true, force: true });
+  }
+});
+
+test("a rebuild under a running server is announced so open pages converge", async () => {
+  const dist = await mkdtemp(join(tmpdir(), "pi-web-rebuild-"));
+  try {
+    await writeFile(join(dist, "index.html"), "<!doctype html><html><head></head><body></body></html>", "utf8");
+    await writeFile(join(dist, "build.json"), JSON.stringify({ buildId: "first", builtAt: "t" }), "utf8");
+    const handle = await startWebServer({ port: 0, host: "127.0.0.1", clientDist: dist });
+    try {
+      const res = await fetch(`http://127.0.0.1:${handle.port}/api/sessions/events`);
+      assert.ok(res.body !== null);
+      const reader = res.body.getReader();
+      const readUntil = createFrameReader(reader);
+      await readUntil((text) => text.includes("sessions_snapshot"));
+
+      // The build replaces the record on disk; the running server keeps serving.
+      await writeFile(join(dist, "build.json"), JSON.stringify({ buildId: "second", builtAt: "t2" }), "utf8");
+      const frame = await readUntil((text) => text.includes("\"type\":\"build_changed\""));
+      assert.match(frame, /"buildId":"second"/);
+
+      await reader.cancel();
+    } finally {
+      await handle.close();
+    }
+  } finally {
+    await rm(dist, { recursive: true, force: true });
+  }
 });

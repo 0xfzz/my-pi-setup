@@ -14,6 +14,8 @@ import { sendJson } from "./http.ts";
 import { createAuthHttp, type AuthHttp, type AuthHttpOptions } from "./auth.ts";
 import { getPluginHost } from "./plugin-host.ts";
 import { runTeardown, teardownNote } from "./shutdown.ts";
+import { announceBuildChanged } from "./sessions.ts";
+import { setServedRoot, servedClientBuild, stampBuildId, watchClientBuild } from "./client-build.ts";
 import { webAuthConfigPath } from "../auth/config.ts";
 import { WebAuthService } from "../auth/service.ts";
 
@@ -116,16 +118,21 @@ async function serveStatic(res: ServerResponse, root: string, pathname: string):
   try {
     const data = await readFile(target);
     const type = MIME_TYPES[extname(target).toLowerCase()] ?? "application/octet-stream";
+    // The shell is stamped with the build it belongs to, so the page can name
+    // the bundle it is running; every other asset is served as it is on disk.
+    const buildId = extname(target) === ".html" ? servedClientBuild()?.buildId ?? null : null;
+    const body = buildId !== null ? stampBuildId(data.toString("utf8"), buildId) : data;
     res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-cache" });
-    res.end(data);
+    res.end(body);
   } catch {
     // SPA fallback: client-side routes (/plugins/todo, …) have no file behind
     // them; every extension-less GET falls back to the app shell.
     if (!extname(target)) {
       try {
-        const index = await readFile(join(root, "index.html"));
+        const index = await readFile(join(root, "index.html"), "utf8");
+        const buildId = servedClientBuild()?.buildId ?? null;
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
-        res.end(index);
+        res.end(buildId === null ? index : stampBuildId(index, buildId));
         return;
       } catch {
         // Fall through to 404.
@@ -186,11 +193,18 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
     : fileURLToPath(new URL("../client/dist", import.meta.url));
   const host = options.host ?? DEFAULT_HOST;
   const requestedPort = options.port ?? DEFAULT_PORT;
+  // The build id is read from this directory on demand: a rebuild replaces it
+  // while the process runs, and the served assets change with it.
+  setServedRoot(root);
 
   const auth = createAuthHttp(options.auth ?? defaultAuthService(), options.authHttp ?? defaultAuthHttpOptions());
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     void handleRequest(req, res, root, auth);
   });
+  // A rebuild replaces the bundle on disk while this process keeps serving.
+  // Tell open pages, so every tab converges on one client build instead of
+  // each keeping whatever it was opened with.
+  const stopWatchingBuild = watchClientBuild(root, (build) => announceBuildChanged(build.buildId));
 
   return new Promise<WebServerHandle>((resolveStart, rejectStart) => {
     server.once("error", rejectStart);
@@ -200,14 +214,16 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
       resolveStart({
         port,
         host,
-        close: () =>
-          new Promise<void>((resolveClose) => {
+        close: () => {
+          stopWatchingBuild();
+          return new Promise<void>((resolveClose) => {
             // SSE streams never end on their own; close() must tear them down
             // or a lingering event stream keeps the server's close callback
             // from ever firing.
             server.closeAllConnections();
             server.close(() => resolveClose());
-          }),
+          });
+        },
       });
     });
   });

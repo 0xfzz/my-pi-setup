@@ -11,7 +11,8 @@
 
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
-import { cp } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { cp, readFile, writeFile } from "node:fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -76,3 +77,19 @@ execFileSync(
   ],
   { stdio: "inherit" },
 );
+// The build's identity, beside the assets it describes. `/app.js` is a fixed
+// name, so a browser cannot tell from a response which build it is looking at:
+// the server reports this id on /api/health and on the session directory's
+// snapshot, and a page whose own bundle carries a different id reloads onto the
+// current one. Hashed over the entry output, so any change to the bundle — or
+// to a chunk it references — produces a new id.
+const entry = resolve(dist, "app.js");
+const digest = createHash("sha256");
+digest.update(await readFile(entry));
+digest.update(await readFile(resolve(dist, "index.html")));
+const buildRecord = {
+  buildId: digest.digest("hex").slice(0, 16),
+  builtAt: new Date().toISOString(),
+};
+await writeFile(resolve(dist, "build.json"), `${JSON.stringify(buildRecord, null, 2)}\n`, "utf8");
+console.log(`[build] client build ${buildRecord.buildId}`);

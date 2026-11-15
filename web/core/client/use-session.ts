@@ -25,6 +25,7 @@ import type {
   WorkingModelLike,
 } from "./plugin-system/contract.ts";
 import { pluginStateFrameOf } from "../shared/plugin-state.ts";
+import { buildVerdict, ownBuildId } from "./build-identity.ts";
 
 export type { CustomPanelLike, WebNotificationLike, WidgetModelLike };
 
@@ -245,6 +246,22 @@ export function usePiSession() {
   // `sessions_snapshot` carries a different bootId, the server restarted
   // onto a new build/runtime and the page reloads onto the fresh bundle.
   const bootIdRef = useRef<string | null>(null);
+  // The build this page is running, from the meta tag the server stamps into
+  // its HTML, and the last build this tab reloaded for. A server that serves a
+  // different id has a newer bundle; a page that already reloaded once for an
+  // id stops instead of reloading forever.
+  const ownBuildRef = useRef<string | null>(ownBuildId(document));
+  const reloadedBuildRef = useRef<string | null>(null);
+
+  /** Reload onto `served` when this page runs an older bundle, once per build. */
+  const convergeOnBuild = useCallback((served: string | null) => {
+    const verdict = buildVerdict(ownBuildRef.current, served, reloadedBuildRef.current);
+    if (verdict !== "stale" || served === null) return;
+    reloadedBuildRef.current = served;
+    setReloadingMessage("There are code changes — reloading…");
+    setReloading(true);
+    window.location.reload();
+  }, []);
   const applyStream = useCallback((action: StreamAction) => {
     const next = streamReducer(streamingRef.current, action);
     if (next !== streamingRef.current) {
@@ -313,7 +330,7 @@ export function usePiSession() {
 
   useEffect(() => {
     refreshPlugins();
-  }, [refreshPlugins]);
+  }, [refreshPlugins, convergeOnBuild]);
 
   // The session list is push-driven: one directory EventSource carries the
   // full snapshot on connect, then only running/idle and add/remove
@@ -330,7 +347,10 @@ export function usePiSession() {
       }
       switch (data.type) {
         case "sessions_snapshot": {
-          const body = data as { bootId?: unknown; sessions?: SessionSummary[] };
+          const body = data as { bootId?: unknown; buildId?: unknown; sessions?: SessionSummary[] };
+          // A reconnect onto a server serving another bundle: converge even when
+          // its boot id is unchanged (a rebuild without a restart).
+          convergeOnBuild(typeof body.buildId === "string" ? body.buildId : null);
           if (typeof body.bootId === "string" && body.bootId !== "") {
             if (bootIdRef.current !== null && bootIdRef.current !== body.bootId) {
               bootIdRef.current = body.bootId;
@@ -343,6 +363,13 @@ export function usePiSession() {
           }
           setSessions(body.sessions ?? []);
           setSessionsLoading(false);
+          break;
+        }
+        case "build_changed": {
+          // The bundle on disk was rebuilt under this page: move onto it, so
+          // every tab runs the same client build.
+          const frame = data as { buildId?: unknown };
+          convergeOnBuild(typeof frame.buildId === "string" ? frame.buildId : null);
           break;
         }
         case "plugins_changed": {
@@ -415,7 +442,7 @@ export function usePiSession() {
       }
     };
     return () => source.close();
-  }, [refreshPlugins]);
+  }, [refreshPlugins, convergeOnBuild]);
 
   const fetchState = useCallback(async (id: string) => {
     try {
