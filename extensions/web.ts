@@ -40,7 +40,7 @@ import { readCrashLog } from "../node_modules/@earendil-works/pi-coding-agent/di
 import { getRadiusGatewayUrl, RADIUS_PROVIDER_ID } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/radius.js";
 import { getShareViewerUrl } from "../node_modules/@earendil-works/pi-coding-agent/dist/config.js";
 import { getAuthCredential } from "../node_modules/@earendil-works/pi-coding-agent/dist/cli/auth-command.js";
-import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
+import { WEB_PLUGIN_ACTION_REQUEST_EVENT, validateActionValues, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
 import { WEB_PLUGIN_VIEW_EVENT, type DialogWebView, type WebView } from "../web/core/plugin-contracts/view.ts";
 import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 import { buildWebTree, type PiTreeNodeLike } from "../lib/web-tree.ts";
@@ -161,6 +161,17 @@ interface BridgeBodyReader {
 }
 interface BridgeBody {
   getReader(): BridgeBodyReader;
+}
+
+/**
+ * The form answers a bridge command carries, bounded the way the action route
+ * bounds them. `undefined` means "no answer": the payload must not gain an
+ * empty `values` object, which an extension would read as a submitted form.
+ */
+function actionValuesOf(raw: unknown): Record<string, string> | undefined {
+  const validated = validateActionValues(raw);
+  if (!validated.ok || validated.values === undefined) return undefined;
+  return Object.keys(validated.values).length > 0 ? validated.values : undefined;
 }
 
 /** Context-derived usage, for the web's session state. */
@@ -638,6 +649,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
         pluginId?: unknown;
         actionId?: unknown;
         confirm?: unknown;
+        values?: unknown;
         images?: unknown;
         provider?: unknown;
         id?: unknown;
@@ -760,13 +772,18 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     ) {
       // Plugin actions from the web reach the TUI-side extensions exactly
       // like in-process ones. An instant action's typed dialog answer
-      // (confirm) travels with it.
+      // (confirm) and its form answers (values) travel with it: a dialog row
+      // carries its target in `values` (`{ providerId }`, `{ modelId }`, a
+      // form's fields), so dropping them left the extension with a click it
+      // could not attribute and no view to publish.
+      const values = actionValuesOf(command.values);
       pi.events?.emit(WEB_PLUGIN_ACTION_REQUEST_EVENT, {
         requestId: typeof command.requestId === "string" ? command.requestId : "",
         sessionId,
         pluginId: command.pluginId,
         actionId: command.actionId,
         ...(typeof command.confirm === "string" && command.confirm !== "" ? { confirm: command.confirm } : {}),
+        ...(values !== undefined ? { values } : {}),
       });
       return;
     }
