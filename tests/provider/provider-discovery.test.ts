@@ -192,6 +192,55 @@ for (const baseUrl of ["https://discovery.invalid", "https://discovery.invalid/"
   });
 }
 
+test("Anthropic retries model discovery with Bearer auth after an API-key-header 401", async () => {
+  const h = fakeFetch(request => request.headers.get("authorization") === "Bearer fixture-key"
+    ? json({ data: [{ id: "anthropic-model" }] })
+    : new Response(null, { status: 401 }));
+  assert.deepEqual(await discoverModels(config("anthropic-messages"), { fetch: h.fetch, apiKey: "fixture-key" }), ["anthropic-model"]);
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests[0].headers.get("x-api-key"), "fixture-key");
+  assert.equal(h.requests[0].headers.get("authorization"), null);
+  assert.equal(h.requests[1].headers.get("x-api-key"), null);
+  assert.equal(h.requests[1].headers.get("authorization"), "Bearer fixture-key");
+});
+
+test("model discovery keeps Bearer fallback auth across every pagination page", async () => {
+  const h = fakeFetch(request => request.headers.get("authorization") === "Bearer fixture-key"
+    ? json(request.url.searchParams.has("after_id") ? { data: [{ id: "second" }] } : { data: [{ id: "first" }], has_more: true, last_id: "cursor" })
+    : new Response(null, { status: 401 }));
+  assert.deepEqual(await discoverModels(config("anthropic-messages"), { fetch: h.fetch, apiKey: "fixture-key" }), ["first", "second"]);
+  assert.equal(h.requests.length, 3);
+  assert.equal(h.requests[1].headers.get("authorization"), "Bearer fixture-key");
+  assert.equal(h.requests[2].headers.get("authorization"), "Bearer fixture-key");
+  assert.equal(h.requests[2].url.searchParams.get("after_id"), "cursor");
+});
+
+test("Google retries model discovery with Bearer auth after an API-key-header 401", async () => {
+  const h = fakeFetch(request => request.headers.get("authorization") === "Bearer fixture-key"
+    ? json({ models: [{ name: "models/gemini-model" }] })
+    : new Response(null, { status: 401 }));
+  assert.deepEqual(await discoverModels(config("google-generative-ai"), { fetch: h.fetch, apiKey: "fixture-key" }), ["gemini-model"]);
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests[0].headers.get("x-goog-api-key"), "fixture-key");
+  assert.equal(h.requests[1].headers.get("x-goog-api-key"), null);
+  assert.equal(h.requests[1].headers.get("authorization"), "Bearer fixture-key");
+});
+
+test("custom Authorization headers are never replaced by model discovery fallback", async () => {
+  const h = fakeFetch(() => new Response(null, { status: 401 }));
+  await assert.rejects(discoverModels(config("anthropic-messages"), {
+    fetch: h.fetch, apiKey: "fixture-key", headers: { Authorization: "Bearer custom-token" },
+  }), /HTTP 401/);
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests[0].headers.get("authorization"), "Bearer custom-token");
+});
+
+test("a second unauthorized auth scheme reports the HTTP failure without infinite retries", async () => {
+  const h = fakeFetch(() => new Response(null, { status: 401 }));
+  await assert.rejects(discoverModels(config("google-generative-ai"), { fetch: h.fetch, apiKey: "fixture-key" }), /HTTP 401/);
+  assert.equal(h.requests.length, 2);
+});
+
 test("Anthropic gateway paths and explicit authHeader/custom-header overrides are preserved", async () => {
   assert.equal(modelsEndpoint(config("anthropic-messages", "https://discovery.invalid/gateway/")).pathname, "/gateway/v1/models");
   assert.equal(modelsEndpoint(config("anthropic-messages", "https://discovery.invalid/gateway/v1")).pathname, "/gateway/v1/models");

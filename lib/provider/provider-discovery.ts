@@ -122,6 +122,15 @@ function modelDetails(id: string, item: Record<string, unknown>, api: unknown): 
   return model;
 }
 
+function bearerFallback(config: ProviderConfig, options: DiscoveryOptions, headers: Headers): Headers | undefined {
+  if (!options.apiKey || (config.api !== "anthropic-messages" && config.api !== "google-generative-ai")) return undefined;
+  if (headers.has("authorization")) return undefined;
+  const fallback = new Headers(headers);
+  fallback.delete(config.api === "anthropic-messages" ? "x-api-key" : "x-goog-api-key");
+  fallback.set("authorization", `Bearer ${options.apiKey}`);
+  return fallback;
+}
+
 /** First valid scalar wins; later duplicates fill gaps and union explicit input capabilities. */
 function mergeDetails(previous: DiscoveredModel, next: DiscoveredModel): DiscoveredModel {
   const merged = { ...next, ...previous };
@@ -147,6 +156,8 @@ export async function discoverModelDetails(config: ProviderConfig, options: Disc
     if (value === null) headers.delete(name);
     else headers.set(name, value);
   }
+  let requestHeaders = headers;
+  let fallbackHeaders = bearerFallback(config, options, headers);
   const timeout = AbortSignal.timeout(options.timeoutMs ?? 5000);
   const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
   const fetcher = options.fetch ?? globalThis.fetch;
@@ -154,7 +165,13 @@ export async function discoverModelDetails(config: ProviderConfig, options: Disc
   const cursors = new Set<string>();
   let bytes = 0;
   for (let page = 0; page < 10; page++) {
-    const response = await fetcher(url, { method: "GET", headers, redirect: "error", signal });
+    let response = await fetcher(url, { method: "GET", headers: requestHeaders, redirect: "error", signal });
+    if (response.status === 401 && fallbackHeaders !== undefined) {
+      await response.body?.cancel();
+      requestHeaders = fallbackHeaders;
+      fallbackHeaders = undefined;
+      response = await fetcher(url, { method: "GET", headers: requestHeaders, redirect: "error", signal });
+    }
     if (!response.ok) {
       await response.body?.cancel();
       throw new DiscoveryError(`The model-list endpoint returned HTTP ${response.status}.`);

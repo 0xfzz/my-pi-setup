@@ -95,8 +95,8 @@ credentials are never displayed, changed or removed by these operations.
 - **The picker refreshes itself** afterwards: the extension emits
   `web-plugin:models-changed` and the bridge re-posts the picker's list, so the
   model you just added is selectable without waiting for a turn.
-- **No discovery yet.** The web wizard asks for the limits by hand; the TUI's
-  `/provider add` and `/provider model` still fetch the provider's model list.
+- **Shared discovery.** The web manager and TUI use the same guarded model-list
+  request and picker, including retry and manual-entry options when discovery fails.
 
 The bridge is a first-class web plugin, not a special case in the host:
 `web/plugins/providers/contract.ts` owns the plugin id, the `provider` web
@@ -121,7 +121,7 @@ Selected models are configured together and saved only after one final confirmat
 - Anthropic: `GET <base-url>/v1/models`, without duplicating an existing trailing `/v1`.
 - Gemini: `GET <base-url>/models`; a host-only base uses `/v1beta/models`. `models/` resource prefixes are removed for Pi's model IDs, and explicitly non-chat entries are excluded.
 
-`/models` is a convention, not a universal standard. Native Ollama `/api/tags`, unusual gateway paths and unsupported APIs may need manual entry. Discovery uses the entered key, environment references or existing native Pi API-key credentials and provider headers. No key is included in notifications or session messages. OAuth, extension-owned providers and `!command` authentication use manual entry rather than guessing service-specific auth or executing credential commands.
+`/models` is a convention, not a universal standard. Native Ollama `/api/tags`, unusual gateway paths and unsupported APIs may need manual entry. Discovery uses the entered key, environment references or existing native Pi API-key credentials and provider headers. OpenAI-compatible endpoints send the key as a Bearer token; Anthropic and Gemini use their API-key headers first, then retry once with `Authorization: Bearer <key>` if the endpoint returns 401. Explicit Authorization headers are never replaced. Both the `/provider` extension flow and web Providers plugin share this behavior. No key is included in notifications or session messages. OAuth, extension-owned providers and `!command` authentication use manual entry rather than guessing service-specific auth or executing credential commands.
 
 Discovery has a five-second HTTP timeout and bounds of ten pages, 2 MiB and 2,000 unique models. Pagination stays on the original endpoint; redirects are rejected. `--offline` or `PI_OFFLINE=1` skips discovery. No inference request is made, but read-only discovery requests can occur before final save confirmation; rejecting save does not undo those reads. Endpoint trust confirmation for reused authentication occurs **before** discovery. Returned IDs alone do not describe capabilities. When supplied, the wizard uses validated `context_length`/`context_window`/`contextWindow`/`max_model_len`, OpenRouter `top_provider` limits, or Gemini `inputTokenLimit`/`outputTokenLimit`. It also accepts explicit returned model names, reasoning flags and input modalities; it never infers limits from a model ID. **If a fetched model omits its context window, only that limit must be entered manually**—many standard `/models` responses expose IDs only. Missing/invalid output limits retain a valid existing limit or use `min(8192, contextWindow)`, with a visible notice. Missing capabilities retain existing values or default to text-only/non-reasoning; review these fields in `models.json` if the server does not advertise them. The full manual-entry form remains available whenever discovery fails or you choose manual entry.
 
