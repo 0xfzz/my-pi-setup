@@ -1138,3 +1138,35 @@ test("closing the web editor publishes a closed view so the pane returns to the 
     config: { routes: [{ name: "auto", targets: ["primary/main-model"] }] },
   }));
 });
+
+test("the web picker filters a large catalogue without losing a tick", { timeout: 20000 }, async () => {
+  await withSession(async ({ eventBus }) => {
+    const views = routerViews(eventBus);
+    eventBus.emit("web-plugin:web-command", { name: "router", args: "" });
+    eventBus.emit("web-plugin:action-request", { pluginId: "router", actionId: "router-open" });
+    eventBus.emit("web-plugin:action-request", {
+      pluginId: "router", actionId: "router-targets",
+      values: { name: "filtered", file: "project", method: "cache", when: "turn" },
+    });
+    const all = views.at(-1)?.items?.length ?? 0;
+    assert.ok(all > 0, "the catalogue is listed");
+
+    eventBus.emit("web-plugin:action-request", {
+      pluginId: "router", actionId: "router-toggle", values: { model: "primary/main-model" },
+    });
+    eventBus.emit("web-plugin:action-request", {
+      pluginId: "router", actionId: "router-filter", values: { filter: "main" },
+    });
+    const filtered = views.at(-1);
+    assert.ok((filtered?.items?.length ?? 0) < all, "the filter narrows the list");
+    assert.equal(filtered?.items?.find((item: any) => item.label === "primary/main-model")?.selected, true,
+      "a ticked model stays ticked and listed");
+    assert.match(filtered?.lines?.join("\n") ?? "", /1 match "main"/);
+  }, (seen) => ({
+    providers: [
+      { name: "primary", config: fakeProvider("primary", ["main-model"], seen).config },
+      { name: "backup", config: fakeProvider("backup", ["other-model"], seen).config },
+    ],
+    config: { routes: [{ name: "auto", targets: ["primary/main-model"] }] },
+  }));
+});

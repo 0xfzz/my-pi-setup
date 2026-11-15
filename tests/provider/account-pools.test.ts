@@ -54,7 +54,20 @@ test("pool config defaults are applied and unknown keys are ignored", () => {
   assert.deepEqual(config.pools.p.accounts, []);
   assert.equal(config.pools.p.cooldownMs, undefined);
   assert.equal(parseRouterConfig([]).errors.length, 1);
-  assert.equal(parseRouterConfig({}).errors.length, 1);
+  assert.equal(parseRouterConfig("not an object").errors.length, 1);
+});
+
+test("a routes-only config file is valid, because the route editor writes one", () => {
+  // The documented minimum and the editor's own output: routes and nothing
+  // else. It used to report `expected a JSON object with a "pools" object`,
+  // which made every such file look broken in /router status.
+  const onlyRoutes = parseRouterConfig({ routes: [{ name: "auto", targets: ["a/b"] }] });
+  assert.deepEqual(onlyRoutes.errors, []);
+  assert.deepEqual(onlyRoutes.config.pools, {});
+
+  const wrongType = parseRouterConfig({ pools: [] });
+  assert.equal(wrongType.errors.length, 1);
+  assert.match(wrongType.errors[0] ?? "", /"pools" must be a JSON object/);
 });
 
 test("project pools override global pools of the same name", () => {

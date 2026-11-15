@@ -146,12 +146,25 @@ export function normalizePool(name: string, raw: unknown): PoolConfig | string {
   };
 }
 
-/** Parse and validate a router config document. */
+/**
+ * Read the pools half of a router config file.
+ *
+ * A missing `pools` is an empty set, not an error: a file that only declares
+ * routes is the documented minimum, and it is exactly what the route editor
+ * writes when a project has no pools of its own. Reporting it made every such
+ * file print "expected a JSON object with a pools object" under `/router
+ * status`, which reads like a broken config. A `pools` that is present but not
+ * an object is still refused — that is a typo, not an omission.
+ */
 export function parseRouterConfig(raw: unknown): { config: RouterConfig; errors: string[] } {
   const errors: string[] = [];
-  if (!isRecord(raw) || !isRecord(raw.pools)) {
-    return { config: { pools: {} }, errors: ['expected a JSON object with a "pools" object'] };
+  if (!isRecord(raw)) {
+    return { config: { pools: {} }, errors: ['expected a JSON object'] };
   }
+  if (raw.pools !== undefined && !isRecord(raw.pools)) {
+    return { config: { pools: {} }, errors: ['"pools" must be a JSON object'] };
+  }
+  if (raw.pools === undefined) return { config: { pools: {} }, errors };
   const pools: Record<string, PoolConfig> = {};
   for (const [name, value] of Object.entries(raw.pools)) {
     const pool = normalizePool(name, value);

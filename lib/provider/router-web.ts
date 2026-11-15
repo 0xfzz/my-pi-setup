@@ -27,6 +27,8 @@ import {
   ROUTER_DELETE_ACTION,
   ROUTER_DELETE_CONFIRM_ACTION,
   ROUTER_FILE_FIELD,
+  ROUTER_FILTER_ACTION,
+  ROUTER_FILTER_FIELD,
   ROUTER_METHOD_FIELD,
   ROUTER_MODEL_VALUE,
   ROUTER_NAME_FIELD,
@@ -76,7 +78,8 @@ export type RouterWebDraft = {
 
 export type RouterWebListScreen = { kind: "list"; notice?: string; problem?: string };
 export type RouterWebFormScreen = { kind: "form"; draft: RouterWebDraft; problem?: string };
-export type RouterWebTargetsScreen = { kind: "targets"; draft: RouterWebDraft };
+/** The target picker: the draft plus the text the list is narrowed by. */
+export type RouterWebTargetsScreen = { kind: "targets"; draft: RouterWebDraft; filter?: string };
 export type RouterWebDeleteScreen = { kind: "delete"; draft: RouterWebDraft };
 
 export type RouterWebScreen =
@@ -282,16 +285,26 @@ function formFields(draft: RouterWebDraft, creating: boolean): DialogField[] {
 function targetsView(screen: RouterWebTargetsScreen, context: RouterWebContext): DialogWebView {
   const { draft } = screen;
   const picked = new Set(draft.targets.map((target) => target.model));
-  const shown = visibleChoices(context.models, picked);
+  const filter = screen.filter ?? "";
+  const shown = pickerChoices(context.models, picked, filter);
   return {
     type: "dialog",
     id: routerDialogId(`targets:${draft.from ?? "new"}`),
     title: `Models for router/${draft.name}`,
     lines: [
-      `Ticked: ${picked.size} of ${context.models.length} available.`,
-      ...(shown.hidden > 0 ? [`Showing the first ${VIEW_MAX_ROWS}; ${shown.hidden} more are not listed here.`] : []),
+      filter.trim() === ""
+        ? `Ticked: ${picked.size} of ${context.models.length} available.`
+        : `Ticked: ${picked.size} · ${shown.matched} match "${filter.trim()}" of ${context.models.length}.`,
+      ...(shown.hidden > 0 ? [`Showing ${VIEW_MAX_ROWS} at a time; ${shown.hidden} more are hidden. Filter to narrow the list.`] : []),
       "Click a model to tick or untick it. The chain keeps the order you tick them in.",
     ],
+    fields: [{
+      name: ROUTER_FILTER_FIELD,
+      label: "Filter",
+      value: filter,
+      placeholder: "provider/model, or part of one",
+      help: "Ticks are kept while you filter; a ticked model stays listed even when it does not match.",
+    }],
     items: shown.models.map((model) => ({
       id: model,
       label: model,
@@ -300,31 +313,50 @@ function targetsView(screen: RouterWebTargetsScreen, context: RouterWebContext):
       values: { [ROUTER_MODEL_VALUE]: model },
       selected: picked.has(model),
     })),
-    actions: [{ id: ROUTER_BACK_ACTION, label: "Done", tone: "primary" }],
+    // Filter submits the box; Done needs no answer, because a tick is applied
+    // the moment it is clicked.
+    actions: [
+      { id: ROUTER_FILTER_ACTION, label: "Filter", tone: "primary", submitsInput: true },
+      { id: ROUTER_BACK_ACTION, label: "Done" },
+    ],
   };
 }
 
 /**
- * The catalogue rows to show, capped at what one dialog can carry.
+ * The catalogue rows the picker shows: the filter's matches, then any ticked
+ * model the filter hid, capped at what one dialog can carry.
  *
- * A ticked model keeps its place even when the cap would have cut it: an answer
- * the user already gave must not become invisible, because unticking it would
- * then be impossible. The cap is absolute — the host refuses a longer list
- * outright — so a ticked model past the cut displaces the last unticked one
- * rather than being appended. Catalogue order is preserved either way.
+ * Two rules earn their complexity. A ticked model is always listed — an answer
+ * already given must not become invisible, because unticking it would then be
+ * impossible — so a ticked model the filter excludes is appended after the
+ * matches rather than dropped. And the cap is absolute: the host refuses a
+ * longer list outright, so past `VIEW_MAX_ROWS` the picked models keep their
+ * slots and the rest of the budget goes to matches in catalogue order.
  */
-export function visibleChoices(
+export function pickerChoices(
   models: readonly string[],
   picked: ReadonlySet<string>,
-): { models: string[]; hidden: number } {
-  if (models.length <= VIEW_MAX_ROWS) return { models: [...models], hidden: 0 };
-  const kept = new Set(models.filter((model) => picked.has(model)).slice(0, VIEW_MAX_ROWS));
-  for (const model of models) {
+  filter: string,
+): { models: string[]; hidden: number; matched: number } {
+  const needle = filter.trim().toLowerCase();
+  const matched = needle === ""
+    ? [...models]
+    : models.filter((model) => model.toLowerCase().includes(needle));
+  const matchedSet = new Set(matched);
+  const listed = [...matched, ...models.filter((model) => picked.has(model) && !matchedSet.has(model))];
+  const shown = withinCap(listed, picked);
+  return { models: shown, hidden: listed.length - shown.length, matched: matched.length };
+}
+
+/** `listed` capped at the dialog limit, keeping every picked model. */
+function withinCap(listed: readonly string[], picked: ReadonlySet<string>): string[] {
+  if (listed.length <= VIEW_MAX_ROWS) return [...listed];
+  const kept = new Set(listed.filter((model) => picked.has(model)).slice(0, VIEW_MAX_ROWS));
+  for (const model of listed) {
     if (kept.size >= VIEW_MAX_ROWS) break;
     kept.add(model);
   }
-  const shown = models.filter((model) => kept.has(model));
-  return { models: shown, hidden: models.length - shown.length };
+  return listed.filter((model) => kept.has(model));
 }
 
 function deleteView(screen: RouterWebDeleteScreen): DialogWebView {
@@ -375,6 +407,8 @@ function backStep(screen: RouterWebScreen): RouterWebResult {
   if (screen.kind === "list") return { kind: "close" };
   if (screen.kind === "form") return { kind: "screen", screen: { kind: "list" } };
   // The picker and the confirmation both return to the form that opened them.
+  // The filter stays behind with the picker: it is a way of browsing, not part
+  // of the route.
   return { kind: "screen", screen: { kind: "form", draft: screen.draft } };
 }
 
@@ -438,10 +472,16 @@ export function saveProblem(draft: RouterWebDraft, context: RouterWebContext): s
 }
 
 function targetsStep(screen: RouterWebTargetsScreen, action: RouterWebAction): RouterWebResult {
+  if (action.id === ROUTER_FILTER_ACTION) {
+    return { kind: "screen", screen: { ...screen, filter: action.values?.[ROUTER_FILTER_FIELD] ?? "" } };
+  }
   if (action.id !== ROUTER_TOGGLE_ACTION) return { kind: "screen", screen };
   const model = action.values?.[ROUTER_MODEL_VALUE];
   if (model === undefined) return { kind: "screen", screen };
-  return { kind: "screen", screen: { kind: "targets", draft: { ...screen.draft, targets: toggleTarget(screen.draft.targets, model) } } };
+  return {
+    kind: "screen",
+    screen: { ...screen, draft: { ...screen.draft, targets: toggleTarget(screen.draft.targets, model) } },
+  };
 }
 
 function deleteStep(screen: RouterWebDeleteScreen, action: RouterWebAction): RouterWebResult {

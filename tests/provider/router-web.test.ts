@@ -15,6 +15,8 @@ import {
   ROUTER_DELETE_ACTION,
   ROUTER_DELETE_CONFIRM_ACTION,
   ROUTER_FILE_FIELD,
+  ROUTER_FILTER_ACTION,
+  ROUTER_FILTER_FIELD,
   ROUTER_METHOD_FIELD,
   ROUTER_MODEL_VALUE,
   ROUTER_NAME_FIELD,
@@ -27,8 +29,8 @@ import {
 } from "../../web/plugins/router/contract.ts";
 import type { RouteConfig } from "../../lib/provider/model-routes.ts";
 import {
-  draftFromRow, draftRoute, draftWithValues, newDraft, routerWebStart, routerWebStep, routerWebView,
-  saveProblem, toggleTarget, visibleChoices, withoutTarget,
+  draftFromRow, draftRoute, draftWithValues, newDraft, pickerChoices, routerWebStart, routerWebStep,
+  routerWebView, saveProblem, toggleTarget, withoutTarget,
   type RouterWebContext, type RouterWebDraft, type RouterWebScreen,
 } from "../../lib/provider/router-web.ts";
 import { routerRows, type RouterSettingsView } from "../../lib/provider/router-settings.ts";
@@ -282,15 +284,50 @@ test("the picker's warmth detail comes from the extension and is omitted when un
 test("a catalogue larger than one dialog keeps every ticked model visible", () => {
   const models = Array.from({ length: VIEW_MAX_ROWS + 5 }, (_, index) => `p/m${index}`);
   const picked = new Set([models[0]!, models.at(-1)!]);
-  const shown = visibleChoices(models, picked);
+  const shown = pickerChoices(models, picked, "");
   assert.equal(shown.hidden, 5);
+  assert.equal(shown.models.length, VIEW_MAX_ROWS, "the cap is absolute: the host refuses a longer list");
   assert.ok(shown.models.includes(models.at(-1)!), "a ticked model past the cap is still listed");
-  assert.ok(shown.models.length <= VIEW_MAX_ROWS + 2, "only the rescued ones are added back");
 });
 
 test("a catalogue that fits is listed whole", () => {
-  const shown = visibleChoices(["a/b", "c/d"], new Set(["c/d"]));
-  assert.deepEqual(shown, { models: ["a/b", "c/d"], hidden: 0 });
+  const shown = pickerChoices(["a/b", "c/d"], new Set(["c/d"]), "");
+  assert.deepEqual(shown, { models: ["a/b", "c/d"], hidden: 0, matched: 2 });
+});
+
+test("the filter narrows the list and keeps a ticked model it excludes", () => {
+  const models = ["antigravity/gemini-3.8-flash", "openai-codex/gpt-6.1-sol", "zro-1/glm-5.3-flash"];
+  const picked = new Set(["zro-1/glm-5.3-flash"]);
+  const shown = pickerChoices(models, picked, "  GEMINI  ");
+  assert.equal(shown.matched, 1, "matching is case-insensitive and ignores padding");
+  assert.deepEqual(shown.models, ["antigravity/gemini-3.8-flash", "zro-1/glm-5.3-flash"],
+    "the ticked model stays listed so it can still be unticked");
+});
+
+test("a filter that matches nothing still shows what is ticked", () => {
+  const shown = pickerChoices(["a/b", "c/d"], new Set(["c/d"]), "nope");
+  assert.equal(shown.matched, 0);
+  assert.deepEqual(shown.models, ["c/d"]);
+});
+
+test("the picker publishes a filter box and a Filter action that submits it", () => {
+  const draft = draftFromRow(CONTEXT.view.rows[0]!);
+  const view = routerWebView({ kind: "targets", draft, filter: "gemini" }, CONTEXT);
+  assert.equal(view.fields?.[0]?.name, ROUTER_FILTER_FIELD);
+  assert.equal(view.fields?.[0]?.value, "gemini");
+  const filter = view.actions?.find((action) => action.id === ROUTER_FILTER_ACTION);
+  assert.equal(filter?.submitsInput, true, "the typed filter travels with the answer");
+});
+
+test("filtering keeps the draft's ticks and returns the same picker screen", () => {
+  const draft = draftFromRow(CONTEXT.view.rows[0]!);
+  const result = step({ kind: "targets", draft }, ROUTER_FILTER_ACTION, { [ROUTER_FILTER_FIELD]: "gpt" });
+  assert.equal(result.kind, "screen");
+  if (result.kind !== "screen") throw new Error("unreachable");
+  assert.equal(result.screen.kind, "targets");
+  if (result.screen.kind !== "targets") throw new Error("unreachable");
+  assert.equal(result.screen.filter, "gpt");
+  assert.deepEqual(result.screen.draft.targets, draft.targets, "filtering never changes the chain");
 });
 
 // ── delete ──────────────────────────────────────────────────────────────────

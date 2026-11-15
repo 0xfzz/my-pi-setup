@@ -30,6 +30,8 @@ export const ROUTER_SAVE_ACTION = "router-save";
 export const ROUTER_TARGETS_ACTION = "router-targets";
 /** Tick or untick one model in the target picker. */
 export const ROUTER_TOGGLE_ACTION = "router-toggle";
+/** Narrow the target picker to the models matching the filter field. */
+export const ROUTER_FILTER_ACTION = "router-filter";
 /** Ask before deleting the route on screen. */
 export const ROUTER_DELETE_ACTION = "router-delete";
 /** Delete, after the confirmation screen. */
@@ -42,6 +44,8 @@ export const ROUTER_NAME_FIELD = "name";
 export const ROUTER_FILE_FIELD = "file";
 export const ROUTER_METHOD_FIELD = "method";
 export const ROUTER_WHEN_FIELD = "when";
+/** The target picker's search box; it filters the list, it is not an answer. */
+export const ROUTER_FILTER_FIELD = "filter";
 
 /** Value names carried by a row click, rather than by a form. */
 export const ROUTER_ROUTE_VALUE = "route";
