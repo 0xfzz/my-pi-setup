@@ -48,9 +48,11 @@ So the cost of a routing decision is not the model's price. It is
 `price × (is the prefix still cached there?)`, and today the router answers that
 question by accident:
 
-1. **Rotation is a 12.5× multiplier** on the prompt half of every request it
-   touches (F2, F4). A 20-turn session that rotates on each turn pays $4.50 for
-   its prompt where staying warm pays $0.36.
+1. **Rotation can be a 12.5× multiplier** on the prompt half of every request it
+   touches (F2, F4) — whenever it outruns the TTL, which is the common case for a
+   pool with several accounts. A 20-turn session that rotates on each turn pays
+   $4.50 for its prompt where staying warm pays $0.36. (Alternating only two
+   targets inside one TTL keeps both entries warm; see §10.)
 2. **Price-chasing can cost more than it saves** (F3). A target that is 1.2×
    cheaper needs 60+ warm turns to repay one cache write; one that is 5× cheaper
    repays it in about 3. The router cannot tell the two apart.
@@ -393,6 +395,13 @@ still knows its warmth (this one also guards the storage choice).
 simulation over the cost model asserting cache-aware total ≤ cheapest total in
 every scenario, and round-robin+turn ≥ 5× cache-aware. This is the guard against
 a future "optimisation" that quietly reintroduces the 12.5×.
+
+Writing it corrected a claim in §2: rotation is only catastrophic when it
+*outruns the TTL*. Alternating two targets that are each revisited inside their
+TTL keeps both entries warm and costs < 1.5× the cache-aware total; rotating
+across five with a two-turn TTL makes every request cold and costs ≥ 5×. That is
+why `cacheAffinity` is opt-in for `round-robin` rather than forced on it, and the
+test pins both sides so neither story can be quietly overclaimed.
 
 **Non-regression.** Every existing router test keeps passing unmodified; the
 default `method` stays `priority`; a config with no `cache` block routes exactly

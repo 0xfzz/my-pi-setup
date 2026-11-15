@@ -1149,6 +1149,16 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
   });
 
   pi.on("session_tree", (_event, ctx) => { uiCtx = ctx; sanitizeSessionEntries(ctx); restore(ctx); updateSidebar(); });
+  // Compaction (including an overflow recovery) replaces the conversation with a
+  // summary, so the prefix every entry described no longer exists. Forgetting it
+  // is pessimistic — a short shared prefix may survive — but it is the only
+  // answer that cannot claim warmth for a prefix the provider never saw.
+  pi.on("session_compact", () => {
+    ledger = emptyLedger();
+    handedOut = undefined;
+    lastFingerprint = undefined;
+    previousFingerprint = undefined;
+  });
   pi.on("turn_start", () => { inFlight = undefined; updateSidebar(); });
   // A new prompt (or the end of one) is where rotation resumes.
   pi.on("agent_start", () => { runAccount.clear(); runActive = true; });

@@ -973,3 +973,22 @@ test("/router why names the target that could not serve", { timeout: 20000 }, as
     config: { routes: [{ name: "auto", targets: ["nowhere/ghost"] }] },
   }));
 });
+
+test("compaction forgets the cache, because the prefix it described is gone", { timeout: 20000 }, async () => {
+  await withSession(async ({ registry, session, dir }) => {
+    const virtual = registry.getModel("router", "auto")!;
+    const runner = session._extensionRunner;
+    const messages = [{ role: "user", content: [{ type: "text", text: "hello" }] }];
+    for (const _ of [1, 2]) {
+      const message = await registry.completeSimple(virtual, { messages });
+      await runner.emit({ type: "message_end", message });
+    }
+    assert.match(await routerText(session, "status", dir), /warm 60k/);
+    await runner.emit({ type: "session_compact" });
+    assert.doesNotMatch(await routerText(session, "status", dir), /warm 60k/,
+      "a summary is a new prefix, so no entry describes it");
+  }, (seen) => ({
+    providers: [{ name: "primary", config: fakeProvider("primary", ["main-model"], seen, { cache: { promptTokens: 60_000 } }).config }],
+    config: { routes: [{ name: "auto", targets: ["primary/main-model"] }] },
+  }));
+});
