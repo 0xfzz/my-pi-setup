@@ -55,7 +55,8 @@ export interface WebServerHandle {
 
 export interface StartWebServerOptions {
   host?: string;
-  port?: number;  clientDist?: string;
+  port?: number;
+  clientDist?: string;
   /** The password/token service. Defaults to the one configured by `/web set-password`. */
   auth?: WebAuthService;
   /** Cookie, proxy and origin policy for the auth routes. Defaults come from PI_WEB_* env vars. */

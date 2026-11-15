@@ -36,7 +36,10 @@ From the pi TUI, `/web start | reload | stop | status | set-password | clear-pas
 instance on port 30142 (`lib/web-ui.ts`): single-instance with takeover,
 esbuild when sources changed, direct `node --experimental-strip-types`
 spawn (no npm wrapper holding the server's stdio), and auto-reload watching
-`web/` plus the plugin contract directories.
+`web/` plus the plugin contract directories. A session also re-checks the
+running server at start, so a server left behind by an earlier session is
+rebuilt and restarted instead of being attached to at its old version — see
+[One version across sessions](#one-version-across-sessions).
 
 ## Architecture
 
@@ -244,7 +247,7 @@ live session.
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/api/health` | GET | liveness (always public) |
+| `/api/health` | GET | liveness + `bootId` + the served client `buildId` (always public) |
 | `/api/auth/status` | GET | `{ required, authenticated }` — public |
 | `/api/auth/login` | POST | password → cookies (public, throttled) |
 | `/api/auth/refresh` | POST | rotate the refresh token, new access token |
@@ -503,7 +506,7 @@ drives four operator actions through `/api/plugin-manager`:
 | `GET /api/plugin-manager` | status, safe mode, warnings, shadowed ids, routes, audit tail |
 | `POST /api/plugin-manager/:id/enable` | activate (retry a failed plugin) |
 | `POST /api/plugin-manager/:id/disable` | deactivate, dependents first |
-| `POST /api/plugin-manager/:id/reload` | re-import and roll back on failure |
+| `POST /api/plugin-manager/:id/reload` | re-import the plugin's own module tree (entry and siblings) and roll back on failure |
 | `POST /api/plugin-manager/:id/clear-quarantine` | clear the breaker and retry |
 
 An unknown plugin is 404, a refused action (quarantined, unresolved) is 409
@@ -529,6 +532,28 @@ when several plugins override one region, registry order decides and the
 conflict is reported in the `plugin_state` frame and shown as a banner.
 `example-override` is the reference plugin: inert until its instant
 "Replace the composer" action runs.
+
+### One version across sessions
+
+A web server is spawned detached, so it outlives the pi session that started
+it, and the client bundle is a build artifact with fixed file names. Both facts
+let versions drift apart: one session's browser could render a plugin set, a
+contract or a whole bundle that another session never sees. Four mechanisms
+keep every session on one version:
+
+| Mechanism | What it removes |
+|---|---|
+| Build-input fingerprinting (`lib/web-ui-reload.ts`) | A contract or entry edit that is bundled into the client but not fingerprinted restarts the server without rebuilding — new server code, old client. |
+| Session-start convergence (`extensions/web.ts`) | A server started from older sources is compared against the current fingerprints when a session starts, and rebuilt+restarted once (shared reload lock). |
+| Build identity (`web/core/server/client-build.ts`) | The build writes `dist/build.json`; the server stamps the id into the served HTML and reports it on `/api/health` and the directory snapshot. A page whose stamp differs reloads onto the served bundle, once per build. |
+| Registry push (`web/core/server/plugin-registry-broadcast.ts`) | Enable/disable/reload/quarantine change the served set; the kernel's audit log drives a `plugins_changed` frame, so an open tab re-reads `/api/plugins` instead of keeping its page-load snapshot. |
+
+A plugin **reload** re-imports the plugin's own module tree
+(`web/core/server/plugin-module-loader.ts`): the plugin directory resolves with
+a per-load generation query, so its entry and its sibling modules re-evaluate,
+while modules outside it — the kernel, the files policy, the host — keep their
+identity. A plain `import()` would return the cached module and report success
+while running the old code.
 
 ### Owned processes — no leaks, no orphans
 
