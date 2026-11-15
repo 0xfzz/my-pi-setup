@@ -70,23 +70,33 @@ test("a missing config file is part of the fingerprint as absence, not an error"
   }
 });
 
-test("build and runtime inputs are fingerprinted separately, so a plugin edit does not rebuild", async () => {
+test("a server-only edit restarts without rebuilding; anything the bundle can reach rebuilds", async () => {
   const repo = await tree();
   try {
     const serverDir = join(repo, "web");
     await mkdir(join(serverDir, "core", "client"), { recursive: true });
-    await mkdir(join(repo, "web", "core", "plugin-contracts"), { recursive: true });
+    await mkdir(join(serverDir, "core", "plugin-contracts"), { recursive: true });
+    await mkdir(join(serverDir, "core", "server"), { recursive: true });
     await writeFile(join(serverDir, "core", "client", "shell.tsx"), "ui");
-    await writeFile(join(repo, "web", "core", "plugin-contracts", "host.ts"), "logic");
+    await writeFile(join(serverDir, "core", "plugin-contracts", "view.ts"), "logic");
+    await writeFile(join(serverDir, "core", "server", "main.ts"), "host");
     const first = sourceFingerprints(serverDir, repo);
 
-    await writeFile(join(repo, "web", "core", "plugin-contracts", "host.ts"), "logic v2");
+    // The HTTP host is not in the bundle: a restart is enough.
+    await writeFile(join(serverDir, "core", "server", "main.ts"), "host v2");
     const second = sourceFingerprints(serverDir, repo);
-    assert.equal(second.build, first.build, "runtime edit leaves the build fingerprint alone");
+    assert.equal(second.build, first.build, "a server-only edit leaves the build fingerprint alone");
     assert.notEqual(second.runtime, first.runtime);
 
-    await writeFile(join(serverDir, "core", "client", "shell.tsx"), "ui v2");
-    assert.notEqual(sourceFingerprints(serverDir, repo).build, second.build, "a UI edit changes the build fingerprint");
+    // The contract's values ARE in the bundle (validateView, resolveOverrides),
+    // so a restart without a rebuild would serve a client that disagrees with
+    // the server about the view contract.
+    await writeFile(join(serverDir, "core", "plugin-contracts", "view.ts"), "logic v2");
+    assert.notEqual(sourceFingerprints(serverDir, repo).build, second.build, "a contract edit rebuilds");
+
+    // The client entry wires the plugin registries into the shell.
+    await writeFile(join(serverDir, "app.tsx"), "entry v2");
+    assert.notEqual(sourceFingerprints(serverDir, repo).build, second.build, "the entry is a build input");
   } finally {
     await rm(repo, { recursive: true, force: true });
   }
@@ -139,7 +149,10 @@ test("source roots name only the build inputs and our runtime directories", () =
   const roots = sourceWatchRoots("/repo/web", "/repo");
   assert.ok(roots.includes("/repo/web/core/client"));
   assert.ok(roots.includes("/repo/web/plugins"));
-  assert.ok(roots.includes("/repo/web/core/plugin-contracts"));
+  assert.ok(roots.includes("/repo/web/core/plugin-contracts"), "a bundled contract module is watched");
+  assert.ok(roots.includes("/repo/web/core/server"), "server-only code is watched for a restart");
+  assert.ok(roots.includes("/repo/web/core/auth"));
+  assert.ok(roots.includes("/repo/web/core/pi-api"));
   assert.equal(roots.some((r) => r.includes("node_modules") || r.endsWith("/web")), false);
 });
 

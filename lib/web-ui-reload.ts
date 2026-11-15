@@ -2,10 +2,19 @@
  * Source change detection for the pi-web server (`/web reload`, automatic reload).
  *
  * Two kinds of input matter, and they cost different amounts:
- *  - build inputs: the vendored fork's app, components, lib, hooks and config. The
- *    production build bakes these in, so a change needs a rebuild and a restart.
- *  - runtime inputs: our `web/core/plugin-contracts/` kernel and contracts. The server loads
- *    them through jiti at runtime, so a change needs only a restart.
+ *  - build inputs: everything the production bundle is made of — the client
+ *    entry, the client tree, the shared modules it imports, the plugins' client
+ *    halves, the contract modules whose values the bundle contains, and the
+ *    build config. A change needs a rebuild and a restart.
+ *  - runtime inputs: the server code the bundle does NOT contain (the HTTP host,
+ *    auth and the pi_api facade) plus the plugin contracts it loads at boot. A
+ *    change needs only a restart.
+ *
+ * The split is what keeps a reload cheap, so it must stay honest: anything the
+ * bundle can reach belongs in the build list, or a restart serves a stale client
+ * next to fresh server code — the two sides then disagree about the plugin
+ * contract. `core/plugin-contracts` is both: the client bundles `validateView`
+ * and `resolveOverrides` from it, and the server loads the whole tree.
  *
  * Fingerprints are built from size and mtime of each file, not contents, so a walk
  * stays cheap enough to run on every save. The last-built fingerprints are kept in
@@ -17,15 +26,20 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
 /** Minimal server directories and files the build reads. */
-export const BUILD_INPUT_DIRS = ["core/client", "core/server", "core/shared", "plugins"] as const;
+export const BUILD_INPUT_DIRS = ["core/client", "core/plugin-contracts", "core/shared", "plugins"] as const;
 export const BUILD_INPUT_FILES = [
+  // The client entry: it wires the shell to the plugin panel/page registries.
+  "app.tsx",
   "package.json",
   "package-lock.json",
   "tsconfig.json",
   "build.mjs",
 ] as const;
-/** Our directories the running server loads at runtime (relative to the repo root). */
-export const RUNTIME_INPUT_DIRS = ["web/core/plugin-contracts"] as const;
+/**
+ * Our directories the running server loads at runtime (relative to the repo root)
+ * and the bundle does not contain: a change here needs a restart, not a rebuild.
+ */
+export const RUNTIME_INPUT_DIRS = ["web/core/server", "web/core/auth", "web/core/pi-api"] as const;
 
 const SKIPPED_DIRS = new Set(["node_modules", "dist", "test-results", "e2e"]);
 const TEST_FILE = /\.test\.(ts|tsx|mjs|js)$/;
