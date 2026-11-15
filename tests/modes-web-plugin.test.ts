@@ -50,8 +50,17 @@ test("the modes descriptor is valid, declares the leave-plan action, and is regi
   assert.ok(WEB_PLUGINS.some((p: WebPluginDescriptor) => p.id === "modes"));
 });
 
-test("modes is no longer an opt-out, and every extension still appears exactly once", () => {
+test("modes is no longer an opt-out", () => {
   assert.equal(Object.hasOwn(WEB_PLUGIN_OPT_OUT, "modes"), false);
+});
+
+test("an extension may declare more than one plugin, but no extension appears in both lists", () => {
+  // The router is the worked example: one extension, two plugins (a sidebar
+  // panel and its editor dialog), because a host keeps one view per plugin id.
   const ids = WEB_PLUGINS.map((p) => p.extension);
-  assert.equal(new Set(ids).size, ids.length, "each descriptor's extension appears once");
+  assert.ok(ids.filter((id) => id === "account-router").length >= 2,
+    "the router extension legitimately ships two plugins");
+  // The enforcement rule is unchanged: an extension is either bridged or opted
+  // out, never both, and never neither.
+  assert.equal(Object.hasOwn(WEB_PLUGIN_OPT_OUT, "account-router"), false);
 });

@@ -71,14 +71,16 @@ import {
   describeDecision, formatTrace, pushDecision, type DecisionRecord,
 } from "../lib/provider/route-trace.ts";
 import {
-  routerWebStart, routerWebStep, routerWebView,
+  routerPanelView, routerWebStart, routerWebStep, routerWebView,
   type RouterActionWrite, type RouterWebContext, type RouterWebScreen,
 } from "../lib/provider/router-web.ts";
 import { RouterSettingsPopup } from "../lib/ui/router-settings.ts";
 import { overlayRows, popupOverlayOptions } from "../lib/popup/frame.ts";
 import { providerModelPicker } from "../lib/provider/provider-model-picker.ts";
 import { offerSection, REFRESH_EVENT } from "../lib/sidebar/sidebar-channel.ts";
-import { ROUTER_PLUGIN_ID, ROUTER_WEB_COMMAND } from "../web/plugins/router/contract.ts";
+import {
+  ROUTER_EDITOR_PLUGIN_ID, ROUTER_PLUGIN_ID, ROUTER_RELOAD_ACTION, ROUTER_WEB_COMMAND,
+} from "../web/plugins/router/contract.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
 import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
 import {
@@ -1151,6 +1153,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     uiCtx = ctx;
     webCtx = ctx;
     announceRouterWeb();
+    publishRouterPanel(ctx);
     sanitizeSessionEntries(ctx);
     if (ctx.cwd) activeCwd = ctx.cwd;
     loadConfig(activeCwd);
@@ -1315,6 +1318,8 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     registerPools(ctx);
     syncRoutes();
     updateSidebar();
+    publishRouterPanel(ctx);
+    if (webScreen !== undefined) publishRouterWeb(ctx);
   };
 
   /**
@@ -1353,12 +1358,13 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
    * decision is made with the same information `/models` shows.
    */
   const routeModelChoices = (ctx: ExtensionContext) => {
-    const registry = ctx.modelRegistry;
+    const registry = ctx.modelRegistry as { getAvailable?: () => unknown[]; getAll?: () => unknown[] } | undefined;
     const models = typeof registry?.getAvailable === "function"
       ? registry.getAvailable()
       : typeof registry?.getAll === "function" ? registry.getAll() : [];
+    if (!Array.isArray(models)) return [];
     return routerModelChoices(
-      models.map((model) => ({
+      (models as Array<{ provider: string; id: string; name?: string; type?: string; api?: string; contextWindow?: number; maxTokens?: number; reasoning?: boolean; input?: readonly string[] }>).map((model) => ({
         provider: model.provider,
         id: model.id,
         ...(model.name ? { name: model.name } : {}),
@@ -1465,14 +1471,39 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
 
   const publishRouterWeb = (ctx: ExtensionContext): void => {
     if (webScreen === undefined) return;
-    publishWebView(pi, ROUTER_PLUGIN_ID, routerWebView(webScreen, webRouterContext(ctx)));
+    publishWebView(pi, ROUTER_EDITOR_PLUGIN_ID, routerWebView(webScreen, webRouterContext(ctx)));
+  };
+
+  /** The resting view the right sidebar renders: the route table and its warmth. */
+  const publishRouterPanel = (ctx: ExtensionContext): void => {
+    const registry = ctx.modelRegistry as { getAvailable?: () => unknown[]; getAll?: () => unknown[] } | undefined;
+    if (registry === undefined || (typeof registry.getAvailable !== "function" && typeof registry.getAll !== "function")) return;
+    const context = webRouterContext(ctx);
+    const panelWarmth: Record<string, string> = {};
+    for (const row of context.view.rows) {
+      for (const target of row.route.targets) {
+        const value = context.warmth?.[target.model];
+        if (value !== undefined) panelWarmth[`${row.route.name}/${target.model}`] = value;
+      }
+    }
+    publishWebView(pi, ROUTER_PLUGIN_ID, routerPanelView({
+      view: context.view,
+      warmth: panelWarmth,
+    }));
+  };
+
+  const handleRouterReload = (ctx: ExtensionContext): void => {
+    reloadRoutes(ctx);
+    publishRouterPanel(ctx);
+    if (webScreen !== undefined) publishRouterWeb(ctx);
   };
 
   /** Show a screen, or close the pane when the editor is done. */
   const showRouterWeb = (screen: RouterWebScreen | undefined, ctx: ExtensionContext): void => {
     webScreen = screen;
     if (screen === undefined) {
-      publishWebView(pi, ROUTER_PLUGIN_ID, { type: "dialog", open: false });
+      publishWebView(pi, ROUTER_EDITOR_PLUGIN_ID, { type: "dialog", open: false });
+      publishRouterPanel(ctx);
       return;
     }
     publishRouterWeb(ctx);
@@ -1497,7 +1528,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
         // entry.
         managesModels: true,
         settingsEntry: "Router",
-        settingsPlugin: ROUTER_PLUGIN_ID,
+        settingsPlugin: ROUTER_EDITOR_PLUGIN_ID,
       }],
     });
   };
@@ -1514,6 +1545,12 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
       webScreen = { kind: "list", problem: errorMessage(error) };
     }
     publishRouterWeb(ctx);
+    publishRouterPanel(ctx);
+  };
+
+  const handleRouterPanelAction = (request: Partial<ActionRequestPayload>, ctx: ExtensionContext): void => {
+    if (request.actionId !== ROUTER_RELOAD_ACTION) return;
+    handleRouterReload(ctx);
   };
 
   const handleRouterWebAction = (request: Partial<ActionRequestPayload>, ctx: ExtensionContext): void => {
@@ -1540,10 +1577,10 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
   });
   pi.events?.on(WEB_PLUGIN_ACTION_REQUEST_EVENT, (data: unknown) => {
     const request = data as Partial<ActionRequestPayload> | undefined;
-    if (request?.pluginId !== ROUTER_PLUGIN_ID) return;
     const ctx = webCtx ?? uiCtx;
     if (ctx === undefined) return;
-    handleRouterWebAction(request, ctx);
+    if (request?.pluginId === ROUTER_PLUGIN_ID) { handleRouterPanelAction(request, ctx); return; }
+    if (request?.pluginId === ROUTER_EDITOR_PLUGIN_ID) handleRouterWebAction(request, ctx);
   });
 
   pi.registerCommand(COMMAND, {
@@ -1642,7 +1679,6 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
           return;
         case "reload": {
           reloadRoutes(ctx);
-          publishRouterWeb(ctx);
           emit(ctx, configErrors.length
             ? `Reloaded with ${configErrors.length} warning(s):\n${configErrors.join("\n")}`
             : `Reloaded ${table.routes.length} route(s) and ${Object.keys(config.pools).length} pool(s).`,

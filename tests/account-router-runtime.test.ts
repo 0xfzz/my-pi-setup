@@ -999,7 +999,7 @@ test("compaction forgets the cache, because the prefix it described is gone", { 
 function routerViews(eventBus: any): any[] {
   const views: any[] = [];
   eventBus.on("web-plugin:view", (payload: any) => {
-    if (payload?.pluginId === "router") views.push(payload.view);
+    if (payload?.pluginId === "router-editor") views.push(payload.view);
   });
   return views;
 }
@@ -1016,7 +1016,7 @@ test("the web editor lists the routes and creates one through the dialog", { tim
     const announced = commands.find((command) => command.name === "router");
     assert.equal(announced?.managesModels, true, "it gets a page in the shared settings dialog");
     assert.equal(announced?.settingsEntry, "Router");
-    assert.equal(announced?.settingsPlugin, "router");
+    assert.equal(announced?.settingsPlugin, "router-editor");
     assert.equal(announced?.addsModels, undefined, "the picker's add entry stays the provider editor's");
 
     // Opening the page shows the table.
@@ -1026,27 +1026,27 @@ test("the web editor lists the routes and creates one through the dialog", { tim
     assert.equal(list?.items?.[0]?.label, "router/auto");
 
     // A new route: the form, then the picker, then a save that writes the file.
-    eventBus.emit("web-plugin:action-request", { pluginId: "router", actionId: "router-open" });
+    eventBus.emit("web-plugin:action-request", { pluginId: "router-editor", actionId: "router-open" });
     const form = views.at(-1);
     assert.equal(form?.id, "router-editor:form:new");
     assert.equal(form?.fields?.find((field: any) => field.name === "name")?.value, "route-1");
 
     eventBus.emit("web-plugin:action-request", {
-      pluginId: "router", actionId: "router-targets",
+      pluginId: "router-editor", actionId: "router-targets",
       values: { name: "fast", file: "project", method: "cache", when: "quota" },
     });
     const picker = views.at(-1);
     assert.equal(picker?.id, "router-editor:targets:new");
 
     eventBus.emit("web-plugin:action-request", {
-      pluginId: "router", actionId: "router-toggle",
+      pluginId: "router-editor", actionId: "router-toggle",
       values: { model: "primary/main-model" },
     });
     assert.equal(views.at(-1)?.items?.find((item: any) => item.label === "primary/main-model")?.selected, true);
 
-    eventBus.emit("web-plugin:action-request", { pluginId: "router", actionId: "router-back" });
+    eventBus.emit("web-plugin:action-request", { pluginId: "router-editor", actionId: "router-back" });
     eventBus.emit("web-plugin:action-request", {
-      pluginId: "router", actionId: "router-save",
+      pluginId: "router-editor", actionId: "router-save",
       values: { name: "fast", method: "cache", when: "quota" },
     });
 
@@ -1075,11 +1075,11 @@ test("the web editor deletes only after the confirmation screen", { timeout: 200
     const views = routerViews(eventBus);
     eventBus.emit("web-plugin:web-command", { name: "router", args: "" });
     eventBus.emit("web-plugin:action-request", {
-      pluginId: "router", actionId: "router-open", values: { route: "auto" },
+      pluginId: "router-editor", actionId: "router-open", values: { route: "auto" },
     });
     assert.equal(views.at(-1)?.id, "router-editor:form:auto");
 
-    eventBus.emit("web-plugin:action-request", { pluginId: "router", actionId: "router-delete" });
+    eventBus.emit("web-plugin:action-request", { pluginId: "router-editor", actionId: "router-delete" });
     assert.equal(views.at(-1)?.title, "Delete router/auto?");
     // The route was read from the global file, so that is the one it is
     // removed from — the editor rewrites a route where it found it.
@@ -1087,7 +1087,7 @@ test("the web editor deletes only after the confirmation screen", { timeout: 200
     let file = JSON.parse(await readFile(globalFile, "utf8"));
     assert.equal(file.routes.length, 1, "asking is not deleting");
 
-    eventBus.emit("web-plugin:action-request", { pluginId: "router", actionId: "router-delete-confirm" });
+    eventBus.emit("web-plugin:action-request", { pluginId: "router-editor", actionId: "router-delete-confirm" });
     file = JSON.parse(await readFile(globalFile, "utf8"));
     assert.deepEqual(file.routes, []);
     assert.match(views.at(-1)?.lines?.join("\n") ?? "", /Removed router\/auto/);
@@ -1101,19 +1101,19 @@ test("the web editor refuses a name that is taken without writing", { timeout: 2
   await withSession(async ({ dir, eventBus }) => {
     const views = routerViews(eventBus);
     eventBus.emit("web-plugin:web-command", { name: "router", args: "" });
-    eventBus.emit("web-plugin:action-request", { pluginId: "router", actionId: "router-open" });
+    eventBus.emit("web-plugin:action-request", { pluginId: "router-editor", actionId: "router-open" });
     eventBus.emit("web-plugin:action-request", {
-      pluginId: "router", actionId: "router-targets",
+      pluginId: "router-editor", actionId: "router-targets",
       values: { name: "auto", file: "project", method: "priority", when: "turn" },
     });
     eventBus.emit("web-plugin:action-request", {
-      pluginId: "router", actionId: "router-toggle", values: { model: "primary/main-model" },
+      pluginId: "router-editor", actionId: "router-toggle", values: { model: "primary/main-model" },
     });
     // Done returns to the form with the pick, which is where Save lives.
-    eventBus.emit("web-plugin:action-request", { pluginId: "router", actionId: "router-back" });
+    eventBus.emit("web-plugin:action-request", { pluginId: "router-editor", actionId: "router-back" });
     assert.equal(views.at(-1)?.id, "router-editor:form:new", "Done returns to the route");
     eventBus.emit("web-plugin:action-request", {
-      pluginId: "router", actionId: "router-save",
+      pluginId: "router-editor", actionId: "router-save",
       values: { name: "auto", method: "priority", when: "turn" },
     });
     assert.equal(views.at(-1)?.id, "router-editor:form:new", "the refusal stays on the form");
@@ -1131,7 +1131,7 @@ test("closing the web editor publishes a closed view so the pane returns to the 
     const views = routerViews(eventBus);
     eventBus.emit("web-plugin:web-command", { name: "router", args: "" });
     assert.equal(views.at(-1)?.open, true, "the pane renders an open view");
-    eventBus.emit("web-plugin:action-request", { pluginId: "router", actionId: "router-back" });
+    eventBus.emit("web-plugin:action-request", { pluginId: "router-editor", actionId: "router-back" });
     assert.equal(views.at(-1)?.open, false);
   }, (seen) => ({
     providers: [{ name: "primary", config: fakeProvider("primary", ["main-model"], seen).config }],
@@ -1143,19 +1143,19 @@ test("the web picker filters a large catalogue without losing a tick", { timeout
   await withSession(async ({ eventBus }) => {
     const views = routerViews(eventBus);
     eventBus.emit("web-plugin:web-command", { name: "router", args: "" });
-    eventBus.emit("web-plugin:action-request", { pluginId: "router", actionId: "router-open" });
+    eventBus.emit("web-plugin:action-request", { pluginId: "router-editor", actionId: "router-open" });
     eventBus.emit("web-plugin:action-request", {
-      pluginId: "router", actionId: "router-targets",
+      pluginId: "router-editor", actionId: "router-targets",
       values: { name: "filtered", file: "project", method: "cache", when: "turn" },
     });
     const all = views.at(-1)?.items?.length ?? 0;
     assert.ok(all > 0, "the catalogue is listed");
 
     eventBus.emit("web-plugin:action-request", {
-      pluginId: "router", actionId: "router-toggle", values: { model: "primary/main-model" },
+      pluginId: "router-editor", actionId: "router-toggle", values: { model: "primary/main-model" },
     });
     eventBus.emit("web-plugin:action-request", {
-      pluginId: "router", actionId: "router-filter", values: { filter: "main" },
+      pluginId: "router-editor", actionId: "router-filter", values: { filter: "main" },
     });
     const filtered = views.at(-1);
     assert.ok((filtered?.items?.length ?? 0) < all, "the filter narrows the list");

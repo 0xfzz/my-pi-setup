@@ -756,8 +756,15 @@ test("phase 6 placements: WEB_PLUGINS declared with exact slot and page placemen
   // is pinned by every local extension appearing in exactly one list, plus
   // explicit membership of first-party plugins (including web-only `web-core.*`).
   const diskSet = new Set(diskFiles.map(normalizeExtName));
-  const localBridged = WEB_PLUGINS.filter((p) => diskSet.has(normalizeExtName(p.extension)));
-  assert.equal(localBridged.length + Object.keys(WEB_PLUGIN_OPT_OUT).length, diskFiles.length);
+  // Counted per EXTENSION, not per plugin: one extension may declare more than
+  // one plugin (the router is a panel and its editor is a dialog, because a host
+  // keeps one view per plugin id). Counting plugins would double-count it and
+  // report coverage as "too good", which is the failure this assertion exists to
+  // catch — so the dedupe is the assertion, not a workaround for it.
+  const localBridged = new Set(
+    WEB_PLUGINS.map((p) => normalizeExtName(p.extension)).filter((name) => diskSet.has(name)),
+  );
+  assert.equal(localBridged.size + Object.keys(WEB_PLUGIN_OPT_OUT).length, diskFiles.length);
   for (const id of ["cache-stats", "todo", "artifacts", "subagent-checkpoints", "subagent-graph", "bubbly-spinner"]) {
     assert.ok(WEB_PLUGINS.some((plugin) => plugin.id === id), `${id} must be a registered plugin`);
     assert.equal(id in WEB_PLUGIN_OPT_OUT, false, `${id} must not also be opted out`);
@@ -922,4 +929,28 @@ test("phase 3 publisher: publishWebView successfully emits views for phase 3 plu
     channel: WEB_PLUGIN_VIEW_EVENT,
     data: { pluginId: "bubbly-spinner", view: bubblyView },
   });
+});
+
+test("the router is a sidebar panel plus a separate editor dialog", () => {
+  const panel = WEB_PLUGINS.find((plugin) => plugin.id === "router");
+  const editor = WEB_PLUGINS.find((plugin) => plugin.id === "router-editor");
+
+  // A host keeps exactly one view per plugin id, and a panel renders that view.
+  // One plugin for both would mean an editor screen replacing the panel's table
+  // (and the panel going unavailable) every time a route is edited.
+  assert.ok(panel, "the panel plugin is registered");
+  assert.ok(editor, "the editor plugin is registered");
+  assert.notEqual(panel.id, editor.id, "they must not share an id");
+  assert.equal(panel.extension, editor.extension, "both bridge the same pi extension");
+
+  // The surface is what a plugin *is*: a sidebar surface makes it a panel, a
+  // dialog surface makes it a dialog publisher. Neither may claim the other's.
+  assert.deepEqual(panel.surfaces, [{ kind: "sidebar" }]);
+  assert.deepEqual(editor.surfaces, [{ kind: "dialog" }]);
+  assert.equal(panel.ui, undefined, "a panel's home is the sidebar; a slot placement would have nowhere to mount");
+
+  // A visualization offers no edit action: a list row carries no action, and the
+  // editor is the settings pane's publisher, suppressed outside that pane.
+  assert.deepEqual(panel.actions?.map((action) => action.id), ["router-reload"]);
+  assert.ok((editor.actions?.length ?? 0) > 0, "the editor keeps its action ids");
 });
