@@ -6,11 +6,12 @@
 // (plugins → core, core ↛ plugins).
 
 import { homedir, tmpdir } from "node:os";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import type { WebPluginDescriptor } from "../plugin-contracts/descriptor.ts";
 import { createPluginHost, type PluginHost } from "../plugin-contracts/kernel/host.ts";
 import { createPluginUiSink } from "./plugin-ui-sink.ts";
+import { importPluginModule } from "./plugin-module-loader.ts";
 
 const GLOBAL_HOST_KEY = Symbol.for("pi-web:plugin-host:v1");
 
@@ -47,13 +48,16 @@ interface DiscoveredPluginLike {
  * and those imports MUST resolve to the same module instances the host already
  * holds. An isolated loader would give the plugin a second copy of the kernel's
  * state.
+ *
+ * The import goes through `importPluginModule`, which gives the plugin's own
+ * directory a new module generation per load. Without it the URL cache returns
+ * the module a previous load already produced, so a plugin reload would keep
+ * running its old code — and so would every module it imports itself.
  */
 async function loadPluginRuntime(plugin: DiscoveredPluginLike): Promise<object> {
   const entry = plugin.manifest.main?.server;
   if (!entry) return {};
-  const url = pathToFileURL(join(plugin.dir, entry)).href;
-  const mod = (await import(url)) as { default?: object };
-  return mod.default ?? mod;
+  return importPluginModule(join(plugin.dir, entry), plugin.dir);
 }
 
 function globalHosts(): Record<PropertyKey, unknown> {
