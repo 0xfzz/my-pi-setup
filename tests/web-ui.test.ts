@@ -14,6 +14,7 @@ import {
   startWebUi,
   stopWebUi,
   statusWebUi,
+  webRootUrl,
   DEFAULT_WEB_UI_PORT,
   DEFAULT_WEB_UI_URL,
   DEFAULT_PKILL_COMMAND,
@@ -68,6 +69,16 @@ test("decideStart: pure decision matrix", () => {
   assert.deepEqual(decideStart(null, false), {
     action: "start",
   });
+});
+
+test("webRootUrl: strips the endpoint, keeps the origin, and is stable for an origin", () => {
+  assert.equal(webRootUrl("http://127.0.0.1:30142/api/health"), "http://127.0.0.1:30142");
+  assert.equal(webRootUrl("http://127.0.0.1:30142/api/plugins"), "http://127.0.0.1:30142");
+  assert.equal(webRootUrl("http://127.0.0.1:30142"), "http://127.0.0.1:30142");
+  assert.equal(webRootUrl("http://127.0.0.1:30142/"), "http://127.0.0.1:30142");
+  // No endpoint to strip: a reverse proxy that mounts the web under a path keeps it.
+  assert.equal(webRootUrl("https://example.test/pi-web/api/health"), "https://example.test/pi-web");
+  assert.equal(webRootUrl(), DEFAULT_WEB_UI_URL);
 });
 
 test("decideStop: pure decision matrix", () => {
@@ -187,6 +198,23 @@ test("default disk IO: readState, writeState, removeState roundtrip in temporary
     // Read back
     const read = await defaultReadState(statePath);
     assert.deepEqual(read, valid);
+
+    // A state file written by an older build stored the health endpoint as
+    // `url`; reading it yields the origin so status never prints `/api/health`.
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        pid: 2468,
+        port: DEFAULT_WEB_UI_PORT,
+        url: `${DEFAULT_WEB_UI_URL}/api/health`,
+        startedBy: "test-session",
+        startedAt: "2026-11-05T00:00:00.000Z",
+      }),
+      "utf8",
+    );
+    const legacy = await defaultReadState(statePath);
+    assert.ok(legacy && typeof legacy === "object");
+    assert.equal(legacy.url, DEFAULT_WEB_UI_URL);
 
     // Corrupt JSON
     await writeFile(statePath, "{ broken json", "utf8");
@@ -374,6 +402,7 @@ test("/web start: successful start writes state file and reports URL", async () 
     assert.ok(saved && typeof saved === "object");
     assert.equal(saved.pid, 7777);
     assert.equal(saved.port, DEFAULT_WEB_UI_PORT);
+    assert.equal(saved.url, DEFAULT_WEB_UI_URL, "state.url is the origin, never the health endpoint");
     assert.equal(saved.startedBy, "my-session-id");
     assert.ok(saved.startedAt.length > 0);
   } finally {

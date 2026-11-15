@@ -381,7 +381,11 @@ export async function defaultReadState(statePath: string): Promise<WebUiStateSta
       typeof parsed.startedBy === "string" &&
       typeof parsed.startedAt === "string"
     ) {
-      return parsed as WebUiState;
+      const state = parsed as WebUiState;
+      // Older builds wrote the health endpoint into `url`; the field means the
+      // web's origin, so a state file written by them still reports the right
+      // address instead of `…/api/health`.
+      return { ...state, url: webRootUrl(state.url) };
     }
     return "corrupt";
   } catch (error: any) {
@@ -403,6 +407,16 @@ export async function defaultRemoveState(statePath: string): Promise<void> {
   } catch (error: any) {
     if (error?.code !== "ENOENT") throw error;
   }
+}
+
+/**
+ * The web UI's origin, derived from a health endpoint URL: everything from
+ * `/api/` on is the endpoint, not the address a browser or a message should
+ * print. Deriving it from one place keeps `state.url`, the status report and
+ * the deny message from disagreeing about what "the web is serving at" means.
+ */
+export function webRootUrl(healthUrl: string = DEFAULT_HEALTH_ENDPOINT): string {
+  return healthUrl.replace(/\/api\/.*$/, "").replace(/\/+$/, "");
 }
 
 /** Human elapsed time for progress lines: `42s`, then `2m 05s`. */
@@ -459,7 +473,7 @@ function resolveDeps(overrides: Partial<WebUiDeps> = {}): WebUiDeps {
     sleep: overrides.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms))),
     onProgress: overrides.onProgress ?? (() => undefined),
     notifyReloading: overrides.notifyReloading ?? (async (message) => {
-      const rootUrl = (overrides.healthUrl ?? DEFAULT_HEALTH_ENDPOINT).replace(/\/api\/.*$/, "");
+      const rootUrl = webRootUrl(overrides.healthUrl);
       await fetch(`${rootUrl}/api/reload-notice`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -491,7 +505,7 @@ export async function startWebUi(options: Partial<WebUiDeps> = {}): Promise<WebU
   }
 
   if (decision.action === "deny_unmanaged") {
-    const rootUrl = deps.healthUrl.replace(/\/api\/plugins.*$/, "");
+    const rootUrl = webRootUrl(deps.healthUrl);
     return {
       status: "denied",
       message: `pi-web is already serving at ${rootUrl} as an unmanaged instance (no valid state file found; cannot attribute an owner). No new instance was started.`,
@@ -582,7 +596,7 @@ export async function startWebUi(options: Partial<WebUiDeps> = {}): Promise<WebU
     };
   }
 
-  const rootUrl = deps.healthUrl.replace(/\/api\/plugins.*$/, "");
+  const rootUrl = webRootUrl(deps.healthUrl);
   const newState: WebUiState = {
     pid,
     port: DEFAULT_WEB_UI_PORT,
