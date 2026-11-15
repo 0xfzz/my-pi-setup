@@ -1155,7 +1155,6 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     uiCtx = ctx;
     webCtx = ctx;
     announceRouterWeb();
-    publishRouterPanel(ctx);
     sanitizeSessionEntries(ctx);
     if (ctx.cwd) activeCwd = ctx.cwd;
     loadConfig(activeCwd);
@@ -1164,6 +1163,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     syncRoutes();
     scopeRoutes(ctx);
     updateSidebar();
+    publishRouterPanel(ctx);
   });
 
   pi.on("session_tree", (_event, ctx) => { uiCtx = ctx; sanitizeSessionEntries(ctx); restore(ctx); updateSidebar(); });
@@ -1181,7 +1181,12 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
   // A new prompt (or the end of one) is where rotation resumes.
   pi.on("agent_start", () => { runAccount.clear(); runActive = true; });
   pi.on("agent_end", () => { runAccount.clear(); runActive = false; });
-  pi.on("model_select", (_event, ctx) => { uiCtx = ctx; updateSidebar(); });
+  pi.on("model_select", (_event, ctx) => {
+    uiCtx = ctx;
+    webCtx = ctx;
+    updateSidebar();
+    publishRouterPanel(ctx);
+  });
 
   // The request-local stream owns health updates. HTTP/message callbacks can
   // run concurrently and must not attribute a failure via the UI's inFlight slot.
@@ -1486,7 +1491,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
   const currentByRoute = (): Record<string, string> => {
     const current: Record<string, string> = {};
     for (const record of trace) {
-      if (record.chosen) current[record.route] = record.chosen;
+      current[record.route] = record.chosen;
     }
     return current;
   };
@@ -1506,6 +1511,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
       view: context.view,
       warmth: panelWarmth,
       current: currentByRoute(),
+      selectedRoute: ctx.model?.provider === table.provider ? ctx.model.id : null,
     }));
   };
 

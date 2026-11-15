@@ -74,11 +74,17 @@ through the same writer as everything else and never edits a file in place.
 
 **In the web**, two surfaces over the same table:
 
-- **The right sidebar** has a **Router** panel — a read-only visualization of
-  every route: its policy, its chain, which target still holds the prompt
-  cache, and anything wrong with the config. It is reachable from the panels
-  launcher (the "More panels" button) and updates when the table changes. Its
-  one action is **Reload**, for a config edited by hand.
+- **The right sidebar** has a **Router** panel showing only the selected route:
+  a hub on the left fans out through curved connections to model pills on the
+  right. The latest chosen target and its connection turn green, with a moving
+  dot along the selected branch. Each routing decision updates the diagram live
+  without moving its nodes or resetting the viewport. The canvas fills the
+  sidebar; drag to pan, scroll or use the small overlay controls to zoom, and
+  **Fit** restores the whole diagram. Hover a node for its full model reference
+  and cache detail. This is visualization only — no editor, warning list or
+  config-action section. Select a physical model and the panel asks you to
+  select a route instead of displaying an unrelated route. Open it from
+  **More panels → Router**. Animation respects reduced-motion preferences.
 - **The model picker's dialog** has a **Router** page beside **Models** and
   **Provider**, with the same table and the same writer, laid out as four
   screens:

@@ -68,6 +68,53 @@ async function waitForHealth(baseUrl, timeoutMs = 30_000, serverExitCode = () =>
   throw new Error(`server did not become healthy\n${logs.join("")}`);
 }
 
+async function assertRoutingCanvas(page) {
+  await page.getByRole("button", { name: "More panels", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Router", exact: true }).press("ArrowRight");
+  await page.getByRole("menuitem", { name: "Open panel", exact: true }).press("Enter");
+  const panel = page.getByRole("complementary", { name: "Router panel" });
+  await panel.waitFor();
+  assert.equal(await panel.locator(".plugin-graph-children").count(), 0, "router is a canvas, never generic tree rows");
+  assert.equal(await panel.locator(".router-edges path[data-from]").count(), 3);
+  const target = panel.locator('[data-node-id="target:0"]');
+  assert.equal(await target.getAttribute("data-status"), "active");
+  const standby = panel.getByRole("button", { name: "Highlight secondary/deepseek-v4.1-flash", exact: true });
+  await standby.click();
+  assert.equal(await standby.getAttribute("aria-pressed"), "true");
+  assert.equal(await target.getAttribute("data-status"), "active", "highlighting a pill never changes routing");
+  assert.equal(await panel.locator(".router-inspector, .plugin-actions").count(), 0, "the panel is visualization only");
+  const panelBounds = await panel.boundingBox();
+  const canvasBounds = await panel.locator(".router-canvas").boundingBox();
+  assert.ok(canvasBounds.height > panelBounds.height * 0.7, "the diagram owns the sidebar, not a small card");
+  assert.ok(Math.abs(canvasBounds.y + canvasBounds.height - panelBounds.y - panelBounds.height) < 2);
+  const zoom = panel.getByRole("status", { name: "Graph zoom" });
+  const before = await zoom.innerText();
+  await panel.getByRole("button", { name: "Zoom in", exact: true }).click();
+  assert.notEqual(await zoom.innerText(), before);
+  await panel.getByRole("button", { name: "Fit routing graph", exact: true }).click();
+  assert.equal(await zoom.innerText(), before);
+  const stage = panel.getByTestId("routing-stage");
+  const transform = await stage.getAttribute("style");
+  const canvas = await panel.locator(".router-canvas").boundingBox();
+  await page.mouse.move(canvas.x + 12, canvas.y + 12);
+  await page.mouse.down();
+  await page.mouse.move(canvas.x + 42, canvas.y + 32, { steps: 4 });
+  await page.mouse.up();
+  assert.notEqual(await stage.getAttribute("style"), transform, "dragging pans the diagram");
+  await panel.getByRole("button", { name: "Fit routing graph", exact: true }).click();
+  const liveViewport = await stage.getAttribute("style");
+  // Simulate a producer update through the fixture bus; no config action belongs in this visualization.
+  const response = await page.request.post(`${BASE}/api/plugins/action`, { data: {
+    sessionId: "__test_session__", pluginId: "router", actionId: "router-reload",
+  } });
+  assert.equal(response.ok(), true);
+  await panel.locator('[data-node-id="target:1"][data-status="active"]').waitFor();
+  assert.equal(await target.getAttribute("data-status"), "neutral", "live updates move the selected path");
+  assert.equal(await stage.getAttribute("style"), liveViewport, "live updates preserve the viewport");
+  assert.match(await panel.getByRole("status").filter({ hasText: "Current target:" }).innerText(), /secondary\/deepseek/);
+  await panel.getByRole("button", { name: "Close panel", exact: true }).click();
+}
+
 async function selectFixtureSession(page) {
   await page.click('.app-session-item[data-id="__test_session__"]');
   // The composer override only renders once the session's plugin views land.
@@ -281,6 +328,15 @@ async function run() {
     await page.waitForSelector('.app-session-item[data-id="__test_session__"]', {
       timeout: 15_000,
     });
+
+    if (process.env.PI_WEB_E2E_ROUTER_ONLY === "1") {
+      await selectFixtureSession(page);
+      await assertRoutingCanvas(page);
+      assert.deepEqual(pageErrors, [], "routing canvas has no browser errors");
+      passed = true;
+      console.log("[e2e] routing canvas: curved fan, full sidebar, highlight, zoom, pan, live branch update — passed");
+      return;
+    }
 
     step("1b: minimalist shell — search and desktop sidebar toggle");
     await page.getByRole("heading", { name: "What are we working on?" }).waitFor();
@@ -592,6 +648,9 @@ async function run() {
     await page.getByRole("complementary", { name: "Files panel" }).waitFor();
     await page.getByRole("button", { name: "Close panel", exact: true }).click();
     await page.locator(".app-sidebar-toggle").click();
+
+    step("4h: interactive routing canvas and live branch update");
+    await assertRoutingCanvas(page);
 
     step("5: Alt+M shortcut");
     // 5. Instant-action shortcut (before the confirmed action, so the

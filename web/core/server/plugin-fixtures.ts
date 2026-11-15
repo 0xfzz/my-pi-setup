@@ -46,10 +46,30 @@ function fixtureBus(): MinimalEventBus {
     on: () => () => {},
     emit: (channel: string, data: unknown) => {
       if (channel !== WEB_PLUGIN_ACTION_REQUEST_EVENT) return;
-      const request = data as { requestId?: string };
-      recordPluginView(FIXTURE_SESSION_ID, "subagent-graph", monitorFixtureGraph(request?.requestId || "synced"));
+      const request = data as { requestId?: string; pluginId?: string };
+      if (request.pluginId === "router") {
+        recordPluginView(FIXTURE_SESSION_ID, "router", routingFixtureGraph(1));
+      } else {
+        recordPluginView(FIXTURE_SESSION_ID, "subagent-graph", monitorFixtureGraph(request?.requestId || "synced"));
+      }
       releaseInFlightActions(FIXTURE_SESSION_ID);
     },
+  };
+}
+
+/** Routing canvas fixture: reload changes the selected branch through the real view bus. */
+function routingFixtureGraph(selected: number): unknown {
+  return {
+    type: "graph", title: "Routing",
+    nodes: [
+      { id: "route", label: "router/balanced", kind: "parent", status: "done", detail: "**round-robin · on turn**\n\nRoutes requests across the configured model chain." },
+      ...["primary/deepseek-v4.1-flash", "secondary/deepseek-v4.1-flash", "backup/gemini-pro"].map((label, index) => ({
+        id: `target:${index}`, label, kind: "child", status: index === selected ? "active" : "neutral",
+        detail: index === selected ? "Selected by the latest routing decision. Prompt cache warm." : "Standby candidate. No routing change is made when inspecting this node.",
+      })),
+      { id: "issue:0", label: "Rotating every turn may rewrite the prompt cache.", kind: "review", status: "blocked" },
+    ],
+    edges: [0, 1, 2].map(index => ({ from: "route", to: `target:${index}`, label: `${index + 1}` })),
   };
 }
 
@@ -97,6 +117,7 @@ const FIXTURE_VIEWS: readonly FixtureView[] = [
     },
   },
   { pluginId: "subagent-graph", view: monitorFixtureGraph("seeded") },
+  { pluginId: "router", view: routingFixtureGraph(0) },
   // The reference override plugin: proves the composer region renders a plugin
   // view instead of the built-in input.
   { pluginId: "example-override", view: { type: "status", tone: "accent", text: "Composer replaced (fixture)" } },

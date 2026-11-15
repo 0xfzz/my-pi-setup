@@ -1,0 +1,30 @@
+/* Full-sidebar routing fan. Live decisions change the branch, never the layout. */
+.router-panel { --routing-live: #00bf86; --routing-live-text: #fff; }
+:root[data-theme="light"] .router-panel { --routing-live: #00b980; }
+.router-panel-body { display: flex; flex-direction: column; padding: 0; overflow: hidden; min-height: 0; }
+.router-header-tag { color: var(--routing-live); font-size: 9px; letter-spacing: .14em; margin-left: 8px; }
+.router-canvas { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; user-select: none; cursor: grab; background: radial-gradient(ellipse at 20% 40%, color-mix(in srgb, var(--routing-live) 3%, transparent), transparent 60%), var(--bg); }
+.router-canvas:active { cursor: grabbing; }
+.router-canvas-toolbar { position: absolute; z-index: 2; right: 12px; bottom: 32px; display: flex; align-items: center; gap: 4px; border: 1px solid var(--border); border-radius: 8px; padding: 5px; background: var(--bg-raised); box-shadow: 0 3px 10px #00000016; cursor: default; }
+.router-canvas-toolbar button { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 5px; color: var(--fg-dim); background: transparent; cursor: pointer; }
+.router-canvas-toolbar button:hover { color: var(--fg); background: var(--bg-hover); }
+.router-canvas-toolbar output { width: 36px; text-align: center; font-size: 10px; font-family: var(--font-mono); color: var(--fg-dim); }
+.router-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.router-edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.router-edge { fill: none; stroke: var(--fg-faint); stroke-opacity: .35; stroke-width: 1; }
+.router-edge.is-live { stroke: var(--routing-live); stroke-opacity: 1; stroke-width: 2; }
+.router-packet { fill: var(--routing-live); }
+.router-graph-node { position: absolute; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 2px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 26px; background: var(--bg-raised); color: var(--fg); cursor: pointer; text-align: center; }
+.router-graph-node strong { max-width: 100%; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; line-height: 1.5; }
+.router-node-provider { font-size: 9px; color: var(--fg-faint); line-height: 1.3; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.router-node-input { border: 0; border-radius: 20px; background: var(--routing-live); color: var(--routing-live-text); box-shadow: 0 0 0 22px color-mix(in srgb, var(--routing-live) 5%, transparent); }
+.router-node-input strong { font-size: 14px; font-weight: 650; }
+.router-node-input[data-node-id="none"] { background: var(--bg-raised); color: var(--fg-dim); border: 1px solid var(--border); box-shadow: none; }
+.router-node-input .router-node-provider { color: var(--routing-live-text); opacity: .8; font-family: var(--font-mono); }
+.router-graph-node.is-live { border-color: var(--routing-live); background: var(--routing-live); color: var(--routing-live-text); box-shadow: 0 3px 12px color-mix(in srgb, var(--routing-live) 18%, transparent); }
+.router-graph-node.is-live .router-node-provider { color: var(--routing-live-text); opacity: .85; }
+.router-graph-node[aria-pressed="true"] { outline: 1px solid var(--fg-dim); outline-offset: 4px; }
+.router-graph-node:hover { outline: 1px solid var(--routing-live); outline-offset: 4px; }
+.router-graph-node:focus-visible, .router-canvas-toolbar button:focus-visible { outline: 2px solid var(--routing-live); outline-offset: 4px; }
+.router-gesture-hint { position: absolute; bottom: 10px; right: 14px; color: var(--fg-faint); font-size: 10px; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .router-packet { display: none; } }

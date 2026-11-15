@@ -14,13 +14,11 @@ import {
 } from "./contract.ts";
 
 /**
- * The route table as a right-sidebar panel.
+ * The selected route as a full-sidebar routing fan.
  *
- * Panel-only: the host renders the `router` plugin's published view read-only in
- * the side panel, so this is a visualization by construction. There is no `ui`
- * contribution because the panel is its only home — a `sidebar` surface is what
- * makes a plugin a panel, and a slot placement would have nowhere to mount (the
- * shell never mounts the sidebar region as an inline slot).
+ * RouterPanel registers through the host's bespoke panel slot; graph payloads
+ * still pass through the shared view bus, but never render as generic tree rows.
+ * The editor remains separate so inspecting or panning cannot change routing.
  */
 export const routerPlugin: WebPluginDescriptor = {
   id: ROUTER_PLUGIN_ID,
@@ -28,7 +26,7 @@ export const routerPlugin: WebPluginDescriptor = {
   title: "Router",
   icon: "sliders",
   description:
-    "The route table: each virtual model's chain, its routing method and trigger, and which target still holds the prompt cache. Read-only — routes are edited in the shared model dialog.",
+    "Live routing fan for the selected virtual model: curved model branches, a green chosen path, and pan/zoom across the whole sidebar. Routes are edited in the shared model dialog.",
   surfaces: [{ kind: "sidebar" }],
   actions: [
     { id: ROUTER_RELOAD_ACTION, title: "Re-read the router config files" },

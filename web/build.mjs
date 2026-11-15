@@ -60,7 +60,12 @@ execFileSync(
 
 await cp(resolve(client, "index.html"), resolve(dist, "index.html"));
 await cp(resolve(client, "base.css"), resolve(dist, "app.css"));
-await cp(resolve(client, "plugin-system", "plugins.css"), resolve(dist, "plugins.css"));
+// First-party panel styles are composed here, alongside their client registrations.
+const panelStyles = await Promise.all([
+  readFile(resolve(client, "plugin-system", "plugins.css"), "utf8"),
+  readFile(resolve(root, "plugins", "router", "router.css"), "utf8"),
+]);
+await writeFile(resolve(dist, "plugins.css"), panelStyles.join("\n"));
 
 // Flyfish File Viewer's Workers/WASM/fonts are self-hosted beside the client
 // and resolved at /file-viewer/ (the default asset base). Only the renderers

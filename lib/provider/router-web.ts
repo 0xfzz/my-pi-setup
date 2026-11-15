@@ -150,8 +150,8 @@ export type RouterPanelContext = {
   warmth?: Readonly<Record<string, string>>;
   /** The model the route is currently answering from, keyed by route name. */
   current?: Readonly<Record<string, string>>;
-  /** The route the panel visualises. Defaults to the most recently routed one. */
-  selectedRoute?: string;
+  /** Selected route name; null explicitly means a physical model is selected. */
+  selectedRoute?: string | null;
 };
 
 /** The key a panel warmth reading is filed under. */
@@ -159,32 +159,24 @@ export function warmthKey(routeName: string, model: string): string {
   return `${routeName}/${model}`;
 }
 
-/**
- * The sidebar panel: one row per route, its chain and its warmth as the detail.
- *
- * A list view is the whole of it — the host renders a panel's view read-only, so
- * this is a visualization by construction, not an editor with its controls
- * removed. Everything the panel says comes from the same `RouterSettingsView`
- * the TUI popup and the editor render, so the three cannot disagree.
- */
+/** One selected route's live graph; the bespoke web panel owns layout and inspection. */
 export function routerPanelView(context: RouterPanelContext): GraphWebView {
   const { view } = context;
 
   // The panel visualises one route at a time: the one asked for, otherwise the
   // most recently routed one, otherwise the first route in the table.
-  const selectedName = context.selectedRoute
-    ?? (context.current ? Object.keys(context.current).at(-1) : undefined)
-    ?? view.rows[0]?.route.name;
-  const row = view.rows.find((entry) => entry.route.name === selectedName) ?? view.rows[0];
+  const selectedName = context.selectedRoute !== undefined ? context.selectedRoute
+    : (context.current ? Object.keys(context.current).at(-1) : undefined) ?? view.rows[0]?.route.name;
+  const row = view.rows.find((entry) => entry.route.name === selectedName);
 
   if (row === undefined) {
     // No routes yet: a single informational node keeps the graph non-empty.
     const nodes: GraphNode[] = [{
       id: "none",
-      label: "No routes yet",
+      label: context.selectedRoute === null ? "Select a route model" : "No routes yet",
       kind: "parent",
-      status: "neutral",
-      detail: "A route is a virtual model in `/model` that answers from the chain you give it. Open **Models → Router** to create one.",
+      status: view.errors.length ? "failed" : "neutral",
+      detail: [...view.errors, "Choose a router model in **Models** to visualize its decisions. Open **Models → Router** to create one."].join("\n\n"),
     }];
     return { type: "graph", title: "Routing", nodes, edges: [] };
   }
@@ -205,7 +197,7 @@ export function routerPanelView(context: RouterPanelContext): GraphWebView {
       id: nodeId,
       label: describeTarget(target),
       kind: "child",
-      status: isCurrent ? "active" : (panelStatus(row) === "blocked" ? "neutral" : "neutral"),
+      status: isCurrent ? "active" : "neutral",
       detail: context.warmth?.[warmthKey(row.route.name, target.model)] ?? undefined,
     });
     edges.push({ from: "route", to: nodeId, label: `${index + 1}` });
@@ -215,9 +207,9 @@ export function routerPanelView(context: RouterPanelContext): GraphWebView {
     edges.push({ from: "route", to: "empty" });
   }
 
-  // Config errors and shadowed routes become their own nodes attached to the route.
-  for (const issue of row.issues) {
-    const id = `issue:${issue.slice(0, 20)}`;
+  // Preserve diagnostics in the graph payload even when the canvas only shows the model branches.
+  for (const [index, issue] of [...row.issues, ...view.errors].entries()) {
+    const id = `issue:${index}`;
     nodes.push({ id, label: issue, kind: "review", status: "blocked" });
     edges.push({ from: "route", to: id, label: "problem" });
   }

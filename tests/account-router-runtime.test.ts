@@ -995,8 +995,9 @@ test("compaction forgets the cache, because the prefix it described is gone", { 
 
 // ── The router right-sidebar panel ───────────────────────────────────────────
 
-test("the router publishes a panel view listing every route", { timeout: 20000 }, async () => {
-  await withSession(async ({ eventBus }) => {
+test("the router publishes the selected route rather than the first configured route", { timeout: 20000 }, async () => {
+  await withSession(async ({ eventBus, session, registry }) => {
+    await session.setModel(registry.getModel("router", "auto"));
     const views: any[] = [];
     eventBus.on("web-plugin:view", (payload: any) => {
       if (payload?.pluginId === "router") views.push(payload.view);
@@ -1018,7 +1019,8 @@ test("the router publishes a panel view listing every route", { timeout: 20000 }
 });
 
 test("the panel is a read-only visualization: it has no edit action", { timeout: 20000 }, async () => {
-  await withSession(async ({ eventBus }) => {
+  await withSession(async ({ eventBus, session, registry }) => {
+    await session.setModel(registry.getModel("router", "auto"));
     const views: any[] = [];
     eventBus.on("web-plugin:view", (payload: any) => {
       if (payload?.pluginId === "router") views.push(payload.view);
@@ -1031,6 +1033,47 @@ test("the panel is a read-only visualization: it has no edit action", { timeout:
   }, (seen) => ({
     providers: [{ name: "primary", config: fakeProvider("primary", ["main-model"], seen).config }],
     config: { routes: [{ name: "auto", targets: ["primary/main-model"] }] },
+  }));
+});
+
+test("each routed request republishes the newly selected target without a config reload", { timeout: 20000 }, async () => {
+  await withSession(async ({ eventBus, session, registry }) => {
+    const views: any[] = [];
+    eventBus.on("web-plugin:view", (payload: any) => {
+      if (payload?.pluginId === "router") views.push(payload.view);
+    });
+    await session.setModel(registry.getModel("router", "auto"));
+    await session.prompt("first");
+    assert.equal(views.at(-1)?.nodes.find((node: any) => node.status === "active")?.label, "primary/main-model");
+    await session.prompt("second");
+    assert.equal(views.at(-1)?.nodes.find((node: any) => node.status === "active")?.label, "backup/other");
+    assert.equal(views.at(-1)?.nodes.filter((node: any) => node.status === "active").length, 1);
+  }, seen => ({
+    providers: [
+      { name: "primary", config: fakeProvider("primary", ["main-model"], seen).config },
+      { name: "backup", config: fakeProvider("backup", ["other"], seen).config },
+    ],
+    config: { routes: [{ name: "auto", targets: ["primary/main-model", "backup/other"], method: "round-robin", when: "turn" }] },
+  }));
+});
+
+test("switching model selection republishes only that route, and clears the diagram for a physical model", { timeout: 20000 }, async () => {
+  await withSession(async ({ eventBus, session, registry }) => {
+    const views: any[] = [];
+    eventBus.on("web-plugin:view", (payload: any) => {
+      if (payload?.pluginId === "router") views.push(payload.view);
+    });
+    await session.setModel(registry.getModel("router", "second"));
+    assert.equal(views.at(-1)?.nodes[0]?.label, "router/second");
+    assert.equal(views.at(-1)?.nodes.some((node: any) => node.label === "router/first"), false);
+    await session.setModel(registry.getModel("primary", "main-model"));
+    assert.equal(views.at(-1)?.nodes[0]?.label, "Select a route model");
+  }, seen => ({
+    providers: [{ name: "primary", config: fakeProvider("primary", ["main-model"], seen).config }],
+    config: { routes: [
+      { name: "first", targets: ["primary/main-model"] },
+      { name: "second", targets: ["primary/main-model"] },
+    ] },
   }));
 });
 

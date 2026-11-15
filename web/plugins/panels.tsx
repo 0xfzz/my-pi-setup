@@ -9,6 +9,8 @@ import { ArtifactsPanel } from "./artifacts/ArtifactsPanel.tsx";
 import { ARTIFACTS_PLUGIN_ID } from "./artifacts/contract.ts";
 import { FILES_PLUGIN_ID } from "./files/contract.ts";
 import { FilesPanel } from "./files/FilesPanel.tsx";
+import { RouterPanel } from "./router/RouterPanel.tsx";
+import { ROUTER_PLUGIN_ID } from "./router/contract.ts";
 
 function filesPanel({ open, onClose, sessionId, rootLabel }: HostPanelProps) {
   return (
@@ -27,3 +29,4 @@ function artifactsPanel({ open, onClose, view }: HostPanelProps) {
 
 registerPluginPanel(FILES_PLUGIN_ID, filesPanel);
 registerPluginPanel(ARTIFACTS_PLUGIN_ID, artifactsPanel);
+registerPluginPanel(ROUTER_PLUGIN_ID, RouterPanel);
