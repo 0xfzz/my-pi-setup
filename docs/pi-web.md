@@ -697,9 +697,14 @@ descriptors (`web-plugin:commands`) and runs the command when the bridge asks
 for it back by name (`web-plugin:web-command`). A shared module registry cannot
 work here — pi evaluates every extension with `moduleCache: false`, so no two
 extensions share a module instance. The host re-asks on each `ui_sync`, so a
-consumer attaching late still sees the list. One flag is presentation only:
+consumer attaching late still sees the list. Two flags are presentation only.
 `managesModels` contributes a page beside the built-in **Models** picker in
-its shared sidebar dialog. `settingsEntry` supplies the sidebar label and
+its shared sidebar dialog; several commands may claim it (the provider editor
+and the router both do), and the pages are ordered by their label so the nav
+does not reshuffle with the extensions' load order. `addsModels` marks the one
+command that is the picker's **+ Add models** entry — the command that puts a
+model *into* the catalogue — so a second catalogue page cannot take an entry it
+cannot serve. `settingsEntry` supplies the sidebar label and
 `settingsPlugin` explicitly names the plugin publisher whose dialog is embedded
 in the right content pane. The host suppresses that publisher's standalone
 popup while the shared dialog owns it; plugin-specific UI stays in the plugin.

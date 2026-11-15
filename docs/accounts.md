@@ -5,7 +5,7 @@
 Command: **`/router`**. Routes each request to any registered provider/model, and spreads one provider across several accounts. Works for **every** provider Pi knows about — built-in, `models.json`, or extension-owned — with no provider-specific code.
 
 ```text
-/router                    # the route editor (TUI); the status report elsewhere
+/router                    # the route editor (TUI popup, or the web's Router page)
 /router status             # routes, policies and pools as text
 /router accounts [pool]    # per-account health and prompt-cache warmth
 /router why                # why the last requests went where they did
@@ -63,6 +63,38 @@ Config is read from the global `<agent-dir>/account-router.json` and then the pr
 
 Ordering happens before advancing, so a `cheapest` route cannot re-pick the model that just failed for being cheapest. A trigger's quota/overflow condition is judged from the failed request's own error message, which is the only place it is visible. `fastest` is deliberately absent: the extension only wraps pooled requests, so it cannot measure latency for a plain route target, and a method that guessed would be worse than none.
 
+## Editing routes
+
+A route is a model, so it is edited where models are: the same dialog that picks
+one. There are two surfaces over one route table, and neither owns a copy of it.
+
+**In the TUI**, bare `/router` opens a popup — the route list, then one route,
+its chain, method, trigger, and the model picker for adding targets. It writes
+through the same writer as everything else and never edits a file in place.
+
+**In the web**, the model picker's dialog has a **Router** page beside **Models**
+and **Provider**. It is the same table and the same writer, laid out as four
+screens:
+
+| Screen | What it does |
+| --- | --- |
+| Routes | One row per route: its policy, its chain, and anything wrong with it. |
+| Route | Name, method, re-decide trigger, and the chain — click a model to take it out. |
+| Models | The catalogue as a tick list. Ticked models keep their place; a ticked model past the dialog's 200-row cap stays listed. |
+| Delete | The confirmation. A route is a file entry, so it is never removed on one click. |
+
+A new route is created from the same form: **New route** names it (`route-1` and
+on), the file it is written to, its method and trigger, then **Choose models**
+ticks the chain. The name is validated at the field — reserved words like
+`status` and a name already in the table are refused with the reason, on the
+same screen, keeping what was typed.
+
+Two details are deliberate. The editor rewrites a route **where it found it**,
+so editing a global route does not silently create a project override. And the
+file is only chosen while creating: moving a saved route between files is a
+delete plus a save, and offering it as a field would let the editor write the
+new file before removing the old entry.
+
 ## Cache-aware routing
 
 A routing decision does not cost the model's price; it costs
@@ -119,7 +151,8 @@ cache, because the cost is invisible in a request:
 | `method: "round-robin"` + `when: "turn"` | rotates the head every turn; each turn re-writes the prompt cache (≈12× prompt cost) |
 | `method: "cheapest"` + 2 or more targets | a price gap under ~5× costs more in cache re-writes than it saves; consider `method: "cache"` |
 
-**Visibility.** `/router status` prints warmth per target and per account
+**Visibility.** The web editor shows a target's warmth in the model list, from
+the same ledger `/router status` reads. `/router status` prints warmth per target and per account
 (`warm 58k · 2m left · 94% hit`, `cold · last 6m ago`, `no cache` when the
 provider reports none), and `/router why` explains the last 32 decisions,
 including the cache-driven *non*-switch that would otherwise be invisible:
