@@ -530,6 +530,55 @@ conflict is reported in the `plugin_state` frame and shown as a banner.
 `example-override` is the reference plugin: inert until its instant
 "Replace the composer" action runs.
 
+### Owned processes — no leaks, no orphans
+
+A plugin can be deactivated, disabled, reloaded or quarantined at any moment,
+and the host can exit while it is running. A child process it started does not
+disappear with it: it outlives the object that created it and becomes an orphan
+holding a port, a file or a lock. So the kernel is the owner of record, and
+`ctx.resources` is the only supported way to create something that outlives a
+JS object:
+
+```ts
+export default {
+  activate(ctx: PluginContext) {
+    const child = ctx.resources.spawn("node", ["worker.js"]);   // needs the `exec` grant
+    ctx.resources.interval(() => ctx.ui.notify(sessionId, "tick"), 30_000);
+    const controller = ctx.resources.signal();                  // aborted on deactivate
+  },
+} satisfies PluginRuntime;
+```
+
+Everything created here is disposed with the plugin, LIFO, in the same drain as
+`ctx.register`. Disposers may return a promise and are **awaited** under the
+deactivate budget, so `disable` does not resolve while a child is still dying.
+
+Durability comes from three layers:
+
+| Layer | What it guarantees |
+|---|---|
+| Deactivate / reload / activate-failure | that plugin's children are SIGTERMed, then SIGKILLed after a grace; timers cleared |
+| `host.shutdown()` | every remaining child is released, then the pidfile is removed |
+| Boot | children a **dead** predecessor left behind are reaped before any plugin runs |
+
+Ownership is recorded in `<statePath>.children.json` (`web-plugins.json.children.json`
+by default). Reaping never kills on trust: each record carries the child's
+`/proc/<pid>/stat` start token, so a pid the OS recycled for an unrelated
+process fails the match and is skipped, and a record whose owning host is still
+alive is left alone. A pid that is alive but cannot be proven ours is reported
+in `warnings`, not signalled.
+
+Exit is bounded for the same reason. `main()` runs teardown under one deadline
+(`web/core/server/shutdown.ts`, 5 s total, equal share per step), so a hung SSE
+close cannot starve the plugin host of the time it needs to release children;
+the process exits regardless, and a `process.on("exit")` hook makes a
+synchronous last-resort kill for the paths no signal handler sees.
+
+This is a durability contract, not a sandbox: plugin code runs in-process and
+can import `child_process` directly. A child spawned outside `ctx.resources` is
+invisible to the kernel and survives its plugin. Children spawned through
+`ctx.resources` are never `detached` — a detached child is an orphan by design.
+
 ## The working indicator
 
 `ui.working.changed` events stream the frames and message (the bubbly

@@ -325,6 +325,12 @@ descriptor compile → activation with grants → tap → store.
    pi extension handles it (behavior). A declared `confirm` string is
    enforced byte-identically before submission; keybindings are
    descriptor data the client binds.
+7. **Teardown** — the plugin's registrations are disposed LIFO and awaited:
+   hooks, taps, channels, ui entries, services and routes are removed, and
+   every OS resource it created through `ctx.resources` (a child process, a
+   timer, an abort controller) is released with it. A child a dead host left
+   behind is reaped at the next boot from `<statePath>.children.json`. See
+   [pi-web.md](pi-web.md#owned-processes--no-leaks-no-orphans).
 
 ### A session bridge, end to end
 
@@ -444,6 +450,9 @@ Worked examples from this repo:
   are mounted by the client (`AnchorHost`, `ComponentOverrideHost`,
   `panel-policy.ts` (in `web/core/client/plugin-system/`)); a new placement must come with its host, or it is
   dead metadata.
+- A plugin that spawns a child or arms a timer outside `ctx.resources`. The
+  kernel is the owner of record: anything it did not create, it cannot release
+  on deactivate and cannot reap after a crash, so it outlives the plugin.
 
 ## Enforcement
 
