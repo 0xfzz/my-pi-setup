@@ -716,14 +716,23 @@ test("inside one agent run a pool keeps its account so the prompt cache stays wa
 
 // ── Prompt-cache warmth ──────────────────────────────────────────────────────
 
-/** Run one `/router` subcommand and return what it printed. */
-async function routerText(session: any, args: string, cwd: string): Promise<string> {
+/**
+ * Run one `/router` subcommand and return what it printed.
+ *
+ * `registry` is only needed by commands that re-read the config: production
+ * hands the extension a `ModelRegistry` facade, so a reload without one would
+ * fail on the first pool.
+ */
+async function routerText(session: any, args: string, cwd: string, registry?: any): Promise<string> {
   const lines: string[] = [];
   const command = session.extensionRunner.getRegisteredCommands().find((c: any) => c.invocationName === "router");
   const original = console.log;
   console.log = (line: string) => { lines.push(String(line)); };
   try {
-    await command.handler(args, { hasUI: false, cwd } as any);
+    await command.handler(args, {
+      hasUI: false, cwd,
+      ...(registry ? { modelRegistry: new ModelRegistry(registry) } : {}),
+    } as any);
   } finally {
     console.log = original;
   }
@@ -830,5 +839,69 @@ test("a cache route keeps the warm target until a cheaper one repays its cache w
       { name: "secondary", config: fakeProvider("secondary", ["backup-model"], seen, { cost: { input: 1, output: 0 } }).config },
     ],
     config: routes(3),
+  }));
+});
+
+// ── Cache affinity ───────────────────────────────────────────────────────────
+
+const affinityConfig = (ttlMs: number) => ({
+  cache: { ttlMs: { "*": ttlMs } },
+  pools: { ag: { provider: "antigravity", source: "antigravity-accounts", strategy: "round-robin", cacheAffinity: "warm" } },
+  routes: [{ name: "auto", targets: [{ model: "antigravity/gemini-pro", pool: "ag" }] }],
+});
+
+test("cacheAffinity warm keeps one account across prompts and rotates once the TTL lapses", { timeout: 20000 }, async () => {
+  await withSession(async ({ registry, session, dir, seen }) => {
+    const model = registry.getModel(poolProviderId("ag"), "gemini-pro")!;
+    const runner = session._extensionRunner;
+    const prompt = async (text: string) => {
+      await runner.emit({ type: "agent_start" });
+      const message = await registry.completeSimple(model, { messages: [{ role: "user", content: [{ type: "text", text }] }] });
+      await runner.emit({ type: "message_end", message });
+      await runner.emit({ type: "agent_end", messages: [] });
+    };
+    await prompt("a");
+    await prompt("b");
+    const tokens = seen.map((entry) => JSON.parse(entry.key).token);
+    assert.equal(tokens[0], tokens[1], "the account that wrote the cache keeps it across prompts");
+    // A TTL that has already lapsed: the cache no longer holds the account.
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(join(dir, "account-router.json"), JSON.stringify(affinityConfig(1)));
+    await routerText(session, "reload", dir, registry);
+    await prompt("c");
+    const after = seen.map((entry) => JSON.parse(entry.key).token);
+    assert.notEqual(after[2], after[1], "a cold cache rotates the pool again");
+  }, (seen) => ({
+    providers: [{ name: "antigravity", config: fakeProvider("antigravity", ["gemini-pro"], seen, { cache: { promptTokens: 60_000 } }).config }],
+    config: affinityConfig(300_000),
+  }));
+});
+
+test("a quota wall still moves the pool at once, affinity or not, and the new account is then kept", { timeout: 20000 }, async () => {
+  await withSession(async ({ registry, session, seen }) => {
+    const model = registry.getModel(poolProviderId("ag"), "gemini-pro")!;
+    const runner = session._extensionRunner;
+    const prompt = async (text: string) => {
+      await runner.emit({ type: "agent_start" });
+      const message = await registry.completeSimple(model, { messages: [{ role: "user", content: [{ type: "text", text }] }] });
+      await runner.emit({ type: "message_end", message });
+      await runner.emit({ type: "agent_end", messages: [] });
+      return message;
+    };
+    const first = await prompt("a");
+    assert.equal(first.stopReason, "error", "the wall is surfaced, not hidden");
+    await prompt("b");
+    await prompt("c");
+    const tokens = seen.map((entry) => JSON.parse(entry.key).token);
+    assert.deepEqual(tokens, ["tok-one", "tok-two", "tok-two"], "the wall moved the pool; the working account is then kept");
+  }, (seen) => ({
+    providers: [{
+      name: "antigravity",
+      config: fakeProvider("antigravity", ["gemini-pro"], seen, {
+        cache: { promptTokens: 60_000 },
+        failWith: (key: string) => (key.includes("tok-one") ? "429 rate limit exceeded, please wait 5h" : undefined),
+      }).config,
+    }],
+    config: affinityConfig(300_000),
   }));
 });

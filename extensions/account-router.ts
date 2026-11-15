@@ -245,14 +245,21 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
   const acquire = async (
     pool: PoolConfig,
     poolName: string,
-    exclude: readonly string[] = [],
+    options: { modelId: string; exclude?: readonly string[] } = { modelId: "" },
   ): Promise<{ account: AccountConfig; apiKey?: string } | { error: string }> => {
     const accounts = accountsOf(pool);
     if (!accounts.length) {
       return { error: `pool "${poolName}" has no accounts (add accounts or link a login)` };
     }
     const effective: PoolConfig = { ...pool, accounts };
-    const tried = new Set<string>(exclude);
+    const tried = new Set<string>(options.exclude ?? []);
+    // Which accounts still hold this conversation's prefix: the fact that makes
+    // `cacheAffinity` worth its quota cost.
+    const now = Date.now();
+    const ttlMs = ttlFor(cacheConfig, pool.provider);
+    const warm = (accountId: string): boolean => isWarm(warmthFor(ledger, cacheKey(accountId, options.modelId)), {
+      now, ttlMs, minCacheableTokens: cacheConfig.minCacheableTokens,
+    });
     let lastProblem = `pool "${poolName}": no usable account (accounts are cooling down, recovering, or disabled)`;
     while (tried.size < accounts.length) {
       const heldId = runAccount.get(poolName);
@@ -260,7 +267,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
         ? accounts.find((account) => account.id === heldId)
         : undefined;
       const picked = (held && selectAccount({ ...effective, accounts: [held] }, state, { poolName }))
-        || selectAccount(effective, state, { poolName, exclude: [...tried] });
+        || selectAccount(effective, state, { poolName, exclude: [...tried], warm });
       if (!picked) break;
       if (probing.has(`${poolName}/${picked.account.id}`)) {
         tried.add(picked.account.id);
@@ -321,7 +328,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
         const tried = new Set<string>();
         while (true) {
           if (options?.signal?.aborted) throw new Error("Request aborted");
-          const acquired = await acquire(pool, poolName, [...tried]);
+          const acquired = await acquire(pool, poolName, { modelId: model.id, exclude: [...tried] });
           if ("error" in acquired) throw new Error(acquired.error);
           if (options?.signal?.aborted) throw new Error("Request aborted");
           const accountId = acquired.account.id;
@@ -1157,7 +1164,8 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
           return !health.needsProbe && !(maxFailures > 0 && health.failures >= maxFailures);
         }).length;
         const source = pool.source ? `, ${pool.source}` : "";
-        lines.push(`  ${name} → ${pool.provider} (${pool.strategy}, ${usable}/${accounts.length} usable${source})`);
+        const affinity = pool.cacheAffinity ? `, cacheAffinity ${pool.cacheAffinity}` : "";
+        lines.push(`  ${name} → ${pool.provider} (${pool.strategy}, ${usable}/${accounts.length} usable${source}${affinity})`);
         for (const account of accounts) {
           lines.push(`    ${accountLabel(account)}  ${describeAccountCache(pool, account.id, now)}`);
         }
@@ -1418,6 +1426,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
           if (arg) {
             delete state.health[arg];
             delete state.cursor[arg];
+            delete state.served[arg];
           } else {
             state = emptyState();
           }

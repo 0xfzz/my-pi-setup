@@ -32,7 +32,21 @@ export type PoolConfig = {
   cooldownMs?: number;
   /** Stop routing to an account after this many consecutive failures (0 = never). */
   maxConsecutiveFailures?: number;
+  /**
+   * Whether a warm prompt cache keeps the pool on one account.
+   *
+   * A cache is scoped to the account that wrote it, so rotating between prompts
+   * re-writes the whole conversation. Defaults to `warm` for the strategies that
+   * already stick (`sticky`, `priority`) and to `off` for the ones whose point is
+   * spreading (`round-robin`, `least-recently-used`).
+   */
+  cacheAffinity?: CacheAffinity;
+  /** Rotate once after this many consecutive requests on one account, despite warmth. */
+  rotateAfterRequests?: number;
 };
+
+/** `warm`: keep the account that holds the cache; `off`: rotate as configured. */
+export type CacheAffinity = "warm" | "off";
 
 export type RouterConfig = {
   pools: Record<string, PoolConfig>;
@@ -59,6 +73,8 @@ export type RouterState = {
   health: Record<string, Record<string, AccountHealth>>;
   /** Sticky/round-robin cursor per pool. */
   cursor: Record<string, string | undefined>;
+  /** Consecutive requests one account has served, per pool (`rotateAfterRequests`). */
+  served: Record<string, { accountId: string; count: number }>;
 };
 
 export const DEFAULT_COOLDOWN_MS = 60_000;
@@ -66,7 +82,7 @@ export const DEFAULT_MAX_CONSECUTIVE_FAILURES = 3;
 const STRATEGIES: Strategy[] = ["round-robin", "least-recently-used", "priority", "sticky"];
 
 export function emptyState(): RouterState {
-  return { version: 1, health: {}, cursor: {} };
+  return { version: 1, health: {}, cursor: {}, served: {} };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -110,6 +126,14 @@ export function normalizePool(name: string, raw: unknown): PoolConfig | string {
   if (maxFailures !== undefined && (typeof maxFailures !== "number" || !Number.isInteger(maxFailures) || maxFailures < 0)) {
     return `pool "${name}": "maxConsecutiveFailures" must be a non-negative integer`;
   }
+  const affinity = raw.cacheAffinity;
+  if (affinity !== undefined && affinity !== "warm" && affinity !== "off") {
+    return `pool "${name}": "cacheAffinity" must be "warm" or "off"`;
+  }
+  const rotate = raw.rotateAfterRequests;
+  if (rotate !== undefined && (typeof rotate !== "number" || !Number.isInteger(rotate) || rotate < 1)) {
+    return `pool "${name}": "rotateAfterRequests" must be a positive integer`;
+  }
   return {
     provider,
     strategy,
@@ -117,6 +141,8 @@ export function normalizePool(name: string, raw: unknown): PoolConfig | string {
     ...(typeof raw.source === "string" && raw.source.trim() ? { source: raw.source.trim() } : {}),
     ...(cooldownMs !== undefined ? { cooldownMs: cooldownMs as number } : {}),
     ...(maxFailures !== undefined ? { maxConsecutiveFailures: maxFailures as number } : {}),
+    ...(affinity !== undefined ? { cacheAffinity: affinity } : {}),
+    ...(rotate !== undefined ? { rotateAfterRequests: rotate as number } : {}),
   };
 }
 
@@ -185,6 +211,13 @@ export function normalizeState(raw: unknown): RouterState {
       if (typeof account === "string") state.cursor[pool] = account;
     }
   }
+  if (isRecord(raw.served)) {
+    for (const [pool, entry] of Object.entries(raw.served)) {
+      if (!isRecord(entry) || typeof entry.accountId !== "string") continue;
+      const count = typeof entry.count === "number" && Number.isFinite(entry.count) ? entry.count : 0;
+      state.served[pool] = { accountId: entry.accountId, count };
+    }
+  }
   return state;
 }
 
@@ -233,6 +266,21 @@ function usable(pool: PoolConfig, health: AccountHealth, now: number): boolean {
   return true;
 }
 
+/** Effective affinity: an unset pool follows its strategy's intent. */
+export function cacheAffinityOf(pool: PoolConfig): CacheAffinity {
+  if (pool.cacheAffinity) return pool.cacheAffinity;
+  return pool.strategy === "round-robin" || pool.strategy === "least-recently-used" ? "off" : "warm";
+}
+
+/** The account that has served its full rotation, so the next request moves on. */
+export function rotateAfter(pool: PoolConfig, state: RouterState, poolName: string): string | undefined {
+  const limit = pool.rotateAfterRequests;
+  if (!limit) return undefined;
+  const served = state.served[poolName];
+  if (!served || served.count < limit) return undefined;
+  return served.accountId;
+}
+
 /**
  * Choose an account for the next request.
  *
@@ -240,6 +288,11 @@ function usable(pool: PoolConfig, health: AccountHealth, now: number): boolean {
  * have exhausted their failure budget are skipped. Never fall back to a
  * cooling account when the pool is exhausted. Quota-recovery candidates are
  * returned only after cooldown, and must be probed by the caller.
+ *
+ * `warm` marks the accounts that still hold this conversation's prompt cache.
+ * Under `cacheAffinity: "warm"` they are preferred over the strategy's order,
+ * because rotating between prompts re-writes the whole prefix; `rotateAfter`
+ * then bounds how long one account is held.
  *
  * Returns `undefined` when there is nothing to pick: no candidates at all
  * (empty pool, or everything excluded), or candidates exist but none are
@@ -252,7 +305,13 @@ function usable(pool: PoolConfig, health: AccountHealth, now: number): boolean {
 export function selectAccount(
   pool: PoolConfig,
   state: RouterState,
-  options: { now?: number; poolName?: string; exclude?: readonly string[] } = {},
+  options: {
+    now?: number;
+    poolName?: string;
+    exclude?: readonly string[];
+    /** Accounts whose prompt cache is still warm for this conversation. */
+    warm?: (accountId: string) => boolean;
+  } = {},
 ): { account: AccountConfig; exhausted: boolean } | undefined {
   const now = options.now ?? Date.now();
   const name = options.poolName ?? pool.provider;
@@ -295,6 +354,19 @@ export function selectAccount(
       ordered = byCursor(usableSet);
       break;
   }
+  // A warm account is kept across prompts; the rotation cap then forces one
+  // deliberate move so a pool does not starve the accounts it is not using.
+  const warm = options.warm;
+  if (warm && cacheAffinityOf(pool) === "warm") {
+    ordered = [
+      ...ordered.filter((entry) => warm(entry.account.id)),
+      ...ordered.filter((entry) => !warm(entry.account.id)),
+    ];
+  }
+  const capped = rotateAfter(pool, state, name);
+  if (capped && ordered[0]?.account.id === capped) {
+    ordered = [...ordered.slice(1), ordered[0]];
+  }
   return { account: ordered[0].account, exhausted };
 }
 
@@ -309,6 +381,11 @@ export function recordSuccess(state: RouterState, poolName: string, accountId: s
   health.lastUsedAt = now;
   health.lastOkAt = now;
   state.cursor[poolName] = accountId;
+  // Consecutive requests on one account, for `rotateAfterRequests`.
+  const served = state.served[poolName];
+  state.served[poolName] = served?.accountId === accountId
+    ? { accountId, count: served.count + 1 }
+    : { accountId, count: 1 };
 }
 
 /** Record a failed request; cool the account down when it looks like a quota wall. */

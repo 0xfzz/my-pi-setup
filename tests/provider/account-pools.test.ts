@@ -4,9 +4,9 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  accountLabel, agentStatePath, describeHealth, emptyState, healthFor,
+  accountLabel, agentStatePath, cacheAffinityOf, describeHealth, emptyState, healthFor,
   isAuthError, isQuotaError, mergeConfigs, normalizeState, parseRouterConfig, quotaRetryMs, readRouterConfig,
-  readRouterState, recordFailure, recordSuccess, selectAccount, writeRouterState,
+  readRouterState, recordFailure, recordSuccess, rotateAfter, selectAccount, writeRouterState,
   type PoolConfig,
 } from "../../lib/provider/account-pools.ts";
 import { advanceChain, mergeRouteTables, parseModelRef, parseRouteTable, targetPool } from "../../lib/provider/model-routes.ts";
@@ -374,4 +374,67 @@ test("advanceChain skips the failed model but keeps every other candidate", () =
   const route = { name: "r", targets: [{ model: "a/1" }, { model: "a/2" }, { model: "a/3" }] };
   assert.deepEqual(advanceChain(route, "a/2").map((target) => target.model), ["a/3", "a/1"]);
   assert.deepEqual(advanceChain(route, "z/9").map((target) => target.model), ["a/2", "a/3"]);
+});
+
+// ── Cache affinity ───────────────────────────────────────────────────────────
+
+const warmOnly = (ids: string[]) => (id: string) => ids.includes(id);
+
+test("cache affinity follows the strategy unless the pool says otherwise", () => {
+  assert.equal(cacheAffinityOf(pool({ strategy: "round-robin" })), "off", "spreading is the point of round-robin");
+  assert.equal(cacheAffinityOf(pool({ strategy: "least-recently-used" })), "off");
+  assert.equal(cacheAffinityOf(pool({ strategy: "sticky" })), "warm", "sticky already intended to stay");
+  assert.equal(cacheAffinityOf(pool({ strategy: "priority" })), "warm");
+  assert.equal(cacheAffinityOf(pool({ strategy: "round-robin", cacheAffinity: "warm" })), "warm", "an explicit key wins");
+  assert.equal(cacheAffinityOf(pool({ strategy: "priority", cacheAffinity: "off" })), "off");
+});
+
+test("a warm account is kept across prompts when the pool opts in", () => {
+  const state = emptyState();
+  recordSuccess(state, "ag", "b", 1_000);
+  const affinity = pool({ strategy: "round-robin", cacheAffinity: "warm" });
+  // Round-robin would move on to c; the warm account wins instead.
+  assert.equal(selectAccount(affinity, state, { now: 2_000, poolName: "ag", warm: warmOnly(["b"]) })!.account.id, "b");
+  assert.equal(selectAccount(affinity, state, { now: 2_000, poolName: "ag" })!.account.id, "c", "without warmth the cursor rotates");
+  assert.equal(selectAccount(pool({ strategy: "round-robin" }), state, { now: 2_000, poolName: "ag", warm: warmOnly(["b"]) })!.account.id,
+    "c", "affinity off ignores warmth");
+});
+
+test("a cooling warm account is not kept: correctness beats cache", () => {
+  const state = emptyState();
+  recordSuccess(state, "ag", "b", 1_000);
+  recordFailure(state, "ag", "b", "429 rate limit", { now: 2_000, cooldownMs: 60_000 });
+  const picked = selectAccount(pool({ strategy: "round-robin", cacheAffinity: "warm" }), state,
+    { now: 3_000, poolName: "ag", warm: warmOnly(["b"]) });
+  assert.notEqual(picked!.account.id, "b");
+});
+
+test("rotateAfterRequests moves off a warm account exactly when it is due", () => {
+  const state = emptyState();
+  const affinity = pool({ strategy: "priority", cacheAffinity: "warm", rotateAfterRequests: 2 });
+  recordSuccess(state, "ag", "a", 1_000);
+  assert.equal(rotateAfter(affinity, state, "ag"), undefined, "one request is not the cap");
+  recordSuccess(state, "ag", "a", 2_000);
+  assert.equal(rotateAfter(affinity, state, "ag"), "a");
+  // Priority would keep a forever; the cap rotates it out once.
+  assert.equal(selectAccount(affinity, state, { now: 3_000, poolName: "ag", warm: warmOnly(["a"]) })!.account.id, "b");
+});
+
+test("a pool config validates the cache keys instead of silently defaulting", () => {
+  const { errors } = parseRouterConfig({
+    pools: {
+      badAffinity: { provider: "x", cacheAffinity: "sometimes" },
+      badRotate: { provider: "x", rotateAfterRequests: 0 },
+    },
+  });
+  assert.deepEqual(errors.sort(), [
+    'pool "badAffinity": "cacheAffinity" must be "warm" or "off"',
+    'pool "badRotate": "rotateAfterRequests" must be a positive integer',
+  ]);
+});
+
+test("the rotation counter survives a state round-trip and is dropped when malformed", () => {
+  const state = normalizeState({ version: 1, health: {}, cursor: {}, served: { ag: { accountId: "a", count: 3 }, bad: { count: 2 } } });
+  assert.deepEqual(state.served, { ag: { accountId: "a", count: 3 } });
+  assert.deepEqual(emptyState().served, {});
 });
