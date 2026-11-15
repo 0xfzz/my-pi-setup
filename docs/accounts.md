@@ -65,16 +65,23 @@ Ordering happens before advancing, so a `cheapest` route cannot re-pick the mode
 
 ## Editing routes
 
-A route is a model, so it is edited where models are: the same dialog that picks
-one. There are two surfaces over one route table, and neither owns a copy of it.
+A route is a model, so it is edited where models are. There are three
+surfaces over one route table, and none of them owns a copy of it.
 
 **In the TUI**, bare `/router` opens a popup — the route list, then one route,
 its chain, method, trigger, and the model picker for adding targets. It writes
 through the same writer as everything else and never edits a file in place.
 
-**In the web**, the model picker's dialog has a **Router** page beside **Models**
-and **Provider**. It is the same table and the same writer, laid out as four
-screens:
+**In the web**, two surfaces over the same table:
+
+- **The right sidebar** has a **Router** panel — a read-only visualization of
+  every route: its policy, its chain, which target still holds the prompt
+  cache, and anything wrong with the config. It is reachable from the panels
+  launcher (the "More panels" button) and updates when the table changes. Its
+  one action is **Reload**, for a config edited by hand.
+- **The model picker's dialog** has a **Router** page beside **Models** and
+  **Provider**, with the same table and the same writer, laid out as four
+  screens:
 
 | Screen | What it does |
 | --- | --- |
