@@ -13,6 +13,7 @@ import { handleApi } from "./routes.ts";
 import { sendJson } from "./http.ts";
 import { createAuthHttp, type AuthHttp, type AuthHttpOptions } from "./auth.ts";
 import { getPluginHost } from "./plugin-host.ts";
+import { runTeardown, teardownNote } from "./shutdown.ts";
 import { webAuthConfigPath } from "../auth/config.ts";
 import { WebAuthService } from "../auth/service.ts";
 
@@ -215,35 +216,45 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
 /**
  * Exit deliberately, and say so.
  *
- * The kernel's crash-loop guard counts process starts: two inside a minute
- * boots safe mode, where only `core.*` plugins activate and every other
- * plugin's actions answer 404 while its views still render. A restart the
- * operator asked for (a dev reload, a supervisor restart, Ctrl-C) is not a
- * crash, so the plugin host records an orderly shutdown first — without this
- * hook `markCleanShutdown` was never reached and every restart looked like one.
+ * Two things go wrong without this hook:
+ *
+ * - The kernel's crash-loop guard counts process starts: two inside a minute
+ *   boots safe mode, where only `core.*` plugins activate and every other
+ *   plugin's actions answer 404 while its views still render. A restart the
+ *   operator asked for (a dev reload, a supervisor restart, Ctrl-C) is not a
+ *   crash, so the plugin host records an orderly shutdown first.
+ * - Teardown is where a leak becomes an orphan. An unbounded close lets a hung
+ *   SSE client or a plugin that never settles keep the process alive until the
+ *   supervisor SIGKILLs it, and every child the host still tracked survives.
+ *   The budget is what guarantees this process actually reaches `exit`.
+ *
+ * The `exit` hook is the last resort for the paths no signal handler sees — a
+ * `process.exit()` from anywhere else, or an uncaught exception's exit — where
+ * nothing can be awaited and only a synchronous kill is still possible.
  */
-function installShutdownHandlers(handle: WebServerHandle): void {
+function installExitGuards(handle: WebServerHandle): void {
   let stopping = false;
   const stop = (signal: string): void => {
     if (stopping) return;
     stopping = true;
     void (async () => {
-      try {
-        await handle.close();
-      } catch {
-        // A server that is already closing needs no second attempt.
-      }
-      try {
-        await getPluginHost()?.shutdown();
-      } catch {
-        // Never let teardown turn a deliberate exit into a crash exit code.
-      }
-      console.log(`[pi-web-minimal] stopped (${signal})`);
+      const host = getPluginHost();
+      const outcome = await runTeardown([
+        // A server that is already closing needs no second attempt: close() is
+        // the step, and its failure is recorded rather than thrown.
+        { name: "http server", run: () => handle.close() },
+        { name: "plugin host", run: async () => host?.shutdown() },
+      ]);
+      console.log(`[pi-web-minimal] stopped (${signal})${teardownNote(outcome)}`);
       process.exit(0);
     })();
   };
   process.once("SIGTERM", () => stop("SIGTERM"));
   process.once("SIGINT", () => stop("SIGINT"));
+  process.once("exit", () => {
+    // Synchronous on purpose: an exit handler cannot await anything.
+    getPluginHost()?.processes.killAllNow();
+  });
 }
 
 export async function main(): Promise<void> {
@@ -253,7 +264,7 @@ export async function main(): Promise<void> {
   process.title = "pi-web-minimal";
   const auth = defaultAuthService();
   const handle = await startWebServer({ auth });
-  installShutdownHandlers(handle);
+  installExitGuards(handle);
   console.log(`[pi-web-minimal] listening on http://${handle.host}:${handle.port}`);
   const mode = auth.mode();
   if (mode === "enabled") {

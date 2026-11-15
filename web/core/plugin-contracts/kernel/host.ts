@@ -13,6 +13,7 @@ import { HookBus } from "./hooks.ts";
 import { PluginUiRegistry } from "./plugin-ui.ts";
 import { PluginChannelBus } from "./plugin-channels.ts";
 import { PluginRouteRegistry } from "./routes.ts";
+import { createProcessRegistry, reapOrphans, type PluginProcessRegistry } from "./processes.ts";
 import { ServiceRegistry } from "./services.ts";
 import { PluginStorage } from "./storage.ts";
 import { loadStorageSnapshot, saveStorageSnapshot } from "./storage-file.ts";
@@ -31,6 +32,8 @@ export interface PluginHostOptions<D extends DescriptorLike> {
   statePath: string;
   /** Where plugin storage is persisted; defaults to `<statePath>.storage.json`. */
   storagePath?: string;
+  /** Where child-process ownership is recorded; defaults to `<statePath>.children.json`. */
+  pidFile?: string;
   env?: Record<string, string | undefined>;
   /** False when this evaluation is not a server start (see ManagerOptions.countStarts). */
   countStarts?: boolean;
@@ -56,6 +59,11 @@ export interface PluginHost<D extends DescriptorLike> {
   readonly services: ServiceRegistry;
   readonly routes: PluginRouteRegistry;
   readonly storage: PluginStorage;
+  /**
+   * Owner of record for the child processes plugin code starts. The host reaps
+   * what a dead process left behind at boot and releases the rest at shutdown.
+   */
+  readonly processes: PluginProcessRegistry;
   /** Resolves once the manager has booted (activation done or failed for each plugin). */
   readonly ready: Promise<BootReport>;
   /** Non-fatal problems found while loading state or discovering plugins. */
@@ -140,6 +148,17 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
   if (persistedStorage.warning) warnings.push(persistedStorage.warning);
   if (persistedStorage.snapshot) storage.restore(persistedStorage.snapshot);
 
+  // Children outlive the process that started them. The pidfile is how the next
+  // boot learns what a crash left behind; reaping happens before any plugin
+  // runs, so a restarted plugin finds its old child gone instead of fighting it
+  // for a port or a lock.
+  const pidFile = options.pidFile ?? `${options.statePath}.children.json`;
+  const processes = createProcessRegistry({
+    pidFile,
+    onWarning: (message) => warnings.push(message),
+    ...(options.now !== undefined ? { now: options.now } : {}),
+  });
+
   let storageSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   function writeStorageNow(): void {
@@ -173,6 +192,7 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     services,
     routes,
     storage,
+    processes,
     persist: (state: WebPluginsState) => {
       try {
         saveState(options.statePath, state);
@@ -202,6 +222,22 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
   // plugins that started are active — one rule, no state list to keep in sync.
   const served = (id: string): boolean => manager.isActive(id);
 
+  /**
+   * Reap orphans, then boot. Reaping first means a plugin that is about to
+   * start finds the port, lock or file its predecessor's child was holding free.
+   */
+  async function boot(): Promise<BootReport> {
+    const reaped = await reapOrphans(pidFile);
+    if (reaped.warning !== undefined) warnings.push(reaped.warning);
+    if (reaped.reaped.length > 0) {
+      audit.append("lifecycle", "kernel", `reaped ${reaped.reaped.length} orphaned child process(es) from a previous run`);
+    }
+    if (reaped.skipped.length > 0) {
+      warnings.push(`${reaped.skipped.length} recorded child process(es) are alive but not provably ours; left running`);
+    }
+    return manager.start();
+  }
+
   return {
     manager,
     audit,
@@ -213,7 +249,8 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     services,
     routes,
     storage,
-    ready: manager.start(),
+    processes,
+    ready: boot(),
     warnings,
     visible: () => orderedDescriptors.filter((descriptor) => served(descriptor.id)),
     descriptor: (id) => {
@@ -221,9 +258,12 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
       return descriptor !== undefined && served(id) ? descriptor : undefined;
     },
     // A pending storage write is data a plugin already considers saved, so the
-    // debounce is flushed rather than dropped.
+    // debounce is flushed rather than dropped. The process registry is disposed
+    // last: after every plugin has deactivated, anything still owned is a leak
+    // this teardown is the only chance to reclaim.
     shutdown: async () => {
       await manager.shutdown();
+      await processes.dispose();
       writeStorageNow();
     },
   };
