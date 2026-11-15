@@ -19,6 +19,13 @@ export interface ModelRefLike {
 
 export const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
+/** A header action: one extra button beside the dialog's title. */
+export interface DialogHeadAction {
+  label: string;
+  title?: string;
+  onClick: () => void;
+}
+
 /** Shared modal frame: scrim, centered panel, Esc closes, title header. */
 function DialogFrame({
   title,
@@ -26,12 +33,15 @@ function DialogFrame({
   children,
   footer,
   wide,
+  headAction,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
   wide?: boolean;
+  /** A secondary action next to the title (e.g. the model picker's add). */
+  headAction?: DialogHeadAction;
 }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -48,6 +58,16 @@ function DialogFrame({
       <div className={`app-dialog${wide === true ? " app-dialog-wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
         <div className="app-dialog-head">
           <span className="app-dialog-title">{title}</span>
+          {headAction !== undefined ? (
+            <button
+              type="button"
+              className="app-dialog-head-action"
+              title={headAction.title ?? headAction.label}
+              onClick={headAction.onClick}
+            >
+              {headAction.label}
+            </button>
+          ) : null}
         </div>
         <div className="app-dialog-body">{children}</div>
         {footer !== undefined ? <div className="app-dialog-foot">{footer}</div> : null}
@@ -237,6 +257,7 @@ export function ModelPickerDialog({
   onClose,
   busy,
   error,
+  onManageModels,
 }: {
   models: ModelRefLike[];
   /** Every registry model; the "All models" tab, falling back to `models`. */
@@ -246,6 +267,12 @@ export function ModelPickerDialog({
   onClose: () => void;
   busy?: boolean;
   error?: string | null;
+  /**
+   * Present when the session declares a command that manages the model
+   * catalogue: the picker's header offers it, so a missing model is one click
+   * away instead of a different command nobody knows to type.
+   */
+  onManageModels?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
@@ -315,6 +342,15 @@ export function ModelPickerDialog({
     <DialogFrame
       title="Model"
       onClose={onClose}
+      {...(onManageModels !== undefined
+        ? {
+          headAction: {
+            label: "+ Add models",
+            title: "Add a provider or a model to the catalogue",
+            onClick: onManageModels,
+          },
+        }
+        : {})}
       footer={
         <span className="app-dialog-hint">
           {busy === true ? "applying…" : "↑↓ move · enter select · esc close"}

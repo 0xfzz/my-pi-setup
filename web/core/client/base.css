@@ -1457,6 +1457,22 @@ a:focus-visible {
   color: var(--fg-dim);
 }
 
+.app-dialog-head-action {
+  margin-left: auto;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.app-dialog-head-action:hover {
+  border-color: var(--accent);
+}
+
 .app-dialog-actions {
   justify-content: flex-end;
   flex-wrap: wrap;

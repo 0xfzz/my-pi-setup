@@ -293,6 +293,12 @@ export function AppShell() {
     }
   };
 
+  // A command that manages the model catalogue (the provider editor, for
+  // instance) gets the model picker's header entry: pick, or add.
+  const manageModelsCommand = session.sessionCommands?.find(
+    (command) => command.managesModels === true,
+  );
+
   const pickThinking = async (level: string): Promise<void> => {
     const error = await session.setThinking(level);
     if (error === null) {
@@ -700,6 +706,15 @@ export function AppShell() {
           onPick={(provider, id) => {
             void pickModel(provider, id);
           }}
+          {...(manageModelsCommand !== undefined
+            ? {
+              onManageModels: () => {
+                setModelPickerOpen(false);
+                setModelError(null);
+                void session.sendWebCommand(manageModelsCommand.name, "");
+              },
+            }
+            : {})}
           onClose={() => {
             setModelPickerOpen(false);
             setModelError(null);

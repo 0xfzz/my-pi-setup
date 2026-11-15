@@ -24,6 +24,13 @@ export interface WebCommand {
   web?: boolean;
   /** TUI-only: rendered in the interactive transcript, not dispatchable from the web. */
   tuiOnly?: boolean;
+  /**
+   * The command manages the model catalogue, so the model picker offers it as
+   * its "add models" entry. Set by the extension that registers the command
+   * (it arrives on the session's `web_commands` list), never by this policy
+   * table.
+   */
+  managesModels?: boolean;
 }
 
 /** The web's presentation flags per built-in name — policy, not data. */

@@ -47,6 +47,7 @@ import { buildWebTree, type PiTreeNodeLike } from "../lib/web-tree.ts";
 import { findModelRef, uniqueModelRefs, type ModelRef } from "../lib/model-ref.ts";
 import { sseFrameData, takeSseFrames } from "../lib/web-sse.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
+import { registeredWebCommand, registeredWebCommands } from "../web/core/plugin-contracts/web-commands.ts";
 import { defaultIsPidAlive, defaultReadState, defaultServerDir, defaultWebUiStatePath, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiCommandResult, type WebUiDeps } from "../lib/web-ui.ts";
 import { repoRootFromServerDir, sourceWatchRoots, watchSources, type SourceWatcher } from "../lib/web-ui-reload.ts";
 import { WebAuthConfigCache, loadWebAuthConfig, removeWebPassword, webAuthConfigPath, writeWebPassword } from "../web/core/auth/config.ts";
@@ -429,6 +430,15 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       description: command.description,
       web: true,
     })),
+    // Commands another extension contributed (web/core/plugin-contracts/
+    // web-commands.ts): the same channel, with whatever presentation flags
+    // the contributor declared.
+    ...registeredWebCommands().map((command) => ({
+      name: command.name,
+      description: command.description,
+      web: true,
+      ...(command.managesModels === true ? { managesModels: true } : {}),
+    })),
   ];
 
   /**
@@ -681,13 +691,26 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       // The web core's own command channel. Runner-dispatched commands go
       // through pi's own command runner (a fresh, valid command context —
       // session control methods only exist there); direct ones run on the
-      // captured session context.
+      // captured session context. A command another extension registered
+      // (web/core/plugin-contracts/web-commands.ts) is always direct.
+      const args = typeof command.args === "string" ? command.args : "";
+      const contributed = registeredWebCommand(command.name);
+      if (contributed !== undefined) {
+        const registeredCtx = lastCtxForCommands;
+        if (registeredCtx === null) {
+          ctxNotify(`web command ${command.name}: no session context yet`);
+          return;
+        }
+        void Promise.resolve(contributed.handler(args, registeredCtx)).catch((error: unknown) => {
+          ctxNotify(`web command ${command.name} failed: ${String(error)}`);
+        });
+        return;
+      }
       const entry = webCoreCommand(command.name);
       if (entry === undefined) {
         ctxNotify(`unknown web command: ${command.name}`);
         return;
       }
-      const args = typeof command.args === "string" ? command.args : "";
       if (entry.dispatch === "runner") {
         // pi.sendUserMessage returns void (fire-and-forget); its errors
         // surface through the runner's own error reporting.
