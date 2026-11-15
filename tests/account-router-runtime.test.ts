@@ -17,13 +17,20 @@ function fakeProvider(id: string, modelIds: string[], seen: Seen[], options: {
   inputTokens?: number;
   outputTokens?: number;
   /** Catalog price per token; a route's `cheapest` method ranks targets by it. */
-  cost?: { input: number; output: number };
+  cost?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
+  /**
+   * Report a prompt cache of this size: the first request to a (credential,
+   * model) writes it and later ones read it, which is what a warm provider does.
+   */
+  cache?: { promptTokens: number };
 } = {}) {
   const model = (modelId: string) => ({
     id: modelId, name: modelId, provider: id, api: "scripted", baseUrl: "http://127.0.0.1:1",
     reasoning: false, input: ["text"], contextWindow: 100_000, maxTokens: 2_000,
-    cost: { input: options.cost?.input ?? 0, output: options.cost?.output ?? 0, cacheRead: 0, cacheWrite: 0 },
+    cost: { input: options.cost?.input ?? 0, output: options.cost?.output ?? 0, cacheRead: options.cost?.cacheRead ?? 0, cacheWrite: options.cost?.cacheWrite ?? 0 },
   });
+  // Cache state lives with the provider, so a second account starts cold.
+  const written = new Set<string>();
   return {
     models: modelIds.map(model),
     config: {
@@ -36,11 +43,21 @@ function fakeProvider(id: string, modelIds: string[], seen: Seen[], options: {
         seen.push({ key, model: m.id, provider: m.provider, context, options: opts });
         const failure = options.failWith?.(key);
         const stream = createAssistantMessageEventStream();
+        const cacheId = `${key}/${m.id}`;
+        const warm = written.has(cacheId);
+        if (options.cache) written.add(cacheId);
+        const prompt = options.cache?.promptTokens;
+        const usage = prompt === undefined
+          ? { input: options.inputTokens ?? 0, output: options.outputTokens ?? 0, cacheRead: 0, cacheWrite: 0 }
+          : warm
+            ? { input: 0, output: options.outputTokens ?? 0, cacheRead: prompt, cacheWrite: 0 }
+            // A write is the whole prompt stored; `input` counts only the
+            // uncached remainder, so a cold request bills it as a write.
+            : { input: 0, output: options.outputTokens ?? 0, cacheRead: 0, cacheWrite: prompt };
         const message: any = {
           role: "assistant", api: m.api, provider: m.provider, model: m.id,
           timestamp: Date.now(), content: [],
-          usage: { input: options.inputTokens ?? 0, output: options.outputTokens ?? 0, cacheRead: 0, cacheWrite: 0,
-            totalTokens: (options.inputTokens ?? 0) + (options.outputTokens ?? 0) },
+          usage: { ...usage, totalTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite },
           stopReason: failure ? "error" : "stop",
           ...(failure ? { errorMessage: failure } : { content: [{ type: "text", text: `ok:${key}` }] }),
         };
@@ -694,5 +711,90 @@ test("inside one agent run a pool keeps its account so the prompt cache stays wa
       pools: { ag: { provider: "antigravity", source: "antigravity-accounts", strategy: "round-robin" } },
       routes: [{ name: "auto", targets: [{ model: "antigravity/gemini-pro", pool: "ag" }] }],
     },
+  }));
+});
+
+// ── Prompt-cache warmth ──────────────────────────────────────────────────────
+
+/** Run one `/router` subcommand and return what it printed. */
+async function routerText(session: any, args: string, cwd: string): Promise<string> {
+  const lines: string[] = [];
+  const command = session.extensionRunner.getRegisteredCommands().find((c: any) => c.invocationName === "router");
+  const original = console.log;
+  console.log = (line: string) => { lines.push(String(line)); };
+  try {
+    await command.handler(args, { hasUI: false, cwd } as any);
+  } finally {
+    console.log = original;
+  }
+  return lines.join("\n");
+}
+
+test("a request that read the prompt cache shows its target as warm in /router status", { timeout: 20000 }, async () => {
+  await withSession(async ({ registry, session, dir }) => {
+    const virtual = registry.getModel("router", "auto")!;
+    const runner = session._extensionRunner;
+    const messages = [{ role: "user", content: [{ type: "text", text: "hello" }] }];
+    const ask = async () => {
+      const message = await registry.completeSimple(virtual, { messages });
+      await runner.emit({ type: "message_end", message });
+      return message;
+    };
+    await ask();
+    // A write makes the entry exist, so it is warm, but nothing was read yet.
+    assert.match(await routerText(session, "status", dir), /primary\/main-model\s+warm 60k · \d+m left · 0% hit/);
+    const second = await ask();
+    assert.equal(second.usage.cacheRead, 60_000, "the provider served it from cache");
+    assert.match(await routerText(session, "status", dir), /warm 60k · \d+m left · 100% hit/);
+  }, (seen) => ({
+    providers: [{ name: "primary", config: fakeProvider("primary", ["main-model"], seen, { cache: { promptTokens: 60_000 } }).config }],
+    config: { routes: [{ name: "auto", targets: ["primary/main-model"] }] },
+  }));
+});
+
+test("a pooled target reports the account that holds the warm prefix", { timeout: 20000 }, async () => {
+  await withSession(async ({ registry, session, dir }) => {
+    const model = registry.getModel(poolProviderId("ag"), "gemini-pro")!;
+    const runner = session._extensionRunner;
+    const messages = [{ role: "user", content: [{ type: "text", text: "hello" }] }];
+    for (const _ of [1, 2]) {
+      const message = await registry.completeSimple(model, { messages });
+      await runner.emit({ type: "message_end", message });
+    }
+    const status = await routerText(session, "status", dir);
+    // The account is the cache owner, so warmth is reported per account.
+    assert.match(status, /one@x\.com\s+warm 60k/);
+    assert.match(status, /two@x\.com\s+–/, "an account never used has no cache evidence");
+    assert.match(await routerText(session, "accounts ag", dir), /one@x\.com: ok · warm 60k/);
+  }, (seen) => ({
+    providers: [{ name: "antigravity", config: fakeProvider("antigravity", ["gemini-pro"], seen, { cache: { promptTokens: 60_000 } }).config }],
+    config: {
+      pools: { ag: { provider: "antigravity", source: "antigravity-accounts", strategy: "priority" } },
+      routes: [{ name: "auto", targets: [{ model: "antigravity/gemini-pro", pool: "ag" }] }],
+    },
+  }));
+});
+
+test("the ledger rides in the virtual model's state, so a branch switch restores that branch's warmth", { timeout: 20000 }, async () => {
+  await withSession(async ({ registry, session }) => {
+    const virtual = registry.getModel("router", "auto")!;
+    const runner = session._extensionRunner;
+    const messages = [{ role: "user", content: [{ type: "text", text: "hello" }] }];
+    const resolve = async (state?: unknown) =>
+      (await (registry as any).resolveModel(virtual, messages, { reason: "user", thinkingLevel: "off", ...(state ? { state } : {}) }));
+    const message = await registry.completeSimple(virtual, { messages });
+    await runner.emit({ type: "message_end", message });
+    const own = await resolve();
+    assert.ok(own.state?.entries["primary/main-model"], "the ledger is handed to Pi with the route");
+    // A different branch's state is the truth once it is handed back.
+    const other = { version: 1, entries: { "other/model": { lastAt: 5, prefixTokens: 900, readTokens: 0, reportsCache: true, misses: 0 } } };
+    const adopted = await resolve(other);
+    assert.deepEqual(Object.keys(adopted.state.entries), ["other/model"]);
+    // A direct request carries no state; it must not discard what we observed.
+    const afterDirect = await resolve();
+    assert.deepEqual(Object.keys(afterDirect.state.entries), ["other/model"]);
+  }, (seen) => ({
+    providers: [{ name: "primary", config: fakeProvider("primary", ["main-model"], seen, { cache: { promptTokens: 60_000 } }).config }],
+    config: { routes: [{ name: "auto", targets: ["primary/main-model"] }] },
   }));
 });

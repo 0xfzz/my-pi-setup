@@ -49,12 +49,18 @@ import {
   type SourceContext,
 } from "../lib/provider/account-sources.ts";
 import {
+  cacheIdentityOf, cacheKey, DEFAULT_CACHE_CONFIG, describeWarmth, emptyLedger, normalizeLedger,
+  observe, prefixUnchanged, readCacheConfig, ttlFor, warmthFor, withWarmth,
+  type CacheConfig, type CacheLedger, type Warmth,
+} from "../lib/provider/cache-routing.ts";
+import { fingerprint, type Fingerprint } from "../lib/payload-fingerprint.ts";
+import {
   deprioritizeCooling, describeRoutePolicy, findRoute, mergeRouteTables, orderTargets, parseModelRef, readRouteTable,
   routeDecision, routeMethod, routeTargets, targetCooldownMs, targetPool,
   type RouteConfig, type RouteFailureClass, type RouteTable, type RouteTarget,
 } from "../lib/provider/model-routes.ts";
 import {
-  classifyFailure, mergeTargets, routerModelChoices, routerRows,
+  classifyFailure, describeTarget, mergeTargets, routerModelChoices, routerRows,
   type RouterAction, type RouterDraft, type RouterPopupResult, type RouterSettingsView,
 } from "../lib/provider/router-settings.ts";
 import {
@@ -140,11 +146,26 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
   let lastError: string | undefined;
   /** Shadow provider id → pool name. */
   let shadows = new Map<string, string>();
-  /** Account used for the in-flight request, so health lands on the right one. */
-  let inFlight: { pool: string; accountId: string } | undefined;
+  /** Account used for the in-flight request, so health and cache land on the right one. */
+  let inFlight: { pool: string; accountId: string; modelId: string } | undefined;
   let uiCtx: ExtensionContext | undefined;
   /** Only one recovery probe per pool/account at a time. */
   const probing = new Set<string>();
+  /** Prompt-cache policy: horizon, TTL priors and the price ratios to fall back on. */
+  let cacheConfig: CacheConfig = DEFAULT_CACHE_CONFIG;
+  /**
+   * Which (account, model) wrote this conversation's prefix, and how recently.
+   *
+   * Per conversation, not per process: a branch is a prefix. It rides in the
+   * virtual model's own `state` channel, which Pi stores on the branch, so a
+   * resumed session is warm-aware without a second store.
+   */
+  let ledger: CacheLedger = emptyLedger();
+  /** The ledger object last handed to Pi, so a branch switch is detectable. */
+  let handedOut: CacheLedger | undefined;
+  /** The request being compared: its prefix, and the one before it. */
+  let lastFingerprint: Fingerprint | undefined;
+  let previousFingerprint: Fingerprint | undefined;
 
   const statePath = agentStatePath(agentDir);
 
@@ -164,10 +185,16 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
       readRouteTable(globalPath, DEFAULT_ROUTER_PROVIDER).table,
       readRouteTable(projectPath, DEFAULT_ROUTER_PROVIDER).table,
     );
+    // `cache` is a whole document, not a per-name map: the project file wins
+    // only when it declares one.
+    const cache = readCacheConfig(projectPath);
+    const globalCache = readCacheConfig(globalPath);
+    cacheConfig = cache.errors.length ? globalCache.config : cache.config;
     configErrors = [
       ...global.errors, ...project.errors,
       ...readRouteTable(globalPath, DEFAULT_ROUTER_PROVIDER).errors,
       ...readRouteTable(projectPath, DEFAULT_ROUTER_PROVIDER).errors,
+      ...globalCache.errors, ...cache.errors,
     ];
     lastError = configErrors[0] ?? lastError;
   };
@@ -182,6 +209,12 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
       found = true;
     }
     state = found ? restored : readRouterState(statePath);
+    // The ledger follows the branch through the virtual model's state, not this
+    // entry: forget ours so the next route() adopts whatever the branch holds.
+    ledger = emptyLedger();
+    handedOut = undefined;
+    lastFingerprint = undefined;
+    previousFingerprint = undefined;
   };
 
   const persist = (ctx: ExtensionContext): void => {
@@ -302,7 +335,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
           const needsProbe = healthFor(state, poolName, accountId).needsProbe === true;
           if (needsProbe) probing.add(probeKey);
           let recovering = needsProbe;
-          inFlight = { pool: poolName, accountId };
+          inFlight = { pool: poolName, accountId, modelId: model.id };
           updateSidebar();
           try {
             // Use the selected member's implementation, not a sibling's endpoint/auth.
@@ -373,7 +406,9 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
             tried.add(accountId);
           } finally {
             probing.delete(probeKey);
-            inFlight = undefined;
+            // `inFlight` stays set until the finished message is observed: the
+            // account that answered is the cache owner, and only the message
+            // knows the request ended. `turn_start` clears a stale one.
             updateSidebar();
           }
         }
@@ -811,6 +846,80 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
     return { error: problems[0] ?? `route "${route.name}" has no usable target` };
   };
 
+  // ── Prompt-cache ledger ────────────────────────────────────────────────────
+
+  /**
+   * Take the ledger the branch carries, unless it is the one we just handed out.
+   *
+   * Within a session Pi returns the same object, so our newer observations win;
+   * after a branch switch or a reload it is a different object, and that branch
+   * is the truth.
+   */
+  const adoptBranchLedger = (raw: unknown): void => {
+    // Undefined is "no state on this branch yet" *and* what a `direct` request
+    // carries; neither may discard what this conversation already observed.
+    if (raw === undefined || raw === handedOut) return;
+    ledger = normalizeLedger(raw);
+    lastFingerprint = undefined;
+    previousFingerprint = undefined;
+  };
+
+  /** Remember a request's prefix so the next one can be compared with it. */
+  const rememberPayload = (payload: unknown): void => {
+    previousFingerprint = lastFingerprint;
+    lastFingerprint = fingerprint(payload);
+  };
+
+  /** Fold one finished message into the ledger. Errors and aborts say nothing. */
+  const observeMessage = (message: unknown, now: number): void => {
+    const typed = message as Parameters<typeof cacheIdentityOf>[0];
+    // A pooled request reports the pool's provider, not the account: the
+    // account that answered is the cache owner, and only the stream knows it.
+    const pooled = inFlight && inFlight.modelId === typed?.model ? cacheKey(inFlight.accountId, typed.model!) : undefined;
+    inFlight = undefined;
+    const key = pooled ?? cacheIdentityOf(typed);
+    if (!key) return;
+    const next = observe(warmthFor(ledger, key), {
+      at: now,
+      usage: typed?.usage,
+      prefixUnchanged: prefixUnchanged(previousFingerprint, lastFingerprint),
+    });
+    if (next) ledger = withWarmth(ledger, key, next);
+  };
+
+  /** Cache keys a target can be warm on: one per account for a pooled target. */
+  const cacheKeysOf = (route: RouteConfig, target: RouteTarget): string[] => {
+    const parsed = parseModelRef(target.model);
+    if (!parsed) return [];
+    const poolName = targetPool(route, target);
+    if (!poolName) return [cacheKey(parsed.provider, parsed.modelId)];
+    const pool = config.pools[poolName];
+    if (!pool) return [];
+    return accountsOf(pool).map((account) => cacheKey(account.id, parsed.modelId));
+  };
+
+  /** The most recently used entry among a target's keys, so status shows the live one. */
+  const bestWarmth = (keys: readonly string[]): Warmth | undefined =>
+    keys
+      .map((key) => warmthFor(ledger, key))
+      .filter((entry): entry is Warmth => entry !== undefined)
+      .sort((a, b) => b.lastAt - a.lastAt)[0];
+
+  /** How warm a target is, as `/router status` prints it. */
+  const describeTargetCache = (route: RouteConfig, target: RouteTarget, now: number): string => {
+    const warmth = bestWarmth(cacheKeysOf(route, target));
+    const parsed = parseModelRef(target.model);
+    const ttlMs = ttlFor(cacheConfig, parsed?.provider ?? "");
+    return describeWarmth(warmth, { now, ttlMs, minCacheableTokens: cacheConfig.minCacheableTokens });
+  };
+
+  /** How warm one account is on a pool's models, as `/router accounts` prints it. */
+  const describeAccountCache = (pool: PoolConfig, accountId: string, now: number): string => {
+    const keys = Object.keys(ledger.entries).filter((key) => key.startsWith(`${accountId}/`));
+    const ttlMs = ttlFor(cacheConfig, pool.provider);
+    return describeWarmth(bestWarmth(keys), { now, ttlMs, minCacheableTokens: cacheConfig.minCacheableTokens });
+  };
+
   // ── Virtual models ─────────────────────────────────────────────────────────
 
   /** Route names this extension has registered, so a removal can be undone. */
@@ -826,6 +935,7 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
         ...(route.description ? { description: route.description } : {}),
         thinkingLevels: ["off", "low", "medium", "high"],
         route(request, ctx) {
+          adoptBranchLedger(request.state);
           const previous = request.previous
             ? { provider: request.previous.model.provider, modelId: request.previous.model.id }
             : undefined;
@@ -842,9 +952,13 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
             lastError = picked.error;
             throw new Error(picked.error);
           }
+          // Hand the ledger back so Pi stores it on this branch. The object is
+          // only replaced when it changed, so an unchanged ledger costs no entry.
+          handedOut = ledger;
           return {
             model: picked.model,
             thinkingLevel: ((picked.thinking ?? request.thinkingLevel) as never),
+            state: ledger,
           };
         },
       });
@@ -960,6 +1074,13 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
   pi.on("message_end", (event) => {
     const msg = event.message as any;
     if (msg?.usage) ensureUsageCost(msg.usage);
+    observeMessage(msg, Date.now());
+  });
+
+  // The prefix comparison needs the request body, which only this event carries.
+  pi.on("before_provider_request", (event) => {
+    rememberPayload(event.payload);
+    return undefined;
   });
 
   pi.on("session_shutdown", () => { persistState(); uiCtx = undefined; });
@@ -988,19 +1109,19 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
       ].join("\n");
     }
     const lines: string[] = [];
+    const now = Date.now();
     if (table.routes.length) {
       lines.push(`Routes (virtual provider "${table.provider}"):`);
       for (const route of table.routes) {
-        const chain = route.targets
-          .map((target) => {
-            const poolName = targetPool(route, target);
-            const thinking = target.thinking ? `:${target.thinking}` : "";
-            return `${target.model}${thinking}${poolName ? ` [${poolName}]` : ""}`;
-          })
-          .join(" → ");
         const cursor = routeMethod(route) === "round-robin" ? ` (cursor ${state.cursor[routeCursorKey(route.name)] ?? "start"})` : "";
         lines.push(`  ${table.provider}/${route.name}: ${describeRoutePolicy(route)}${cursor}`);
-        lines.push(`    ${chain}`);
+        // One target per line, so the cache column has somewhere to sit: which
+        // target still holds this conversation's prefix is the routing fact.
+        const labels = route.targets.map(describeTarget);
+        const width = Math.max(...labels.map((label) => label.length));
+        for (const [index, target] of route.targets.entries()) {
+          lines.push(`    ${labels[index]!.padEnd(width)}  ${describeTargetCache(route, target, now)}`);
+        }
       }
     }
     const poolNames = Object.keys(config.pools);
@@ -1009,7 +1130,6 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
       for (const name of poolNames) {
         const pool = config.pools[name];
         const accounts = accountsOf(pool);
-        const now = Date.now();
         const maxFailures = pool.maxConsecutiveFailures ?? 3;
         const usable = accounts.filter((account) => {
           const health = healthFor(state, name, account.id);
@@ -1018,6 +1138,9 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
         }).length;
         const source = pool.source ? `, ${pool.source}` : "";
         lines.push(`  ${name} → ${pool.provider} (${pool.strategy}, ${usable}/${accounts.length} usable${source})`);
+        for (const account of accounts) {
+          lines.push(`    ${accountLabel(account)}  ${describeAccountCache(pool, account.id, now)}`);
+        }
       }
     }
     if (configErrors.length) lines.push(`Config warnings:\n${configErrors.map((line) => `  ${line}`).join("\n")}`);
@@ -1033,10 +1156,11 @@ export default async function accountRouterExtension(pi: ExtensionAPI): Promise<
       const pool = config.pools[name];
       if (!pool) { lines.push(`Unknown pool "${name}". Known: ${Object.keys(config.pools).join(", ") || "(none)"}`); continue; }
       const accounts = accountsOf(pool);
+      const now = Date.now();
       lines.push(`Pool ${name} → ${pool.provider} (${pool.strategy}, cursor ${state.cursor[name] ?? "none"})`);
       if (!accounts.length) lines.push("  (no accounts)");
       for (const account of accounts) {
-        lines.push(`  ${accountLabel(account)}: ${describeHealth(healthFor(state, name, account.id))}`);
+        lines.push(`  ${accountLabel(account)}: ${describeHealth(healthFor(state, name, account.id))} · ${describeAccountCache(pool, account.id, now)}`);
       }
     }
     return lines.join("\n");
