@@ -29,9 +29,9 @@ import {
 } from "../../web/plugins/router/contract.ts";
 import type { RouteConfig } from "../../lib/provider/model-routes.ts";
 import {
-  draftFromRow, draftRoute, draftWithValues, newDraft, pickerChoices, routerWebStart, routerWebStep,
-  routerWebView, saveProblem, toggleTarget, withoutTarget,
-  type RouterWebContext, type RouterWebDraft, type RouterWebScreen,
+  draftFromRow, draftRoute, draftWithValues, newDraft, pickerChoices, routerPanelView, routerWebStart,
+  routerWebStep, routerWebView, saveProblem, toggleTarget, warmthKey, withoutTarget,
+  type RouterPanelContext, type RouterWebContext, type RouterWebDraft, type RouterWebScreen,
 } from "../../lib/provider/router-web.ts";
 import { routerRows, type RouterSettingsView } from "../../lib/provider/router-settings.ts";
 
@@ -449,4 +449,111 @@ test("a large catalogue still produces a valid view", async () => {
   const draft = { ...draftFromRow(CONTEXT.view.rows[0]!), targets: [{ model: models[0]! }, { model: models.at(-1)! }] };
   const result = validateView(routerWebView({ kind: "targets", draft }, { ...CONTEXT, models }));
   assert.equal(result.ok, true, result.ok ? "" : result.error);
+});
+
+// ── the right sidebar panel ─────────────────────────────────────────────────
+
+test("the panel lists one row per route, healthy or blocked", () => {
+  const context: RouterPanelContext = { view: viewWith(ROUTE, ROUTE_2) };
+  const view = routerPanelView(context);
+  assert.equal(view.type, "list");
+  assert.equal(view.title, "Routes");
+  assert.deepEqual(view.items.map((item) => (typeof item === "string" ? item : [item.text, item.status])), [
+    ["router/auto", "done"],
+    ["router/cheap", "done"],
+  ]);
+});
+
+test("a route with a config problem is blocked, not silently healthy", () => {
+  const context: RouterPanelContext = {
+    view: viewWith({ ...ROUTE, targets: [{ model: "a/b", pool: "gone" }] }),
+  };
+  const item = routerPanelView(context).items[0];
+  assert.equal(typeof item === "object" && item.status, "blocked");
+  assert.match(typeof item === "object" ? item.detail ?? "" : "", /unknown pool "gone"/);
+});
+
+test("a route's detail carries its policy, its chain and each target's warmth", () => {
+  const context: RouterPanelContext = {
+    view: viewWith(ROUTE),
+    warmth: {
+      [warmthKey("auto", "primary/main-model")]: "warm 58k · 3m left · 94% hit",
+      [warmthKey("auto", "backup/other")]: "cold · last 6m ago",
+    },
+  };
+  const item = routerPanelView(context).items[0];
+  const detail = typeof item === "object" ? item.detail ?? "" : "";
+  assert.match(detail, /\*\*cache · on quota\*\*/);
+  assert.match(detail, /- `primary\/main-model` · warm 58k · 3m left · 94% hit/);
+  assert.match(detail, /- `backup\/other:low` · cold · last 6m ago/);
+  assert.match(detail, /_project config_/);
+});
+
+test("warmth is filed per route, so two routes over one model stay distinct", () => {
+  const context: RouterPanelContext = {
+    view: viewWith(ROUTE, { ...ROUTE_2, targets: [{ model: "primary/main-model" }] }),
+    warmth: { [warmthKey("auto", "primary/main-model")]: "warm 58k" },
+  };
+  const items = routerPanelView(context).items;
+  assert.match(typeof items[0] === "object" ? items[0].detail ?? "" : "", /warm 58k/);
+  assert.doesNotMatch(
+    typeof items[1] === "object" ? items[1].detail ?? "" : "",
+    /warm 58k/,
+    "the other route reaches that model through different auth, so it is not warm",
+  );
+});
+
+test("a route with no targets says so instead of showing an empty list", () => {
+  const context: RouterPanelContext = { view: viewWith({ name: "draft", targets: [] }) };
+  const item = routerPanelView(context).items[0];
+  assert.match(typeof item === "object" ? item.detail ?? "" : "", /_no targets yet_/);
+});
+
+test("a hidden global route is listed as hidden, not dropped", () => {
+  const view = viewWith(ROUTE);
+  const context: RouterPanelContext = {
+    view: { ...view, shadowed: routerRows([{ route: ROUTE_2, source: "global" }], "router", []) },
+  };
+  const item = routerPanelView(context).items.at(-1);
+  assert.equal(typeof item === "object" ? item.text : "", "router/cheap (hidden)");
+  assert.match(typeof item === "object" ? item.detail ?? "" : "", /A project route with this name wins/);
+  assert.match(typeof item === "object" ? item.detail ?? "" : "", /_global config_/);
+});
+
+test("a config error is a failed row with the message as its detail", () => {
+  const context: RouterPanelContext = { view: { ...viewWith(ROUTE), errors: ['"pools" must be a JSON object'] } };
+  const item = routerPanelView(context).items.at(-1);
+  assert.equal(typeof item === "object" ? item.text : "", "Config error");
+  assert.equal(typeof item === "object" && item.status, "failed");
+  assert.match(typeof item === "object" ? item.detail ?? "" : "", /must be a JSON object/);
+});
+
+test("an empty table explains what a route is rather than showing nothing", () => {
+  const item = routerPanelView({ view: viewWith() }).items[0];
+  assert.equal(typeof item === "object" ? item.text : "", "No routes yet");
+  assert.match(typeof item === "object" ? item.detail ?? "" : "", /Models → Router/);
+});
+
+test("a table past the view cap reports what it omitted", () => {
+  const routes = Array.from({ length: VIEW_MAX_ROWS + 3 }, (_, index) => ({
+    name: `r${index}`,
+    targets: [{ model: "a/b" }],
+  }));
+  const view = routerPanelView({ view: viewWith(...routes) });
+  assert.equal(view.items.length, VIEW_MAX_ROWS);
+  assert.equal(view.omitted, 3);
+});
+
+test("the panel view passes the host's own validation", async () => {
+  const { validateView } = await import("../../web/core/plugin-contracts/view.ts");
+  const screens: RouterPanelContext[] = [
+    { view: viewWith(ROUTE, ROUTE_2) },
+    { view: viewWith() },
+    { view: { ...viewWith(ROUTE), errors: ["broken"] } },
+    { view: viewWith(ROUTE), warmth: { [warmthKey("auto", "primary/main-model")]: "warm 58k" } },
+  ];
+  for (const context of screens) {
+    const result = validateView(routerPanelView(context));
+    assert.equal(result.ok, true, result.ok ? "" : result.error);
+  }
 });

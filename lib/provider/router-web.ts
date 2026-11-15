@@ -20,7 +20,9 @@
  * `/router reload` and the TUI editor use. Nothing here reads the clock, the
  * disk or pi.
  */
-import type { DialogAction, DialogField, DialogItem, DialogWebView } from "../../web/core/plugin-contracts/view.ts";
+import type {
+  DialogAction, DialogField, DialogItem, DialogWebView, ListItem, ListStatus, ListWebView,
+} from "../../web/core/plugin-contracts/view.ts";
 import { VIEW_MAX_ROWS } from "../../web/core/plugin-contracts/view.ts";
 import {
   ROUTER_BACK_ACTION,
@@ -132,6 +134,88 @@ export function newDraft(view: RouterSettingsView, file: RouterFileChoice): Rout
 /** The editor's first screen. */
 export function routerWebStart(): RouterWebScreen {
   return { kind: "list" };
+}
+
+// ── the right sidebar panel ─────────────────────────────────────────────────
+
+/**
+ * What the sidebar panel reads: the table, and how warm each target is.
+ *
+ * Warmth is keyed by `warmthKey(route, model)` rather than by model, because a
+ * cache entry belongs to the account that wrote it: the same model reached
+ * through two routes with different pools is two different entries.
+ */
+export type RouterPanelContext = {
+  view: RouterSettingsView;
+  warmth?: Readonly<Record<string, string>>;
+};
+
+/** The key a panel warmth reading is filed under. */
+export function warmthKey(routeName: string, model: string): string {
+  return `${routeName}/${model}`;
+}
+
+/**
+ * The sidebar panel: one row per route, its chain and its warmth as the detail.
+ *
+ * A list view is the whole of it — the host renders a panel's view read-only, so
+ * this is a visualization by construction, not an editor with its controls
+ * removed. Everything the panel says comes from the same `RouterSettingsView`
+ * the TUI popup and the editor render, so the three cannot disagree.
+ */
+export function routerPanelView(context: RouterPanelContext): ListWebView {
+  const { view } = context;
+  const items: ListItem[] = view.rows.map((row) => ({
+    text: row.id,
+    status: panelStatus(row),
+    detail: panelDetail(row, context),
+  }));
+  for (const row of view.shadowed) {
+    items.push({
+      text: `${row.id} (hidden)`,
+      status: "neutral",
+      detail: `A project route with this name wins over the global one.\n\n${panelDetail(row, context)}`,
+    });
+  }
+  for (const error of view.errors) {
+    items.push({ text: "Config error", status: "failed", detail: error });
+  }
+  if (items.length === 0) {
+    items.push({
+      text: "No routes yet",
+      status: "neutral",
+      detail: "A route is a virtual model in `/model` that answers from the chain you give it. Open **Models → Router** to create one.",
+    });
+  }
+  const shown = items.slice(0, VIEW_MAX_ROWS);
+  return {
+    type: "list",
+    title: "Routes",
+    items: shown,
+    ...(shown.length < items.length ? { omitted: items.length - shown.length } : {}),
+  };
+}
+
+/**
+ * A route's icon: blocked when the config has something wrong with it, done
+ * when it does not. A healthy route is not "active" — nothing is running.
+ */
+function panelStatus(row: RouterRow): ListStatus {
+  return row.issues.length > 0 ? "blocked" : "done";
+}
+
+/** One route's detail: its policy, its chain with warmth, and anything wrong. */
+function panelDetail(row: RouterRow, context: RouterPanelContext): string {
+  const blocks: string[] = [`**${row.policy}**`];
+  const chain = row.route.targets.map((target) => {
+    const warmth = context.warmth?.[warmthKey(row.route.name, target.model)];
+    const suffix = warmth === undefined ? "" : ` · ${warmth}`;
+    return `- \`${describeTarget(target)}\`${suffix}`;
+  });
+  blocks.push(chain.length > 0 ? chain.join("\n") : "_no targets yet_");
+  if (row.issues.length > 0) blocks.push(row.issues.map((issue) => `- ${issue}`).join("\n"));
+  blocks.push(`_${row.source === "global" ? "global" : "project"} config_`);
+  return blocks.join("\n\n");
 }
 
 // ── the view ────────────────────────────────────────────────────────────────

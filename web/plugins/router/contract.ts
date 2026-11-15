@@ -1,19 +1,36 @@
 /**
- * The router bridge contract: the plugin id, the web command name and the
+ * The router bridge contract: the plugin ids, the web command name and the
  * action ids that the `account-router` pi extension and this web descriptor
  * share.
  *
  *   - extensions/account-router.ts imports these to register the web command,
- *     publish the editor's screen and apply an answer,
- *   - web/plugins/router/descriptor.ts imports these to declare the plugin and
- *     its actions, which is what lets the server relay them at all,
- *   - lib/provider/router-web.ts imports these to build the screens, because
- *     the screen and the action that leaves it must agree on one id.
+ *     publish the panel's view and the editor's screen, and apply an answer,
+ *   - web/plugins/router/descriptor.ts imports these to declare the plugins and
+ *     their actions, which is what lets the server relay them at all,
+ *   - lib/provider/router-web.ts imports these to build the views, because the
+ *     view and the action that leaves it must agree on one id.
  *
  * Neither side imports the other: this file is the whole seam.
  */
 
+/**
+ * The panel plugin: the right sidebar's route visualization.
+ *
+ * A host keeps exactly one view per plugin id, and the panel renders that view.
+ * The editor is therefore its own plugin (`ROUTER_EDITOR_PLUGIN_ID`) rather than
+ * a second view here — otherwise publishing an editor screen would replace the
+ * panel's table and the panel would go unavailable mid-edit.
+ */
 export const ROUTER_PLUGIN_ID = "router";
+
+/**
+ * The editor plugin: the dialog screens, embedded in the shared settings pane.
+ *
+ * Dialog-only, and named by the announced command's `settingsPlugin`, which is
+ * what makes the host render it in the model-settings pane instead of as a
+ * floating modal.
+ */
+export const ROUTER_EDITOR_PLUGIN_ID = "router-editor";
 
 /**
  * The web command the shared model-settings dialog dispatches for the "Router"
@@ -38,6 +55,17 @@ export const ROUTER_DELETE_ACTION = "router-delete";
 export const ROUTER_DELETE_CONFIRM_ACTION = "router-delete-confirm";
 /** One screen back; from the route list it closes the pane. */
 export const ROUTER_BACK_ACTION = "router-back";
+/**
+ * The panel's only action: re-read the config files.
+ *
+ * A visualization cannot offer "edit route 3" — a list row carries no action —
+ * and it must not offer "open the editor" either: the editor is the settings
+ * pane's publisher, which the host suppresses outside that pane, so an action
+ * that published it from here would do nothing visible. Reloading is the one
+ * thing the panel can honestly do alone, and it is what a hand-edited config
+ * needs.
+ */
+export const ROUTER_RELOAD_ACTION = "router-reload";
 
 /** The form field names: one per answer the editor collects. */
 export const ROUTER_NAME_FIELD = "name";
