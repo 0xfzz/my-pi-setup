@@ -8,9 +8,7 @@
 // module only adapts HTTP to `PluginManager`, so the UI and the CLI share one
 // implementation.
 
-import type { IncomingMessage, ServerResponse } from "node:http";
 import { getPluginHost } from "./plugin-host.ts";
-import { readJsonBody, sendJson } from "./http.ts";
 import {
   PLUGIN_CAPABILITY_ACTIONS,
   PLUGIN_MANAGER_ACTIONS,
@@ -90,46 +88,4 @@ export async function applyPluginManagerAction(
     return { ok: false, state: "unknown", error: `${action} needs a capability` };
   }
   return action === "grant" ? manager.grant(pluginId, capability) : manager.revoke(pluginId, capability);
-}
-
-/** The capability a grant/revoke names, or undefined when the body is unusable. */
-async function readCapability(req: IncomingMessage): Promise<string | undefined> {
-  try {
-    const body = (await readJsonBody(req)) as { capability?: unknown };
-    return typeof body?.capability === "string" ? body.capability : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** GET /api/plugin-manager */
-export function handlePluginManagerReport(res: ServerResponse): void {
-  const report = pluginManagerReport();
-  if (report === null) {
-    sendJson(res, 503, { error: "plugin host not started", code: "plugin_host_unavailable" });
-    return;
-  }
-  sendJson(res, 200, report);
-}
-
-/** POST /api/plugin-manager/:id/:action */
-export async function handlePluginManagerCommand(
-  req: IncomingMessage,
-  res: ServerResponse,
-  pluginId: string,
-  action: string,
-): Promise<void> {
-  if (!isPluginManagerCommand(action)) {
-    sendJson(res, 400, {
-      error: `unknown action "${action}"`,
-      actions: [...PLUGIN_MANAGER_ACTIONS, ...PLUGIN_CAPABILITY_ACTIONS],
-    });
-    return;
-  }
-  const capability = isCapabilityAction(action) ? await readCapability(req) : undefined;
-  const outcome = await applyPluginManagerAction(pluginId, action, capability);
-  // 404 only when the kernel does not know the plugin at all; a refused action
-  // (quarantined, unresolved, broken) is a 409 carrying the state.
-  const unknown = outcome.error?.startsWith("unknown plugin") ?? false;
-  sendJson(res, outcome.ok ? 200 : unknown ? 404 : 409, outcome);
 }

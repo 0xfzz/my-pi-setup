@@ -1,21 +1,20 @@
-// The web server's API route table: one declarative entry per route, in
-// evaluation order. Adding a route is adding an entry + a handler — no
-// branching inside a monolithic dispatcher. Order matters only where a
-// path is also a prefix of another (e.g. `/api/agent/new` before the
-// generic `/api/agent/:id`, and every `/api/agent/:id/<suffix>` route
-// before `/api/agent/:id` itself).
+// The web server's core API, as native Fastify routes.
+//
+// Each entry is a real Fastify path (params are Fastify's, not a regex capture)
+// with one handler per supported method. A generated per-path dispatcher answers
+// 405 for a known path used with an unsupported method, so known-path 405 versus
+// unknown-path 404 is preserved without a second handwritten matcher: Fastify's
+// router does the matching, and the dispatcher only picks the method.
+//
+// `asJson` is the one shared response policy (JSON, `cache-control: no-store`).
 
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { existsSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { attachBridge, getBridge, type BridgeState } from "./bridge.ts";
-import {
-  getPluginDescriptor,
-  getPluginHost,
-  pluginsWhenReady,
-} from "./plugin-host.ts";
+import { getPluginDescriptor, getPluginHost, pluginsWhenReady } from "./plugin-host.ts";
 import { checkAndSetInFlightAction, recordActionAudit } from "./plugin-actions.ts";
 import { validateActionValues } from "../plugin-contracts/actions.ts";
 import { isKnownSession, relayActionRequest } from "./plugin-sessions.ts";
@@ -38,71 +37,80 @@ import { gitBranch } from "./git-branch.ts";
 import { piBuiltinCommands } from "../pi-api/index.ts";
 import { annotateBuiltinCommands } from "../shared/commands.ts";
 import { attachAgentEventStream, attachSessionsEventStream } from "./event-stream.ts";
-import { handlePluginManagerCommand, handlePluginManagerReport } from "./plugin-admin.ts";
+import {
+  PLUGIN_CAPABILITY_ACTIONS,
+  PLUGIN_MANAGER_ACTIONS,
+} from "../shared/plugin-manager.ts";
+import {
+  applyPluginManagerAction,
+  isCapabilityAction,
+  isPluginManagerCommand,
+  pluginManagerReport,
+} from "./plugin-admin.ts";
 import { servedClientBuild } from "./client-build.ts";
-import { readJsonBody, sendJson } from "./http.ts";
 
 type HttpMethod = "GET" | "POST" | "DELETE";
+type CoreHandler = (request: FastifyRequest, reply: FastifyReply) => Promise<void> | void;
 
-interface RouteMatch {
-  /** The first capture group (the session/plugin id segment), decoded. */
-  param: string;
-  /** Every capture group in order, decoded — routes needing a second segment read these. */
-  captures: string[];
+interface CoreRoute {
+  path: string;
+  methods: Partial<Record<HttpMethod, CoreHandler>>;
 }
 
-interface ApiRouteContext {
-  req: IncomingMessage;
-  res: ServerResponse;
-  url: URL;
-  /** Empty for exact-path routes; the decoded session id for id-capturing routes. */
-  param: string;
-  /** Every capture group, decoded; empty for exact-path routes. */
-  captures: string[];
+// ── Request helpers ─────────────────────────────────────────────────────────
+
+function asJson(reply: FastifyReply, status: number, body: unknown): void {
+  void reply.code(status).header("cache-control", "no-store").send(body);
 }
 
-interface ApiRoute {
-  /** Exact pathname, or a RegExp whose first capture group is the session id. */
-  match: string | RegExp;
-  methods: readonly HttpMethod[];
-  handle: (ctx: ApiRouteContext) => Promise<void>;
+/** The query string with `URLSearchParams` semantics (first value wins). */
+function queryOf(request: FastifyRequest): URLSearchParams {
+  return new URL(request.url, "http://localhost").searchParams;
 }
 
-function matchRoute(match: string | RegExp, pathname: string): RouteMatch | null {
-  if (typeof match === "string") return match === pathname ? { param: "", captures: [] } : null;
-  const captured = match.exec(pathname);
-  if (captured === null) return null;
-  const captures = captured.slice(1).map((value) => decodeURIComponent(value ?? ""));
-  return { param: captures[0] ?? "", captures };
+function paramOf(request: FastifyRequest, name: string): string {
+  const params = request.params as Record<string, string> | undefined;
+  return params?.[name] ?? "";
 }
 
 /**
- * The core-name routes `/api/agent/:id/<suffix>` share this id-capturing
- * regex; the generic `/api/agent/:id` route closes the list.
+ * Parse the request body the way the handwritten `readJsonBody` did: `{}` for
+ * an empty body, otherwise JSON.parse, which throws on malformed input so each
+ * endpoint keeps its own error mapping. The route's scoped parser hands the raw
+ * string here, so no path double-reads the stream.
  */
-const id = "[^/]+";
+function bodyOf(request: FastifyRequest): unknown {
+  const raw = request.body;
+  if (raw === undefined || raw === null) return {};
+  const text = typeof raw === "string" ? raw : JSON.stringify(raw);
+  if (text === "") return {};
+  return JSON.parse(text);
+}
+
+/** The host's own dialog channel: the bridge's built-in pickers. */
+const HOST_DIALOG_CHANNEL = "web-core";
 
 /** Cap for the typed value an instant action may carry (a dialog answer). */
 const MAX_ACTION_VALUE_LENGTH = 2000;
 
 // ── Handlers ────────────────────────────────────────────────────────────────
 
-async function handleHealth(ctx: ApiRouteContext): Promise<void> {
-  sendJson(ctx.res, 200, {
+function handleHealth(_request: FastifyRequest, reply: FastifyReply): void {
+  asJson(reply, 200, {
     ok: true,
     service: "pi-web-minimal",
     bootId: getServerBootId(),
     // Which client bundle this server is serving. A page compares it with the
-    // id stamped into its own HTML: a mismatch means the page is older than
-    // the bundle and reloads onto it.
+    // id stamped into its own HTML: a mismatch means the page is older than the
+    // bundle and reloads onto it.
     buildId: servedClientBuild()?.buildId ?? null,
   });
 }
 
-async function handleReloadNotice(ctx: ApiRouteContext): Promise<void> {
+async function handleReloadNotice(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   let message: string | undefined;
   try {
-    const body = (await readJsonBody(ctx.req)) as { message?: unknown };
+    const body = bodyOf(request) as { message?: unknown };
     if (typeof body?.message === "string" && body.message.trim() !== "") {
       message = body.message.trim();
     }
@@ -110,30 +118,21 @@ async function handleReloadNotice(ctx: ApiRouteContext): Promise<void> {
     // Default message is used when no JSON body is supplied.
   }
   announceCodeChanges(message);
-  sendJson(ctx.res, 200, { ok: true });
+  asJson(reply, 200, { ok: true });
 }
 
-async function handlePluginsList(ctx: ApiRouteContext): Promise<void> {
+async function handlePluginsList(_request: FastifyRequest, reply: FastifyReply): Promise<void> {
   // After boot: a descriptor whose plugin has not activated yet is hidden, and
   // the client reads this list once per page load.
-  sendJson(ctx.res, 200, { plugins: await pluginsWhenReady() });
+  asJson(reply, 200, { plugins: await pluginsWhenReady() });
 }
 
 /**
- * The host's own dialog channel: the bridge's built-in pickers (fork, tree,
- * model, thinking). It has no descriptor because its action ids are the
- * session's own entries, so the extension that published the picker is the
- * validator. The in-flight guard and audit below still apply.
+ * POST /api/plugins/action — 404 before anything else, 403 when a declared
+ * confirm does not match byte-identically, 409 while another action is in
+ * flight for the session, then audit + relay over the session bus.
  */
-const HOST_DIALOG_CHANNEL = "web-core";
-
-/**
- * POST /api/plugins/action — ported from the vendored app with identical
- * semantics: 404 before anything else, 403 when a declared confirm does not
- * match byte-identically, 409 while another action is in flight for the
- * session, then audit + relay over the session bus.
- */
-async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handlePluginAction(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   let body: {
     sessionId?: unknown;
     pluginId?: unknown;
@@ -142,9 +141,9 @@ async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Pr
     values?: unknown;
   };
   try {
-    body = (await readJsonBody(req)) as typeof body;
+    body = bodyOf(request) as typeof body;
   } catch {
-    sendJson(res, 400, { error: "Invalid JSON body" });
+    asJson(reply, 400, { error: "Invalid JSON body" });
     return;
   }
   const { sessionId, pluginId, actionId, confirm } = body ?? {};
@@ -152,27 +151,27 @@ async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Pr
   // can read them without defending against a prototype key or a huge body.
   const submitted = validateActionValues(body?.values);
   if (!submitted.ok) {
-    sendJson(res, 400, { error: submitted.error });
+    asJson(reply, 400, { error: submitted.error });
     return;
   }
 
   // 1. Validate: sessionId/pluginId/actionId known (404 before anything else).
   if (typeof sessionId !== "string" || !isKnownSession(sessionId)) {
-    sendJson(res, 404, { error: "Session not found" });
+    asJson(reply, 404, { error: "Session not found" });
     return;
   }
   if (typeof pluginId !== "string") {
-    sendJson(res, 404, { error: "Plugin not found" });
+    asJson(reply, 404, { error: "Plugin not found" });
     return;
   }
   const isHostChannel = pluginId === HOST_DIALOG_CHANNEL;
   const descriptor = isHostChannel ? undefined : getPluginDescriptor(pluginId);
   if (!isHostChannel && !descriptor) {
-    sendJson(res, 404, { error: "Plugin not found" });
+    asJson(reply, 404, { error: "Plugin not found" });
     return;
   }
   if (typeof actionId !== "string") {
-    sendJson(res, 404, { error: "Action not found" });
+    asJson(reply, 404, { error: "Action not found" });
     return;
   }
   // A plugin whose action ids are chosen at runtime (the host's own dialog
@@ -180,39 +179,28 @@ async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Pr
   // itself: the static list cannot name `fork@<entryId>`.
   const action = descriptor?.actions?.find((candidate) => candidate.id === actionId);
   if (!isHostChannel && descriptor?.dynamicActions !== true && !action) {
-    sendJson(res, 404, { error: "Action not found" });
+    asJson(reply, 404, { error: "Action not found" });
     return;
   }
 
   // 2. A declared confirm must match byte-identically (403, nothing emitted).
-  //    An action without a declared confirm is the instant form: it submits
-  //    without a typed string. The web core channel has no declared
-  //    confirms — its picks are instant.
   if (action?.confirm !== undefined && (typeof confirm !== "string" || confirm !== action.confirm)) {
-    sendJson(res, 403, { error: "Invalid confirmation string" });
+    asJson(reply, 403, { error: "Invalid confirmation string" });
     return;
   }
 
   // 3. One in-flight CONFIRMED submission per (session, plugin, action) (409).
   //    Instant actions (no declared confirm) and the web core channel are
-  //    exempt: both are fire-and-forget dispatches, so a lock here would
-  //    refuse the next click — the exact failure behind rapid Normal↔Plan
-  //    toggling. The lock is per action, not per session, and a finished turn
-  //    releases it, so a handler that never reports back cannot wedge the
-  //    button for the rest of the session.
+  //    exempt: both are fire-and-forget dispatches.
   const requestId = randomUUID();
   const claimed = action?.confirm === undefined
     || checkAndSetInFlightAction({ sessionId, pluginId, actionId, requestId });
   if (!claimed) {
-    sendJson(res, 409, { error: "Action already in flight for this session" });
+    asJson(reply, 409, { error: "Action already in flight for this session" });
     return;
   }
 
   // 4. Audit, then relay to the owning extension over the session event bus.
-  //    An instant action (no declared confirm) may carry the dialog's typed
-  //    answer as its value — the ask-style dialogs' answer channel. A value
-  //    on a declared-confirm action is the byte-match check above and is
-  //    never relayed.
   recordActionAudit({ requestId, sessionId, pluginId, actionId, timestamp: Date.now() });
   const relayedConfirm = action?.confirm === undefined
     && typeof confirm === "string"
@@ -220,49 +208,81 @@ async function handlePluginAction(req: IncomingMessage, res: ServerResponse): Pr
     && confirm.length <= MAX_ACTION_VALUE_LENGTH
     ? confirm
     : undefined;
-  // A declared confirm is the byte-match check, so a form's answers are
-  // relayed only for an instant action — the same rule as `confirm`.
   const relayedValues = action?.confirm === undefined ? submitted.values : undefined;
   if (isHostChannel) {
-    // The picker closes here, server-side: the picked action's side effect
-    // (a fork, a tree navigation) can switch the pi's session and rebind
-    // its poster before the extension's own queued open:false flushes —
-    // this close is immediate and race-free. The relay still notifies the
-    // extension (the TUI-side dialog close).
+    // The picker closes here, server-side, so the close is race-free with the
+    // picked action's side effect.
     recordPluginView(sessionId, HOST_DIALOG_CHANNEL, { type: "dialog", open: false });
   }
   const { relayed } = relayActionRequest(sessionId, pluginId, actionId, requestId, relayedConfirm, relayedValues);
-  sendJson(res, 200, { ok: true, requestId, relayed });
+  asJson(reply, 200, { ok: true, requestId, relayed });
 }
 
-async function handleBridgeAttach(ctx: ApiRouteContext): Promise<void> {
-  const { req, res, url, param: sessionId } = ctx;
-  const modelParam = url.searchParams.get("model");
+function handlePluginManagerReport(_request: FastifyRequest, reply: FastifyReply): void {
+  const report = pluginManagerReport();
+  if (report === null) {
+    asJson(reply, 503, { error: "plugin host not started", code: "plugin_host_unavailable" });
+    return;
+  }
+  asJson(reply, 200, report);
+}
+
+async function handlePluginManagerCommand(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const pluginId = paramOf(request, "id");
+  const action = paramOf(request, "command");
+  if (!isPluginManagerCommand(action)) {
+    asJson(reply, 400, {
+      error: `unknown action "${action}"`,
+      actions: [...PLUGIN_MANAGER_ACTIONS, ...PLUGIN_CAPABILITY_ACTIONS],
+    });
+    return;
+  }
+  let capability: string | undefined;
+  if (isCapabilityAction(action)) {
+    try {
+      const body = bodyOf(request) as { capability?: unknown };
+      if (typeof body?.capability === "string") capability = body.capability;
+    } catch {
+      capability = undefined;
+    }
+  }
+  const outcome = await applyPluginManagerAction(pluginId, action, capability);
+  // 404 only when the kernel does not know the plugin at all; a refused action
+  // (quarantined, unresolved, broken) is a 409 carrying the state.
+  const unknown = outcome.error?.startsWith("unknown plugin") ?? false;
+  asJson(reply, outcome.ok ? 200 : unknown ? 404 : 409, outcome);
+}
+
+function handleBridgeAttach(request: FastifyRequest, reply: FastifyReply): void {
+  const sessionId = paramOf(request, "id");
+  const query = queryOf(request);
+  const modelParam = query.get("model");
   const modelSlash = modelParam !== null ? modelParam.indexOf("/") : -1;
+  reply.hijack();
   attachBridge({
-    req,
-    res,
+    req: request.raw,
+    res: reply.raw,
     metadata: {
       sessionId,
-      cwd: url.searchParams.get("cwd") ?? process.cwd(),
-      sessionFile: url.searchParams.get("sessionFile") ?? undefined,
+      cwd: query.get("cwd") ?? process.cwd(),
+      sessionFile: query.get("sessionFile") ?? undefined,
       model: modelSlash > 0 && modelParam !== null
         ? { provider: modelParam.slice(0, modelSlash), id: modelParam.slice(modelSlash + 1) }
         : undefined,
-      thinkingLevel: url.searchParams.get("thinkingLevel") ?? undefined,
+      thinkingLevel: query.get("thinkingLevel") ?? undefined,
     },
   });
 }
 
-async function handleBridgeEvents(ctx: ApiRouteContext): Promise<void> {
-  const { req, res, param: sessionId } = ctx;
+async function handleBridgeEvents(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const sessionId = paramOf(request, "id");
   const bridge = getBridge(sessionId);
   if (bridge === undefined) {
-    sendJson(res, 404, { error: "Bridge not attached" });
+    asJson(reply, 404, { error: "Bridge not attached" });
     return;
   }
   try {
-    const body = (await readJsonBody(req)) as {
+    const body = bodyOf(request) as {
       event?: unknown;
       events?: unknown[];
       state?: Partial<BridgeState>;
@@ -273,57 +293,56 @@ async function handleBridgeEvents(ctx: ApiRouteContext): Promise<void> {
       ...(body.event !== undefined ? [body.event] : []),
     ];
     for (const event of events) bridge.postEvent(event);
-    sendJson(res, 200, { ok: true });
+    asJson(reply, 200, { ok: true });
   } catch (error) {
-    sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    asJson(reply, 400, { error: error instanceof Error ? error.message : String(error) });
   }
 }
 
-async function handleBridgeDetach(ctx: ApiRouteContext): Promise<void> {
-  const { res, param: sessionId } = ctx;
+async function handleBridgeDetach(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const sessionId = paramOf(request, "id");
   const bridge = getBridge(sessionId);
   if (bridge === undefined) {
-    sendJson(res, 404, { error: "Bridge not attached" });
+    asJson(reply, 404, { error: "Bridge not attached" });
     return;
   }
   bridge.close();
-  sendJson(res, 200, { ok: true });
+  asJson(reply, 200, { ok: true });
 }
 
-async function handlePiApi(ctx: ApiRouteContext): Promise<void> {
-  const { req, res, param: sessionId } = ctx;
+async function handlePiApi(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const sessionId = paramOf(request, "id");
   const handle = getSession(sessionId);
   if (handle === undefined) {
-    sendJson(res, 404, { error: "Session not found" });
+    asJson(reply, 404, { error: "Session not found" });
     return;
   }
-  const body = await readJsonBody(req);
+  const body = bodyOf(request);
   const outcome = await handlePiApiRequest(handle.cwd, body);
-  sendJson(res, outcome.status, outcome.body);
+  asJson(reply, outcome.status, outcome.body);
 }
 
-async function handleDirectories(ctx: ApiRouteContext): Promise<void> {
-  const { res, url } = ctx;
+async function handleDirectories(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   // The new-session picker: subdirectories of a path (hidden dirs skipped,
   // capped) plus the parent for navigation. A bad path is a 400, not an
   // error — the picker shows it inline.
-  const requested = url.searchParams.get("path") ?? "";
+  const requested = queryOf(request).get("path") ?? "";
   let dir: string;
   try {
     dir = resolve(requested === "" ? process.cwd() : requested);
   } catch {
-    sendJson(res, 400, { error: "invalid path" });
+    asJson(reply, 400, { error: "invalid path" });
     return;
   }
   if (!existsSync(dir) || !statSync(dir).isDirectory()) {
-    sendJson(res, 400, { error: `not a directory: ${dir}` });
+    asJson(reply, 400, { error: `not a directory: ${dir}` });
     return;
   }
   let dirents: Array<{ isDirectory: () => boolean; name: string }>;
   try {
     dirents = await readdir(dir, { withFileTypes: true });
   } catch (error) {
-    sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    asJson(reply, 400, { error: error instanceof Error ? error.message : String(error) });
     return;
   }
   const entries = dirents
@@ -332,68 +351,67 @@ async function handleDirectories(ctx: ApiRouteContext): Promise<void> {
     .sort((a, b) => a.name.localeCompare(b.name))
     .slice(0, 500);
   const parent = dirname(dir);
-  sendJson(res, 200, {
+  asJson(reply, 200, {
     path: dir,
     parent: parent === dir ? null : parent,
     entries,
   });
 }
 
-async function handleSessionsEvents(ctx: ApiRouteContext): Promise<void> {
-  attachSessionsEventStream(ctx.req, ctx.res);
+function handleSessionsEvents(request: FastifyRequest, reply: FastifyReply): void {
+  reply.hijack();
+  attachSessionsEventStream(request.raw, reply.raw);
 }
 
-async function handleSessionsList(ctx: ApiRouteContext): Promise<void> {
-  const query = ctx.url.searchParams.get("q") ?? undefined;
+async function handleSessionsList(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const query = queryOf(request).get("q") ?? undefined;
   const sessions = await listAllSessions({ query });
-  sendJson(ctx.res, 200, { sessions });
+  asJson(reply, 200, { sessions });
 }
 
-async function handleSessionDelete(ctx: ApiRouteContext): Promise<void> {
-  const outcome = await deleteSession(ctx.param);
+async function handleSessionDelete(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const outcome = await deleteSession(paramOf(request, "id"));
   if (outcome.status === "not_found") {
-    sendJson(ctx.res, 404, { error: "Session not found" });
+    asJson(reply, 404, { error: "Session not found" });
     return;
   }
   if (outcome.status === "vetoed") {
-    sendJson(ctx.res, 403, { error: outcome.reason, vetoedBy: outcome.pluginId });
+    asJson(reply, 403, { error: outcome.reason, vetoedBy: outcome.pluginId });
     return;
   }
-  sendJson(ctx.res, 200, { ok: true });
+  asJson(reply, 200, { ok: true });
 }
 
-async function handleAgentNew(ctx: ApiRouteContext): Promise<void> {
-  const { req, res } = ctx;
+async function handleAgentNew(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   try {
-    const body = (await readJsonBody(req)) as { cwd?: unknown };
+    const body = bodyOf(request) as { cwd?: unknown };
     const cwd = typeof body.cwd === "string" && body.cwd.trim() !== ""
       ? resolve(body.cwd)
       : process.cwd();
     if (!existsSync(cwd)) {
-      sendJson(res, 400, { error: `cwd does not exist: ${cwd}` });
+      asJson(reply, 400, { error: `cwd does not exist: ${cwd}` });
       return;
     }
     const core = await startSession({ cwd });
-    sendJson(res, 200, { sessionId: core.sessionId, cwd });
+    asJson(reply, 200, { sessionId: core.sessionId, cwd });
   } catch (error) {
-    sendJson(res, 500, {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    asJson(reply, 500, { error: error instanceof Error ? error.message : String(error) });
   }
 }
 
-async function handleAgentEvents(ctx: ApiRouteContext): Promise<void> {
-  const { req, res, param: sessionId } = ctx;
+function handleAgentEvents(request: FastifyRequest, reply: FastifyReply): void {
+  const sessionId = paramOf(request, "id");
   const sessionPromise = ensureSession(sessionId);
-  attachAgentEventStream(req, res, sessionId, sessionPromise);
+  reply.hijack();
+  attachAgentEventStream(request.raw, reply.raw, sessionId, sessionPromise);
 }
 
-async function handleAgentHistory(ctx: ApiRouteContext): Promise<void> {
-  const { res, param: sessionId } = ctx;
+async function handleAgentHistory(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const sessionId = paramOf(request, "id");
   const live = getSession(sessionId);
   const file = live?.sessionFile || (await resolveSessionFile(sessionId));
   if (!file) {
-    sendJson(res, 404, { error: "Session not found" });
+    asJson(reply, 404, { error: "Session not found" });
     return;
   }
   const history = await readHistory(file);
@@ -411,48 +429,43 @@ async function handleAgentHistory(ctx: ApiRouteContext): Promise<void> {
     }
     entries = transformed;
   }
-  sendJson(res, 200, { sessionId, entries, toolResults: history.toolResults });
+  asJson(reply, 200, { sessionId, entries, toolResults: history.toolResults });
 }
 
-async function handleAgentCommands(ctx: ApiRouteContext): Promise<void> {
-  const { res, param: sessionId } = ctx;
-  // Live sessions only — a disk-only session has no process to dispatch
-  // a command, and resuming one just to list them is a heavy side effect.
+async function handleAgentCommands(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const sessionId = paramOf(request, "id");
+  // Live sessions only — a disk-only session has no process to dispatch a
+  // command, and resuming one just to list them is a heavy side effect.
   const core = getSession(sessionId)?.core;
   if (core === undefined) {
-    sendJson(res, 404, { error: "Session not found" });
+    asJson(reply, 404, { error: "Session not found" });
     return;
   }
-  // pi's built-in list at runtime (BUILTIN_SLASH_COMMANDS via the
-  // pi_api facade) annotated with the web's presentation flags, then the
-  // session's live commands (extension/prompt/skill + web core registry).
   const builtins = annotateBuiltinCommands(await piBuiltinCommands());
-  sendJson(res, 200, { sessionId, commands: [...builtins, ...(core.getCommands?.() ?? [])] });
+  asJson(reply, 200, { sessionId, commands: [...builtins, ...(core.getCommands?.() ?? [])] });
 }
 
-async function handleAgentTree(ctx: ApiRouteContext): Promise<void> {
-  const { res, param: sessionId } = ctx;
+async function handleAgentTree(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const sessionId = paramOf(request, "id");
   const core = getSession(sessionId)?.core;
   if (core === undefined) {
-    sendJson(res, 404, { error: "Session not found" });
+    asJson(reply, 404, { error: "Session not found" });
     return;
   }
-  // pi's tree, projected for the web picker; the extension posts it for
-  // bridged sessions (web_tree), the server builds it in-process.
   const nodes = core.getTreeNodes?.() ?? null;
   if (nodes === null) {
-    sendJson(res, 404, { error: "Tree not posted yet" });
+    asJson(reply, 404, { error: "Tree not posted yet" });
     return;
   }
-  sendJson(res, 200, { sessionId, nodes });
+  asJson(reply, 200, { sessionId, nodes });
 }
 
-async function handleAgentModels(ctx: ApiRouteContext): Promise<void> {
-  const { res, param: sessionId } = ctx;
+async function handleAgentModels(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const sessionId = paramOf(request, "id");
   const handle = getSession(sessionId);
   const core = handle?.core;
   if (core === undefined) {
-    sendJson(res, 404, { error: "Session not found" });
+    asJson(reply, 404, { error: "Session not found" });
     return;
   }
   let catalog = core.getModels?.() ?? { models: [] };
@@ -462,82 +475,77 @@ async function handleAgentModels(ctx: ApiRouteContext): Promise<void> {
     const overridden = await pickerService(catalog, { sessionId, cwd: handle?.cwd ?? "" });
     if (overridden && Array.isArray(overridden.models)) catalog = overridden;
   }
-  sendJson(res, 200, { sessionId, ...catalog });
+  asJson(reply, 200, { sessionId, ...catalog });
 }
 
-async function handleAgentSetModel(ctx: ApiRouteContext): Promise<void> {
-  const { req, res, param: sessionId } = ctx;
+async function handleAgentSetModel(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const sessionId = paramOf(request, "id");
   const core = getSession(sessionId)?.core;
   if (core === undefined || core.setModel === undefined) {
-    sendJson(res, 404, { error: "Session not found" });
+    asJson(reply, 404, { error: "Session not found" });
     return;
   }
   try {
-    const body = (await readJsonBody(req)) as { provider?: unknown; id?: unknown };
+    const body = bodyOf(request) as { provider?: unknown; id?: unknown };
     if (typeof body.provider !== "string" || typeof body.id !== "string") {
-      sendJson(res, 400, { error: "provider and id are required" });
+      asJson(reply, 400, { error: "provider and id are required" });
       return;
     }
     const applied = await core.setModel(body.provider, body.id);
     if (!applied) {
-      sendJson(res, 400, { error: "model not available in this session" });
+      asJson(reply, 400, { error: "model not available in this session" });
       return;
     }
-    sendJson(res, 200, { ok: true });
+    asJson(reply, 200, { ok: true });
   } catch (error) {
-    sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    asJson(reply, 400, { error: error instanceof Error ? error.message : String(error) });
   }
 }
 
-async function handleAgentSetThinking(ctx: ApiRouteContext): Promise<void> {
-  const { req, res, param: sessionId } = ctx;
+async function handleAgentSetThinking(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const sessionId = paramOf(request, "id");
   const core = getSession(sessionId)?.core;
   if (core === undefined || core.setThinkingLevel === undefined) {
-    sendJson(res, 404, { error: "Session not found" });
+    asJson(reply, 404, { error: "Session not found" });
     return;
   }
   try {
-    const body = (await readJsonBody(req)) as { level?: unknown };
+    const body = bodyOf(request) as { level?: unknown };
     if (typeof body.level !== "string") {
-      sendJson(res, 400, { error: "level is required" });
+      asJson(reply, 400, { error: "level is required" });
       return;
     }
     const applied = await core.setThinkingLevel(body.level);
     if (!applied) {
-      sendJson(res, 400, { error: "thinking level rejected" });
+      asJson(reply, 400, { error: "thinking level rejected" });
       return;
     }
-    sendJson(res, 200, { ok: true });
+    asJson(reply, 200, { ok: true });
   } catch (error) {
-    sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    asJson(reply, 400, { error: error instanceof Error ? error.message : String(error) });
   }
 }
 
-async function handleAgentBranch(ctx: ApiRouteContext): Promise<void> {
-  const { res, param: sessionId } = ctx;
-  // The branch of the directory the session runs in. The path itself is on
-  // the session list the client already has; only git's answer has to be
-  // asked for, and it is decoration: a directory that is not a worktree (or
-  // has no git) answers null rather than failing the composer's line.
+async function handleAgentBranch(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const sessionId = paramOf(request, "id");
+  // The branch of the directory the session runs in. A directory that is not a
+  // worktree (or has no git) answers null rather than failing the line.
   const core = await ensureSession(sessionId);
   const cwd = core === null ? undefined : getSession(sessionId)?.cwd;
   if (cwd === undefined) {
-    sendJson(res, 404, { error: "Session not found" });
+    asJson(reply, 404, { error: "Session not found" });
     return;
   }
-  sendJson(res, 200, { branch: await gitBranch(cwd) });
+  asJson(reply, 200, { branch: await gitBranch(cwd) });
 }
 
-async function handleChangelog(ctx: ApiRouteContext): Promise<void> {
-  const { res } = ctx;
-  // The web port of /changelog: the installed pi package's changelog,
-  // rendered as a dialog client-side. The package exports do not expose
-  // the file, so resolve the entry and walk up to the package root.
+async function handleChangelog(_request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  // The web port of /changelog: the installed pi package's changelog, rendered
+  // client-side. The package exports do not expose the file, so resolve the
+  // entry and walk up to the package root.
   try {
     const { dirname: dirnameOf, join: joinPath } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
-    // The package exports are ESM-only; import.meta.resolve gives the
-    // entry, and the changelog sits at the package root beside dist/.
     let dir = dirnameOf(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent")));
     let changelogPath: string | null = null;
     for (let i = 0; i < 3 && dir !== "/"; i++) {
@@ -550,110 +558,105 @@ async function handleChangelog(ctx: ApiRouteContext): Promise<void> {
     }
     if (changelogPath === null) throw new Error("CHANGELOG.md not found next to the package");
     const content = await readFile(changelogPath, "utf8");
-    sendJson(res, 200, { markdown: content.slice(0, 512_000) });
+    asJson(reply, 200, { markdown: content.slice(0, 512_000) });
   } catch {
-    sendJson(res, 404, { error: "changelog not found" });
+    asJson(reply, 404, { error: "changelog not found" });
   }
 }
 
-async function handleAgent(ctx: ApiRouteContext): Promise<void> {
-  const { req, res, param: sessionId } = ctx;
+async function handleAgent(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const sessionId = paramOf(request, "id");
   try {
-    if (req.method === "GET") {
+    if (request.method === "GET") {
       const core = await ensureSession(sessionId);
       if (core === null) {
-        sendJson(res, 404, { error: "Session not found" });
+        asJson(reply, 404, { error: "Session not found" });
         return;
       }
-      sendJson(res, 200, { running: true, state: core.getState() });
+      asJson(reply, 200, { running: true, state: core.getState() });
       return;
     }
-    const body = await readJsonBody(req);
+    const body = bodyOf(request);
     const parsed = parseSessionCommand(body);
     if ("error" in parsed) {
-      sendJson(res, 400, { error: parsed.error });
+      asJson(reply, 400, { error: parsed.error });
       return;
     }
     const core = await ensureSession(sessionId);
     if (core === null) {
-      sendJson(res, 404, { error: "Session not found" });
+      asJson(reply, 404, { error: "Session not found" });
       return;
     }
     const result = await sendCommand(sessionId, parsed);
     if (result.status === "ok") {
-      sendJson(res, 200, { success: true, data: result.data });
+      asJson(reply, 200, { success: true, data: result.data });
     } else if (result.status === "not_found") {
-      sendJson(res, 404, { error: "Session not found" });
+      asJson(reply, 404, { error: "Session not found" });
     } else {
-      sendJson(res, 500, { error: result.error });
+      asJson(reply, 500, { error: result.error });
     }
   } catch (error) {
-    sendJson(res, 500, {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    asJson(reply, 500, { error: error instanceof Error ? error.message : String(error) });
   }
 }
 
-// ── Files routes ───────────────────────────────────────────────────────────
-// File browsing lives in the Files plugin's own backend surface,
-// /api/p/files/* (web/plugins/files/server/). The core keeps the audited
-// traversal/symlink policy in files.ts, so there is exactly one implementation.
+// ── The route table ─────────────────────────────────────────────────────────
+// Fastify resolves the path (static beats param); the per-path dispatcher only
+// picks the method, so no ordering is required and `/api/agent/new` wins over
+// `/api/agent/:id` by specificity rather than table position.
 
-// ── The route table ────────────────────────────────────────────────────────
-// Ordered: more specific paths precede the generic `/api/agent/:id`.
-
-const API_ROUTES: readonly ApiRoute[] = [
-  { match: "/api/health", methods: ["GET"], handle: handleHealth },
-  { match: "/api/reload-notice", methods: ["POST"], handle: handleReloadNotice },
-  { match: "/api/plugins", methods: ["GET"], handle: handlePluginsList },
-  { match: "/api/plugin-manager", methods: ["GET"], handle: ({ res }) => { handlePluginManagerReport(res); return Promise.resolve(); } },
-  {
-    match: new RegExp(`^/api/plugin-manager/(${id})/([a-z-]+)$`),
-    methods: ["POST"],
-    handle: ({ req, res, captures }) =>
-      handlePluginManagerCommand(req, res, captures[0] ?? "", captures[1] ?? ""),
-  },
-  { match: "/api/plugins/action", methods: ["POST"], handle: ({ req, res }) => handlePluginAction(req, res) },
-  { match: /^\/api\/bridge\/([^/]+)\/attach$/, methods: ["GET"], handle: handleBridgeAttach },
-  { match: /^\/api\/bridge\/([^/]+)\/events$/, methods: ["POST"], handle: handleBridgeEvents },
-  { match: /^\/api\/bridge\/([^/]+)\/detach$/, methods: ["POST"], handle: handleBridgeDetach },
-  { match: /^\/api\/agent\/([^/]+)\/pi_api$/, methods: ["POST"], handle: handlePiApi },
-  { match: "/api/directories", methods: ["GET"], handle: handleDirectories },
-  { match: "/api/sessions/events", methods: ["GET"], handle: handleSessionsEvents },
-  { match: "/api/sessions", methods: ["GET"], handle: handleSessionsList },
-  { match: new RegExp(`^/api/sessions/(${id})$`), methods: ["DELETE"], handle: handleSessionDelete },
-  { match: "/api/agent/new", methods: ["POST"], handle: handleAgentNew },
-  { match: new RegExp(`^/api/agent/(${id})/events$`), methods: ["GET"], handle: handleAgentEvents },
-  { match: new RegExp(`^/api/agent/(${id})/history$`), methods: ["GET"], handle: handleAgentHistory },
-  { match: new RegExp(`^/api/agent/(${id})/commands$`), methods: ["GET"], handle: handleAgentCommands },
-  { match: new RegExp(`^/api/agent/(${id})/tree$`), methods: ["GET"], handle: handleAgentTree },
-  { match: new RegExp(`^/api/agent/(${id})/models$`), methods: ["GET"], handle: handleAgentModels },
-  { match: new RegExp(`^/api/agent/(${id})/model$`), methods: ["POST"], handle: handleAgentSetModel },
-  { match: new RegExp(`^/api/agent/(${id})/thinking$`), methods: ["POST"], handle: handleAgentSetThinking },
-  { match: new RegExp(`^/api/agent/(${id})/branch$`), methods: ["GET"], handle: handleAgentBranch },
-  { match: "/api/changelog", methods: ["GET"], handle: handleChangelog },
-  { match: new RegExp(`^/api/agent/(${id})$`), methods: ["GET", "POST"], handle: handleAgent },
+const CORE_ROUTES: readonly CoreRoute[] = [
+  { path: "/api/health", methods: { GET: handleHealth } },
+  { path: "/api/reload-notice", methods: { POST: handleReloadNotice } },
+  { path: "/api/plugins", methods: { GET: handlePluginsList } },
+  { path: "/api/plugin-manager", methods: { GET: handlePluginManagerReport } },
+  { path: "/api/plugin-manager/:id/:command", methods: { POST: handlePluginManagerCommand } },
+  { path: "/api/plugins/action", methods: { POST: handlePluginAction } },
+  { path: "/api/bridge/:id/attach", methods: { GET: handleBridgeAttach } },
+  { path: "/api/bridge/:id/events", methods: { POST: handleBridgeEvents } },
+  { path: "/api/bridge/:id/detach", methods: { POST: handleBridgeDetach } },
+  { path: "/api/agent/:id/pi_api", methods: { POST: handlePiApi } },
+  { path: "/api/directories", methods: { GET: handleDirectories } },
+  { path: "/api/sessions/events", methods: { GET: handleSessionsEvents } },
+  { path: "/api/sessions", methods: { GET: handleSessionsList } },
+  { path: "/api/sessions/:id", methods: { DELETE: handleSessionDelete } },
+  { path: "/api/agent/new", methods: { POST: handleAgentNew } },
+  { path: "/api/agent/:id/events", methods: { GET: handleAgentEvents } },
+  { path: "/api/agent/:id/history", methods: { GET: handleAgentHistory } },
+  { path: "/api/agent/:id/commands", methods: { GET: handleAgentCommands } },
+  { path: "/api/agent/:id/tree", methods: { GET: handleAgentTree } },
+  { path: "/api/agent/:id/models", methods: { GET: handleAgentModels } },
+  { path: "/api/agent/:id/model", methods: { POST: handleAgentSetModel } },
+  { path: "/api/agent/:id/thinking", methods: { POST: handleAgentSetThinking } },
+  { path: "/api/agent/:id/branch", methods: { GET: handleAgentBranch } },
+  { path: "/api/changelog", methods: { GET: handleChangelog } },
+  { path: "/api/agent/:id", methods: { GET: handleAgent, POST: handleAgent } },
 ];
 
 /**
- * Dispatch an `/api/*` request to the first matching route; answers 405 for
- * a known path with an unsupported method and returns false (caller 404s)
- * when nothing matches.
+ * Register the core API as native Fastify routes.
+ *
+ * The body parser is scoped to this plugin so it cannot change another route's
+ * error ordering: the raw body string is handed to `bodyOf`, which preserves
+ * the handwritten contract (JSON parsed regardless of Content-Type, `{}` for an
+ * empty body, a throw the endpoint maps for malformed input).
  */
-export async function handleApi(
-  req: IncomingMessage,
-  res: ServerResponse,
-  url: URL,
-): Promise<boolean> {
-  for (const route of API_ROUTES) {
-    const match = matchRoute(route.match, url.pathname);
-    if (match === null) continue;
-    if (!route.methods.includes(req.method as HttpMethod)) {
-      sendJson(res, 405, { error: "method not allowed" });
-      return true;
+export async function registerCoreRoutes(app: FastifyInstance): Promise<void> {
+  await app.register(async (scope) => {
+    scope.addContentTypeParser("*", { parseAs: "string" }, (_request, body, done) => {
+      done(null, typeof body === "string" ? body : "");
+    });
+
+    for (const route of CORE_ROUTES) {
+      scope.all(route.path, async (request, reply) => {
+        const handler = route.methods[request.method as HttpMethod];
+        if (handler === undefined) {
+          // Known path, unsupported method. Only the auth routes send `Allow`.
+          asJson(reply, 405, { error: "method not allowed" });
+          return;
+        }
+        await handler(request, reply);
+      });
     }
-    await route.handle({ req, res, url, param: match.param, captures: match.captures });
-    return true;
-  }
-  return false;
+  });
 }

@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { extname, join, resolve, sep } from "node:path";
 import { registerSession } from "./sessions.ts";
 import { seedPluginFixtures } from "./plugin-fixtures.ts";
-import { handleApi } from "./routes.ts";
+import { registerCoreRoutes } from "./routes.ts";
 import { sendJson } from "./http.ts";
 import { createAuthHttp, type AuthHttp, type AuthHttpOptions } from "./auth.ts";
 import { createWebApp } from "./app.ts";
@@ -193,8 +193,6 @@ async function dispatchUnclaimed(
   try {
     if (pathnameIsApi(url.pathname)) {
       if (await auth.handleRoute(req, res, url)) return;
-      const handled = await handleApi(req, res, url);
-      if (handled) return;
       sendJson(res, 404, { error: "not found" });
       return;
     }
@@ -241,8 +239,10 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
     },
     delegate: (req, res) => dispatchUnclaimed(req, res, root, auth),
   }).then(async (app) => {
-    // Plugin backend routes are native now; the kernel matcher stays dynamic.
+    // Plugin backend routes and the core API are native now; the kernel matcher
+    // behind the plugin gateway stays dynamic.
     await registerPluginRoutes(app);
+    await registerCoreRoutes(app);
     try {
       await app.listen({ port: requestedPort, host });
     } catch (error) {

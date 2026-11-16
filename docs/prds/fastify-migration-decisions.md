@@ -253,6 +253,12 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   plugin HTTP entry point is now a native route (`registerPluginRoutes`,
   `scope.all('/api/p/*')`) with a scoped lenient parser preserving the plugin
   body contract (JSON regardless of Content-Type, `{}` empty, `undefined`
-  malformed). Remaining Phase 2 work: native core/auth/admin routes and the
-  graph's native routes; the `/*` delegate still carries those paths and the
-  static assets.
+  malformed). The core API is now a native route table (`registerCoreRoutes` in
+  `web/core/server/routes.ts`): real Fastify paths with `:params`, a generated
+  per-path dispatcher that answers 405 for a known path with an unsupported
+  method (so known-path 405 versus unknown-path 404 survives without a second
+  matcher), and a scoped lenient body parser preserving the handwritten body
+  contract. The regex `API_ROUTES`/`matchRoute`/`handleApi` table, the
+  `readJsonBody` reader and the plugin-manager HTTP adapters are deleted.
+  Remaining Phase 2 work: native auth routes and the graph's native routes; the
+  `/*` delegate still carries the auth endpoints and the static assets.
