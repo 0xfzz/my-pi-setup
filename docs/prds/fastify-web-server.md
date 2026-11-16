@@ -302,6 +302,23 @@ npm --prefix web run test:e2e
 
 `tidy` runs typecheck, smell lint, root tests, and web checks/build/tests. There are no accepted baseline failures: the former native regular/fullscreen TUI clipping baseline was fixed in the test fixture (the `test(provider)` commit bound the real dialog methods), not waived. Record unrun/blocked browser prerequisites honestly; they are not green acceptance.
 
+### Release evidence
+
+Recorded on 2026-11-16 against the completed tree, Node v22.23.2:
+
+| Criterion | Command | Result |
+| --- | --- | --- |
+| AC10 repository gate | `npm run tidy` | pass — root tests 0 failures, web `447/447`, typecheck and smell lint clean |
+| AC2 dead code | `npm run lint:dead` | pass; `web/` is not yet a `knip` scope (see [smell-baseline](../smell-baseline.md)) |
+| AC10 browser e2e | `npm --prefix web run test:e2e` | pass — `e2e.mjs` and `files-viewers.e2e.mjs` both "all checks passed" |
+| AC9 direct strip-types launch | `cd web && PI_WEB_PORT=0 node --experimental-strip-types server.ts` | pass — bound an ephemeral port, `/api/health` 200, clean SIGTERM stop |
+| AC9 tsx launch | `cd web && PI_WEB_PORT=0 ./node_modules/.bin/tsx server.ts` | pass — same health/stop outcome |
+| AC9 Node floor | `node -v` | v22.23.2 (repository engine floor 22.6.0) |
+
+AC9's "minimum Node" and clean-install-from-scratch checks were not exercised on this machine; only the development runtime above was. They remain open acceptance items, not waived ones.
+
+The root test **total** is not deterministic: repeated `npm test` runs on the same tree reported between 1972 and 1998 tests, always with `fail 0` / `cancelled 0`. A file whose process is force-exited can under-report its subtests. Treat `fail 0` as the gate, not the total; the count variance is a runner observation, not a coverage guarantee.
+
 ### Removal audit and exception ledger
 
 At release, inspect **all production source under `web/`**, not just touched files. Record every surviving occurrence of listener creation, URL/method routing, raw response writes, body consumption, cookie serialization, JWT signing, SSE framing/heartbeat, static MIME/path delivery, and Range parsing. Tests/fixtures, domain event serialization, and deliberate descriptor/raw-compatibility seams must be distinguished from generic HTTP mechanisms. Add architecture tests for forbidden legacy dispatchers and keep the audit readable rather than enforcing a blanket ban on `node:http` types or `JSON.stringify`.
