@@ -246,6 +246,7 @@ protecting test, and removal condition.
 | E3 | kernel route facade (`kernel/routes.ts`) | grants, namespace, diagnostics, budget facade even though the matcher is `find-my-way` | `find-my-way` has no capability/ownership model | thin facade over `on`/`off`/`findRoute` | `tests/web-plugin-routes.test.ts` | never (policy is domain) |
 | E4 | `web/core/auth/throttle.ts` | failure-only rolling accounting + pre-hash charging | `@fastify/rate-limit` fixed-window post-check mismatch | keep `LoginThrottle` | `web/core/auth/*.test.ts` | a maintained limiter with equivalent hooks |
 | E5 | `web/core/http/sse.ts`, `lib/sse-pressure.ts` (web transport owner) | domain byte admission, coalescing/prelude reservations, immediate startup flush and hard abort of stalled clients | `@fastify/sse` 0.6.1 `stream()` handles framing/backpressure/lifecycle, but has no application byte budgets; `sendHeaders()` does not flush and `close()` is graceful | one bounded library formatter/UTF-8 pipe adapter; only raw flush/pressure abort, no raw SSE writes or independent connection listeners | `sse.test.ts`, `event-stream-policy.test.ts`, `tests/sse-pressure.test.ts`, auth/graph suites | use plugin flush/abort APIs when available; application caps/replay/healing remain domain policy |
+| E6 | `web/core/server/auth.ts` connection index | immediate revocation/logout cuts every open response for a session | `@fastify/sse` owns channel lifetime but the auth service does not hold channels, and revocation is decided in `WebAuthService` | a `Map<sessionId, Set<ServerResponse>>` that only `destroy()`s; it never writes or frames a response | `auth.test.ts` (revocation cuts the stream) | expose channel handles to the auth service so revocation closes channels instead of raw responses |
 
 ## 9. Spike results
 
@@ -366,3 +367,44 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   covered by deterministic producer tests and real sockets. The shared HTTP
   zone cannot import either host runtime (enforced by `web-boundaries.test.ts`).
   `npm run tidy`, `npm run lint:dead` and both browser e2e suites pass.
+- **Phase 5 — complete**: M14 uses Fastify request ids plus a shared
+  `web/core/http/observability.ts` logger (`warn` level, credential-safe
+  request serializer that drops the query string). Primary logging goes to
+  stdout, the graph routes the same structured logs into its existing file
+  sink; startup/process messages and the plugin action audit are unchanged.
+  `request-logging.test.ts` pins request ids and that no query/header/body
+  secret reaches a log line. The removal audit below was run over **all**
+  production source under `web/` and is enforced by
+  `tests/web-legacy-dispatchers.test.ts`.
+
+## 11. Removal audit (release)
+
+Audited every production file under `web/` (tests, build output, e2e drivers
+and the vendored `app/` assets excluded) for listener creation, URL/method
+routing, raw response writes, body consumption, cookie serialization, JWT
+signing, SSE framing/heartbeat, static MIME/path delivery and Range parsing.
+Remaining occurrences and their classification:
+
+| Location | What remains | Why it is not generic infrastructure |
+| --- | --- | --- |
+| `web/core/http/sse.ts` | `@fastify/sse` `stream()` adapter, `raw.flushHeaders()`/pipe/`destroy()`/`writableLength` | E5: byte-budget flush/abort the plugin does not expose; framing/heartbeat/close are the plugin's |
+| `web/core/server/legacy-plugin-transport.ts` | header copy, `reply.hijack()`, `raw.destroy()` | E2: the single permitted external-plugin raw escape hatch |
+| `web/core/server/plugin-routes.ts` | `reply.raw` as the legacy `transport` value and its close/abort listeners | E2 contract; first-party handlers return body/stream results |
+| `web/core/server/auth.ts` | `node:http` types, `request.raw` policy reads, `reply.raw` revocation index | E4/E6: proxy/CSRF/Secure policy adapter and logout/revocation cutting open responses (destroy only, never writes) |
+| `web/core/server/client-static.ts` | `onSend` shell read + build-ID stamp + `content-length` fix | M11: the one narrow HTML transform the PRD keeps |
+| `web/core/server/files.ts` | descriptor `O_NOFOLLOW` open, `range-parser`, `content-disposition` | E1: descriptor safety/root policy; range/disposition are maintained utilities |
+| `web/core/plugin-contracts/kernel/routes.ts` | `normalisePath` registration validation | M3: validates plugin-declared registration paths before feeding the maintained `find-my-way` matcher; it does not match requests |
+| `web/plugins/subagent-graph/lib/server.ts` | `net.listen(path)` liveness probe | domain singleton fallback on non-Linux, not the HTTP listener |
+| `web/plugins/subagent-graph/lib/server-main.ts` | `process.stdout`/log-file writes | process/startup messages (M14 preserves them) |
+
+No legacy dispatcher symbol remains: `matchSegments`, `splitRequestPath`,
+`API_ROUTES`, `handleApi`, `matchRoute`, `readJsonBody`, `readSmallJson`,
+`sendRawJson`, `parseCookies`, `MIME_TYPES`, `resolveStaticPath`,
+`closeAllConnections` and `.writeHead(` are absent from production source.
+`reply.raw` is confined to the E2/E5/E6 files and `node:http` types to the
+auth seam; both are asserted by `tests/web-legacy-dispatchers.test.ts`.
+
+- **Release status**: M1–M15 are resolved (M15 retained by verdict, §7). No
+  mandatory row is incomplete; the exception ledger names owner, protecting
+  test and removal condition for each seam. Remaining work is ordinary
+  maintenance as those removal conditions are met.
