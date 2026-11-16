@@ -27,6 +27,7 @@ import type {
 import { pluginStateFrameOf } from "../shared/plugin-state.ts";
 import { buildVerdict, ownBuildId } from "./build-identity.ts";
 import { isCompactionReason, type CompactionReason } from "./compaction.ts";
+import { HISTORY_FETCH_TIMEOUT_MS, historyRetryDelayMs } from "./history-retry.ts";
 
 export type { CustomPanelLike, WebNotificationLike, WidgetModelLike };
 
@@ -582,6 +583,8 @@ export function usePiSession() {
     // The first `connected` frames the initial snapshot; later ones are
     // reconnects that may have missed events and reload the history.
     let everConnected = false;
+    // The pending retry of a history read, cancelled when this stream closes.
+    let historyRetry: ReturnType<typeof setTimeout> | undefined;
 
     const appendEntry = (entry: HistoryEntryLike): void => {
       if (closed) return;
@@ -663,14 +666,23 @@ export function usePiSession() {
     // is `connected` (below), so the file read covers everything before
     // the subscribe and the buffered appends cover everything after — no
     // gap between them where a completed reply would be invisible to both.
-    const fetchHistoryOnce = (): void => {
-      void fetch(`/api/agent/${encodeURIComponent(selectedId)}/history`)
+    // A stalled or failed read is bounded and retried (see history-retry.ts):
+    // until it lands, every live reply is buffered behind it, so a read that
+    // hangs would leave the whole conversation invisible.
+    const fetchHistoryOnce = (attempt = 0): void => {
+      if (closed || historyApplied) return;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), HISTORY_FETCH_TIMEOUT_MS);
+      void fetch(`/api/agent/${encodeURIComponent(selectedId)}/history`, { signal: controller.signal })
         .then((res) => res.json() as Promise<{ entries?: HistoryEntryLike[]; toolResults?: Record<string, ToolResultLike> }>)
         .then((body) => {
+          clearTimeout(timeout);
           applyHistory(body.entries ?? [], body.toolResults ?? {});
         })
         .catch(() => {
-          applyHistory([], {});
+          clearTimeout(timeout);
+          if (closed || historyApplied) return;
+          historyRetry = setTimeout(() => fetchHistoryOnce(attempt + 1), historyRetryDelayMs(attempt));
         });
     };
     // The initial state read (model, thinking, context): the model chip
@@ -1049,6 +1061,7 @@ export function usePiSession() {
 
     return () => {
       closed = true;
+      clearTimeout(historyRetry);
       source.close();
       setConnection("idle");
     };
