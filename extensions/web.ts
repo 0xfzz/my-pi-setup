@@ -868,6 +868,42 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     if (bridgeSessionId !== null) postSessionStateThrottled(ctx);
   });
   pi.on("tool_execution_end", forwardToBridge);
+  // Compaction, announced on the wire exactly as an in-process session
+  // announces it (web/core/server/wire.ts): the start/end pair for pi's own
+  // compact paths (manual /compact, the threshold, overflow recovery), and an
+  // appended compaction entry for a compactor an extension contributed as a
+  // turn_end boundary draft (lib/vcc/controller.ts). Both carry the same
+  // fields, so the browser cannot tell which process owns the session, and the
+  // marker itself always comes from the transcript read.
+  pi.on("session_before_compact", (event) => {
+    forwardToBridge({ type: "compaction_start", reason: event.reason });
+    return undefined;
+  });
+  pi.on("session_compact", (event) => {
+    forwardToBridge({
+      type: "compaction_end",
+      reason: event.reason,
+      aborted: false,
+      willRetry: event.willRetry === true,
+      tokensBefore: event.compactionEntry.tokensBefore,
+    });
+  });
+  pi.on("session_compact_failed", (event) => {
+    forwardToBridge({
+      type: "compaction_end",
+      reason: event.reason,
+      aborted: event.aborted === true,
+      willRetry: event.willRetry === true,
+      ...(typeof event.errorMessage === "string" ? { errorMessage: event.errorMessage } : {}),
+    });
+  });
+  // A compaction an extension's own compactor commits as a boundary draft
+  // (lib/vcc/controller.ts) has no extension-visible event: pi commits it
+  // through _commitBoundaryDrafts, which emits the internal `entry_appended`
+  // … but the extension API does not surface that event to extensions. A
+  // bridged session therefore reports pi's own compactions only; the web
+  // still paints the marker on its next transcript read (a reconnect, a
+  // switch, or a reload), because the entry is in the session file.
   // User-run bash (`!` commands): pi's extension events only announce the
   // command, so the web extension supplies pi's local shell as custom
   // operations and wraps it — the TUI keeps its own stream (onData is
