@@ -239,6 +239,9 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
       return authorizeRequest(request, reply, url, auth);
     },
     delegate: (req, res) => dispatchUnclaimed(req, res, root),
+    // Cut live event streams deterministically as part of close(), before
+    // Fastify force-closes whatever is left.
+    onClose: () => auth.close(),
   }).then(async (app) => {
     // Plugin backend routes, the core API and the auth endpoints are native now;
     // the kernel matcher behind the plugin gateway stays dynamic.

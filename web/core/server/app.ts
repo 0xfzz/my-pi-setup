@@ -51,6 +51,13 @@ export interface WebAppOptions {
    * any schema is validated (PRD §6.1).
    */
   authorize?: (request: HttpRequestFacade, reply: HttpReplyFacade) => boolean | Promise<boolean>;
+  /**
+   * Releases app-owned resources when `app.close()` runs. Fastify's own close
+   * sequence is to run `onClose` hooks and only then force-close the remaining
+   * connections, so this is the deterministic place to cut live event streams
+   * rather than leaving them to the socket teardown (PRD §M13).
+   */
+  onClose?: () => void | Promise<void>;
 }
 
 /**
@@ -129,6 +136,13 @@ export async function createWebApp(options: WebAppOptions): Promise<FastifyInsta
   } else {
     app.addHook("onRequest", async (_request, reply) => {
       applyRawSecurityHeaders(reply.raw);
+    });
+  }
+
+  if (options.onClose !== undefined) {
+    const onClose = options.onClose;
+    app.addHook("onClose", async () => {
+      await onClose();
     });
   }
 

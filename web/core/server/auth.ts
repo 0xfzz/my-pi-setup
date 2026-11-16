@@ -51,6 +51,12 @@ export interface AuthHttp {
    * password is set.
    */
   authorize(request: AuthGateRequest, reply: AuthGateReply, url: URL): boolean;
+  /**
+   * Cut every tracked event stream and forget them. Called from the app's
+   * `onClose` hook so `close()` never waits on a client that will not leave on
+   * its own, before Fastify force-closes the remaining sockets.
+   */
+  close(): void;
 }
 
 interface CookiePolicy {
@@ -490,5 +496,12 @@ export function createAuthHttp(service: WebAuthService, options: AuthHttpOptions
     return true;
   };
 
-  return { authorize };
+  const close = (): void => {
+    for (const set of connections.values()) {
+      for (const res of set) res.destroy();
+    }
+    connections.clear();
+  };
+
+  return { authorize, close };
 }

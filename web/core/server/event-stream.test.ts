@@ -276,3 +276,36 @@ test("events stream carries plugin_state frames for the session's views", async 
     await handle.close();
   }
 });
+
+test("closing the server cuts an open event stream instead of waiting on it", async () => {
+  const { core } = sseLiveCore();
+  registerSession(core, "/tmp/project");
+  const handle = await startWebServer({ port: 0, host: "127.0.0.1" });
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  try {
+    const res = await fetch(`http://127.0.0.1:${handle.port}/api/agent/sse-live/events`);
+    assert.equal(res.status, 200);
+    assert.ok(res.body !== null);
+    reader = res.body.getReader();
+    const readUntil = createFrameReader(reader);
+    await readUntil((text) => text.includes("\"type\":\"connected\""));
+
+    // close() must return promptly, not wait for the client to leave.
+    const closed = Date.now();
+    await handle.close();
+    const elapsed = Date.now() - closed;
+    assert.ok(elapsed < 2_000, `close() must not block on an open stream (took ${elapsed} ms)`);
+
+    // ...and the stream is cut. A destroyed socket surfaces as an aborted read
+    // rather than a clean EOF, so the pin is that the read settles at all.
+    const outcome = await Promise.race([
+      reader.read().then(read => (read.done ? "ended" : "data"), () => "aborted"),
+      new Promise<string>(resolve => setTimeout(() => resolve("hung"), 2_000)),
+    ]);
+    assert.notEqual(outcome, "hung", "an open stream must end when the server closes");
+  } finally {
+    if (reader !== null) await reader.cancel().catch(() => {});
+    // A second close is a no-op; the app is already down.
+    await handle.close().catch(() => {});
+  }
+});
