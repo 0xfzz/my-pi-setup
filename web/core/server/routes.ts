@@ -39,6 +39,8 @@ import {
   sendCommand,
   startSession,
 } from "./sessions.ts";
+import { createHistoryCache, fileStamp } from "./history-cache.ts";
+import { toWireToolResults } from "./tool-result-wire.ts";
 import { handlePiApiRequest } from "./pi-api.ts";
 import { gitBranch } from "./git-branch.ts";
 import { piBuiltinCommands } from "../pi-api/index.ts";
@@ -403,15 +405,22 @@ function handleAgentEvents(request: FastifyRequest, reply: FastifyReply): void {
   attachAgentEventStream(mainEventChannel(reply), { sessionId, sessionPromise });
 }
 
+/** Parsed histories, reused while a session file is unchanged (see history-cache.ts). */
+const readHistoryCached = createHistoryCache({ load: (file) => readHistory(file), stamp: fileStamp });
+
+async function historyFileFor(sessionId: string): Promise<string | null> {
+  const live = getSession(sessionId);
+  return live?.sessionFile || (await resolveSessionFile(sessionId)) || null;
+}
+
 async function handleAgentHistory(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const sessionId = paramOf(request, "id");
-  const live = getSession(sessionId);
-  const file = live?.sessionFile || (await resolveSessionFile(sessionId));
+  const file = await historyFileFor(sessionId);
   if (!file) {
     asJson(reply, 404, { error: "Session not found" });
     return;
   }
-  const history = await readHistory(file);
+  const history = await readHistoryCached(file);
   const host = getPluginHost();
   let entries = history.entries;
   if (host !== null && host.hooks.handlersFor("message.before-render-model").length > 0) {
@@ -426,7 +435,23 @@ async function handleAgentHistory(request: FastifyRequest, reply: FastifyReply):
     }
     entries = transformed;
   }
-  asJson(reply, 200, { sessionId, entries, toolResults: history.toolResults });
+  asJson(reply, 200, { sessionId, entries, toolResults: toWireToolResults(history.toolResults) });
+}
+
+/** One tool result in full, for an expanded tool call whose images the history left out. */
+async function handleAgentToolResult(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const sessionId = paramOf(request, "id");
+  const file = await historyFileFor(sessionId);
+  if (!file) {
+    asJson(reply, 404, { error: "Session not found" });
+    return;
+  }
+  const result = (await readHistoryCached(file)).toolResults[paramOf(request, "toolCallId")];
+  if (result === undefined) {
+    asJson(reply, 404, { error: "Tool result not found" });
+    return;
+  }
+  asJson(reply, 200, result);
 }
 
 async function handleAgentCommands(request: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -620,6 +645,7 @@ const CORE_ROUTES: readonly CoreRoute[] = [
   { path: "/api/agent/new", methods: { POST: handleAgentNew } },
   { path: "/api/agent/:id/events", methods: { GET: handleAgentEvents }, sse: SSE_ROUTE_OPTIONS },
   { path: "/api/agent/:id/history", methods: { GET: handleAgentHistory } },
+  { path: "/api/agent/:id/tool-results/:toolCallId", methods: { GET: handleAgentToolResult } },
   { path: "/api/agent/:id/commands", methods: { GET: handleAgentCommands } },
   { path: "/api/agent/:id/tree", methods: { GET: handleAgentTree } },
   { path: "/api/agent/:id/models", methods: { GET: handleAgentModels } },
