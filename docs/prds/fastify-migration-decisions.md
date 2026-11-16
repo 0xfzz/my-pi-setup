@@ -109,7 +109,7 @@ regression test (PRD §9 "Compatibility rule"). Default is **retain**.
 | SSE `retry: 2000` | standalone preamble frame | part of the first message | emit `{ retry: 2000, data }` on graph connect; document the combined frame |
 | Static ETag/Last-Modified/redirects | none | `@fastify/static` sends them | configure `etag:false`, `lastModified:false`, `redirect:false` to keep the on-disk contract |
 | Static index/listing | explicit root→index.html, no listing | index on, listing off | index on, listing off; dotfiles denied |
-| Plugin route precedence | first-registration-wins | `find-my-way` specificity (static > param) | **adopt specificity**; add a regression test and note it in the kernel; not "identical" |
+| Plugin route precedence | first-registration-wins | `find-my-way` specificity (static > param) | **adopted specificity** in the kernel matcher; regression-tested in `tests/web-plugin-routes.test.ts`; not "identical" |
 | Proxy trust | `PI_WEB_TRUST_PROXY` → custom last-hop key | Fastify `trustProxy` | small tested policy adapter for the throttling key / forwarded host / proto (PRD §6.4) |
 
 ## 5. SSE stability review — `@fastify/sse` 0.6.1
@@ -242,6 +242,12 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   transitional wrapper; it shrinks route-group by route-group in Phase 2.
   Factory/lifecycle coverage: `web/core/server/app.test.ts` plus the existing
   graph runtime/process suites (34 tests).
-- **Phases 2–5 — pending.** The remaining rows keep their phase column above;
+- **Phase 2 — in progress**: the kernel's handwritten `matchSegments` matcher is
+  replaced by a `find-my-way` facade (`web/core/plugin-contracts/kernel/routes.ts`),
+  one library router per plugin so namespaces stay isolated. Capability/ownership,
+  budget and namespace policy are unchanged; precedence is now library specificity
+  (recorded above and regression-tested). Native core/auth/admin route modules and
+  the graph's native routes are the remaining Phase 2 work; the `/*` delegate still
+  carries those paths. The remaining rows keep their phase column above;
   native routes register their real content type parsers in a child scope so a
   delegated request's body is never consumed twice.

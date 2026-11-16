@@ -7,7 +7,19 @@
  * time budget so a slow handler cannot wedge the server. Nothing here touches
  * HTTP directly: the server route adapts `IncomingMessage` to
  * `PluginRouteRequest` and writes the returned `PluginRouteResponse`.
+ *
+ * Matching is a maintained `find-my-way` router (the router Fastify itself
+ * uses), one instance per plugin so each keeps its own namespace and one plugin
+ * can never see or shadow another's routes. Fastify's router cannot register or
+ * remove routes after `ready()`, but `find-my-way`'s add/remove/find API can, so
+ * a live reload needs no restart and no Fastify-private mutation.
+ *
+ * Intentional difference from the previous handwritten matcher: matching was
+ * first-registration-wins and is now `find-my-way`'s specificity precedence
+ * (a static segment beats a `:param`). The capability, ownership, budget and
+ * namespace policies are unchanged.
  */
+import Router from "find-my-way";
 import { assertGranted, parseCapability, type Capability } from "./capabilities.ts";
 import { runWithBudget } from "./budget.ts";
 
@@ -77,15 +89,23 @@ export interface RegisteredRoute {
   path: string;
 }
 
-interface RouteEntry extends RegisteredRoute {
-  segments: string[];
-  handler: PluginRouteHandler;
-  seq: number;
-}
-
 export type RouteResolution =
   | { ok: true; route: RegisteredRoute; handler: PluginRouteHandler; params: Record<string, string> }
   | { ok: false; error: string };
+
+/**
+ * The slice of `find-my-way` this facade uses. Declaring it structurally keeps
+ * the library's generic handler types out of the kernel contract and out of the
+ * plugin-facing surface.
+ */
+interface FindMyWay {
+  on(method: string, path: string, handler: unknown, store: unknown): void;
+  off(method: string, path: string): void;
+  find(
+    method: string,
+    path: string,
+  ): { handler: unknown; params: Record<string, string | undefined>; store: unknown } | null;
+}
 
 /** Path segments of a registration: no leading slash, no `..`, no empty segment. */
 function normalisePath(raw: unknown): string[] | null {
@@ -101,26 +121,29 @@ function normalisePath(raw: unknown): string[] | null {
   return segments;
 }
 
-function splitRequestPath(raw: string): string[] {
-  const trimmed = raw.replace(/^\/+/, "").replace(/\/+$/, "");
-  return trimmed === "" ? [] : trimmed.split("/");
+/** The `find-my-way` pattern for a registration; the mount root is `/`. */
+function patternFor(segments: readonly string[]): string {
+  return segments.length === 0 ? "/" : `/${segments.join("/")}`;
 }
 
-/** Match concrete segments against a pattern; `:name` captures one segment. */
-function matchSegments(pattern: string[], concrete: string[]): Record<string, string> | null {
-  if (pattern.length !== concrete.length) return null;
-  const params: Record<string, string> = {};
-  for (let i = 0; i < pattern.length; i++) {
-    const expected = pattern[i];
-    const actual = concrete[i];
-    if (expected.startsWith(":")) {
-      if (actual === "") return null;
-      params[expected.slice(1)] = decodeURIComponent(actual);
-      continue;
-    }
-    if (expected !== actual) return null;
+/**
+ * The concrete path for a request, normalised the way registrations are: a
+ * leading/trailing slash is stripped, so the mount root and `a/b/` behave as
+ * before. `find-my-way` matches the exact path, so the trailing slash is
+ * removed here rather than relying on `ignoreTrailingSlash`.
+ */
+function requestPath(rawPath: string): string {
+  const trimmed = rawPath.replace(/^\/+/, "").replace(/\/+$/, "");
+  return trimmed === "" ? "/" : `/${trimmed}`;
+}
+
+/** Only the defined params, as a plain object (never the router's own shape). */
+function paramValues(params: Record<string, string | undefined>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) out[key] = value;
   }
-  return params;
+  return out;
 }
 
 export interface PluginRouteRegistryOptions {
@@ -128,11 +151,16 @@ export interface PluginRouteRegistryOptions {
   clock?: () => number;
 }
 
+/** One plugin's live route table: a matcher plus the ownership index for teardown. */
+interface PluginBucket {
+  router: FindMyWay;
+  entries: Map<string, RegisteredRoute>;
+}
+
 export class PluginRouteRegistry {
-  private readonly entries = new Map<string, RouteEntry[]>();
+  private readonly buckets = new Map<string, PluginBucket>();
   private readonly budgetMs: number;
   private readonly clock: () => number;
-  private seq = 1;
 
   constructor(options: PluginRouteRegistryOptions = {}) {
     this.budgetMs = options.budgetMs ?? DEFAULT_ROUTE_BUDGET_MS;
@@ -159,47 +187,53 @@ export class PluginRouteRegistry {
     if (!requested.ok) throw new Error(`Plugin "${owner.pluginId}": ${requested.error}`);
     assertGranted(owner.pluginId, owner.grants, requested.value);
 
-    const list = this.entries.get(owner.pluginId) ?? [];
-    const clash = list.find((entry) => entry.method === upper && entry.path === segments.join("/"));
-    if (clash) {
-      throw new Error(
-        `Plugin "${owner.pluginId}": route ${upper} /${segments.join("/")} is already registered`,
-      );
-    }
-    const entry: RouteEntry = {
+    const route: RegisteredRoute = {
       pluginId: owner.pluginId,
       method: upper as PluginRouteMethod,
       path: segments.join("/"),
-      segments,
-      handler,
-      seq: this.seq++,
     };
-    this.entries.set(owner.pluginId, [...list, entry]);
+    const key = `${upper} ${route.path}`;
+    const bucket = this.bucket(owner.pluginId);
+    if (bucket.entries.has(key)) {
+      throw new Error(
+        `Plugin "${owner.pluginId}": route ${upper} /${route.path} is already registered`,
+      );
+    }
+    try {
+      bucket.router.on(upper, patternFor(segments), handler, route);
+    } catch (error) {
+      throw new Error(
+        `Plugin "${owner.pluginId}": route ${upper} /${route.path} could not be registered: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    bucket.entries.set(key, route);
     return () => {
-      const current = this.entries.get(owner.pluginId) ?? [];
-      this.entries.set(owner.pluginId, current.filter((candidate) => candidate !== entry));
+      if (!bucket.entries.delete(key)) return;
+      bucket.router.off(upper, patternFor(segments));
+      if (bucket.entries.size === 0) this.buckets.delete(owner.pluginId);
     };
   }
 
   /** Remove every route a plugin registered (deactivate, rollback, quarantine). */
   removeOwner(pluginId: string): number {
-    const removed = this.entries.get(pluginId)?.length ?? 0;
-    this.entries.delete(pluginId);
+    const removed = this.buckets.get(pluginId)?.entries.size ?? 0;
+    // Dropping the plugin's whole matcher discards its routes atomically.
+    this.buckets.delete(pluginId);
     return removed;
   }
 
   /** Every registered route, oldest first — the plugin manager's diagnostics view. */
   list(): RegisteredRoute[] {
     const out: RegisteredRoute[] = [];
-    for (const list of this.entries.values()) {
-      for (const entry of list) out.push({ pluginId: entry.pluginId, method: entry.method, path: entry.path });
+    for (const bucket of this.buckets.values()) {
+      for (const route of bucket.entries.values()) out.push(route);
     }
     return out.sort((a, b) => a.pluginId.localeCompare(b.pluginId) || a.path.localeCompare(b.path));
   }
 
   /** Whether a plugin registered any route at all. */
   hasRoutes(pluginId: string): boolean {
-    return (this.entries.get(pluginId)?.length ?? 0) > 0;
+    return (this.buckets.get(pluginId)?.entries.size ?? 0) > 0;
   }
 
   /**
@@ -208,24 +242,25 @@ export class PluginRouteRegistry {
    */
   resolve(pluginId: string, method: string, rawPath: string): RouteResolution {
     const upper = method.toUpperCase();
-    const list = this.entries.get(pluginId) ?? [];
-    if (list.length === 0) return { ok: false, error: "no routes registered" };
-    const concrete = splitRequestPath(rawPath);
-    let methodMismatch = false;
-    for (const entry of list) {
-      const params = matchSegments(entry.segments, concrete);
-      if (params === null) continue;
-      if (entry.method !== upper) {
-        methodMismatch = true;
-        continue;
-      }
+    const bucket = this.buckets.get(pluginId);
+    if (bucket === undefined || bucket.entries.size === 0) {
+      return { ok: false, error: "no routes registered" };
+    }
+    const path = requestPath(rawPath);
+    const found = bucket.router.find(upper, path);
+    if (found !== null) {
       return {
         ok: true,
-        route: { pluginId: entry.pluginId, method: entry.method, path: entry.path },
-        handler: entry.handler,
-        params,
+        route: found.store as RegisteredRoute,
+        handler: found.handler as unknown as PluginRouteHandler,
+        params: paramValues(found.params),
       };
     }
+    // Wrong-method detection is library lookups across the allowed methods, not
+    // a second pattern matcher.
+    const methodMismatch = PLUGIN_ROUTE_METHODS.some(
+      (candidate) => candidate !== upper && bucket.router.find(candidate, path) !== null,
+    );
     return { ok: false, error: methodMismatch ? "method not allowed" : "not found" };
   }
 
@@ -243,5 +278,13 @@ export class PluginRouteRegistry {
     if (!outcome.ok) return { ok: false, reason: outcome.reason, message: outcome.error };
     const response = outcome.value;
     return { ok: true, response: response && typeof response === "object" ? response : {} };
+  }
+
+  private bucket(pluginId: string): PluginBucket {
+    const existing = this.buckets.get(pluginId);
+    if (existing !== undefined) return existing;
+    const created: PluginBucket = { router: Router() as unknown as FindMyWay, entries: new Map() };
+    this.buckets.set(pluginId, created);
+    return created;
   }
 }

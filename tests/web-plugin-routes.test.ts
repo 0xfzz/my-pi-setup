@@ -88,6 +88,53 @@ test("removeOwner drops every route a plugin mounted", () => {
   assert.equal(routes.hasRoutes("acme.metrics"), false);
 });
 
+test("live registration and removal keep unrelated routes intact", () => {
+  const routes = new PluginRouteRegistry();
+  routes.register(owner, "GET", "a", () => ({ body: "a" }));
+  const release = routes.register(owner, "GET", "b/:id", () => ({ body: "b" }));
+  assert.equal(routes.resolve("acme.metrics", "GET", "b/1").ok, true);
+  release();
+  assert.deepEqual(routes.resolve("acme.metrics", "GET", "b/1"), { ok: false, error: "not found" });
+  assert.equal(routes.resolve("acme.metrics", "GET", "a").ok, true, "an unrelated route survives");
+});
+
+test("a static segment wins over a :param (find-my-way precedence, intentional)", () => {
+  const routes = new PluginRouteRegistry();
+  routes.register(owner, "GET", "summary/:id", () => ({ body: "param" }));
+  routes.register(owner, "GET", "summary/latest", () => ({ body: "static" }));
+  const resolved = routes.resolve("acme.metrics", "GET", "summary/latest");
+  assert.equal(resolved.ok, true);
+  if (!resolved.ok) return;
+  assert.equal(resolved.route.path, "summary/latest");
+  assert.deepEqual(resolved.params, {});
+});
+
+test("the plugin namespace isolates identical patterns across plugins", () => {
+  const routes = new PluginRouteRegistry();
+  const other = { pluginId: "acme.other", grants: [{ kind: "routes" } as const] };
+  routes.register(owner, "GET", "summary/:id", () => ({ body: "mine" }));
+  routes.register(other, "GET", "summary/:id", () => ({ body: "theirs" }));
+  assert.equal(routes.resolve("acme.metrics", "GET", "summary/1").ok, true);
+  assert.equal(routes.resolve("acme.other", "GET", "summary/1").ok, true);
+});
+
+test("params are percent-decoded and a malformed escape is answered, not thrown", () => {
+  const routes = new PluginRouteRegistry();
+  routes.register(owner, "GET", "file/:name", () => ({}));
+  const decoded = routes.resolve("acme.metrics", "GET", "file/a%20b");
+  assert.equal(decoded.ok, true);
+  if (decoded.ok) assert.deepEqual(decoded.params, { name: "a b" });
+  assert.doesNotThrow(() => routes.resolve("acme.metrics", "GET", "file/%zz"));
+});
+
+test("the mount root and a trailing slash resolve as before", () => {
+  const routes = new PluginRouteRegistry();
+  routes.register(owner, "GET", "", () => ({ body: "root" }));
+  assert.equal(routes.resolve("acme.metrics", "GET", "/").ok, true);
+  routes.register(owner, "GET", "a/b", () => ({}));
+  assert.equal(routes.resolve("acme.metrics", "GET", "a/b/").ok, true);
+});
+
 test("a handler that throws or exceeds its budget becomes an error outcome, never a throw", async () => {
   const routes = new PluginRouteRegistry({ budgetMs: 20 });
   const request = { method: "GET" as const, path: "boom", params: {}, query: new URLSearchParams(), body: undefined };
