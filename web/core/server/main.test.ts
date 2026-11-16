@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { startWebServer } from "./main.ts";
+import { beginDrain, resetDrainForTests } from "./drain.ts";
 import { assetPathname } from "../../../lib/built-asset-policy.ts";
 import { registerWebPlugins } from "./plugin-host.ts";
 import { WEB_PLUGINS } from "../../plugins/index.ts";
@@ -20,6 +21,7 @@ registerWebPlugins(WEB_PLUGINS);
 
 test.afterEach(() => {
   clearSessionsForTests();
+  resetDrainForTests();
 });
 
 /** `git init` in a fixture directory; the branch route only needs a worktree. */
@@ -67,6 +69,26 @@ test("health endpoint reports service identity", async () => {
     const body = (await res.json()) as { ok?: boolean; service?: string };
     assert.equal(body.ok, true);
     assert.equal(body.service, "pi-web-minimal");
+  });
+});
+
+test("a draining server fails readiness and refuses new API work", async () => {
+  await withServer(async (baseUrl) => {
+    beginDrain();
+    try {
+      const health = await fetch(`${baseUrl}/api/health`);
+      assert.equal(health.status, 503);
+      assert.equal(((await health.json()) as { draining?: unknown }).draining, true);
+
+      const prompt = await fetch(`${baseUrl}/api/agent/new`, { method: "POST", body: "{}" });
+      assert.equal(prompt.status, 503, "no new work starts on a process that is going away");
+
+      // The notice route is exempt: it is how the supervisor tells open pages.
+      const notice = await fetch(`${baseUrl}/api/reload-notice`, { method: "POST", body: "{}" });
+      assert.equal(notice.status, 200);
+    } finally {
+      resetDrainForTests();
+    }
   });
 });
 

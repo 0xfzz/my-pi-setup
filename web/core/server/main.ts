@@ -14,6 +14,8 @@ import { registerPluginRoutes } from "./plugin-routes.ts";
 import { getPluginHost } from "./plugin-host.ts";
 import { runTeardown, teardownNote } from "./shutdown.ts";
 import { announceBuildChanged } from "./sessions.ts";
+import { beginDrain } from "./drain.ts";
+import { closeAllEventChannels } from "../http/sse.ts";
 import { setServedRoot, watchClientBuild } from "./client-build.ts";
 import { webAuthConfigPath } from "../auth/config.ts";
 import { WebAuthService } from "../auth/service.ts";
@@ -189,12 +191,18 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
  * `process.exit()` from anywhere else, or an uncaught exception's exit — where
  * nothing can be awaited and only a synchronous kill is still possible.
  */
+/** Give the final SSE frame a chance to reach browsers before sockets are force-closed. */
+const DRAIN_FLUSH_MS = 250;
+
 function installExitGuards(handle: WebServerHandle): void {
   let stopping = false;
   const stop = (signal: string): void => {
     if (stopping) return;
     stopping = true;
     void (async () => {
+      beginDrain();
+      closeAllEventChannels("There are code changes — reloading…");
+      await new Promise((resolve) => setTimeout(resolve, DRAIN_FLUSH_MS));
       const host = getPluginHost();
       const outcome = await runTeardown([
         // A server that is already closing needs no second attempt: close() is

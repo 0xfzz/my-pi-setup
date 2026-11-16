@@ -58,6 +58,7 @@ import {
   pluginManagerReport,
 } from "./plugin-admin.ts";
 import { servedClientBuild } from "./client-build.ts";
+import { isDraining } from "./drain.ts";
 
 type HttpMethod = "GET" | "POST" | "DELETE";
 type CoreHandler = (request: FastifyRequest, reply: FastifyReply) => Promise<void> | void;
@@ -100,6 +101,10 @@ const MAX_ACTION_VALUE_LENGTH = 2000;
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 function handleHealth(_request: FastifyRequest, reply: FastifyReply): void {
+  if (isDraining()) {
+    asJson(reply, 503, { ok: false, service: "pi-web-minimal", draining: true });
+    return;
+  }
   asJson(reply, 200, {
     ok: true,
     service: "pi-web-minimal",
@@ -674,6 +679,14 @@ const CORE_ROUTES: readonly CoreRoute[] = [
 export async function registerCoreRoutes(app: FastifyInstance): Promise<void> {
   await app.register(async (scope) => {
     registerLenientJsonParser(scope);
+    scope.addHook("onRequest", async (request, reply) => {
+      if (!isDraining()) return;
+      // Health has its own draining answer; the reload notice is the one
+      // write still allowed while the supervisor tells open pages to wait.
+      if (request.url === "/api/health" || request.url === "/api/reload-notice") return;
+      asJson(reply, 503, { error: "server is restarting" });
+      return reply;
+    });
     for (const route of CORE_ROUTES) {
       for (const [method, handler] of Object.entries(route.methods)) {
         scope.route({

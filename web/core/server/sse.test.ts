@@ -4,7 +4,7 @@ import { get } from "node:http";
 import type { ServerResponse } from "node:http";
 import type { SsePressureLimits } from "../../../lib/sse-pressure.ts";
 import { createWebApp } from "./app.ts";
-import { openEventChannel, SSE_ROUTE_OPTIONS, type EventChannel } from "../http/sse.ts";
+import { closeAllEventChannels, openEventChannel, SSE_ROUTE_OPTIONS, type EventChannel } from "../http/sse.ts";
 
 type ChannelFixture = { channel: EventChannel; raw: ServerResponse; response: Response };
 
@@ -142,6 +142,19 @@ test("a graceful close drains already-admitted frames before ending the response
     const text = await response.text();
     assert.ok(text.indexOf('"first"') < text.indexOf('"last"'));
     assert.match(text, /data: \{"last":"finish"\}\n\n$/);
+  });
+});
+
+test("a restart drain sends a retry hint on every stream and ends it", { timeout: 5_000 }, async () => {
+  await withChannel(async ({ channel, response }) => {
+    const text = response.text();
+    closeAllEventChannels("There are code changes — reloading…");
+    assert.equal(channel.closed, true);
+    const frame = await text;
+    assert.match(frame, /retry: 1000/);
+    assert.match(frame, /"type":"code_changes"/);
+    assert.match(frame, /There are code changes/);
+    assert.match(frame, /\n\n$/);
   });
 });
 

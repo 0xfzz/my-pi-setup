@@ -32,6 +32,20 @@ export interface EventChannel {
   close(): void;
 }
 
+/** Live channels, so an orderly restart can give every stream a resume hint. */
+const channels = new Set<EventChannel>();
+
+/**
+ * Send a final event to every open stream and end it. The retry field tells
+ * EventSource to come back quickly once the replacement process listens.
+ */
+export function closeAllEventChannels(message: string): void {
+  for (const channel of Array.from(channels)) {
+    channel.send({ type: "code_changes", message }, { retry: 1_000 });
+    channel.close();
+  }
+}
+
 // Conservatively reserve HTTP chunk framing before a new frame reaches raw.
 // Once written, raw.writableLength includes its actual chunk overhead.
 const HTTP_CHUNK_RESERVE_BYTES = 16;
@@ -132,5 +146,8 @@ class BufferedEventChannel implements EventChannel {
 }
 
 export function openEventChannel(reply: FastifyReply, limits: SsePressureLimits = MAIN_SSE_LIMITS): EventChannel {
-  return new BufferedEventChannel(reply, limits);
+  const channel = new BufferedEventChannel(reply, limits);
+  channels.add(channel);
+  channel.onClose(() => channels.delete(channel));
+  return channel;
 }
