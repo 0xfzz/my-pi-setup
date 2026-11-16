@@ -12,6 +12,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
+import { fastifySSE } from "@fastify/sse";
 import { registerClientStatic } from "./client-static.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
@@ -115,6 +116,7 @@ export async function createWebApp(options: WebAppOptions = {}): Promise<Fastify
     done(null, undefined);
   });
 
+  await app.register(fastifySSE);
   await app.register(cookie);
   await app.register(helmet, { global: true, ...SECURITY_HEADERS });
 

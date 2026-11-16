@@ -256,6 +256,7 @@ function rawRequest(
 
 interface EventStream {
   status: number;
+  headers: IncomingHttpHeaders;
   next(timeoutMs?: number): Promise<string>;
   close(): void;
 }
@@ -270,7 +271,7 @@ function openEventStream(port: number, cookie?: string): Promise<EventStream> {
       if (status !== 200) {
         res.resume();
         res.on("end", () =>
-          resolveStream({ status, next: () => Promise.reject(new Error("closed")), close: () => req.destroy() }),
+          resolveStream({ status, headers: res.headers, next: () => Promise.reject(new Error("closed")), close: () => req.destroy() }),
         );
         return;
       }
@@ -305,6 +306,7 @@ function openEventStream(port: number, cookie?: string): Promise<EventStream> {
       });
       resolveStream({
         status,
+        headers: res.headers,
         next(timeoutMs = 3_000) {
           const block = blocks.shift();
           if (block !== undefined) return Promise.resolve(block);
@@ -654,11 +656,21 @@ test("SSE sends changed events, pings, caps clients, and survives a destroyed co
     const cookie = await bootstrapCookie(handle);
     const stream = await openEventStream(handle.port, cookie);
     assert.equal(stream.status, 200);
+    assert.equal(stream.headers["content-type"], "text/event-stream");
+    assert.equal(stream.headers["cache-control"], "no-store");
+    assert.equal(stream.headers["x-accel-buffering"], "no");
+    assert.equal(stream.headers["x-content-type-options"], "nosniff");
+    assert.equal(stream.headers["x-frame-options"], "DENY");
+    assert.equal(stream.headers["referrer-policy"], "no-referrer");
+    assert.equal(stream.headers["cross-origin-opener-policy"], "same-origin");
+    assert.equal(stream.headers["cross-origin-resource-policy"], "same-origin");
+    assert.equal(stream.headers["content-security-policy"], undefined);
     const firstChanged = await waitFor(async () => {
       const block = await stream.next(1_000).catch(() => null);
       return block && block.includes('"type":"changed"') ? block : null;
     }, "initial changed event");
-    assert.match(firstChanged, /changed/);
+    assert.match(firstChanged, /data: \{"type":"changed"\}/);
+    assert.match(firstChanged, /retry: 2000/);
 
     const unauth = await rawRequest(handle.port, "/api/events");
     assert.equal(unauth.status, 401);
@@ -669,9 +681,9 @@ test("SSE sends changed events, pings, caps clients, and survives a destroyed co
 
     const ping = await waitFor(async () => {
       const block = await stream.next(500).catch(() => null);
-      return block && block.startsWith(': ping') ? block : null;
+      return block && block.startsWith(': heartbeat') ? block : null;
     }, "SSE ping");
-    assert.match(ping, /^: ping/);
+    assert.match(ping, /^: heartbeat/);
 
     assert.equal((await publish(handle, makeSnapshot("session-sse"))).status, 200);
     const changed = await waitFor(async () => {

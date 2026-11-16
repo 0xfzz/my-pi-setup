@@ -55,7 +55,8 @@ import { createServer as createNetServer, Socket } from "node:net";
 import type { Server as NetServer } from "node:net";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
+import { openEventChannel, SSE_ROUTE_OPTIONS, type EventChannel } from "../../../core/http/sse.ts";
 
 import { createGraphApp } from "./app.ts";
 import { SUBAGENT_GRAPH_PROTOCOL } from "./protocol.ts";
@@ -560,11 +561,11 @@ class SubagentGraphRuntime {
   readonly #sessions = new Map<string, SessionRecord>();
   readonly #tombstones = new Map<string, number>();
   readonly #browserSessions = new Map<string, number>();
-  readonly #sseClients = new Set<ServerResponse>();
+  readonly #sseClients = new Set<EventChannel>();
   #lastActivityAt = Date.now();
   #notifyTimer: NodeJS.Timeout | null = null;
   #sweepTimer: NodeJS.Timeout | null = null;
-  #pingTimer: NodeJS.Timeout | null = null;
+  #eventPressureTimer: NodeJS.Timeout | null = null;
   #closing: Promise<void> | null = null;
   #closedResolve: (() => void) | null = null;
   #closed = new Promise<void>(resolve => {
@@ -638,6 +639,7 @@ class SubagentGraphRuntime {
   async #listen(): Promise<void> {
     const app = await createGraphApp({
       staticRoot: this.#options.webRoot,
+      heartbeatInterval: this.#options.ssePingMs,
       guard: (req, res) => this.#guard(req, res),
     });
     this.#app = app;
@@ -690,8 +692,10 @@ class SubagentGraphRuntime {
     this.#sweepTimer.unref();
     this.#lastActivityAt = now();
     if (this.#options.ssePingMs > 0) {
-      this.#pingTimer = setInterval(() => this.#ping(), this.#options.ssePingMs);
-      this.#pingTimer.unref();
+      // The plugin sends keepalive comments; this timer only enforces the
+      // graph's application-owned client byte cap between notifications.
+      this.#eventPressureTimer = setInterval(() => this.#checkEventPressure(), this.#options.ssePingMs);
+      this.#eventPressureTimer.unref();
     }
   }
 
@@ -802,6 +806,7 @@ class SubagentGraphRuntime {
         this.#fail(reply.raw, error);
       }
     });
+    this.#registerEventsRoute(app);
     const routes: readonly GraphApiRoute[] = [
       { path: "/api/health", method: "GET", auth: "any", handle: (_req, res) => sendJson(res, 200, this.stats()) },
       {
@@ -812,7 +817,6 @@ class SubagentGraphRuntime {
       },
       { path: "/api/session", method: "GET", auth: "browser", handle: (_req, res, url) => this.#sendSession(res, url) },
       { path: "/api/artifact", method: "GET", auth: "browser", handle: (_req, res, url) => this.#sendArtifact(res, url) },
-      { path: "/api/events", method: "GET", auth: "browser", handle: (req, res) => this.#openEvents(req, res) },
       { path: "/api/producer/publish", method: "POST", auth: "producer", handle: (req, res) => this.#publish(req, res) },
       {
         path: "/api/producer/heartbeat",
@@ -930,26 +934,35 @@ class SubagentGraphRuntime {
 
   // ── SSE ──────────────────────────────────────────────────────────────────
 
-  #openEvents(req: IncomingMessage, res: ServerResponse): void {
+  #registerEventsRoute(app: FastifyInstance): void {
+    const method = "GET";
+    app.all("/api/events", {
+      sse: { ...SSE_ROUTE_OPTIONS, heartbeat: true },
+      onRequest: async (request, reply) => {
+        if (this.#apiAuthorized("browser", request.raw)) return;
+        return reply.code(401).header("cache-control", "no-store").send({ error: "unauthorized" });
+      },
+    }, async (request, reply) => {
+      if (request.method !== method) {
+        return reply.code(405).header("cache-control", "no-store").send({ error: `method not allowed; use ${method}` });
+      }
+      this.#openEvents(reply);
+    });
+  }
+
+  #openEvents(reply: FastifyReply): void {
     if (this.#sseClients.size >= this.#options.maxSseClients) {
-      throw new HttpError(429, "too many event streams");
+      void reply.code(429).header("cache-control", "no-store").send({ error: "too many event streams" });
+      return;
     }
-    securityHeaders(res);
-    res.setHeader("content-type", "text/event-stream; charset=utf-8");
-    res.setHeader("cache-control", "no-store");
-    res.setHeader("connection", "keep-alive");
-    res.setHeader("x-accel-buffering", "no");
-    res.statusCode = 200;
-    res.write("retry: 2000\n\n");
-    res.write(`data: ${JSON.stringify({ type: "changed" })}\n\n`);
-    this.#sseClients.add(res);
-    const remove = () => {
-      this.#sseClients.delete(res);
-    };
-    req.on("close", remove);
-    req.on("error", remove);
-    res.on("close", remove);
-    res.on("error", remove);
+    reply.header("cache-control", "no-store");
+    const channel = openEventChannel(reply, {
+      dropAboveBytes: this.#options.maxSseBufferBytes,
+      closeAboveBytes: this.#options.maxSseBufferBytes,
+    });
+    this.#sseClients.add(channel);
+    channel.onClose(() => this.#sseClients.delete(channel));
+    channel.send({ type: "changed" }, { retry: 2000 });
   }
 
   #notify(): void {
@@ -963,34 +976,11 @@ class SubagentGraphRuntime {
   }
 
   #broadcast(): void {
-    const payload = `data: ${JSON.stringify({ type: "changed" })}\n\n`;
-    for (const res of this.#sseClients) {
-      this.#writeEvent(res, payload);
-    }
+    for (const channel of this.#sseClients) channel.send({ type: "changed" });
   }
 
-  #writeEvent(res: ServerResponse, payload: string): void {
-    if (res.writableEnded || res.destroyed) {
-      this.#sseClients.delete(res);
-      return;
-    }
-    if (res.writableLength > this.#options.maxSseBufferBytes) {
-      // A slow/stalled consumer must not grow the server's heap: drop it and let
-      // EventSource reconnect to a fresh snapshot instead of buffering forever.
-      this.#sseClients.delete(res);
-      res.destroy();
-      return;
-    }
-    try {
-      res.write(payload);
-    } catch {
-      this.#sseClients.delete(res);
-      res.destroy();
-    }
-  }
-
-  #ping(): void {
-    for (const res of this.#sseClients) this.#writeEvent(res, ": ping\n\n");
+  #checkEventPressure(): void {
+    for (const channel of this.#sseClients) channel.checkPressure();
   }
 
   // ── Producer transport ───────────────────────────────────────────────────
@@ -1213,18 +1203,12 @@ class SubagentGraphRuntime {
     this.#closing = (async () => {
       if (this.#notifyTimer !== null) clearTimeout(this.#notifyTimer);
       if (this.#sweepTimer !== null) clearInterval(this.#sweepTimer);
-      if (this.#pingTimer !== null) clearInterval(this.#pingTimer);
+      if (this.#eventPressureTimer !== null) clearInterval(this.#eventPressureTimer);
       this.#notifyTimer = null;
       this.#sweepTimer = null;
-      this.#pingTimer = null;
-      for (const res of this.#sseClients) {
-        this.#sseClients.delete(res);
-        try {
-          res.end();
-        } catch {
-          res.destroy();
-        }
-      }
+      this.#eventPressureTimer = null;
+      for (const channel of this.#sseClients) channel.close();
+      this.#sseClients.clear();
       const closedServer = this.#app?.close() ?? Promise.resolve();
       await closedServer;
       await removeRuntimeMetadata(this.#options.runtimeDir, this.#instanceId);

@@ -8,7 +8,7 @@
 // use. This is what makes web↔TUI sync bidirectional and realtime: one
 // session, two frontends, no rival in-process copy.
 
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { EventChannel } from "../http/sse.ts";
 import { createStreamTracker, type StreamSnapshot } from "./stream-tracker.ts";
 import type { WebTreeNode } from "../../../lib/web-tree.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../plugin-contracts/actions.ts";
@@ -85,7 +85,7 @@ export interface BridgeConnection {
 }
 
 const bridges = new Map<string, BridgeConnection>();
-const BRIDGE_HEARTBEAT_MS = 30_000;
+const BRIDGE_REGISTRATION_CHECK_MS = 30_000;
 
 /** The well-formed model refs of a web_models list; unknown shapes drop out. */
 function parseModelRefs(value: unknown): Array<{ provider: string; id: string }> {
@@ -103,7 +103,7 @@ function parseModelRefs(value: unknown): Array<{ provider: string; id: string }>
  * elsewhere (an in-process resume that slipped in during a race) takes its
  * session back — the displaced copy is disposed and the two frontends
  * re-converge within one heartbeat instead of staying split-brained.
- * The heartbeat calls this; tests drive it directly.
+ * The periodic registration check calls this; tests drive it directly.
  */
 export function healBridgeRegistration(connection: BridgeConnection): void {
   if (connection.closed) return;
@@ -130,11 +130,10 @@ export function getBridge(sessionId: string): BridgeConnection | undefined {
  * the browser streams so their EventSources reconnect and re-resolve.
  */
 export function attachBridge(options: {
-  req: IncomingMessage;
-  res: ServerResponse;
+  channel: EventChannel;
   metadata: BridgeMetadata;
 }): BridgeConnection {
-  const { req, res, metadata } = options;
+  const { channel, metadata } = options;
   // A re-attach replaces the previous bridge (server or extension restart).
   bridges.get(metadata.sessionId)?.close();
 
@@ -171,19 +170,10 @@ export function attachBridge(options: {
     treeNodes = next;
   };
 
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache, no-transform",
-    Connection: "keep-alive",
-    "X-Accel-Buffering": "no",
-  });
-  res.write(":\n\n");
-  res.write(
-    `data: ${JSON.stringify({ type: "bridge_attached", sessionId: metadata.sessionId })}\n\n`,
-  );
+  channel.send({ type: "bridge_attached", sessionId: metadata.sessionId });
 
   let closed = false;
-  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let registrationTimer: ReturnType<typeof setInterval> | null = null;
 
   // Action relay: the plugin action route emits the action request on the
   // session bus; for a bridged session the bus forwards it as a bridge
@@ -232,12 +222,8 @@ export function attachBridge(options: {
     },
     sendCommand(command: BridgeCommand): void {
       if (closed) return;
-      try {
-        res.write(`data: ${JSON.stringify({ type: "bridge_command", command })}\n\n`);
-      } catch {
-        // A failed write means the owning process is gone; the request's
-        // close event runs the cleanup.
-      }
+      channel.send({ type: "bridge_command", command });
+      if (channel.closed) connection.close();
     },
     postEvent(event: unknown): void {
       if (closed) return;
@@ -341,7 +327,7 @@ export function attachBridge(options: {
       // The TUI owner is going away — hold the split-brain guard for the
       // self-heal window; after it expires, an in-process resume is legal.
       markBridgeDetached(metadata.sessionId);
-      if (heartbeat !== null) clearInterval(heartbeat);
+      if (registrationTimer !== null) clearInterval(registrationTimer);
       if (bridges.get(metadata.sessionId) === connection) {
         bridges.delete(metadata.sessionId);
       }
@@ -358,21 +344,12 @@ export function attachBridge(options: {
         }
       }
       listeners.clear();
-      try {
-        res.end();
-      } catch {
-        // already gone
-      }
+      channel.close();
     },
   };
 
   bridges.set(metadata.sessionId, connection);
   registerSessionBusForTests(metadata.sessionId, actionBus);
-
-  // Ask the owning pi process to re-emit its current web UI values now that
-  // this session's consumers can receive them: a bridge that attaches after
-  // the TUI already published converges instead of leaving the web empty.
-  actionBus.emit?.(WEB_PLUGIN_UI_SYNC_EVENT, {});
 
   // The bridge IS the live session: every existing route (events SSE, prompt
   // and abort POSTs, get_state, the sessions list) works against this core
@@ -384,20 +361,20 @@ export function attachBridge(options: {
   // connection (or its self-heal successor) is the owner.
   markBridgeAttached(metadata.sessionId);
 
-  heartbeat = setInterval(() => {
+  registrationTimer = setInterval(() => {
     if (closed) return;
+    // Transport keepalive belongs to the plugin; registration healing and
+    // pressure admission remain bridge policy on the same 30-second cadence.
     healBridgeRegistration(connection);
-    try {
-      res.write(":hb\n\n");
-    } catch {
-      connection.close();
-    }
-  }, BRIDGE_HEARTBEAT_MS);
+    channel.checkPressure();
+  }, BRIDGE_REGISTRATION_CHECK_MS);
 
-  req.on("close", () => {
-    connection.close();
-  });
+  channel.onClose(() => connection.close());
 
+  // Own the registry, timer and cleanup before sending: a failed first command
+  // must not close the bridge and then let setup re-register the closed core.
+  // Re-publish UI values for a bridge attaching after the TUI's initial publish.
+  actionBus.emit?.(WEB_PLUGIN_UI_SYNC_EVENT, {});
   return connection;
 }
 

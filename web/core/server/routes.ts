@@ -9,6 +9,8 @@
 // `asJson` is the one shared response policy (JSON, `cache-control: no-store`).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { SSERouteOptions } from "@fastify/sse";
+import { openEventChannel, SSE_ROUTE_OPTIONS, type EventChannel } from "../http/sse.ts";
 import { randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { existsSync, statSync } from "node:fs";
@@ -55,12 +57,18 @@ type CoreHandler = (request: FastifyRequest, reply: FastifyReply) => Promise<voi
 interface CoreRoute {
   path: string;
   methods: Partial<Record<HttpMethod, CoreHandler>>;
+  sse?: SSERouteOptions;
 }
 
 // ── Request helpers ─────────────────────────────────────────────────────────
 
 function asJson(reply: FastifyReply, status: number, body: unknown): void {
   void reply.code(status).header("cache-control", "no-store").send(body);
+}
+
+function mainEventChannel(reply: FastifyReply): EventChannel {
+  reply.header("cache-control", "no-cache, no-transform");
+  return openEventChannel(reply);
 }
 
 /** The query string with `URLSearchParams` semantics (first value wins). */
@@ -258,10 +266,8 @@ function handleBridgeAttach(request: FastifyRequest, reply: FastifyReply): void 
   const query = queryOf(request);
   const modelParam = query.get("model");
   const modelSlash = modelParam !== null ? modelParam.indexOf("/") : -1;
-  reply.hijack();
   attachBridge({
-    req: request.raw,
-    res: reply.raw,
+    channel: mainEventChannel(reply),
     metadata: {
       sessionId,
       cwd: query.get("cwd") ?? process.cwd(),
@@ -358,9 +364,8 @@ async function handleDirectories(request: FastifyRequest, reply: FastifyReply): 
   });
 }
 
-function handleSessionsEvents(request: FastifyRequest, reply: FastifyReply): void {
-  reply.hijack();
-  attachSessionsEventStream(request.raw, reply.raw);
+function handleSessionsEvents(_request: FastifyRequest, reply: FastifyReply): void {
+  attachSessionsEventStream(mainEventChannel(reply));
 }
 
 async function handleSessionsList(request: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -402,8 +407,7 @@ async function handleAgentNew(request: FastifyRequest, reply: FastifyReply): Pro
 function handleAgentEvents(request: FastifyRequest, reply: FastifyReply): void {
   const sessionId = paramOf(request, "id");
   const sessionPromise = ensureSession(sessionId);
-  reply.hijack();
-  attachAgentEventStream(request.raw, reply.raw, sessionId, sessionPromise);
+  attachAgentEventStream(mainEventChannel(reply), { sessionId, sessionPromise });
 }
 
 async function handleAgentHistory(request: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -612,16 +616,16 @@ const CORE_ROUTES: readonly CoreRoute[] = [
   { path: "/api/plugin-manager", methods: { GET: handlePluginManagerReport } },
   { path: "/api/plugin-manager/:id/:command", methods: { POST: handlePluginManagerCommand } },
   { path: "/api/plugins/action", methods: { POST: handlePluginAction } },
-  { path: "/api/bridge/:id/attach", methods: { GET: handleBridgeAttach } },
+  { path: "/api/bridge/:id/attach", methods: { GET: handleBridgeAttach }, sse: { ...SSE_ROUTE_OPTIONS, heartbeat: true } },
   { path: "/api/bridge/:id/events", methods: { POST: handleBridgeEvents } },
   { path: "/api/bridge/:id/detach", methods: { POST: handleBridgeDetach } },
   { path: "/api/agent/:id/pi_api", methods: { POST: handlePiApi } },
   { path: "/api/directories", methods: { GET: handleDirectories } },
-  { path: "/api/sessions/events", methods: { GET: handleSessionsEvents } },
+  { path: "/api/sessions/events", methods: { GET: handleSessionsEvents }, sse: SSE_ROUTE_OPTIONS },
   { path: "/api/sessions", methods: { GET: handleSessionsList } },
   { path: "/api/sessions/:id", methods: { DELETE: handleSessionDelete } },
   { path: "/api/agent/new", methods: { POST: handleAgentNew } },
-  { path: "/api/agent/:id/events", methods: { GET: handleAgentEvents } },
+  { path: "/api/agent/:id/events", methods: { GET: handleAgentEvents }, sse: SSE_ROUTE_OPTIONS },
   { path: "/api/agent/:id/history", methods: { GET: handleAgentHistory } },
   { path: "/api/agent/:id/commands", methods: { GET: handleAgentCommands } },
   { path: "/api/agent/:id/tree", methods: { GET: handleAgentTree } },
@@ -648,7 +652,7 @@ export async function registerCoreRoutes(app: FastifyInstance): Promise<void> {
     });
 
     for (const route of CORE_ROUTES) {
-      scope.all(route.path, async (request, reply) => {
+      scope.all(route.path, { sse: route.sse }, async (request, reply) => {
         const handler = route.methods[request.method as HttpMethod];
         if (handler === undefined) {
           // Known path, unsupported method. Only the auth routes send `Allow`.

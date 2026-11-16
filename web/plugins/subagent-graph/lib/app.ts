@@ -18,12 +18,15 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
+import { fastifySSE } from "@fastify/sse";
 import { registerGraphStatic } from "./static.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 export interface GraphAppOptions {
   /** Built graph UI root; missing builds use the local placeholder page. */
   staticRoot: string;
+  /** Transport comment keepalive; zero disables it. */
+  heartbeatInterval?: number;
   /**
    * The graph's loopback Host/Origin gate (PRD §6.1). Runs in `onRequest`
    * before any route or the delegate, answers on the raw response itself when
@@ -80,6 +83,7 @@ export async function createGraphApp(options: GraphAppOptions): Promise<FastifyI
     done(null, undefined);
   });
 
+  await app.register(fastifySSE, { heartbeatInterval: options.heartbeatInterval ?? 15_000 });
   await app.register(cookie);
   await app.register(helmet, { global: true, ...GRAPH_SECURITY_HEADERS });
 

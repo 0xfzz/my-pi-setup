@@ -71,6 +71,8 @@ Switching mode updates the displayed mode but retains observation of existing wo
 
 The server is independent of the first Pi process. Live producers reconnect and republish full state after a server restart. The server shuts down after an idle grace period when there are no live producers or connected browser streams.
 
+Browser events use `@fastify/sse` with the graph's own client/buffer caps and notification debounce. The first `changed` data frame also carries `retry: 2000`; subsequent keepalives are the library's `: heartbeat` comments at the configured ping interval (zero disables them). Data events remain unnamed JSON. Disconnect and shutdown release the channel through the plugin lifecycle; a slow consumer is disconnected rather than given an unbounded queue.
+
 This is a current-state viewer, not a durable history database. Offline/disconnected sessions are subject to bounded retention; server restarts do not promise historical session recovery.
 
 ## Read-only and local-only

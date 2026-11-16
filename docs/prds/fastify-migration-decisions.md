@@ -80,7 +80,7 @@ application-owned per PRD §3.
 | M7 | `auth.ts` `parseCookies`/`cookie()`; graph `parseCookies` + `Set-Cookie` | `@fastify/cookie` parse + `setCookie`/`clearCookie` | names/paths/expiry, credential precedence, Secure policy, graph bootstrap store | `auth.test.ts`, graph runtime | 3 |
 | M8 | `main.ts` three header setters; graph `securityHeaders` | `@fastify/helmet`, configured per host/route | CSP/trust policy, special cache headers | `main.test.ts`, graph runtime | 3 |
 | M9 | `web/core/auth/jwt.ts` hand-rolled HS256 | `fast-jwt` codec seam (one implementation, HS256-only, keyed by purpose) | purpose keys, required claims, revocation, rotation/grace, error mapping | `web/core/auth/*.test.ts`, `tests/web-auth.test.ts` | 3 |
-| M10 | `event-stream.ts` (agent + directory); `bridge.ts` attach; graph `#openEvents`/`#ping`/`#broadcast` | `@fastify/sse` transport (`sse:'manual'`, `keepAlive`, `close`, `onClose`) | event projection, snapshots, coalescing, drop/backlog policy, bridge healing, graph debounce | `event-stream.test.ts`, `tests/web-bridge-*.test.ts`, graph runtime | 4 |
+| M10 | deleted repeated headers/framing/raw close plumbing in agent/directory, bridge attach and graph events | shared `core/http/sse.ts`: `@fastify/sse` public `stream`, `sendHeaders`, `keepAlive`, `close`, `onClose`; library heartbeats for bridge/graph | event projection/snapshots, byte-bounded preludes/coalescing, drop/backlog policy, bridge healing, graph debounce/caps | `sse.test.ts`, `event-stream-policy.test.ts`, `tests/sse-pressure.test.ts`, existing stream/bridge/auth/graph suites + browser e2e | 4 complete |
 | M11 | `main.ts` `serveStatic`/`MIME_TYPES`/`resolveStaticPath`; graph `#serveStatic` fallback | `@fastify/static` + allowed-path hooks | build-ID HTML stamping, primary SPA fallback, graph restricted types + CSP | `main.test.ts`, graph runtime | 4 |
 | M12 | `files.ts` `parseRange`/disposition/`stream.pipe(res)` | Fastify stream reply + `@fastify/send` range/content-disposition helpers | descriptor acquisition (`O_NOFOLLOW`), root/symlink/size policy, `file.before-read` veto, forced-attachment rules | `files.test.ts`, `files-stream.test.ts` | 4 |
 | M13 | `main.ts` `closeAllConnections`; `auth.ts` connection map; graph `#closing` | Fastify `preClose`/`onClose`, `close`, `closeAllConnections` option, stream cleanup | bounded teardown, child cleanup, graph singleton release, watchers | `web-shutdown-budget.test.ts`, graph runtime | 1/4 |
@@ -106,9 +106,11 @@ regression test (PRD §9 "Compatibility rule"). Default is **retain**.
 | Trailing slash | exact match, no redirect | `ignoreTrailingSlash` off; `/x/` ≠ `/x` | keep off; test `/x` vs `/x/` explicitly |
 | `Cache-Control: no-store` JSON | every JSON reply | none | policy helper sets cache per status family (JSON `no-store`; SSE `no-cache, no-transform`) |
 | SSE content-type | `text/event-stream` (graph: `; charset=utf-8`) | plugin writes `text/event-stream` | keep plugin value; graph charset difference is cosmetic and documented |
-| SSE heartbeat | JSON `data: {"type":"heartbeat"}` every 30 s | plugin writes `: heartbeat` comment | **disable plugin heartbeat**, emit our JSON data heartbeat (wire preserved) |
+| SSE heartbeat | agent/directory JSON heartbeat at 30 s; bridge `:hb`; graph `: ping` | plugin writes `: heartbeat` | agent/directory disable plugin heartbeat and keep JSON; bridge/graph **adopt library comments** at 30 s/configured graph interval (zero disables graph pings); ownership-healing/pressure guards remain domain work |
 | SSE Accept negotiation | always streams | `manual` attaches unconditionally; `only` can 406 | use `sse: 'manual'` so every client that worked before still streams |
-| SSE `retry: 2000` | standalone preamble frame | part of the first message | emit `{ retry: 2000, data }` on graph connect; document the combined frame |
+| SSE `retry: 2000` | standalone preamble frame | part of the first message | **adopted** combined initial `changed` data + retry field; no named/double-encoded data events |
+| SSE immediate flush | an empty comment forces headers onto the wire | `sendHeaders()` commits but does not flush | flush the committed head before startup via `raw.flushHeaders()`; no synthetic data event or handwritten preamble |
+| SSE pressure | raw-buffer-only checks before writes; prelude/coalescing storage uncapped; droppable traffic could bypass hard close | library formatting/Node pipe backpressure, not application byte caps | charge incoming UTF-8 frame bytes, formatter/byte-stream/socket buffers and producer reservations before admission, with conservative HTTP chunk reserve; hard close takes precedence over dropping. Oversized staged events close/reconnect rather than remain retained |
 | Static ETag/Last-Modified/redirects | none | `@fastify/static` sends them | **retained** with `etag:false`, `lastModified:false`, `redirect:false`, `acceptRanges:false`; built assets remain full 200 with `no-cache` (not Files downloads) |
 | Static index/listing | explicit root→index.html, no listing | index on, listing off | primary: explicit root index plus extensionless SPA fallback, `index:false`; graph: root index (root then dist), no directory indexes under asset prefixes; no listing; dotfiles denied |
 | Static MIME | hand-maintained maps | maintained MIME database | **adopted** library MIME values, including JavaScript `application/javascript; charset=utf-8` rather than `text/javascript`; WASM/fonts/opaque viewer assets are regression-tested |
@@ -130,20 +132,31 @@ wire, and lifecycle review. Findings from the installed source (`index.js`):
 
 - **Framing is byte-compatible for data events.** `formatSSEMessage` emits
   `data: <line>\n` per line plus a blank line, i.e. `data: {…}\n\n` — identical
-  to `event-stream.ts` today. Plain objects are `JSON.stringify`-ed, matching
-  the current serializer; objects are not re-wrapped as named events.
+  to the former `event-stream.ts` writer. The adapter freezes a frame's JSON
+  string on admission; the route serializer returns it unchanged, so library
+  framing neither double-encodes objects nor invents named events.
 - **Lifecycle works for out-of-band producers.** With `sse: 'manual'` the
   plugin attaches `reply.sse` unconditionally; `keepAlive()` stops the
   auto-close on handler resolution and `close()` ends the raw response once
   headers are committed. `onClose()` fires from `reply.raw` `close`/`error`, so
   timers and subscriptions are released exactly once.
-- **Backpressure is honoured.** `writeToStream` resolves on `write()` or
-  `drain`, and throws `FST_ERR_SSE_CONNECTION_CLOSED` after close. The
-  application pressure policy (512 KiB drop threshold, 16 MiB close, 150 ms
-  coalescing) stays ours and reads `reply.raw.writableLength`; the plugin does
-  not add an unbounded queue.
-- **Heartbeat is a comment**, not a data event. We disable it
-  (`{ kind:'manual', heartbeat:false }`) and keep the JSON `heartbeat` event.
+- **Bounded backpressure uses the public `stream()` API**, documented by the
+  package for piping to `reply.raw`. Calling async `send()` once per producer
+  callback would accumulate promises/drain listeners, and this release's
+  single-write drain wait listens for error/drain but not close. We avoid that
+  path entirely. One formatter and a byte-mode PassThrough feed Node's bounded
+  pipe chain. The byte stage matters: raw HTTP string queues can report UTF-16
+  character lengths rather than UTF-8 byte lengths. Application admission counts
+  immutable pending JSON, every pipeline layer, socket bytes and bounded
+  producer prelude/coalescing reservations, with a conservative HTTP chunk
+  reserve. There is no promise chain or unbounded iterator queue. Tests cover
+  Unicode accounting, a genuinely unread client, graceful draining, abrupt
+  close, and removal of pipe drain listeners.
+- **Heartbeat is a comment**, not a data event. Agent/directory disable it
+  (`{ kind:'manual', heartbeat:false }`) and retain the JSON `heartbeat` event.
+  Bridge/graph use library heartbeat ownership. Their remaining periodic work
+  is only bridge registry healing / graph byte-cap enforcement; graph debounce
+  remains notification policy.
 - **Cache-Control** is set to `no-cache` by the plugin but `reply.getHeaders()`
   is transferred afterwards, so an explicit `reply.header('cache-control',
   'no-cache, no-transform')` wins.
@@ -226,6 +239,7 @@ protecting test, and removal condition.
 | E2 | `web/core/server/legacy-plugin-transport.ts` (plugin-host owner) | existing external plugins that write to the real Node response before returning `{ handled:true }` | Fastify cannot infer already-committed external raw ownership or replace committed bytes with a 502 | single deprecated raw adapter; hijack on ownership, terminate partial output after failure; first-party Files no longer uses it | `plugin-stream.test.ts`, `tests/web-plugin-routes.test.ts` | remove when external raw transport API support is retired; new first-party handlers must return body/stream results |
 | E3 | kernel route facade (`kernel/routes.ts`) | grants, namespace, diagnostics, budget facade even though the matcher is `find-my-way` | `find-my-way` has no capability/ownership model | thin facade over `on`/`off`/`findRoute` | `tests/web-plugin-routes.test.ts` | never (policy is domain) |
 | E4 | `web/core/auth/throttle.ts` | failure-only rolling accounting + pre-hash charging | `@fastify/rate-limit` fixed-window post-check mismatch | keep `LoginThrottle` | `web/core/auth/*.test.ts` | a maintained limiter with equivalent hooks |
+| E5 | `web/core/http/sse.ts`, `lib/sse-pressure.ts` (web transport owner) | domain byte admission, coalescing/prelude reservations, immediate startup flush and hard abort of stalled clients | `@fastify/sse` 0.6.1 `stream()` handles framing/backpressure/lifecycle, but has no application byte budgets; `sendHeaders()` does not flush and `close()` is graceful | one bounded library formatter/UTF-8 pipe adapter; only raw flush/pressure abort, no raw SSE writes or independent connection listeners | `sse.test.ts`, `event-stream-policy.test.ts`, `tests/sse-pressure.test.ts`, auth/graph suites | use plugin flush/abort APIs when available; application caps/replay/healing remain domain policy |
 
 ## 9. Spike results
 
@@ -296,8 +310,8 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   heartbeating producer still prevents the idle shutdown. The handlers keep the
   runtime's raw writers and `#readEnvelope`. M11 registered `/api/events`
   and `/bootstrap` natively as well, then deleted `#handle`/`#api` and the
-  factory delegate; the SSE transport itself still needs M10.
-- **Phase 3 — done**: cookies go through `@fastify/cookie` (the gate reads
+  factory delegate. M10 now uses native library-backed SSE for `/api/events`.
+- **Phase 3 — primary auth done**: cookies go through `@fastify/cookie` (the gate reads
   `request.cookies`, the routes call `reply.setCookie`/`clearCookie`) and the
   four auth endpoints are native Fastify routes with a scoped 4,096-byte body
   limit. The JWT codec (`web/core/auth/jwt.ts`) is the `fast-jwt` seam
@@ -308,7 +322,7 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   derived from the raw headers this module already owns, so no Fastify
   `trustProxy` / `request.ip` path is needed (nothing reads it). M15's throttle
   verdict is recorded in §7.
-- **Phase 4 — partial**: M12 is complete. First-party Files returns the
+- **Phase 4 — complete**: M12 is complete. First-party Files returns the
   framework-neutral stream result; Fastify owns transfer/completion and the
   descriptor adapter owns policy/acquisition/release. Range arithmetic and
   disposition encoding use maintained direct dependencies (§6). The only raw
@@ -323,5 +337,13 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   retained without manual streaming or MIME tables. Pure shared policy lives
   in `lib/built-asset-policy.ts` so the standalone graph host never imports
   the primary runtime. Static behavior is covered by `static.test.ts`, the
-  main/rebuild tests and the real-socket graph runtime suite. Only M10's four
-  SSE transports remain unfinished in the Phase 4 split.
+  main/rebuild tests and the real-socket graph runtime suite. M10 is complete:
+  all four streams use the shared maintained transport, with existing JSON
+  data/replay semantics, pressure limits, timers and late-startup cleanup
+  covered by deterministic producer tests and real sockets. The shared HTTP
+  zone cannot import either host runtime (enforced by `web-boundaries.test.ts`).
+  `npm run tidy`, `npm run lint:dead` and both browser e2e suites pass.
+- **Release audit still required**: Phase 4 completion is not PRD completion.
+  Surviving graph body accumulation/raw finite replies/cookie/header helpers,
+  remaining declarative request schemas, and M14 diagnostics must be resolved
+  and the full removal/exception ledger verified before release.

@@ -1,11 +1,12 @@
-// SSE transport for agent events over a raw Node response — the trimmed
+// Agent/session-directory events over the shared library SSE channel — the trimmed
 // port of the vendored agent-event-stream.ts. One stream per client page:
 // it opens immediately, publishes a `connected` event once the session is
 // ready, coalesces tool progress, heartbeats every 30 s, and guards against
 // a client that stops reading (drop rebuildable deltas above 512 KB, end the
 // response above 16 MB so the client reconnects and re-snapshots).
 
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { EventChannel } from "../http/sse.ts";
+import { BoundedSseEvents, MAIN_SSE_LIMITS } from "../../../lib/sse-pressure.ts";
 import {
   AGENT_EVENT_HEARTBEAT_MS,
   isDroppableEvent,
@@ -28,30 +29,23 @@ import { servedClientBuild } from "./client-build.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT } from "../plugin-contracts/ui-event-models.ts";
 
 const TOOL_UPDATE_COALESCE_MS = 150;
-const STREAM_HIGH_WATER_MARK_BYTES = 512 * 1024;
-const STREAM_BACKLOG_LIMIT_BYTES = 16 * 1024 * 1024;
+
+function isAgentEvent(event: unknown): event is AgentEventLike {
+  return typeof event === "object" && event !== null && !Array.isArray(event)
+    && "type" in event && typeof event.type === "string";
+}
 
 export interface EventStreamSession extends Pick<SessionCore, "subscribe" | "isStreaming" | "getStreamSnapshot" | "getState"> {}
 
 /**
- * Attach an SSE stream to `res` for `sessionId`. `sessionPromise` resolves
+ * Publish on the SSE channel for `sessionId`. `sessionPromise` resolves
  * with the session core, or null when the session cannot be found or started.
  */
 export function attachAgentEventStream(
-  req: IncomingMessage,
-  res: ServerResponse,
-  sessionId: string,
-  sessionPromise: Promise<EventStreamSession | null>,
+  channel: EventChannel,
+  options: { sessionId: string; sessionPromise: Promise<EventStreamSession | null> },
 ): void {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache, no-transform",
-    Connection: "keep-alive",
-    "X-Accel-Buffering": "no",
-  });
-  // Flush the headers before the agent is ready; the client waits for the
-  // later `connected` data event.
-  res.write(":\n\n");
+  const { sessionId, sessionPromise } = options;
 
   let closed = false;
   let heartbeat: ReturnType<typeof setInterval> | null = null;
@@ -60,51 +54,44 @@ export function attachAgentEventStream(
   let unsubscribeReplaced: (() => void) | null = null;
   let toolUpdateTimer: ReturnType<typeof setTimeout> | null = null;
   let syncInterval: ReturnType<typeof setInterval> | null = null;
-  const pendingToolUpdates = new Map<unknown, AgentEventLike>();
+  const pendingToolUpdates = new BoundedSseEvents();
+  const startupEvents = new BoundedSseEvents();
 
-  const cleanup = (finish: boolean): void => {
+  const cleanup = (): void => {
     if (closed) return;
     closed = true;
     if (heartbeat !== null) clearInterval(heartbeat);
     if (toolUpdateTimer !== null) clearTimeout(toolUpdateTimer);
     if (syncInterval !== null) clearInterval(syncInterval);
     pendingToolUpdates.clear();
+    startupEvents.clear();
     unsubscribe?.();
     unsubscribe = null;
     unsubscribeUi?.();
     unsubscribeUi = null;
     unsubscribeReplaced?.();
     unsubscribeReplaced = null;
-    if (finish) res.end();
+    channel.close();
   };
 
   const send = (data: unknown, options?: { droppable?: boolean }): void => {
     if (closed) return;
-    const queuedBytes = res.writableLength;
-    if (options?.droppable && queuedBytes > STREAM_HIGH_WATER_MARK_BYTES) {
-      return;
-    }
-    if (queuedBytes > STREAM_BACKLOG_LIMIT_BYTES) {
-      cleanup(true);
-      return;
-    }
-    try {
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
-    } catch {
-      cleanup(false);
-    }
+    channel.send(data, { ...options, reservedBytes: pendingToolUpdates.bytes + startupEvents.bytes });
+    if (channel.closed) cleanup();
   };
 
   const flushToolUpdates = (): void => {
     toolUpdateTimer = null;
-    const updates = [...pendingToolUpdates.values()];
-    pendingToolUpdates.clear();
-    for (const update of updates) send(update, { droppable: true });
+    for (const update of pendingToolUpdates.consume()) send(update, { droppable: true });
   };
 
   const sendClientEvent = (clientEvent: AgentEventLike): void => {
     if (clientEvent.type === "tool_execution_update") {
-      pendingToolUpdates.set(clientEvent.toolCallId, clientEvent);
+      const available = MAIN_SSE_LIMITS.closeAboveBytes - channel.bufferedBytes - startupEvents.bytes;
+      if (!pendingToolUpdates.put(clientEvent.toolCallId, clientEvent, available)) {
+        cleanup();
+        return;
+      }
       if (toolUpdateTimer === null) {
         toolUpdateTimer = setTimeout(flushToolUpdates, TOOL_UPDATE_COALESCE_MS);
       }
@@ -120,7 +107,8 @@ export function attachAgentEventStream(
     send(clientEvent, { droppable: isDroppableEvent(clientEvent) });
   };
 
-  const forwardEvent = (event: AgentEventLike): void => {
+  const forwardEvent = (event: unknown): void => {
+    if (!isAgentEvent(event)) return;
     const clientEvent = toClientAgentEvent(event);
     if (clientEvent !== null) sendClientEvent(clientEvent);
   };
@@ -131,7 +119,7 @@ export function attachAgentEventStream(
       if (closed) return;
       if (session === null) {
         send({ type: "startup_error", errorMessage: "Session not found" });
-        cleanup(true);
+        cleanup();
         return;
       }
 
@@ -139,10 +127,11 @@ export function attachAgentEventStream(
       // reconnecting client never sees live events precede the state they
       // extend. (The vendored app also replayed the streaming snapshot here;
       // minimal v1 relies on the history endpoint for full state.)
-      const buffered: AgentEventLike[] = [];
+      let startupSequence = 0;
       let announced = false;
       const handleEvent = (event: unknown): void => {
-        const typed = event as AgentEventLike;
+        if (closed || !isAgentEvent(event)) return;
+        const typed = event;
         // Lifecycle events drive the unified UI state (running flag, working
         // indicator reset) for every plugin surface following this stream.
         if (
@@ -154,11 +143,12 @@ export function attachAgentEventStream(
           recordExtensionUi(sessionId, typed as Record<string, unknown>);
         }
         if (typed.type === "session_shutdown") {
-          cleanup(true);
+          cleanup();
           return;
         }
         if (!announced) {
-          buffered.push(typed);
+          const available = MAIN_SSE_LIMITS.closeAboveBytes - channel.bufferedBytes - pendingToolUpdates.bytes;
+          if (!startupEvents.put(startupSequence++, typed, available)) cleanup();
           return;
         }
         forwardEvent(typed);
@@ -173,11 +163,10 @@ export function attachAgentEventStream(
       // in-process resume this stream may be watching), end the stream: the
       // browser reconnects and resolves the live session instead of staying
       // frozen on the replaced copy.
-      unsubscribeReplaced = onSessionReplaced(sessionId, () => {
-        cleanup(true);
-      });
+      unsubscribeReplaced = onSessionReplaced(sessionId, cleanup);
 
       send({ type: "connected", sessionId, isStreaming: session.isStreaming() });
+      if (closed) return;
       announced = true;
       // Mid-turn (re)connect: this stream never saw `message_start`, so
       // the client's delta accumulator would drop every delta until
@@ -193,7 +182,8 @@ export function attachAgentEventStream(
           message: snapshot.message ?? { role: "assistant", content: [] },
         });
       }
-      for (const event of buffered) forwardEvent(event);
+      for (const event of startupEvents.consume()) forwardEvent(event);
+      if (closed) return;
 
       // Plugin surfaces ride the same stream: one snapshot after connect,
       // then every store revision pushes the session's views and working
@@ -225,6 +215,7 @@ export function attachAgentEventStream(
         send(frame);
       };
       sendPluginState();
+      if (closed) return;
       unsubscribeUi = webUiStore.subscribe(() => {
         sendPluginState();
       });
@@ -255,15 +246,14 @@ export function attachAgentEventStream(
         type: "startup_error",
         errorMessage: `Failed to start agent: ${error instanceof Error ? error.message : String(error)}`,
       });
-      cleanup(true);
+      cleanup();
     }
   };
 
+  channel.onClose(cleanup);
+  // Observe startup rejection even if the socket closed before attachment.
   void publishSession();
-
-  req.on("close", () => cleanup(false));
-  res.on("close", () => cleanup(false));
-
+  if (closed) return;
   heartbeat = setInterval(() => {
     send({ type: "heartbeat" }, { droppable: true });
   }, AGENT_EVENT_HEARTBEAT_MS);
@@ -279,50 +269,38 @@ async function buildSessionsSnapshot(): Promise<SessionInfo[]> {
  * `session_removed` transitions (see subscribeSessionDirectory in sessions.ts).
  * Shares the agent stream's heartbeat cadence and backlog guards.
  */
-export function attachSessionsEventStream(req: IncomingMessage, res: ServerResponse): void {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache, no-transform",
-    Connection: "keep-alive",
-    "X-Accel-Buffering": "no",
-  });
-  res.write(":\n\n");
+export function attachSessionsEventStream(channel: EventChannel): void {
 
   let closed = false;
   let heartbeat: ReturnType<typeof setInterval> | null = null;
   let unsubscribe: (() => void) | null = null;
+  const buffered = new BoundedSseEvents();
 
-  const cleanup = (finish: boolean): void => {
+  const cleanup = (): void => {
     if (closed) return;
     closed = true;
     if (heartbeat !== null) clearInterval(heartbeat);
+    buffered.clear();
     unsubscribe?.();
     unsubscribe = null;
-    if (finish) res.end();
+    channel.close();
   };
 
   const send = (data: unknown, options?: { droppable?: boolean }): void => {
     if (closed) return;
-    const queuedBytes = res.writableLength;
-    if (options?.droppable && queuedBytes > STREAM_HIGH_WATER_MARK_BYTES) return;
-    if (queuedBytes > STREAM_BACKLOG_LIMIT_BYTES) {
-      cleanup(true);
-      return;
-    }
-    try {
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
-    } catch {
-      cleanup(false);
-    }
+    channel.send(data, { ...options, reservedBytes: buffered.bytes });
+    if (channel.closed) cleanup();
   };
 
   // Subscribe-before-snapshot: transitions that land while the (async) disk
   // scan runs are buffered and flushed after the snapshot, so no flip is lost.
   let announced = false;
-  const buffered: SessionDirectoryEvent[] = [];
+  let eventSequence = 0;
   const forward = (event: SessionDirectoryEvent): void => {
+    if (closed) return;
     if (!announced) {
-      buffered.push(event);
+      const available = MAIN_SSE_LIMITS.closeAboveBytes - channel.bufferedBytes;
+      if (!buffered.put(eventSequence++, event, available)) cleanup();
       return;
     }
     send(event);
@@ -334,20 +312,17 @@ export function attachSessionsEventStream(req: IncomingMessage, res: ServerRespo
       if (closed) return;
       send({ type: "sessions_snapshot", bootId: getServerBootId(), buildId: servedClientBuild()?.buildId ?? null, sessions });
       announced = true;
-      for (const event of buffered) send(event);
-      buffered.length = 0;
+      for (const event of buffered.consume()) send(event);
     })
     .catch(() => {
       if (closed) return;
       send({ type: "sessions_snapshot", bootId: getServerBootId(), buildId: servedClientBuild()?.buildId ?? null, sessions: [] });
       announced = true;
-      for (const event of buffered) send(event);
-      buffered.length = 0;
+      for (const event of buffered.consume()) send(event);
     });
 
-  req.on("close", () => cleanup(false));
-  res.on("close", () => cleanup(false));
-
+  channel.onClose(cleanup);
+  if (closed) return;
   heartbeat = setInterval(() => {
     send({ type: "heartbeat" }, { droppable: true });
   }, AGENT_EVENT_HEARTBEAT_MS);

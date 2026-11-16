@@ -146,9 +146,17 @@ const ZONES: readonly ZoneRules[] = [
     // the plugin descriptors; it serves the BUILT client and never imports
     // its source.
     dir: "web/core/server",
-    runtimeAllow: ["web/core/server/", "web/core/shared/", "web/core/plugin-contracts/", "web/core/pi-api/", "web/core/auth/", "lib/", "@earendil-works/", "node:"],
+    runtimeAllow: ["web/core/server/", "web/core/http/", "web/core/shared/", "web/core/plugin-contracts/", "web/core/pi-api/", "web/core/auth/", "lib/", "@earendil-works/", "node:"],
     typeOnlyAllow: null,
     why: "the server hosts sessions, serves plugin descriptors and the built client; importing client source couples build to runtime",
+  },
+  {
+    // Mechanisms shared by the two independent HTTP hosts, never either
+    // host's sessions, auth state, producer or browser runtime.
+    dir: "web/core/http",
+    runtimeAllow: ["web/core/http/", "lib/", "node:"],
+    typeOnlyAllow: null,
+    why: "shared HTTP mechanisms must remain independent of both host runtimes",
   },
   {
     // pi extensions own behavior. Their web surface is the bridge
@@ -212,7 +220,7 @@ const ZONES: readonly ZoneRules[] = [
     // app — so it needs node and the view contract, which the descriptor rule
     // above does not allow. It still never imports the web server or client.
     dir: "web/plugins/subagent-graph",
-    runtimeAllow: ["web/plugins/subagent-graph/", "web/core/plugin-contracts/", "lib/", "node:"],
+    runtimeAllow: ["web/plugins/subagent-graph/", "web/core/http/", "web/core/plugin-contracts/", "lib/", "node:"],
     typeOnlyAllow: null,
     why: "the Subagent graph plugin produces plugin views and runs its own producer; it never imports the web server or client runtime",
   },

@@ -58,8 +58,10 @@ web/
       sessions.ts      session core: spawn/resume via the SDK, live registry,
                        commands (prompt/abort/web_command), disk scan, history
       wire.ts          event projection for the browser
-      event-stream.ts  SSE transport: coalescing, heartbeats, backpressure
+      event-stream.ts  event producers: replay, coalescing, JSON heartbeats
       plugin-host.ts   the plugin host: discovery, kernel wiring, ui sink
+    http/       shared HTTP mechanisms, independent of either host runtime
+      sse.ts           @fastify/sse framing/lifecycle + byte-pressure adapter
     client/     React 19 SPA (esbuild bundle into core/client/dist)
       shell.tsx        base regions + slots + overrides + routing
       use-session.ts   the session hook (one EventSource per session + the
@@ -100,9 +102,15 @@ from the session file); the session list is push-driven over
 connect, then running/idle and add/remove transitions — no polling), with
 `GET /api/sessions?q=…` for whole-directory search. The selected session
 persists in `localStorage`, so reloads and plugin-page navigation
-reconnect the stream. Backpressure: rebuildable deltas drop above 512 KB
-queued, the stream ends above 16 MB (the client reconnects and
-re-snapshots).
+reconnect the stream. All four event streams (agent, directory, TUI attach,
+and standalone graph) use `@fastify/sse` through `web/core/http/sse.ts`.
+Backpressure: rebuildable deltas drop above 512 KiB queued; the primary
+streams cut the connection before admitting a frame beyond 16 MiB, so the
+client reconnects and re-snapshots. Accounting includes producer staging,
+formatter queues and UTF-8 socket bytes, not just Node's raw string length.
+Agent/directory retain 30-second JSON heartbeats and 150-ms tool-progress
+coalescing; TUI attach uses library keepalive comments while registration
+healing remains application-owned.
 
 ## The session bridge (TUI ↔ web sync)
 
