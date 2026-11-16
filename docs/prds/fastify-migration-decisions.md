@@ -229,16 +229,19 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
 
 - **Phase 0 — done** (commit `b06e6bb`): stack pinned, decisions recorded,
   spikes green.
-- **Phase 1 — main host done, graph host pending**: `web/core/server/app.ts`
-  builds the pi-web Fastify app (cookie, helmet with the explicit
-  three-header policy, JSON error/not-found handlers, no-op root content type
-  parsers, `forceCloseConnections`) without listening. `startWebServer` owns
-  `listen`/`close`, preserves port 0, bind-failure rejection, the build watcher
-  and bounded teardown, and returns the same `WebServerHandle`. Requests that
-  have no native route yet reach the pre-existing dispatcher through one
-  bounded `/*` delegate (`reply.hijack`), which is the PRD's permitted
-  transitional wrapper and is removed route-group by route-group in Phase 2.
-  `web/core/server/app.test.ts` covers the factory/lifecycle gate.
+- **Phase 1 — done**: both hosts now build a Fastify app without listening.
+  `web/core/server/app.ts` (pi-web) and `web/plugins/subagent-graph/lib/app.ts`
+  (graph) each configure cookie, helmet with the host's explicit header policy,
+  sanitized JSON error/not-found handlers, `forceCloseConnections` and no-op
+  root content type parsers. `startWebServer` owns `listen`/`close` for pi-web
+  (port 0, bind-failure rejection, build watcher, bounded teardown, same
+  `WebServerHandle`); the graph runtime owns its `listen`/port-fallback/`close`
+  with `forceCloseConnections` replacing the old idle/close/guard bookkeeping.
+  Requests that have no native route yet reach the pre-existing dispatcher
+  through one bounded `/*` delegate (`reply.hijack`) — the PRD's permitted
+  transitional wrapper; it shrinks route-group by route-group in Phase 2.
+  Factory/lifecycle coverage: `web/core/server/app.test.ts` plus the existing
+  graph runtime/process suites (34 tests).
 - **Phases 2–5 — pending.** The remaining rows keep their phase column above;
   native routes register their real content type parsers in a child scope so a
   delegated request's body is never consumed twice.

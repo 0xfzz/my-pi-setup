@@ -18,7 +18,7 @@ import helmet from "@fastify/helmet";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 /** The general pi-web request body cap (base64 images, downscaled client-side). */
-export const MAX_WEB_BODY_BYTES = 60_000_000;
+const MAX_WEB_BODY_BYTES = 60_000_000;
 
 export interface WebAppOptions {
   /**

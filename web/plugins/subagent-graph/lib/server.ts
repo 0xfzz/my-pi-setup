@@ -48,16 +48,17 @@
  * live producer: eviction would make two healthy Pi sessions fight over the same
  * slots, so only lapsed records are reclaimed.
  */
-import { createServer } from "node:http";
-import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { chmod, lstat, mkdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer as createNetServer, Socket } from "node:net";
 import type { Server as NetServer } from "node:net";
 import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { FastifyInstance } from "fastify";
 
+import { createGraphApp } from "./app.ts";
 import { SUBAGENT_GRAPH_PROTOCOL } from "./protocol.ts";
 import type {
   SubagentGraphArtifact,
@@ -584,7 +585,7 @@ function envelopeDict(value: unknown): Record<string, unknown> {
 
 class SubagentGraphRuntime {
   readonly #options: ResolvedOptions;
-  readonly #server: Server;
+  #app: FastifyInstance | null = null;
   readonly #instanceId = randomBytes(16).toString("hex");
   readonly #bootstrapToken = randomBytes(32).toString("hex");
   readonly #startedAt = Date.now();
@@ -609,16 +610,6 @@ class SubagentGraphRuntime {
 
   constructor(options: ResolvedOptions) {
     this.#options = options;
-    this.#server = createServer((req, res) => {
-      void this.#handle(req, res);
-    });
-    this.#server.requestTimeout = 30_000;
-    this.#server.headersTimeout = 10_000;
-    this.#server.keepAliveTimeout = 5_000;
-    this.#server.on("clientError", (_error, socket) => {
-      if (!socket.destroyed) socket.destroy();
-    });
-    this.#server.on("error", error => this.#log(`server error: ${String(error)}`));
   }
 
   get closed(): Promise<void> {
@@ -681,27 +672,14 @@ class SubagentGraphRuntime {
   }
 
   async #listen(): Promise<void> {
+    const app = await createGraphApp({ delegate: (req, res) => this.#handle(req, res) });
+    this.#app = app;
+    this.#configureServer(app);
     const preferred = this.#options.preferredPort;
-    const bind = (port: number) =>
-      new Promise<number>((resolvePort, reject) => {
-        const onError = (error: NodeJS.ErrnoException) => {
-          this.#server.off("listening", onListening);
-          reject(error);
-        };
-        const onListening = () => {
-          this.#server.off("error", onError);
-          const address = this.#server.address();
-          if (typeof address === "object" && address !== null) resolvePort(address.port);
-          else reject(new Error("subagent-graph server has no port"));
-        };
-        this.#server.once("error", onError);
-        this.#server.once("listening", onListening);
-        this.#server.listen(port, SUBAGENT_GRAPH_HOST);
-      });
-
     if (preferred > 0) {
       try {
-        this.#port = await bind(preferred);
+        await app.listen({ port: preferred, host: SUBAGENT_GRAPH_HOST });
+        this.#port = this.#boundPort(app, preferred);
         return;
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
@@ -709,7 +687,25 @@ class SubagentGraphRuntime {
         this.#log(`preferred port ${preferred} unavailable (${code}); using an ephemeral port`);
       }
     }
-    this.#port = await bind(0);
+    await app.listen({ port: 0, host: SUBAGENT_GRAPH_HOST });
+    this.#port = this.#boundPort(app, 0);
+  }
+
+  /** Timeouts and the raw-server error policy the graph host has always used. */
+  #configureServer(app: FastifyInstance): void {
+    const server = app.server;
+    server.requestTimeout = 30_000;
+    server.headersTimeout = 10_000;
+    server.keepAliveTimeout = 5_000;
+    server.on("clientError", (_error, socket) => {
+      if (!socket.destroyed) socket.destroy();
+    });
+    server.on("error", error => this.#log(`server error: ${String(error)}`));
+  }
+
+  #boundPort(app: FastifyInstance, fallback: number): number {
+    const address = app.server.address();
+    return typeof address === "object" && address !== null ? address.port : fallback;
   }
 
   #startTimers(): void {
@@ -1394,14 +1390,8 @@ class SubagentGraphRuntime {
           res.destroy();
         }
       }
-      const closedServer = new Promise<void>(resolveClose => {
-        this.#server.close(() => resolveClose());
-      });
-      this.#server.closeIdleConnections();
-      const guard = setTimeout(() => this.#server.closeAllConnections(), 500);
-      guard.unref();
+      const closedServer = this.#app?.close() ?? Promise.resolve();
       await closedServer;
-      clearTimeout(guard);
       await removeRuntimeMetadata(this.#options.runtimeDir, this.#instanceId);
       await this.#singleton?.release().catch(() => {});
       this.#singleton = null;
