@@ -8,7 +8,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | phase 0 — decisions recorded, spikes green |
+| **Status** | all phases complete (§10); removal audit enforced by test (§11) |
 | **Owner** | Faiz |
 | **Verified against** | installed tree under `web/` (exact versions below); Node v22.23.2 |
 | **Acceptance** | [fastify-web-server.md](fastify-web-server.md) §12 (AC1–AC10) |
@@ -25,22 +25,21 @@ target and the PRD asks for pinned versions selected during feasibility.
 | `@fastify/static` | 10.1.11 | built client assets + SPA/fallback on both hosts | peer `fastify ^5` |
 | `@fastify/cookie` | 11.1.5 | cookie parse + set/clear (M7) | peer `fastify ^5` |
 | `@fastify/helmet` | 13.2.0 | security headers (M8) | peer `fastify ^5` |
-| `@fastify/jwt` | 10.2.8 | JWT decorators (HTTP paths); bundles `fast-jwt ^6.3.4` | peer `fastify ^5` |
 | `fast-jwt` | 6.3.6 | HTTP-independent codec seam for `WebAuthService` (M9) | node ≥20 |
 | `@fastify/sse` | 0.6.1 | SSE transport + lifecycle on both hosts (M10) | node ≥20.20.2, peer `fastify ^5` |
-| `@fastify/rate-limit` | 11.2.2 | M15 equivalence evaluation | peer `fastify ^5` |
-| `@fastify/send` | 4.2.1 | range/content-disposition/MIME helpers (M12) | node ≥20 |
 | `find-my-way` | 9.10.1 | live dynamic matcher behind the kernel facade (M3) | node ≥20 |
+| `range-parser` | 1.3.0 | Range header arithmetic for Files (M12, E1) | — |
+| `content-disposition` | 3.0.0 | RFC 6266/5987 download-name encoding (M12, E1) | — |
 | `ajv` | 8.20.0 | same engine as Fastify; shared schemas for independently callable command/pi_api validators (M6) | no runtime-floor increase |
 
-`@fastify/jwt` and `fast-jwt` share the same underlying `fast-jwt` codec, so
-there is one implementation even when the HTTP decorator is also registered
-(PRD §6.4).
+`fast-jwt` is the only JWT codec. The `@fastify/jwt` decorator is not registered,
+so there is one implementation (PRD §6.4).
 
-**Not added:** `@fastify/send` is a direct dependency because the Files
-descriptor path may call it directly; `find-my-way` and `fast-jwt` are direct
-because the kernel and the auth codec use them without Fastify. No package was
-added that the inventory does not justify.
+**Removed by the post-migration audit** (declared but never imported):
+`@fastify/jwt`, `@fastify/send`, `@fastify/rate-limit`. `@fastify/send` remains
+only as `@fastify/static`'s own dependency. `range-parser` and
+`content-disposition` are direct because `@fastify/send` does not export its
+helpers (§6). Re-adding a package requires a real import site and a row here.
 
 ## 2. Runtime and install topology
 
@@ -60,6 +59,11 @@ added that the inventory does not justify.
   from root tests without adding them to the root manifest. The root
   `package-lock.json` is therefore untouched **unless** a later phase imports a
   new dependency directly from root.
+- Test tooling caveat: `fetch()` and `URL` apply WHATWG dot-segment
+  normalization, so `%2e%2e` becomes `..` before the request is sent. A traversal
+  probe written with `fetch` tests the client, not the server. Path-traversal
+  assertions use a raw `node:http` request (`rawRequest` in
+  `subagent-graph-runtime.test.ts`).
 - Test tooling: finite HTTP goes through Fastify `inject()`; socket-level
   checks (SSE flush/pressure/abort, forced close, port-0) stay as real-listener
   tests. The existing suites use real `fetch()` against a port-0 listener and are
@@ -83,10 +87,10 @@ application-owned per PRD §3.
 | M9 | `web/core/auth/jwt.ts` hand-rolled HS256 | `fast-jwt` codec seam (one implementation, HS256-only, keyed by purpose) | purpose keys, required claims, revocation, rotation/grace, error mapping | `web/core/auth/*.test.ts`, `tests/web-auth.test.ts` | 3 |
 | M10 | deleted repeated headers/framing/raw close plumbing in agent/directory, bridge attach and graph events | shared `core/http/sse.ts`: `@fastify/sse` public `stream`, `sendHeaders`, `keepAlive`, `close`, `onClose`; library heartbeats for bridge/graph | event projection/snapshots, byte-bounded preludes/coalescing, drop/backlog policy, bridge healing, graph debounce/caps | `sse.test.ts`, `event-stream-policy.test.ts`, `tests/sse-pressure.test.ts`, existing stream/bridge/auth/graph suites + browser e2e | 4 complete |
 | M11 | `main.ts` `serveStatic`/`MIME_TYPES`/`resolveStaticPath`; graph `#serveStatic` fallback | `@fastify/static` + allowed-path hooks | build-ID HTML stamping, primary SPA fallback, graph restricted types + CSP | `main.test.ts`, graph runtime | 4 |
-| M12 | `files.ts` `parseRange`/disposition/`stream.pipe(res)` | Fastify stream reply + `@fastify/send` range/content-disposition helpers | descriptor acquisition (`O_NOFOLLOW`), root/symlink/size policy, `file.before-read` veto, forced-attachment rules | `files.test.ts`, `files-stream.test.ts` | 4 |
+| M12 | `files.ts` `parseRange`/disposition/`stream.pipe(res)` | Fastify stream reply + direct `range-parser` / `content-disposition` (§6) | descriptor acquisition (`O_NOFOLLOW`), root/symlink/size policy, `file.before-read` veto, forced-attachment rules | `files.test.ts`, `files-stream.test.ts` | 4 |
 | M13 | `main.ts` `closeAllConnections`; `auth.ts` connection map; graph `#closing` | Fastify `preClose`/`onClose`, `close`, `closeAllConnections` option, stream cleanup | bounded teardown, child cleanup, graph singleton release, watchers | `web-shutdown-budget.test.ts`, graph runtime | 1/4 |
 | M14 | ad-hoc boot/`console` lines, no request ids | Fastify request ids + structured logger with credential-safe request serialization | redaction, existing process/startup messages, plugin audit | `request-logging.test.ts` | 5 complete |
-| M15 | `LoginThrottle` (`throttle.ts`) counters/windows/eviction | `@fastify/rate-limit` where equivalent | failure-only accounting, pre-hash admission, success refund/reset, lock duration, global backstop | `web/core/auth/*.test.ts` | 3 |
+| M15 | `LoginThrottle` (`throttle.ts`) counters/windows/eviction | none adopted: `LoginThrottle` retained by verdict (§7) | failure-only accounting, pre-hash admission, success refund/reset, lock duration, global backstop | `web/core/auth/*.test.ts` | 3 |
 
 ## 4. Old/new behaviour decisions
 
@@ -95,11 +99,11 @@ regression test (PRD §9 "Compatibility rule"). Default is **retain**.
 
 | Area | Today | Fastify default | Decision |
 | --- | --- | --- | --- |
-| HEAD on primary GET routes | `handleRequest` answers 405 for non-GET | auto-HEAD for every GET | **disable** auto-HEAD on the primary host (`exposeHeadRoutes: false`); graph keeps GET+HEAD where its static contract needs it |
+| HEAD on primary GET routes | `handleRequest` answers 405 for non-GET | auto-HEAD for every GET | **disable** auto-HEAD on the primary host (`exposeHeadRoutes: false`), so HEAD on primary API and static paths is 405, as before; graph keeps GET+HEAD where its static contract needs it |
 | Known path, wrong method | 405 via table scan | 404 (no route) | **retain 405**, generated from the same route declarations / router lookup + allowed-method iteration for plugins |
 | Unknown `/api/*` | 404 JSON after auth | 404 HTML/JSON not-found handler | **retain 404 JSON**, and never an SPA shell for API misses |
 | Body limit (general) | 60,000,000 B manual | `bodyLimit` default 1 MiB | set `bodyLimit: 60_000_000` for the general scope; **4,096** for auth routes; `maxSnapshotBytes` for graph producers |
-| Oversize body | old code threw → endpoint 400/500 | 413 `FST_ERR_CTP_BODY_TOO_LARGE` | **mapped back**: the auth scope's error handler answers 400 for login/refresh/status and keeps logout's clear-cookies + 200, so no endpoint gains a global 413 (PRD §6.3) |
+| Oversize body | most JSON handlers caught the reader error and answered 400 `request body too large`; a few answered 500 | 413 `FST_ERR_CTP_BODY_TOO_LARGE` | **primary general scope: 400 `{"error":"request body too large"}`, not logged as a server error** (the app error handler; the 500 was a regression caught by `app.test.ts`). Auth scope: 400 for login/refresh/status; logout clears cookies and answers 200 (PRD §6.3). Graph producers: 413, its own contract |
 | Auth body limit | 4,096 B accumulated manually | route `bodyLimit` enforced by Fastify as bytes arrive | adopted; the over-limit answer is mapped to the historical per-endpoint outcome above |
 | Cookie parse/serialize | handwritten `parseCookies` + string concatenation | `@fastify/cookie` `request.cookies` / `reply.setCookie` / `reply.clearCookie` | **adopted**; names, paths, `Max-Age`, `HttpOnly`, `SameSite=Strict`, Secure detection retained. Library parsing uses the first duplicate and URI-decodes values. The graph's former last-wins/raw-value parser is deliberately replaced; a runtime regression pins both duplicate orders and encoded values |
 | Content-Type on body parse | general/auth parse JSON ignoring Content-Type | Fastify only parses matching Content-Type | scoped `parseAs`/`addContentTypeParser` adapter to keep the "parse JSON regardless" contract where it existed; graph producer routes require JSON |
@@ -109,7 +113,7 @@ regression test (PRD §9 "Compatibility rule"). Default is **retain**.
 | Shape error ordering | session/action/confirmation checks at endpoint-specific points | validation immediately rejects | `attachValidation` preserves those decision points; schema-validated protocol entry points use the same Ajv engine/schema rather than parallel field checkers |
 | Invalid-input text | JSON.parse details and handwritten pi_api text | schema paths/keywords | **adopted** stable `Invalid JSON body` (existing endpoint status retained) and pi_api schema-path errors without input values; command/auth/graph status envelopes remain. Schema string lengths use Unicode code points; MCP add config is explicitly an object (arrays rejected as 400, not a downstream failure) |
 | Method bodies | transitional all-method routes accumulated irrelevant bodies | per-method routes can reject early | native real methods plus generated complement `onRequest` fallbacks reject 405/401 before parsing or validation; no duplicated path matcher |
-| Trailing slash | exact match, no redirect | `ignoreTrailingSlash` off; `/x/` ≠ `/x` | keep off; test `/x` vs `/x/` explicitly |
+| Trailing slash | exact match, no redirect | `ignoreTrailingSlash` off; `/x/` ≠ `/x` | keep off. `/api/health/` is 404. `/api/sessions/` matches `/api/sessions/:id` with an empty id, and that is 404 too, not 405 (`request-schemas.test.ts`) |
 | `Cache-Control: no-store` JSON | every JSON reply | none | policy helper sets cache per status family (JSON `no-store`; SSE `no-cache, no-transform`) |
 | SSE content-type | `text/event-stream` (graph: `; charset=utf-8`) | plugin writes `text/event-stream` | keep plugin value; graph charset difference is cosmetic and documented |
 | SSE heartbeat | agent/directory JSON heartbeat at 30 s; bridge `:hb`; graph `: ping` | plugin writes `: heartbeat` | agent/directory disable plugin heartbeat and keep JSON; bridge/graph **adopt library comments** at 30 s/configured graph interval (zero disables graph pings); ownership-healing/pressure guards remain domain work |
@@ -122,7 +126,7 @@ regression test (PRD §9 "Compatibility rule"). Default is **retain**.
 | Static MIME | hand-maintained maps | maintained MIME database | **adopted** library MIME values, including JavaScript `application/javascript; charset=utf-8` rather than `text/javascript`; WASM/fonts/opaque viewer assets are regression-tested |
 | Static containment/noncanonical paths | graph realpath containment; primary lexical containment; graph WHATWG URL normalization could turn encoded dot segments into an index request | library rejects noncanonical paths before serving | **adopted stricter rejection**, mapped to 404: encoded traversal is never an alternate index URL; both hosts reject out-of-root symlinks and dotfiles. Graph allowed layouts/types remain policy callbacks |
 | Plugin route precedence | first-registration-wins | `find-my-way` specificity (static > param) | **adopted specificity** in the kernel matcher; regression-tested in `tests/web-plugin-routes.test.ts`; not "identical" |
-| Proxy trust | `PI_WEB_TRUST_PROXY` → custom last-hop key | Fastify `trustProxy` | small tested policy adapter for the throttling key / forwarded host / proto (PRD §6.4) |
+| Proxy trust | `PI_WEB_TRUST_PROXY` → custom last-hop key | Fastify `trustProxy` from the same env, used only for the logged `request.ip` | auth decisions (throttle key, forwarded host/proto, Secure) stay in the `auth.ts` adapter, which reads raw headers under the same policy (PRD §6.4) |
 | JWT codec | hand-rolled HS256 in `jwt.ts` | `fast-jwt` signer/verifier, HS256-only, `checkTyp`, `cache:false` | **adopted**; the claim policy stays in `jwt.ts` (issuer/audience/use/kid, required claim types, `exp`/`iat` with leeway). The wire format is byte-identical — interop is pinned both ways in `tests/web-auth.test.ts` |
 | JWT clock/expiry | `now` + `leewaySeconds` passed per call; expired iff `exp + leeway ≤ now` | the library binds `clockTimestamp` at construction | **decision**: one verifier per call carries the injected clock, with `ignoreExpiration`/`ignoreNotBefore` so the injected clock and the exact 1-second expiry boundary are unchanged, and `cache:false` so a stale clock decision cannot leak |
 | Shutdown / stream cleanup (M13) | `closeAllConnections()` plus ad-hoc socket bookkeeping | Fastify `preClose`/`onClose`, `close`, `forceCloseConnections`, stream teardown | **decision**: `forceCloseConnections: true`, plus one bounded `runTeardown` step that calls `app.close()`, plus the app's `onClose` hook (`WebAppOptions.onClose` → `AuthHttp.close()`) which releases residual response tracking *after* Fastify starts force-closing sockets; `forceCloseConnections`, not that callback, bounds socket shutdown; the synchronous `exit` guard kills leftover children. No `preClose` hook is used — nothing needs a pre-close phase. Pinned by the close-cuts-an-open-stream test |
@@ -285,7 +289,7 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   Phase 1 introduced a bounded `/*` delegate for incremental route conversion;
   M11 removed it from both factories after the native/static routes landed.
   Factory/lifecycle coverage: `web/core/server/app.test.ts` plus the existing
-  graph runtime/process suites (34 tests).
+  graph runtime/process suites.
 - **Phase 2 — complete**: the kernel's handwritten `matchSegments` matcher is
   replaced by a `find-my-way` facade (`web/core/plugin-contracts/kernel/routes.ts`),
   one library router per plugin so namespaces stay isolated (precedence is now
@@ -322,9 +326,8 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   runs in each route's `onRequest` hook, so it is still decided before any body
   is read; method mismatches keep their 405, unknown `/api/*` keeps its 404 via
   the dispatcher, and the request-activity stamp moved into `#guard` so a
-  heartbeating producer still prevents the idle shutdown. The handlers keep the
-  runtime's raw writers and `#readEnvelope` during the intermediate migration.
-  Those are now removed: all finite routes use Fastify replies, bootstrap uses
+  heartbeating producer still prevents the idle shutdown. All finite routes use
+  Fastify replies, bootstrap uses
   `setCookie`/`redirect`, and Helmet owns headers including gate/error replies.
   A scoped `parseAs: 'string'` parser preserves empty/invalid/non-object JSON
   errors while Fastify consumes and caps the body at `maxSnapshotBytes`.
@@ -339,8 +342,9 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   wire-format interop pinned in `tests/web-auth.test.ts`. The
   `PI_WEB_TRUST_PROXY` / Secure-detection contract is the small tested policy
   adapter in `auth.ts` (§4): the forwarded host/proto and the throttling key are
-  derived from the raw headers this module already owns, so no Fastify
-  `trustProxy` / `request.ip` path is needed (nothing reads it). M15's throttle
+  derived from the raw headers this module already owns, so the auth
+  decisions need no Fastify `trustProxy`. The same env does set Fastify
+  `trustProxy`, but only the request logger reads `request.ip` (§4). M15's throttle
   verdict is recorded in §7. The graph uses library bootstrap cookies and
   native authentication/Host/Origin replies. Primary `sendRawJson`, the last
   `http.ts` serializer and duplicated raw security setters are deleted; neither
@@ -373,7 +377,9 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   stdout, the graph routes the same structured logs into its existing file
   sink; startup/process messages and the plugin action audit are unchanged.
   `request-logging.test.ts` pins request ids and that no query/header/body
-  secret reaches a log line. The removal audit below was run over **all**
+  secret reaches a log line. Oversize JSON bodies on the primary host answer 400 `request body too large`
+  and are not logged as server errors (`app.test.ts`). The unused plugin pins were
+  removed from `web/package.json`. The removal audit below was run over **all**
   production source under `web/` and is enforced by
   `tests/web-legacy-dispatchers.test.ts`.
 
