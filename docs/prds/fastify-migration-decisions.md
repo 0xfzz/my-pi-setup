@@ -391,6 +391,11 @@ routing, raw response writes, body consumption, cookie serialization, JWT
 signing, SSE framing/heartbeat, static MIME/path delivery and Range parsing.
 Remaining occurrences and their classification:
 
+The audit is backed by the smell gates: `lint:smell` and `lint:dup` include
+`web/core`, `web/plugins`, `web/app.tsx` and `web/server.ts` (0 oxlint warnings;
+0.43% duplication). `knip` stays scoped to the root packages — see
+[smell-baseline](../smell-baseline.md).
+
 | Location | What remains | Why it is not generic infrastructure |
 | --- | --- | --- |
 | `web/core/http/sse.ts` | `@fastify/sse` `stream()` adapter, `raw.flushHeaders()`/pipe/`destroy()`/`writableLength` | E5: byte-budget flush/abort the plugin does not expose; framing/heartbeat/close are the plugin's |

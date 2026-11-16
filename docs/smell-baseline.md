@@ -7,7 +7,7 @@
 | --- | --- |
 | **Status** | measurement snapshot, not a policy |
 | **Detail for** | [README § Verification](../README.md) |
-| **Scope** | `extensions/`, `lib/`, `tests/`, `scripts/` (per `knip.json`) |
+| **Scope** | `extensions/`, `lib/`, `tests/`, `scripts/` (per `knip.json`); `lint:smell`/`lint:dup` also cover `web/core`, `web/plugins`, `web/app.tsx`, `web/server.ts` |
 | **Verified against** | `npm run lint:dead`, `npm run lint:dup` at the commit that adds this note (after `80f71e4`) |
 | **Related** | [Verification](verification.md) |
 
@@ -20,6 +20,8 @@ commit. This note records where that backlog stands.
 - **Unlisted dependencies**: 0 — the 15 Pi runtime and peer imports are declared in `knip.json` → `ignoreDependencies`, each with a reason (see below).
 - **Unused exports**: 0.
 - **Duplicated blocks**: 20 clones, 356 lines (0.58%) of 61,183 TypeScript lines (advisory).
+- **`web/`**: `oxlint` is clean (0 warnings) and `jscpd` reports 12 clones, 241 lines (0.43%), so both gates now include the migrated HTTP code.
+- **`knip` does not cover `web/`**: without a workspace config it reports 35 unused files plus every dynamically loaded plugin `descriptor.ts`, so enabling it would fail `lint:dead` on false positives. A web scope needs its own entry/project config (entries `web/server.ts`, `web/app.tsx`, `web/core/server/main.ts`, `web/core/e2e/*.mjs`, the test globs and the plugin descriptors; project excluding `**/dist/**` and `**/app/**`). Until that exists, measure `web/` with `oxlint` and `jscpd` only.
 
 `knip` is blocking in CI (`npm run lint:dead` in `.github/workflows/ci.yml`). `jscpd` stays advisory.
 
