@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { LoadingSpinner } from "./plugin-system/LoadingSpinner.tsx";
 import { requestActivity } from "./request-activity.ts";
 import { REQUEST_LOADING_IDLE, requestLoadingTick, type RequestLoadingState } from "./request-loading-state.ts";
+import { inlineLoading } from "./inline-loading.ts";
 
 /**
  * Whether the loading card is worth showing right now.
@@ -29,10 +30,17 @@ function useRequestLoading(): { visible: boolean; pending: number } {
   return { visible: state.visibleSince !== null, pending };
 }
 
-/** Always above panels/dialogs, but never intercepts taps or moves the layout. */
+/**
+ * Always above panels/dialogs, but never intercepts taps or moves the layout.
+ *
+ * It stays away while an in-place loading state is on screen (see
+ * `inline-loading.ts`): one load gets one spinner. The timers keep running, so
+ * the card returns on time if the in-place state ends first.
+ */
 export function RequestLoading() {
   const { visible, pending } = useRequestLoading();
-  if (!visible) return null;
+  const inlineActive = useSyncExternalStore(inlineLoading.subscribe, inlineLoading.getSnapshot);
+  if (!visible || inlineActive) return null;
   // Escape the fixed root's stacking context, just like dialog portals do.
   return createPortal(
     <div className="app-request-loading" data-testid="request-loading">

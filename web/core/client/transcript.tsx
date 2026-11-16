@@ -13,6 +13,7 @@ import { compactionMarkerLabel } from "./compaction.ts";
 import { ComponentOverrideHost } from "./plugin-system/ComponentOverrideHost.tsx";
 import { MarkdownBody } from "./plugin-system/markdown.tsx";
 import { LoadingSpinner } from "./plugin-system/LoadingSpinner.tsx";
+import { inlineLoading } from "./inline-loading.ts";
 import { INITIAL_FOLLOW, reduceFollow, type FollowEvent, type FollowState, type ScrollMetrics } from "./transcript-follow.ts";
 
 const RESULT_PREVIEW_LIMIT = 8_000;
@@ -497,6 +498,10 @@ export function Transcript({
   const sentCountRef = useRef(userMessages.length);
   const [showJump, setShowJump] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
+
+  // While the history is loading, this transcript shows its own spinner; claim
+  // that so the generic request card does not add a second one.
+  useEffect(() => (loading ? inlineLoading.claim() : undefined), [loading]);
 
   const items: TranscriptItem[] = [
     ...history.map((entry, index): TranscriptItem => entry.role === "compaction"
