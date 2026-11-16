@@ -2587,9 +2587,14 @@ button.msg-compaction-label:hover {
    for rows and actions, 40px minimum for the compact chrome) instead of the
    desktop's 15px-high hit areas. */
 @media (pointer: coarse) {
+  /* A row is a flex column inside a scrolling list. Without flex: none the
+     list shrinks it to the 44px minimum, and the overflow:hidden title inside
+     collapses to a sliver (its text is clipped). Rows must keep their content
+     height and grow to fit it. */
   .app-dialog-item,
   .app-plugin-dialog-item,
   .app-dialog-entry {
+    flex: none;
     min-height: 44px;
   }
 
