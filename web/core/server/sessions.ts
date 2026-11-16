@@ -921,6 +921,53 @@ async function scanForLatestName(file: string): Promise<string | undefined> {
   }
 }
 
+/** A session file found in the directory, before its header is read. */
+interface SessionCandidate {
+  file: string;
+  modifiedAt: number;
+}
+
+/** A header read for one file, kept while the file's mtime is unchanged. */
+const headerCache = new Map<string, { mtimeMs: number; header: SessionHeaderLike | null }>();
+
+/** Stat every candidate in parallel, newest first. A file that vanished since the listing is dropped. */
+async function statCandidates(files: string[]): Promise<SessionCandidate[]> {
+  const stats = await Promise.all(files.map(async (file) => {
+    try {
+      return { file, modifiedAt: (await stat(file)).mtimeMs };
+    } catch {
+      return null;
+    }
+  }));
+  return stats
+    .filter((candidate): candidate is SessionCandidate => candidate !== null)
+    .sort((a, b) => b.modifiedAt - a.modifiedAt);
+}
+
+async function headerOf(candidate: SessionCandidate): Promise<SessionHeaderLike | null> {
+  const cached = headerCache.get(candidate.file);
+  if (cached !== undefined && cached.mtimeMs === candidate.modifiedAt) return cached.header;
+  const header = await readSessionHeader(candidate.file);
+  headerCache.set(candidate.file, { mtimeMs: candidate.modifiedAt, header });
+  return header;
+}
+
+/**
+ * The newest `limit` sessions with a valid header. Headers are read only until
+ * the limit is full, so a directory of thousands of older sessions costs about
+ * `limit` reads, not one per file. Invalid files do not count toward the limit.
+ */
+async function sessionsNewestFirst(candidates: SessionCandidate[], limit: number): Promise<DiskSession[]> {
+  const found: DiskSession[] = [];
+  for (const candidate of candidates) {
+    if (found.length >= limit) break;
+    const header = await headerOf(candidate);
+    if (header?.id === undefined || header.cwd === undefined) continue;
+    found.push({ id: header.id, cwd: header.cwd, file: candidate.file, modifiedAt: candidate.modifiedAt });
+  }
+  return found;
+}
+
 /** Sessions on disk under the agent dir, newest first, capped. */
 export async function listDiskSessions(options?: {
   agentDir?: string;
@@ -929,21 +976,9 @@ export async function listDiskSessions(options?: {
   const root = sessionsRoot(options?.agentDir);
   if (!existsSync(root)) return [];
   const limit = options?.limit ?? 30;
-  const found: DiskSession[] = [];
-  for (const file of await listSessionFiles(root)) {
-    const header = await readSessionHeader(file);
-    if (header?.id === undefined || header.cwd === undefined) continue;
-    let modifiedAt = 0;
-    try {
-      modifiedAt = (await stat(file)).mtimeMs;
-    } catch {
-      continue;
-    }
-    found.push({ id: header.id, cwd: header.cwd, file, modifiedAt });
-  }
-  found.sort((a, b) => b.modifiedAt - a.modifiedAt);
+  const found = await sessionsNewestFirst(await statCandidates(await listSessionFiles(root)), limit);
   // Names are read only for the sessions returned, never for the whole directory.
-  return Promise.all(found.slice(0, limit).map(async (session) => {
+  return Promise.all(found.map(async (session) => {
     const name = await latestSessionName(session.file, session.modifiedAt);
     return name === undefined ? session : { ...session, name };
   }));

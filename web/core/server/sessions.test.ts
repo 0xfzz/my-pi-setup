@@ -566,3 +566,27 @@ test("listDiskSessions and resolveSessionFile scan the sessions dir", async () =
   assert.equal(await resolveSessionFile("nope", agentDir), null);
   assert.equal(await resolveSessionFile("../escape", agentDir), null);
 });
+
+test("listDiskSessions keeps reading past invalid newest files until the limit is filled", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "pi-web-agent-"));
+  const projectDir = join(agentDir, "sessions", "slug");
+  await mkdir(projectDir, { recursive: true });
+  const base = Date.now();
+  // Three valid sessions, oldest first.
+  for (const [index, id] of ["aaaa1111", "bbbb2222", "cccc3333"].entries()) {
+    const file = join(projectDir, `2026-11-0${index + 1}T00-00-00-000Z_${id}.jsonl`);
+    await writeFile(file, `${JSON.stringify({ type: "session", id, cwd: `/tmp/${id}` })}\n`);
+    const at = new Date(base - 100_000 + index * 1000);
+    await utimes(file, at, at);
+  }
+  // Five newer files without a valid header: they must not use up the limit.
+  for (let index = 0; index < 5; index++) {
+    const file = join(projectDir, `2026-11-10T00-00-0${index}-000Z_junk${index}.jsonl`);
+    await writeFile(file, "not a header\n");
+    const at = new Date(base - index * 1000);
+    await utimes(file, at, at);
+  }
+
+  const listed = await listDiskSessions({ agentDir, limit: 2 });
+  assert.deepEqual(listed.map((session) => session.id), ["cccc3333", "bbbb2222"], "the two newest valid sessions, newest first");
+});
