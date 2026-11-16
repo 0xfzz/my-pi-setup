@@ -227,6 +227,10 @@ export async function main(): Promise<void> {
   // matches it with pkill -f "pi-web-minimal" and nothing else. main() only
   // runs when the server is started directly, so test processes keep theirs.
   process.title = "pi-web-minimal";
+  // A real server owns web sessions in detached pi processes by default, so a
+  // reload drops only the bridge. Tests start the server directly and keep the
+  // in-process fallback; PI_WEB_SESSION_HOST=0 is the operator opt-out.
+  if (process.env.NODE_TEST_CONTEXT === undefined) process.env.PI_WEB_SESSION_HOST ??= "1";
   const auth = defaultAuthService();
   const handle = await startWebServer({ auth });
   installExitGuards(handle);

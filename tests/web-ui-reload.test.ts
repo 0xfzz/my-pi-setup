@@ -528,11 +528,11 @@ test("autoReloadAction: a server-code change restarts once no turn or session is
   assert.equal(autoReloadAction({ build: true, runtime: true }, true, safety(true)), "defer", "a mixed change waits too");
 });
 
-test("autoReloadAction: a live web session or bridge defers a server restart", () => {
+test("autoReloadAction: only a session owned by this process defers a restart", () => {
   const live = { liveSessions: 1, runningSessions: 0, bridgedSessions: 0 };
   const bridged = { liveSessions: 0, runningSessions: 1, bridgedSessions: 1 };
-  assert.equal(autoReloadAction({ build: false, runtime: true }, true, safety(false, live)), "defer", "an idle web session still dies on restart");
-  assert.equal(autoReloadAction({ build: false, runtime: true }, true, safety(false, bridged)), "defer", "a bridge drop is not hot reload either");
+  assert.equal(autoReloadAction({ build: false, runtime: true }, true, safety(false, live)), "defer", "an idle in-process web session still dies on restart");
+  assert.equal(autoReloadAction({ build: false, runtime: true }, true, safety(false, bridged)), "restart", "a bridged owner survives and reattaches");
 });
 
 test("autoReloadAction: a server that is down is restarted, never deferred or rebuilt in place", () => {

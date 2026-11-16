@@ -176,9 +176,29 @@ displaced in-process copy is disposed on takeover. When the TUI is truly
 gone the window expires and the server falls back to resuming the session
 file, with browser streams reconnecting. A reconnect
 after a gap emits `bridge_resync`, which makes the client reload its
-history. Without a TUI attached, the web still spawns/resumes sessions
-in-process — but running both frontends on one session is exactly what the
-bridge is for.
+history. Without a TUI attached, a real server now uses the same bridge shape:
+`/api/agent/new` and disk resumes start a detached headless pi RPC owner that
+holds the AgentSession, and the HTTP process only bridges to it. A server
+reload drops the bridge, not the session; the owner reattaches when the new
+process is healthy. `PI_WEB_SESSION_HOST=0` selects the older in-process runner
+(it is also the fallback on Windows, where the FIFO-backed RPC stdin is not
+available). A persistent pid file under the agent dir lets a replacement
+server wait for an existing owner instead of starting a second one on the same
+session file, and an owner retires itself if the web stays gone for two
+minutes.
+
+### Reloading without killing sessions
+
+`/web start` launches a detached source watcher, so file edits are seen even
+with no terminal session open. Client-only changes are rebuilt in place: the
+build id changes and open pages reload, while the server and its sessions keep
+running. A server/runtime change needs a new process; the watcher asks the
+server for its live-session counts (`/api/reload-state`) and defers the restart
+while a session owned **by this process** is live. Bridged sessions survive by
+definition and do not block it. Before a restart the server fails readiness,
+refuses new API work, and ends every SSE stream with a `retry` hint so browsers
+and bridges reconnect to the replacement. `/web stop` and `/web reload` also
+retire the watcher; `/web reload` starts a fresh one with the new server.
 
 ## Password protection (publishing the web)
 
@@ -270,6 +290,7 @@ the plugin action audit are separate and unchanged.
 | Route | Method | Purpose |
 |---|---|---|
 | `/api/health` | GET | liveness + `bootId` + the served client `buildId` (always public) |
+| `/api/reload-state` | GET | live/bridged session counts used by the reload guard |
 | `/api/auth/status` | GET | `{ required, authenticated }` — public |
 | `/api/auth/login` | POST | password → cookies (public, throttled) |
 | `/api/auth/refresh` | POST | rotate the refresh token, new access token |

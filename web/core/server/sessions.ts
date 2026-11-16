@@ -19,6 +19,7 @@ import { compileHttpSchema } from "../http/schema.ts";
 import { SESSION_COMMAND_SCHEMA, sessionCommandSchemaError } from "../../../lib/session-command-schema.ts";
 import { createReadStream, existsSync } from "node:fs";
 import { open, readFile, readdir, stat, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { basename, join } from "node:path";
 import { getPluginHost } from "./plugin-host.ts";
 import type { PluginHost } from "../plugin-contracts/kernel/host.ts";
@@ -29,6 +30,7 @@ import { createHeadlessWebUiContext } from "./web-ui-context.ts";
 import { annotateContributedCommands } from "../shared/commands.ts";
 import { WEB_PLUGIN_WEB_COMMAND_EVENT } from "../plugin-contracts/web-commands.ts";
 import { announcedWebCommands, sessionBus } from "./plugin-sessions.ts";
+import { externalSessionHostEnabled, isSessionHosted, startSessionHost, stopSessionHost } from "./session-host.ts";
 
 export interface SessionStateLite {
   sessionId: string;
@@ -457,8 +459,11 @@ function register(core: SessionCore, cwd: string, sessionFile: string, inner?: u
     lastActivityAt: Date.now(),
   });
   if (replaced !== undefined && replaced.core !== core) {
-    // The displaced owner (an in-process resume a bridge just took over)
-    // is released: no second AgentSession stays live on the file.
+    // The displaced owner (an in-process resume or a headless host a bridge
+    // just took over) is released: no second AgentSession stays live on the
+    // file. A host that reattaches has already unregistered, so this is only
+    // reached when a different process took the session.
+    if (replaced.core.bridgeOf !== undefined && isSessionHosted(core.sessionId)) stopSessionHost(core.sessionId);
     replaced.core.dispose?.();
     // Someone else now owns this session (a bridge over an in-process
     // resume). Wake every stream watching the old owner so they reconnect
@@ -524,6 +529,17 @@ export async function startSession(options: {
   cwd: string;
   agentDir?: string;
 }): Promise<SessionCore> {
+  if (externalSessionHostEnabled(process.env, process.platform)) {
+    const sessionId = randomUUID();
+    await startSessionHost({
+      sessionId,
+      cwd: options.cwd,
+      isAttached: () => getSession(sessionId)?.core.bridgeOf !== undefined,
+    });
+    const core = getSession(sessionId)?.core;
+    if (core === undefined) throw new Error(`session host for ${sessionId} attached without a core`);
+    return core;
+  }
   const { session } = await createAgentSession({
     cwd: options.cwd,
     sessionStartEvent: { type: "session_start", reason: "new" },
@@ -769,6 +785,7 @@ export async function deleteSession(id: string, options?: { agentDir?: string })
     live.core.dispose?.();
     unregisterSession(id);
   }
+  if (isSessionHosted(id)) stopSessionHost(id);
   sessionNames.delete(id);
   if (file !== null && file !== "") {
     diskNameCache.delete(file);
@@ -1423,5 +1440,17 @@ export async function ensureSession(
   }
   const file = await resolveSessionFile(id, options?.agentDir);
   if (file === null) return null;
+  if (externalSessionHostEnabled(process.env, process.platform)) {
+    const cwd = (await readSessionHeader(file))?.cwd ?? process.cwd();
+    await startSessionHost({
+      sessionId: id,
+      cwd,
+      sessionFile: file,
+      isAttached: () => getSession(id)?.core.bridgeOf !== undefined,
+    });
+    const core = getSession(id)?.core;
+    if (core === undefined) throw new Error(`session host for ${id} attached without a core`);
+    return core;
+  }
   return resumeSession({ sessionFile: file, ...options });
 }

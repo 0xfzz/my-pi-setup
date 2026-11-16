@@ -169,14 +169,16 @@ export function autoReloadAction(change: SourceChange, healthy: boolean, safety:
   if (!change.runtime) return "rebuild-client";
   if (safety.turnRunning) return "defer";
   const server = safety.server;
-  if (server !== null && (server.liveSessions > 0 || server.bridgedSessions > 0)) return "defer";
+  // A bridged session is owned by a surviving process (a TUI or a headless
+  // host) and reattaches after the new server listens. Only sessions owned by
+  // this process would be killed by the restart.
+  if (server !== null && server.liveSessions > 0) return "defer";
   return "restart";
 }
 
 /** Say what is keeping a restart pending, so the TUI notice names the real blocker. */
 export function deferralMessage(safety: ReloadSafety): string {
-  const server = safety.server;
-  const live = (server?.liveSessions ?? 0) + (server?.bridgedSessions ?? 0);
+  const live = safety.server?.liveSessions ?? 0;
   if (live > 0) {
     const noun = live === 1 ? "session" : "sessions";
     return `pi-web server code changed; the restart waits until ${live} live web ${noun} close.`;

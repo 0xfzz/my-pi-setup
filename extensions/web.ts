@@ -54,6 +54,7 @@ import {
   type WebCommandDescriptor,
 } from "../web/core/plugin-contracts/web-commands.ts";
 import { defaultIsPidAlive, defaultReadState, defaultSpawnWatcher, defaultWebUiStatePath, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiCommandResult, type WebUiDeps } from "../lib/web-ui.ts";
+import { isSessionHostProcess } from "../lib/session-host.ts";
 import { parseReloadState } from "../lib/web-ui-reload.ts";
 import { WebAuthConfigCache, loadWebAuthConfig, removeWebPassword, webAuthConfigPath, writeWebPassword } from "../web/core/auth/config.ts";
 import { MIN_PASSWORD_LENGTH, passwordProblem } from "../web/core/auth/password.ts";
@@ -74,6 +75,14 @@ export interface WebExtensionOptions {
 export const WEB_PROGRESS_STATUS_KEY = "web-reload";
 
 const WEB_UI_TELEMETRY_VERSION = 1;
+
+/** A detached headless owner retires if the web stays unreachable this long. */
+const SESSION_HOST_GIVE_UP_MS = 120_000;
+const isSessionHost = isSessionHostProcess(process.env);
+/** pi evaluates extensions without a shared module cache; two copies would bridge twice. */
+const SESSION_HOST_EXTENSION_MARKER = "PI_WEB_SESSION_HOST_EXTENSION_LOADED";
+const ownsSessionHostBridge = !isSessionHost || process.env[SESSION_HOST_EXTENSION_MARKER] !== "1";
+if (isSessionHost && ownsSessionHostBridge) process.env[SESSION_HOST_EXTENSION_MARKER] = "1";
 
 /** Whether a web-management outcome belongs in the error/diagnostic telemetry log. */
 function isNotableWebUiOutcome(status: string, details?: Record<string, unknown>): boolean {
@@ -289,6 +298,11 @@ function createBridgePoster(sessionId: string): BridgePoster {
 }
 
 export default function webExtension(pi: ExtensionAPI, options: WebExtensionOptions = {}) {
+  // pi evaluates extensions without a shared module cache. A discovered copy
+  // alongside the owner's explicit load must stay completely inert, or two
+  // bridge controllers would fight over the same session.
+  if (isSessionHost && !ownsSessionHostBridge) return;
+
   const sessionIdOf = (ctx: ExtensionContext): string =>
     (ctx as any)?.sessionManager?.getSessionId?.() ??
     (ctx as any)?.sessionManager?.getHeader?.()?.id ??
@@ -373,6 +387,8 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       }).catch(() => undefined);
     }
   };
+  /** First failed watchdog tick since the server was last reachable. */
+  let sessionHostDownSince: number | null = null;
   /**
    * The self-heal: a healthy server with a down bridge re-attaches within
    * one tick. This covers every silent death mode — the retry loop exiting,
@@ -380,7 +396,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
    * only trusts the live attach-stream flag, not controller bookkeeping.
    */
   const ensureBridgeWatchdog = (): void => {
-    if (!bridgeEnabled || bridgeWatchdog !== null) return;
+    if (!bridgeEnabled || !ownsSessionHostBridge || bridgeWatchdog !== null) return;
     bridgeWatchdog = setInterval(() => {
       if (bridgeStreaming) return;
       const ctx = lastCtxForCommands;
@@ -390,8 +406,19 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
           const health = await fetch(`${bridgeServerUrl()}/api/health`, {
             signal: AbortSignal.timeout(1_500),
           });
-          if (health.ok) await attachBridge(ctx);
+          if (!health.ok) throw new Error(`health returned ${health.status}`);
+          sessionHostDownSince = null;
+          await attachBridge(ctx);
         } catch {
+          if (isSessionHost) {
+            // The owner outlives a reload, but not a web that is gone for good.
+            // Without this, /web stop would leave headless pi processes behind.
+            sessionHostDownSince ??= Date.now();
+            if (Date.now() - sessionHostDownSince > SESSION_HOST_GIVE_UP_MS) {
+              ctx.shutdown();
+            }
+            return;
+          }
           // Server down: if the durable state is still "start" (a /web stop
           // would have removed the state file) and the recorded pid is dead,
           // the server crashed or a reload failed — restart it through the
@@ -543,7 +570,7 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     // A connected attach stream is the only reason not to re-attach. A dead
     // loop (server restart mid-stream, a silent drop) must be replaceable —
     // otherwise the bridge never comes back and the web stream stays frozen.
-    if (!bridgeEnabled || bridgeStreaming) return;
+    if (!bridgeEnabled || !ownsSessionHostBridge || bridgeStreaming) return;
     const generation = ++bridgeGeneration;
     try {
       const health = await fetch(`${bridgeServerUrl()}/api/health`, {
