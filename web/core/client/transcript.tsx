@@ -23,9 +23,16 @@ const DEFAULT_WORKING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦",
 export function WorkingIndicator({
   working,
   fallback,
+  label,
 }: {
   working: WorkingModelLike | null;
   fallback: string;
+  /**
+   * Wins over the working model's own message. A compaction is not the
+   * plugin's work, so its status line has to replace "Ratiocinating..." rather
+   * than defer to it.
+   */
+  label?: string;
 }) {
   const frames = working?.frames ?? DEFAULT_WORKING_FRAMES;
   const intervalMs = working?.intervalMs ?? 80;
@@ -42,8 +49,10 @@ export function WorkingIndicator({
   }, [signature, intervalMs, frames.length]);
 
   const frameColor = working?.frameColors?.[frameIndex];
-  const message = working?.message ?? fallback;
-  const segments = working?.messageSegments;
+  const message = label ?? working?.message ?? fallback;
+  // The plugin's styled segments describe its own words; a replacement label
+  // renders as plain text.
+  const segments = label !== undefined ? undefined : working?.messageSegments;
   return (
     <span className="plugin-working-line">
       <span
@@ -629,7 +638,7 @@ export function Transcript({
                 plugins={plugins ?? []}
                 views={pluginViews}
               >
-                <WorkingIndicator working={working} fallback={workingLabel ?? "pi is working..."} />
+                <WorkingIndicator working={working} fallback="pi is working..." label={workingLabel} />
               </ComponentOverrideHost>
               {workingAnchor}
             </div>
