@@ -165,6 +165,31 @@ test("a thrown native error is answered with a sanitized 500", async () => {
   }
 });
 
+test("an oversize JSON body is a client 400 with the historical message, not a logged 500", async () => {
+  const app = await createWebApp({ delegate: jsonDelegate({}) });
+  // The root parser is a deliberate no-op; a scope that really parses JSON
+  // with a tiny limit is what production routes do.
+  await app.register(async (scope) => {
+    scope.addContentTypeParser("application/json", { parseAs: "string" }, (_request, body, done) => done(null, body));
+    scope.post("/small", { bodyLimit: 16 }, async () => ({ ok: true }));
+  });
+  await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = app.server.address();
+  assert.ok(address !== null && typeof address === "object");
+  try {
+    const res = await fetch(`http://127.0.0.1:${address.port}/small`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ padding: "x".repeat(64) }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(res.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await res.json(), { error: "request body too large" });
+  } finally {
+    await app.close();
+  }
+});
+
 test("an unclaimed path still reaches the delegate (no HTML shell for the API)", async () => {
   const app = await createWebApp({
     delegate: (_request, response) => {

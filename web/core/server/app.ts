@@ -113,6 +113,13 @@ export async function createWebApp(options: WebAppOptions = {}): Promise<Fastify
   }
 
   app.setErrorHandler((error, request, reply) => {
+    // An oversize body is the client's fault. The historical handlers answered
+    // 400 with this message, so it is not a server error and must not be logged
+    // as one.
+    if (errorCodeOf(error) === "FST_ERR_CTP_BODY_TOO_LARGE") {
+      void reply.code(400).header("cache-control", "no-store").send({ error: "request body too large" });
+      return;
+    }
     // Never leak a stack, credential or internal detail; the shape matches the
     // handwritten 500 the suites already assert on.
     request.log.error({ err: error }, "unhandled request error");
@@ -129,4 +136,8 @@ export async function createWebApp(options: WebAppOptions = {}): Promise<Fastify
   }
 
   return app;
+}
+
+function errorCodeOf(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : undefined;
 }
