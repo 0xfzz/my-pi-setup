@@ -7,6 +7,7 @@
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { memo, useEffect, useState } from "react";
+import { splitMarkdownChunks } from "../markdown-chunks.ts";
 
 // Mermaid is a large library and only needed when a ```mermaid fence appears,
 // so it is loaded on first use (the bundler splits it into its own chunk).
@@ -96,20 +97,31 @@ function safeUrlTransform(url: string): string {
   return "#";
 }
 
+/** One chunk of markdown. Memoized by its text, so a closed chunk is never parsed again. */
+const MarkdownChunk = memo(function MarkdownChunk({ text }: { text: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      urlTransform={safeUrlTransform}
+      components={components}
+    >
+      {text}
+    </ReactMarkdown>
+  );
+});
+
 /** Render a markdown string (GFM: tables, strikethrough, autolinks) safely.
  * Memoized by text: the transcript re-renders on every stream delta, plugin
  * state frame and status change, and re-parsing every historical message
- * each time is the flicker/jank users saw ("blipping"). */
+ * each time is the flicker/jank users saw ("blipping"). A streamed message
+ * is split into chunks at blank lines (see markdown-chunks.ts), so a delta
+ * re-parses only the chunk still being typed, not the whole answer. */
 export const MarkdownBody = memo(function MarkdownBody({ text }: { text: string }) {
+  const { stable, open } = splitMarkdownChunks(text);
   return (
     <div className="markdown-body">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        urlTransform={safeUrlTransform}
-        components={components}
-      >
-        {text}
-      </ReactMarkdown>
+      {stable.map((chunk, index) => <MarkdownChunk key={index} text={chunk} />)}
+      {open === "" ? null : <MarkdownChunk text={open} />}
     </div>
   );
 });
