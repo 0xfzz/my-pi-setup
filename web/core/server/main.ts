@@ -8,7 +8,6 @@ import { resolve } from "node:path";
 import { registerSession } from "./sessions.ts";
 import { seedPluginFixtures } from "./plugin-fixtures.ts";
 import { registerCoreRoutes } from "./routes.ts";
-import { sendJson } from "./http.ts";
 import { createAuthHttp, registerAuthRoutes, type AuthGateReply, type AuthGateRequest, type AuthHttp, type AuthHttpOptions } from "./auth.ts";
 import { createWebApp } from "./app.ts";
 import { registerPluginRoutes } from "./plugin-routes.ts";
@@ -129,7 +128,7 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
     authorize: (request, reply) => {
       const url = parseRequestUrl(request.raw);
       if (url === null) {
-        sendJson(reply.raw, 400, { error: "bad request" });
+        void reply.code(400).header("cache-control", "no-store").send({ error: "bad request" });
         return false;
       }
       return authorizeRequest(request, reply, url, auth);

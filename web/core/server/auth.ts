@@ -34,20 +34,13 @@ export interface AuthHttpOptions {
 }
 
 /** What the gate needs from the request; a FastifyRequest satisfies it structurally. */
-export interface AuthGateRequest {
-  readonly raw: IncomingMessage;
-  readonly headers: Record<string, string | string[] | undefined>;
-  readonly cookies: Record<string, string | undefined>;
-}
-
-export interface AuthGateReply {
-  readonly raw: ServerResponse;
-}
+export type AuthGateRequest = FastifyRequest;
+export type AuthGateReply = FastifyReply;
 
 export interface AuthHttp {
   /**
    * The gate for every /api route. True: carry on. False: the response (401, 403,
-   * 503) has been sent through the raw pair. Passes everything through when no
+   * 503) has been sent through Fastify. Passes everything through when no
    * password is set.
    */
   authorize(request: AuthGateRequest, reply: AuthGateReply, url: URL): boolean;
@@ -409,15 +402,6 @@ function accessTokenOf(request: { headers: Record<string, string | string[] | un
   return fromCookie !== undefined && fromCookie !== "" ? { token: fromCookie, viaCookie: true } : null;
 }
 
-function sendRawJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
-  res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
-    ...headers,
-  });
-  res.end(JSON.stringify(body));
-}
-
 export function createAuthHttp(service: WebAuthService, options: AuthHttpOptions = {}): AuthHttp {
   const policy = policyOf(options);
   // Open connections (event streams) by session, so logout and revocation can cut them.
@@ -430,13 +414,6 @@ export function createAuthHttp(service: WebAuthService, options: AuthHttpOptions
       connections.delete(id);
     }
   });
-
-  const unavailableReply = (res: ServerResponse): void => {
-    sendRawJson(res, 503, {
-      error: "Password protection is configured but unreadable, so the server is refusing all requests. Run /web set-password again.",
-      code: "auth_unavailable",
-    });
-  };
 
   const track = (sessionId: string, res: ServerResponse): void => {
     let set = connections.get(sessionId);
@@ -452,8 +429,8 @@ export function createAuthHttp(service: WebAuthService, options: AuthHttpOptions
     });
   };
 
-  const unauthorized = (res: ServerResponse, code: string, error: string): false => {
-    sendRawJson(res, 401, { error, code }, { "WWW-Authenticate": 'Bearer realm="pi-web"' });
+  const unauthorized = (reply: FastifyReply, code: string, error: string): false => {
+    void reply.code(401).header("cache-control", "no-store").header("www-authenticate", 'Bearer realm="pi-web"').send({ error, code });
     return false;
   };
 
@@ -462,7 +439,7 @@ export function createAuthHttp(service: WebAuthService, options: AuthHttpOptions
     const mode = service.mode();
     if (mode === "disabled") return true;
     if (mode === "invalid") {
-      unavailableReply(res);
+      unavailable(reply);
       return false;
     }
 
@@ -471,25 +448,25 @@ export function createAuthHttp(service: WebAuthService, options: AuthHttpOptions
     if (url.pathname.startsWith("/api/bridge/")) {
       const presented = bearer(firstHeader(request.headers.authorization));
       if (presented !== null && service.verifyBridgeToken(presented)) return true;
-      return unauthorized(res, "unauthenticated", "The pi bridge token is missing or wrong.");
+      return unauthorized(reply, "unauthenticated", "The pi bridge token is missing or wrong.");
     }
 
     const credentials = accessTokenOf(request);
-    if (credentials === null) return unauthorized(res, "unauthenticated", "Sign in to continue.");
+    if (credentials === null) return unauthorized(reply, "unauthenticated", "Sign in to continue.");
     const access = service.verifyAccess(credentials.token);
     if (!access.ok) {
       if (access.reason === "unavailable") {
-        unavailableReply(res);
+        unavailable(reply);
         return false;
       }
       return unauthorized(
-        res,
+        reply,
         access.reason === "expired" ? "token_expired" : access.reason === "revoked" ? "session_revoked" : "unauthenticated",
         access.reason === "expired" ? "The access token expired; refresh it." : "Sign in to continue.",
       );
     }
     if (credentials.viaCookie && crossSiteWrite(request.raw, policy)) {
-      sendRawJson(res, 403, { error: "Cross-site request blocked.", code: "cross_site" });
+      json(reply, 403, { error: "Cross-site request blocked.", code: "cross_site" });
       return false;
     }
     track(access.sessionId, res);

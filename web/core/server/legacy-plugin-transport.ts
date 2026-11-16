@@ -9,6 +9,13 @@
 import type { FastifyReply } from "fastify";
 import type { PluginRouteResponse } from "../plugin-contracts/kernel/routes.ts";
 
+/** Copy library-produced headers before an external plugin can commit bytes. */
+export function prepareLegacyPluginReply(reply: FastifyReply): void {
+  for (const [name, value] of Object.entries(reply.getHeaders())) {
+    if (value !== undefined) reply.raw.setHeader(name, value);
+  }
+}
+
 /** Returns true when raw ownership prevents any further Fastify response. */
 export function settleLegacyPluginReply(reply: FastifyReply, response?: PluginRouteResponse): boolean {
   const raw = reply.raw;

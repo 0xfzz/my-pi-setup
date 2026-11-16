@@ -9,43 +9,25 @@
 // Native route groups own their parser scopes and @fastify/static serves the
 // configured build root. There is no production catch-all dispatcher.
 
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from "fastify";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import { fastifySSE } from "@fastify/sse";
 import { registerClientStatic } from "./client-static.ts";
-import type { IncomingMessage, ServerResponse } from "node:http";
 
 /** The general pi-web request body cap (base64 images, downscaled client-side). */
 const MAX_WEB_BODY_BYTES = 60_000_000;
-
-/**
- * The minimal request/reply shape the app's seams accept. Declaring it here
- * keeps Fastify's types out of the callers (`main.ts`) while still letting a
- * `FastifyRequest`/`FastifyReply` satisfy it structurally.
- */
-export interface HttpRequestFacade {
-  readonly raw: IncomingMessage;
-  readonly url: string;
-  readonly headers: Record<string, string | string[] | undefined>;
-  /** Parsed by @fastify/cookie's onRequest hook, which runs before this gate. */
-  readonly cookies: Record<string, string | undefined>;
-}
-
-export interface HttpReplyFacade {
-  readonly raw: ServerResponse;
-}
 
 export interface WebAppOptions {
   /** Built client root; omit when constructing an API-only/test app. */
   staticRoot?: string;
   /**
    * The `/api` access gate. Returns true to let the request continue; false
-   * when it has already answered through the raw pair. It runs in `onRequest`,
+   * when it has already answered through Fastify. It runs in `onRequest`,
    * so an unauthenticated caller is refused **before** any body is parsed or
    * any schema is validated (PRD §6.1).
    */
-  authorize?: (request: HttpRequestFacade, reply: HttpReplyFacade) => boolean | Promise<boolean>;
+  authorize?: (request: FastifyRequest, reply: FastifyReply) => boolean | Promise<boolean>;
   /**
    * Releases app-owned resources when `app.close()` runs. With this pinned
    * Fastify release, forceCloseConnections tears down sockets before this
@@ -80,17 +62,6 @@ const SECURITY_HEADERS = {
 };
 
 /**
- * The same three headers, written straight onto the raw response. Helmet only
- * applies through Fastify's send path, so a transitional `reply.hijack()`
- * response (or an auth-gate 401) would otherwise lose them.
- */
-function applyRawSecurityHeaders(response: ServerResponse): void {
-  response.setHeader("X-Content-Type-Options", "nosniff");
-  response.setHeader("Referrer-Policy", "no-referrer");
-  response.setHeader("X-Frame-Options", "DENY");
-}
-
-/**
  * Build the pi-web Fastify app without listening. Callers own `listen`,
  * `close`, and any signal handling.
  */
@@ -123,15 +94,7 @@ export async function createWebApp(options: WebAppOptions = {}): Promise<Fastify
   if (options.authorize !== undefined) {
     const authorize = options.authorize;
     app.addHook("onRequest", async (request, reply) => {
-      applyRawSecurityHeaders(reply.raw);
-      if (await authorize(request, reply)) return;
-      // The gate wrote its own 401/403/503 through the raw pair; stop Fastify
-      // from sending a second response.
-      reply.hijack();
-    });
-  } else {
-    app.addHook("onRequest", async (_request, reply) => {
-      applyRawSecurityHeaders(reply.raw);
+      if (!await authorize(request, reply)) return reply;
     });
   }
 

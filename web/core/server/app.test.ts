@@ -9,6 +9,7 @@ import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import { createWebApp as buildWebApp, type WebAppOptions } from "./app.ts";
+import { prepareLegacyPluginReply } from "./legacy-plugin-transport.ts";
 
 // Raw fixture routes exercise lifecycle/early-refusal without retaining a
 // catch-all dispatcher in the production factory.
@@ -17,6 +18,7 @@ async function createWebApp({ delegate, ...options }: WebAppOptions & {
 }) {
   const app = await buildWebApp(options);
   app.all("/*", async (request, reply) => {
+    prepareLegacyPluginReply(reply);
     reply.hijack();
     await delegate(request.raw, reply.raw);
   });
@@ -189,8 +191,7 @@ test("a refusing gate answers before the body is parsed", async () => {
     delegate: jsonDelegate({}),
     authorize: (request, reply) => {
       if (request.url.startsWith("/api/guarded")) {
-        reply.raw.writeHead(401, { "content-type": "application/json; charset=utf-8" });
-        reply.raw.end(JSON.stringify({ error: "unauthenticated" }));
+        void reply.code(401).send({ error: "unauthenticated" });
         return false;
       }
       return true;
@@ -201,7 +202,7 @@ test("a refusing gate answers before the body is parsed", async () => {
   assert.ok(address !== null && typeof address === "object");
   try {
     // Invalid JSON: a parsed body would answer 400, so 401 proves the gate ran
-    // first. The raw security headers must survive the hijacked response.
+    // first. Helmet must also apply to early native gate replies.
     const res = await fetch(`http://127.0.0.1:${address.port}/api/guarded`, {
       method: "POST",
       headers: { "content-type": "application/json" },

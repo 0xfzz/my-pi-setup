@@ -285,8 +285,10 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   library specificity, regression-tested). The `/api` access gate moved out of
   the dispatcher into the app's `onRequest` hook (`authorize` in
   `web/core/server/app.ts`, wired from `main.ts`), so an unauthenticated caller
-  is refused before parsing or validation; the same hook writes the three
-  security headers onto the raw response so a hijacked reply keeps them. The
+  is refused before parsing or validation. The gate now answers exclusively
+  through Fastify replies; global Helmet owns the security policy. Only E2's
+  legacy plugin adapter copies already-computed reply headers onto the real
+  response before exposing it to an external plugin. The
   plugin HTTP entry point is now a native route (`registerPluginRoutes`,
   `scope.all('/api/p/*')`) with a scoped lenient parser preserving the plugin
   body contract (JSON regardless of Content-Type, `{}` empty, `undefined`
@@ -316,7 +318,7 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   Auth, method and Content-Type checks run before parsing (401/405/415 before
   oversized input); graph oversize remains 413. M11 deleted `#handle`/`#api`
   and the factory delegate; M10 uses library-backed SSE for `/api/events`.
-- **Phase 3 — primary auth done**: cookies go through `@fastify/cookie` (the gate reads
+- **Phase 3 — complete**: cookies go through `@fastify/cookie` (the gate reads
   `request.cookies`, the routes call `reply.setCookie`/`clearCookie`) and the
   four auth endpoints are native Fastify routes with a scoped 4,096-byte body
   limit. The JWT codec (`web/core/auth/jwt.ts`) is the `fast-jwt` seam
@@ -326,7 +328,11 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   adapter in `auth.ts` (§4): the forwarded host/proto and the throttling key are
   derived from the raw headers this module already owns, so no Fastify
   `trustProxy` / `request.ip` path is needed (nothing reads it). M15's throttle
-  verdict is recorded in §7.
+  verdict is recorded in §7. The graph uses library bootstrap cookies and
+  native authentication/Host/Origin replies. Primary `sendRawJson`, the last
+  `http.ts` serializer and duplicated raw security setters are deleted; neither
+  auth gate hijacks responses. Auth-family revocation retains only its domain
+  index of open responses, not another HTTP transport.
 - **Phase 4 — complete**: M12 is complete. First-party Files returns the
   framework-neutral stream result; Fastify owns transfer/completion and the
   descriptor adapter owns policy/acquisition/release. Range arithmetic and
@@ -349,6 +355,5 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   zone cannot import either host runtime (enforced by `web-boundaries.test.ts`).
   `npm run tidy`, `npm run lint:dead` and both browser e2e suites pass.
 - **Release audit still required**: Phase 4 completion is not PRD completion.
-  Remaining primary auth raw replies/security-header duplication, declarative
-  request schemas, and M14 diagnostics must be resolved
+  Remaining declarative request schemas and M14 diagnostics must be resolved
   and the full removal/exception ledger verified before release.

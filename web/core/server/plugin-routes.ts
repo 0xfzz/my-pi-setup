@@ -13,7 +13,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { getPluginHost } from "./plugin-host.ts";
 import { resolveSessionRoot } from "./sessions.ts";
 import { disposePluginRouteStream, type PluginRouteRequest, type PluginRouteResponse, type PluginRouteStream } from "../plugin-contracts/kernel/routes.ts";
-import { settleLegacyPluginReply } from "./legacy-plugin-transport.ts";
+import { prepareLegacyPluginReply, settleLegacyPluginReply } from "./legacy-plugin-transport.ts";
 
 /** `/api/p/<pluginId>/<rest>` — the plugin id is the first segment. */
 const PLUGIN_ROUTE_PREFIX = "/api/p/";
@@ -140,6 +140,7 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
         signal: disconnected.signal,
       };
 
+      prepareLegacyPluginReply(reply);
       const outcome = await host.routes.invoke(resolved.handler, pluginRequest);
       if (settleLegacyPluginReply(reply, outcome.ok ? outcome.response : undefined)) {
         if (outcome.ok && outcome.response.stream !== undefined) {
