@@ -52,9 +52,9 @@ export interface AuthHttp {
    */
   authorize(request: AuthGateRequest, reply: AuthGateReply, url: URL): boolean;
   /**
-   * Cut every tracked event stream and forget them. Called from the app's
-   * `onClose` hook so `close()` never waits on a client that will not leave on
-   * its own, before Fastify force-closes the remaining sockets.
+   * Destroy any remaining tracked responses and forget them. The app's
+   * `onClose` hook releases this tracking after Fastify starts force-closing
+   * sockets; forceCloseConnections, not this callback, bounds socket shutdown.
    */
   close(): void;
 }

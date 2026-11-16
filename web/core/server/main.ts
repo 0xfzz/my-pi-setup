@@ -135,8 +135,8 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
       return authorizeRequest(request, reply, url, auth);
     },
     staticRoot: root,
-    // Cut live event streams deterministically as part of close(), before
-    // Fastify force-closes whatever is left.
+    // Release residual auth response tracking during close(). Fastify's
+    // forceCloseConnections policy owns the bounded socket teardown.
     onClose: () => auth.close(),
   }).then(async (app) => {
     // Plugin backend routes, the core API and the auth endpoints are native now;

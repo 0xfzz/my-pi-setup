@@ -46,10 +46,10 @@ export interface WebAppOptions {
    */
   authorize?: (request: HttpRequestFacade, reply: HttpReplyFacade) => boolean | Promise<boolean>;
   /**
-   * Releases app-owned resources when `app.close()` runs. Fastify's own close
-   * sequence is to run `onClose` hooks and only then force-close the remaining
-   * connections, so this is the deterministic place to cut live event streams
-   * rather than leaving them to the socket teardown (PRD §M13).
+   * Releases app-owned resources when `app.close()` runs. With this pinned
+   * Fastify release, forceCloseConnections tears down sockets before this
+   * callback. The callback releases residual response tracking; it is not the
+   * mechanism that makes socket shutdown bounded (PRD §M13).
    */
   onClose?: () => void | Promise<void>;
 }

@@ -7,6 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { Socket } from "node:net";
 import { createWebApp as buildWebApp, type WebAppOptions } from "./app.ts";
 
 // Raw fixture routes exercise lifecycle/early-refusal without retaining a
@@ -62,6 +63,33 @@ test("listen on port 0 yields an ephemeral port and serves the delegated path", 
     const res = await fetch(`${baseUrl}/api/anything`);
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), { path: "/api/anything", body: { ok: true } });
+  } finally {
+    await app.close();
+  }
+});
+
+test("app onClose releases resources after force-close has destroyed stream sockets", async () => {
+  let socket: Socket | null = null;
+  let cleanups = 0;
+  const app = await buildWebApp({ onClose: () => {
+    assert.ok(socket);
+    assert.equal(socket.destroyed, true);
+    cleanups += 1;
+  } });
+  app.get("/live", async (_request, reply) => {
+    socket = reply.raw.socket;
+    reply.hijack();
+    reply.raw.writeHead(200, { "content-type": "text/event-stream" });
+    reply.raw.write("data: ready\n\n");
+  });
+  await app.listen({ host: "127.0.0.1", port: 0 });
+  const address = app.server.address();
+  assert.ok(address !== null && typeof address === "object");
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/live`);
+    await response.body!.getReader().read();
+    await withTimeout(app.close(), 3_000, "stream socket shutdown");
+    assert.equal(cleanups, 1);
   } finally {
     await app.close();
   }
