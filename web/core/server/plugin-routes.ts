@@ -12,7 +12,8 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { getPluginHost } from "./plugin-host.ts";
 import { resolveSessionRoot } from "./sessions.ts";
-import type { PluginRouteRequest, PluginRouteResponse } from "../plugin-contracts/kernel/routes.ts";
+import { disposePluginRouteStream, type PluginRouteRequest, type PluginRouteResponse, type PluginRouteStream } from "../plugin-contracts/kernel/routes.ts";
+import { settleLegacyPluginReply } from "./legacy-plugin-transport.ts";
 
 /** `/api/p/<pluginId>/<rest>` — the plugin id is the first segment. */
 const PLUGIN_ROUTE_PREFIX = "/api/p/";
@@ -51,6 +52,26 @@ function writeResponse(reply: FastifyReply, response: PluginRouteResponse): void
   const headers = response.headers ?? {};
   for (const [name, value] of Object.entries(headers)) reply.header(name, value);
   sendJson(reply, response.status ?? 200, response.body ?? null);
+}
+
+/**
+ * Send a byte stream. The handler's `close` runs when the response settles, so
+ * a descriptor released there is released on both completion and a mid-body
+ * abort. Fastify destroys the reply when the client goes away, which is what
+ * fires the response's own `close`.
+ */
+async function writeStream(reply: FastifyReply, result: PluginRouteStream): Promise<void> {
+  const release = (): void => {
+    void disposePluginRouteStream(result).catch(error => reply.log.error({ err: error }, "plugin stream cleanup failed"));
+  };
+  reply.raw.once("close", release);
+  try {
+    for (const [name, value] of Object.entries(result.headers ?? {})) reply.header(name, value);
+    await reply.code(result.status ?? 200).send(result.stream);
+  } catch (error) {
+    release();
+    throw error;
+  }
 }
 
 /**
@@ -98,6 +119,8 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
         return;
       }
 
+      const disconnected = new AbortController();
+      reply.raw.once("close", () => disconnected.abort());
       const body = request.body;
       const sessionId = sessionIdOf(url.searchParams, body);
       // Resolve the session root here: the host owns session lifecycle, so a
@@ -113,9 +136,17 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
         ...(sessionId !== undefined ? { sessionId } : {}),
         ...(sessionRoot !== null ? { sessionRoot } : {}),
         transport: { request: request.raw, response: reply.raw },
+        headers: request.headers,
+        signal: disconnected.signal,
       };
 
       const outcome = await host.routes.invoke(resolved.handler, pluginRequest);
+      if (settleLegacyPluginReply(reply, outcome.ok ? outcome.response : undefined)) {
+        if (outcome.ok && outcome.response.stream !== undefined) {
+          await disposePluginRouteStream(outcome.response.stream);
+        }
+        return;
+      }
       if (!outcome.ok) {
         sendJson(reply, 502, {
           error: outcome.message,
@@ -124,10 +155,8 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
         });
         return;
       }
-      if (outcome.response.handled === true) {
-        // The handler owns the raw response (a byte stream); stop Fastify from
-        // sending a second one.
-        reply.hijack();
+      if (outcome.response.stream !== undefined) {
+        await writeStream(reply, outcome.response.stream);
         return;
       }
       writeResponse(reply, outcome.response);

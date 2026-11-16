@@ -5,9 +5,11 @@
 // downloads honor Range for native media while forcing attachment for
 // executable-ish content (HTML/SVG).
 
-import { constants, createReadStream } from "node:fs";
-import { lstat, open, readdir, realpath } from "node:fs/promises";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import { constants } from "node:fs";
+import { lstat, open, readdir, realpath, type FileHandle } from "node:fs/promises";
+import { Readable } from "node:stream";
+import rangeParser from "range-parser";
+import { create as contentDisposition } from "content-disposition";
 import { basename, dirname, join } from "node:path";
 import {
   classifyFile,
@@ -37,6 +39,27 @@ export interface FileFailure {
 }
 
 export type FileResolution = { ok: true; abs: string } | FileFailure;
+
+/**
+ * A resolved download the caller sends itself. The descriptor stays owned by
+ * this module: until `close()` runs, the fd is open, so an abort cannot leak it.
+ */
+export interface FileDownload {
+  status: number;
+  headers: Record<string, string>;
+  stream: Readable;
+  /** Idempotent: releases the file descriptor. Call when the response settles. */
+  close(): Promise<void>;
+}
+
+interface DownloadOptions {
+  root: string;
+  path: string;
+  attachment: boolean;
+  range?: string;
+}
+
+export type FileDownloadResult = { ok: true; download: FileDownload } | FileFailure;
 
 export interface DirEntry {
   name: string;
@@ -301,24 +324,22 @@ function forcesAttachment(mime: string | null): boolean {
   return mime === null || mime.startsWith("text/html") || mime === "image/svg+xml";
 }
 
-function parseRange(header: string | undefined, size: number): { start: number; end: number } | null {
-  if (header === undefined) return null;
-  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
-  if (match === null) return null;
-  const startText = match[1] ?? "";
-  const endText = match[2] ?? "";
-  if (startText === "" && endText === "") return null;
-  if (startText === "") {
-    const suffix = Number(endText);
-    if (!Number.isFinite(suffix) || suffix <= 0) return null;
-    return { start: Math.max(0, size - suffix), end: size - 1 };
+function downloadRange(header: string | undefined, size: number): rangeParser.Range | null {
+  if (header === undefined || size === 0) return null;
+  // Compatibility policy: only a single, strictly formatted byte range is
+  // supported; invalid/multiple/unsatisfiable requests still mean a full 200.
+  const value = header.trim();
+  if (!/^bytes=(?:\d+-\d*|-\d+)$/.test(value)) return null;
+  if (value.slice(6).split("-").some(position => !Number.isFinite(Number(position)))) return null;
+  const parsed = rangeParser(size, value);
+  if (typeof parsed !== "number") return parsed[0] ?? null;
+  // range-parser rejects an oversized suffix; our media contract clips it.
+  const suffix = value.startsWith("bytes=-") ? Number(value.slice(7)) : 0;
+  if (Number.isFinite(suffix) && suffix > size) {
+    const full = rangeParser(size, "bytes=0-");
+    return typeof full === "number" ? null : full[0] ?? null;
   }
-  const start = Number(startText);
-  if (!Number.isFinite(start) || start < 0 || start >= size) return null;
-  if (endText === "") return { start, end: size - 1 };
-  const end = Number(endText);
-  if (!Number.isFinite(end) || end < start) return null;
-  return { start, end: Math.min(end, size - 1) };
+  return null;
 }
 
 export function statusForCode(code: FileErrorCode): number {
@@ -364,95 +385,100 @@ export function searchPaths(rootAbs: string, query: string): Promise<SearchResul
 }
 
 /**
- * Stream a file with Range support. `attach` is the explicit download action;
- * executable-ish content (HTML/SVG) and unknown content always download as an
- * attachment so a same-origin GET can never execute project content.
+ * Open a file for download with Range support. `attachment` is the explicit
+ * download action; executable-ish content (HTML/SVG) and unknown content always
+ * download as an attachment so a same-origin GET can never execute project
+ * content. Policy — root/symlink containment, `O_NOFOLLOW` acquisition, the
+ * size cap, Range parsing and the disposition rule — all lives here; the
+ * caller only ships the bytes and must call `close()` when the response
+ * settles, whether it finished or the client hung up mid-body.
  */
-export async function streamFile(
-  req: IncomingMessage,
-  res: ServerResponse,
-  rootAbs: string,
-  rel: string,
-  attach: boolean,
-): Promise<void> {
-  const resolved = await resolveEntry(rootAbs, rel);
-  if (!resolved.ok) {
-    res.writeHead(statusForCode(resolved.code), { "Content-Type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify({ error: resolved.message, code: resolved.code }));
-    return;
-  }
+export async function openFileDownload(options: DownloadOptions): Promise<FileDownloadResult> {
+  const resolved = await resolveEntry(options.root, options.path);
+  if (!resolved.ok) return resolved;
 
-  let handle: Awaited<ReturnType<typeof open>>;
+  const handle = await downloadDescriptor(resolved.abs);
+  if (!("stat" in handle)) return handle;
   try {
-    handle = await open(resolved.abs, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const metadata = await downloadSize(handle);
+    if (!metadata.ok) {
+      await handle.close();
+      return metadata;
+    }
+    const { size } = metadata;
+    const range = downloadRange(options.range, size);
+    const headers = downloadHeaders(options, { size, range });
+    const status = range === null ? 200 : 206;
+    return { ok: true, download: { status, headers, ...descriptorStream(handle, { size, range }) } };
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+}
+
+async function downloadDescriptor(path: string): Promise<FileHandle | FileFailure> {
+  try {
+    return await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    const err = code === "ELOOP"
+    return code === "ELOOP"
       ? failure("symlink", "symbolic links are not supported")
       : code === "EACCES"
         ? failure("permission", "permission denied")
         : failure("not_found", "file not found");
-    res.writeHead(statusForCode(err.code), { "Content-Type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify({ error: err.message, code: err.code }));
-    return;
   }
+}
 
-  let size: number;
+async function downloadSize(handle: FileHandle): Promise<{ ok: true; size: number } | FileFailure> {
   try {
-    size = (await handle.stat()).size;
+    const stat = await handle.stat();
+    if (!stat.isFile()) return failure("not_file", "file could not be read");
+    if (stat.size > DOWNLOAD_MAX_BYTES) return failure("too_large", "file is too large to preview or download");
+    return { ok: true, size: stat.size };
   } catch {
-    await handle.close();
-    res.writeHead(404, { "Content-Type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify({ error: "file could not be read", code: "not_file" }));
-    return;
+    return failure("not_file", "file could not be read");
   }
+}
 
-  if (size > DOWNLOAD_MAX_BYTES) {
-    await handle.close();
-    res.writeHead(413, { "Content-Type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify({ error: "file is too large to preview or download", code: "too_large" }));
-    return;
-  }
+interface DownloadExtent {
+  size: number;
+  range: rangeParser.Range | null;
+}
 
-  const mime = mimeTypeFor(rel);
-  const disposition: "inline" | "attachment" = attach || forcesAttachment(mime) ? "attachment" : "inline";
+function downloadHeaders(options: DownloadOptions, { size, range }: DownloadExtent): Record<string, string> {
+  const mime = mimeTypeFor(options.path);
+  const disposition = options.attachment || forcesAttachment(mime) ? "attachment" : "inline";
   const baseHeaders: Record<string, string> = {
     "Content-Type": mime ?? "application/octet-stream",
     "Accept-Ranges": "bytes",
-    "Content-Disposition": `${disposition}; filename="${attachmentName(rel)}"`,
+    "Content-Disposition": contentDisposition(attachmentName(options.path), { type: disposition }),
     "Cache-Control": "private, no-store",
   };
 
-  const range = parseRange(req.headers.range, size);
+  const headers = { ...baseHeaders };
   if (range === null) {
-    res.writeHead(200, { ...baseHeaders, "Content-Length": String(size) });
+    headers["Content-Length"] = String(size);
   } else {
-    res.writeHead(206, {
-      ...baseHeaders,
-      "Content-Range": `bytes ${range.start}-${range.end}/${size}`,
-      "Content-Length": String(range.end - range.start + 1),
-    });
+    headers["Content-Range"] = `bytes ${range.start}-${range.end}/${size}`;
+    headers["Content-Length"] = String(range.end - range.start + 1);
   }
-  const start = range?.start ?? 0;
-  const end = range?.end ?? size - 1;
-  // autoClose stays off: the FileHandle (not the stream) owns the fd, and only
-  // handle.close() clears Node's GC finalizer. Closing the raw fd number while
-  // the handle still counts itself open crashed the server later with
-  // "EBADF: Closing file descriptor … on garbage collection failed".
-  const stream = createReadStream(resolved.abs, { fd: handle.fd, start, end, autoClose: false });
-  let closed = false;
-  const closeHandle = (): void => {
-    if (closed) return;
-    closed = true;
-    void handle.close().catch(() => {
-      // A lost race with a destroy is harmless; the fd is already gone.
-    });
-  };
-  // 'close' covers normal completion and destroy(); res 'close' covers a
-  // client hanging up mid-body (navigation away from a preview) — without it
-  // the unpiped stream kept the fd open until GC killed the process.
-  stream.on("close", closeHandle);
-  stream.on("error", () => res.destroy());
-  res.on("close", closeHandle);
-  stream.pipe(res);
+  return headers;
+}
+
+function descriptorStream(handle: FileHandle, options: DownloadExtent) {
+  // The FileHandle owns the fd. A helper that reopened the pathname would
+  // discard O_NOFOLLOW protection and reintroduce a TOCTOU escape.
+  const stream = options.size === 0 ? Readable.from([]) : handle.createReadStream({
+    start: options.range?.start ?? 0,
+    end: options.range?.end ?? options.size - 1,
+    autoClose: false,
+  });
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => closing ??= handle.close();
+  // autoClose:false does not emit close on successful EOF; the dispatcher
+  // also closes on response completion/abort, including an unconsumed result.
+  const release = (): void => { void close().catch(() => {}); };
+  stream.once("error", release);
+  stream.once("close", release);
+  return { stream, close };
 }

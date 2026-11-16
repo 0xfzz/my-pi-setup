@@ -381,10 +381,27 @@ responsibilities is deliberate:
 | Time budget, error isolation, 502 mapping | the dispatcher (`runWithBudget`, 10 s default) |
 | The bytes/JSON of the answer | the plugin |
 
-A handler that must own the response — streaming a file, holding a long-lived
-write — reads `request.transport` (the real `IncomingMessage`/`ServerResponse`)
-and returns `{ handled: true }`. That is the one escape hatch, and it exists
-because the Files plugin streams with Range support.
+A byte-streaming handler returns a framework-neutral stream result; it never
+imports `FastifyReply`:
+
+```ts
+return { stream: { status: 200, headers, stream: readable, close: release } };
+```
+
+The dispatcher sends the Node `Readable` through Fastify, destroys it on client
+abort, and calls the optional idempotent `close(): void | Promise<void>` when
+the response settles. Cleanup also runs for a stream returned after timeout or
+disconnect. Files uses this contract with an already-open `O_NOFOLLOW`
+descriptor. `request.headers` carries request metadata such as `range`;
+`request.signal` aborts on disconnect/budget expiry.
+
+Only legacy external plugins may still use `request.transport` (the real
+`IncomingMessage`/`ServerResponse`) and return `{ handled: true }`. This
+**deprecated compatibility boundary** is isolated in
+`web/core/server/legacy-plugin-transport.ts`; no first-party plugin uses it.
+A write before return transfers ownership: the host must not auto-send another
+body, even if the handler later fails. Failures after partial writes destroy
+the unfinished response instead of appending a 502.
 
 **Capabilities still apply.** `ctx.routes` throws without the `routes`
 capability, exactly like `ctx.hooks` and `ctx.services`, so a manifest that

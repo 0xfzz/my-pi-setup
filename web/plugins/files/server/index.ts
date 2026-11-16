@@ -5,11 +5,10 @@
 // this module only adapts them to the plugin route contract, so one
 // implementation guards every traversal case.
 
-import { listDirectory, readText, searchPaths, statusForCode, streamFile, type FileFailure } from "../../../core/server/files.ts";
+import { openFileDownload, listDirectory, readText, searchPaths, statusForCode, type FileFailure } from "../../../core/server/files.ts";
 import { getPluginHost } from "../../../core/server/plugin-host.ts";
 import type { PluginContext, PluginRuntime } from "../../../core/plugin-contracts/kernel/manager.ts";
 import type { PluginRouteRequest, PluginRouteResponse } from "../../../core/plugin-contracts/kernel/routes.ts";
-import type { IncomingMessage, ServerResponse } from "node:http";
 
 /** A resolved request target: the plugin's own scope for this call. */
 interface FileTarget {
@@ -75,8 +74,9 @@ async function handleSearch(request: PluginRouteRequest): Promise<PluginRouteRes
 }
 
 /**
- * Byte streaming owns the response, so it uses the raw transport escape hatch:
- * `streamFile` writes headers and body itself and this handler reports it.
+ * Byte streaming returns a `stream` result; the plugin route dispatcher sends
+ * it and runs `close` when the response settles. The descriptor stays owned by
+ * `files.ts`, so an aborted download cannot leak it.
  */
 async function handleDownload(request: PluginRouteRequest): Promise<PluginRouteResponse> {
   const target = targetOf(request);
@@ -84,18 +84,14 @@ async function handleDownload(request: PluginRouteRequest): Promise<PluginRouteR
   const path = request.query.get("path") ?? "";
   const veto = await vetoedByHook(target, path);
   if (veto !== null) return veto;
-  const transport = request.transport;
-  if (transport === undefined) {
-    return { status: 500, body: { error: "download requires the raw transport" } };
-  }
-  await streamFile(
-    transport.request as IncomingMessage,
-    transport.response as ServerResponse,
-    target.root,
+  const range = request.headers?.range;
+  const result = await openFileDownload({
+    root: target.root,
     path,
-    request.query.get("download") === "1",
-  );
-  return { handled: true };
+    attachment: request.query.get("download") === "1",
+    range: typeof range === "string" ? range : undefined,
+  });
+  return result.ok ? { stream: result.download } : failureResponse(result);
 }
 
 const filesRuntime: PluginRuntime = {

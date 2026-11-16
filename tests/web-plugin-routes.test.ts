@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 
 import { PluginRouteRegistry } from "../web/core/plugin-contracts/kernel/routes.ts";
 import { PluginManager, type PluginLoader, type PluginRuntime } from "../web/core/plugin-contracts/kernel/manager.ts";
@@ -207,6 +208,36 @@ test("parsePluginRoutePath splits the plugin id from its mount path", () => {
   assert.equal(parsePluginRoutePath("/api/plugins"), null);
   assert.equal(parsePluginRoutePath("/api/p/"), null);
   assert.equal(parsePluginRoutePath("/api/agent/x/files"), null);
+});
+
+test("a stream returned after the route budget expires is destroyed and released", { timeout: 2_000 }, async () => {
+  const routes = new PluginRouteRegistry({ budgetMs: 20 });
+  const source = Readable.from(["late bytes"]);
+  let returnStream!: (value: { stream: { stream: Readable; close: () => void } }) => void;
+  let released!: () => void;
+  const disposed = new Promise<void>(resolve => { released = resolve; });
+  const late = new Promise<{ stream: { stream: Readable; close: () => void } }>(resolve => { returnStream = resolve; });
+  const outcome = await routes.invoke(() => late, { method: "GET", path: "late", params: {}, query: new URLSearchParams(), body: undefined });
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.equal(outcome.reason, "timeout");
+  returnStream({ stream: { stream: source, close: released } });
+  await disposed;
+  assert.equal(source.destroyed, true);
+});
+
+test("a stream returned after client disconnect is released without being sent", async () => {
+  const routes = new PluginRouteRegistry();
+  const client = new AbortController();
+  const source = Readable.from(["unused bytes"]);
+  let released = false;
+  const outcome = await routes.invoke(request => {
+    client.abort();
+    assert.equal(request.signal?.aborted, true);
+    return { stream: { stream: source, close: () => { released = true; } } };
+  }, { method: "GET", path: "closed", params: {}, query: new URLSearchParams(), body: undefined, signal: client.signal });
+  assert.deepEqual(outcome, { ok: true, response: {} });
+  assert.equal(released, true);
+  assert.equal(source.destroyed, true);
 });
 
 // ── The HTTP surface: a plugin's own endpoint, served by the real server ───

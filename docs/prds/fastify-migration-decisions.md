@@ -117,6 +117,10 @@ regression test (PRD §9 "Compatibility rule"). Default is **retain**.
 | JWT clock/expiry | `now` + `leewaySeconds` passed per call; expired iff `exp + leeway ≤ now` | the library binds `clockTimestamp` at construction | **decision**: one verifier per call carries the injected clock, with `ignoreExpiration`/`ignoreNotBefore` so the injected clock and the exact 1-second expiry boundary are unchanged, and `cache:false` so a stale clock decision cannot leak |
 | Shutdown / stream cleanup (M13) | `closeAllConnections()` plus ad-hoc socket bookkeeping | Fastify `preClose`/`onClose`, `close`, `forceCloseConnections`, stream teardown | **decision**: `forceCloseConnections: true`, plus one bounded `runTeardown` step that calls `app.close()`, plus the app's `onClose` hook (`WebAppOptions.onClose` → `AuthHttp.close()`) which destroys the tracked event streams deterministically *before* Fastify force-closes the remaining sockets; the synchronous `exit` guard kills leftover children. No `preClose` hook is used — nothing needs a pre-close phase. Pinned by the close-cuts-an-open-stream test |
 
+Files M12 compatibility: invalid/multiple/unsatisfiable ranges retain full 200;
+zero-byte requests now safely return empty 200 and Unicode download names gain
+RFC 6266/5987 encoding. Both changes are regression-tested (see §6).
+
 ## 5. SSE stability review — `@fastify/sse` 0.6.1
 
 The PRD flags this package as pre-1.0 and requiring an explicit stability,
@@ -165,14 +169,27 @@ wire, and lifecycle review. Findings from the installed source (`index.js`):
   both listeners fire and the first wins.
 - A helper that takes a path and reopens it (e.g. `@fastify/send`'s default path
   mode) reintroduces the symlink/TOCTOU window. The plan keeps descriptor
-  ownership in `files.ts` and uses `@fastify/send` only for **helpers that
-  operate on an already-open descriptor or on a value we computed** (range
-  parsing, content-disposition, MIME). The spike must prove the range semantics
-  (200/206, suffix/open ranges, invalid/multiple/unsatisfiable, zero-byte,
-  exact content-length, abort closes the fd) match the retained policy.
-- Invalid-`Range` fallback: today an unparseable Range is ignored (200 full
-  body) rather than 416. Keep that and document it; do **not** adopt a library
-  416 default silently.
+  ownership in `files.ts`: `FileHandle.createReadStream()` feeds a
+  framework-neutral `PluginRouteStream` sent through Fastify. `@fastify/send`
+  does not expose its range helpers as public APIs, so the direct, exact-pinned
+  utilities are `range-parser@1.3.0` and `content-disposition@3.0.0`, not private
+  send internals. The shared `mimeTypeFor` allowlist remains rendering/security
+  policy (unknown content must be an attachment), not an unrestricted MIME
+  guess. `files-stream.test.ts` covers full/partial/suffix/open ranges,
+  invalid/multiple/unsatisfiable fallback, content length, Unicode disposition,
+  forced attachments, zero-byte files, path replacement after acquisition and
+  repeated aborts/descriptor counts.
+- Invalid-`Range` fallback stays 200, not a library 416. A small policy guard
+  rejects multiple ranges/units/whitespace the old reader rejected. Oversized
+  suffix ranges clip to the full file even though `range-parser` rejects them.
+- Zero-byte files return an empty 200, even with Range. This deliberately fixes
+  the old `end: -1` stream construction error/leak; no descriptor is reopened.
+  Unicode filenames now use RFC 6266/5987 encoding through `content-disposition`;
+  ASCII names and the existing control/quote stripping and length cap remain.
+- Results arriving after the handler budget or client disconnect are destroyed
+  and released by the route registry, not silently discarded with an open fd.
+  `request.signal` provides cooperative cancellation; response completion,
+  abort and source error all settle the stream's idempotent `close` callback.
 
 ## 7. M15 throttle equivalence
 
@@ -203,8 +220,8 @@ protecting test, and removal condition.
 
 | # | Location | Retained behaviour | Library evaluated (mismatch) | Minimal code | Test | Removal condition |
 | --- | --- | --- | --- | --- | --- | --- |
-| E1 | `web/core/server/files.ts` | authorized `O_NOFOLLOW` descriptor ownership; symlink/root/size policy; forced attachment for HTML/SVG/unknown | `@fastify/send` default path-salad mode reopens the path (TOCTOU) | descriptor open + policy, using send helpers for range/disposition/MIME only | `files-stream.test.ts` | a maintained helper that accepts an open fd/filehandle and preserves the same guarantees |
-| E2 | `web/core/server/plugin-routes.ts` → temporary raw transport | first-party Files raw response during migration | none — transitional | `reply.hijack()` adapter, removed when the streamed result contract lands | `tests/web-plugin-routes.test.ts` | Phase 4 streamed plugin result |
+| E1 | `web/core/server/files.ts` (Files owner) | authorized `O_NOFOLLOW` descriptor ownership; symlink/root/size policy; forced attachment for HTML/SVG/unknown | `@fastify/send` default path mode reopens the path (TOCTOU) | descriptor/policy adapter; Fastify owns streaming, `range-parser` owns range arithmetic, `content-disposition` owns encoding | `files-stream.test.ts` | a maintained descriptor-aware helper preserving these guarantees |
+| E2 | `web/core/server/legacy-plugin-transport.ts` (plugin-host owner) | existing external plugins that write to the real Node response before returning `{ handled:true }` | Fastify cannot infer already-committed external raw ownership or replace committed bytes with a 502 | single deprecated raw adapter; hijack on ownership, terminate partial output after failure; first-party Files no longer uses it | `plugin-stream.test.ts`, `tests/web-plugin-routes.test.ts` | remove when external raw transport API support is retired; new first-party handlers must return body/stream results |
 | E3 | kernel route facade (`kernel/routes.ts`) | grants, namespace, diagnostics, budget facade even though the matcher is `find-my-way` | `find-my-way` has no capability/ownership model | thin facade over `on`/`off`/`findRoute` | `tests/web-plugin-routes.test.ts` | never (policy is domain) |
 | E4 | `web/core/auth/throttle.ts` | failure-only rolling accounting + pre-hash charging | `@fastify/rate-limit` fixed-window post-check mismatch | keep `LoginThrottle` | `web/core/auth/*.test.ts` | a maintained limiter with equivalent hooks |
 
@@ -290,3 +307,12 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   derived from the raw headers this module already owns, so no Fastify
   `trustProxy` / `request.ip` path is needed (nothing reads it). M15's throttle
   verdict is recorded in §7.
+- **Phase 4 — partial**: M12 is complete. First-party Files returns the
+  framework-neutral stream result; Fastify owns transfer/completion and the
+  descriptor adapter owns policy/acquisition/release. Range arithmetic and
+  disposition encoding use maintained direct dependencies (§6). The only raw
+  plugin escape hatch is the deprecated external-plugin adapter E2, with
+  real-socket tests for early writes, handled ownership, failures/timeouts and
+  disconnect. Late streamed results after budget/disconnect are also released.
+  M13 has the app close callback and shutdown regression from `cc10cb1`.
+  M10 (four SSE transports) and M11 (both static roots) remain unfinished.

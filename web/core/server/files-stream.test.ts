@@ -6,7 +6,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { parse as parseDisposition } from "content-disposition";
+import { openFileDownload } from "./files.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startWebServer } from "./main.ts";
@@ -115,6 +117,100 @@ test("a range download returns the requested slice", async () => {
     });
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("download ranges preserve the single-range and invalid-range fallback contract", async t => {
+  const root = await mkdtemp(join(tmpdir(), "pi-files-ranges-"));
+  const bytes = Buffer.from("0123456789");
+  await writeFile(join(root, "big.pdf"), bytes);
+  const cases = [
+    { range: "bytes=2-4", status: 206, expected: "234", contentRange: "bytes 2-4/10" },
+    { range: "bytes=7-", status: 206, expected: "789", contentRange: "bytes 7-9/10" },
+    { range: "bytes=-3", status: 206, expected: "789", contentRange: "bytes 7-9/10" },
+    { range: "bytes=-20", status: 206, expected: "0123456789", contentRange: "bytes 0-9/10" },
+    { range: "bytes=8-99", status: 206, expected: "89", contentRange: "bytes 8-9/10" },
+    ...["bytes=20-30", "bytes=-0", "bytes=5-2", "bytes=0-1,4-5", "bytes=0-x", "items=0-1", "bytes=1 - 2", "bytes=-"]
+      .map(range => ({ range, status: 200, expected: "0123456789", contentRange: null })),
+  ];
+  try {
+    await withServer(root, async base => {
+      for (const fixture of cases) await t.test(fixture.range, async () => {
+        const response = await fetch(await downloadUrl(base), { headers: { range: fixture.range } });
+        assert.equal(response.status, fixture.status);
+        assert.equal(response.headers.get("content-range"), fixture.contentRange);
+        assert.equal(response.headers.get("content-length"), String(fixture.expected.length));
+        assert.equal(response.headers.get("cache-control"), "private, no-store");
+        assert.equal(await response.text(), fixture.expected);
+      });
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("zero-byte downloads return an empty 200, including a requested range", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-files-empty-"));
+  await writeFile(join(root, "big.pdf"), "");
+  try {
+    await withServer(root, async base => {
+      for (const headers of [new Headers(), new Headers({ range: "bytes=0-" })]) {
+        const response = await fetch(await downloadUrl(base), { headers });
+        assert.equal(response.status, 200);
+        assert.equal(response.headers.get("content-length"), "0");
+        assert.equal((await response.arrayBuffer()).byteLength, 0);
+      }
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("download disposition forces executable/unknown content and safely encodes Unicode names", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-files-disposition-"));
+  const names = ["page.html", "image.svg", "file.unknown-type", "résumé-文.pdf"];
+  for (const name of names) await writeFile(join(root, name), "fixture");
+  try {
+    await withServer(root, async base => {
+      for (const name of names) {
+        const response = await fetch(`${base}/api/p/files/download?sessionId=${SESSION_ID}&path=${encodeURIComponent(name)}`);
+        assert.equal(response.status, 200);
+        const disposition = parseDisposition(response.headers.get("content-disposition")!);
+        assert.equal(disposition.type, name.endsWith(".pdf") ? "inline" : "attachment");
+        assert.equal(disposition.parameters.filename, name);
+        assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+        await response.arrayBuffer();
+      }
+      const forced = await fetch(`${base}/api/p/files/download?sessionId=${SESSION_ID}&path=${encodeURIComponent(names[3]!)}&download=1`);
+      assert.equal(parseDisposition(forced.headers.get("content-disposition")!).type, "attachment");
+      await forced.arrayBuffer();
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a download reads its authorized descriptor even if its pathname is replaced", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-files-descriptor-"));
+  const path = join(root, "original.pdf");
+  await writeFile(path, "authorized bytes");
+  const opened = await openFileDownload({ root, path: "original.pdf", attachment: false });
+  assert.ok(opened.ok);
+  try {
+    await rename(path, join(root, "moved.pdf"));
+    await writeFile(join(root, "replacement.pdf"), "not authorized");
+    await symlink(join(root, "replacement.pdf"), path);
+    const chunks: Buffer[] = [];
+    for await (const chunk of opened.download.stream) chunks.push(Buffer.from(chunk));
+    assert.equal(Buffer.concat(chunks).toString(), "authorized bytes");
+    const refused = await openFileDownload({ root, path: "original.pdf", attachment: false });
+    assert.equal(refused.ok, false);
+    if (!refused.ok) assert.equal(refused.code, "symlink");
+  } finally {
+    opened.download.stream.destroy();
+    await opened.download.close();
+    await opened.download.close(); // descriptor release is idempotent.
+    await rm(root, { recursive: true, force: true });
   }
 });
 

@@ -20,6 +20,7 @@
  * namespace policies are unchanged.
  */
 import Router from "find-my-way";
+import type { Readable } from "node:stream";
 import { assertGranted, parseCapability, type Capability } from "./capabilities.ts";
 import { runWithBudget } from "./budget.ts";
 
@@ -30,10 +31,11 @@ export type PluginRouteMethod = (typeof PLUGIN_ROUTE_METHODS)[number];
 export const DEFAULT_ROUTE_BUDGET_MS = 10_000;
 
 /**
- * Raw transport for handlers that must own the response (streaming a file,
- * long-lived writes). The objects are the server's own `IncomingMessage` and
- * `ServerResponse`; the handler casts them and returns `{ handled: true }`, and
- * the dispatcher writes nothing further.
+ * Deprecated external-plugin compatibility transport, not for first-party
+ * handlers. The objects are the server's real `IncomingMessage` and
+ * `ServerResponse`; legacy handlers return `{ handled: true }` and the
+ * isolated server adapter prevents any subsequent auto-send. Prefer a stream
+ * result; no Fastify types are exposed in this contract.
  */
 export interface PluginRouteTransport {
   readonly request: unknown;
@@ -59,18 +61,45 @@ export interface PluginRouteRequest {
    */
   sessionRoot?: string;
   /**
-   * Present only for handlers that need the real request/response pair, such as
-   * a byte stream. Everything else uses the plain `body` shape above.
+   * Deprecated raw compatibility API for external plugins only. New handlers
+   * return a body or stream result instead.
    */
   transport?: PluginRouteTransport;
+  /** The caller's request headers, lowercased by Node (e.g. `range`). */
+  headers?: Record<string, string | string[] | undefined>;
+  /** Aborted on client disconnect or when the handler exceeds its budget. */
+  signal?: AbortSignal;
+}
+
+/** A byte stream a handler returns instead of a body; the dispatcher sends it. */
+export interface PluginRouteStream {
+  status?: number;
+  headers?: Record<string, string>;
+  stream: Readable;
+  /**
+   * Releases owned resources on completion, abort, or an abandoned result.
+   * Must be idempotent: a source error can race response teardown.
+   */
+  close?: () => void | Promise<void>;
 }
 
 export interface PluginRouteResponse {
   status?: number;
   body?: unknown;
   headers?: Record<string, string>;
-  /** The handler already wrote the response itself (see `transport`). */
+  /** A byte stream; the dispatcher owns sending it and calls `close` after. */
+  stream?: PluginRouteStream;
+  /**
+   * Legacy escape hatch: the handler wrote the response itself through
+   * `transport` and the dispatcher must write nothing further. Prefer `stream`.
+   */
   handled?: boolean;
+}
+
+/** Release a result that finished, failed, or arrived after its caller left. */
+export async function disposePluginRouteStream(result: PluginRouteStream): Promise<void> {
+  result.stream.destroy();
+  await result.close?.();
 }
 
 export type PluginRouteHandler = (
@@ -272,7 +301,17 @@ export class PluginRouteRegistry {
     const outcome = await runWithBudget(
       `${request.method} ${request.path}`,
       this.budgetMs,
-      () => handler(request),
+      async (budgetSignal) => {
+        const signal = request.signal === undefined ? budgetSignal : AbortSignal.any([request.signal, budgetSignal]);
+        const result = await handler({ ...request, signal });
+        // runWithBudget discards late values. A discarded stream still owns
+        // resources, so release it here even though its HTTP caller is gone.
+        if (signal.aborted && result?.stream !== undefined) {
+          await disposePluginRouteStream(result.stream);
+          return;
+        }
+        return result;
+      },
       this.clock,
     );
     if (!outcome.ok) return { ok: false, reason: outcome.reason, message: outcome.error };

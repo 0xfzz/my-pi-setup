@@ -462,9 +462,20 @@ removed on deactivate), registration needs the `routes` capability, the path
 stays inside the plugin's own namespace, `sessionId` is resolved to
 `sessionRoot` before dispatch, and every call runs under a 10 s budget — a
 handler that throws or hangs answers 502 with `plugin_route_failed` /
-`plugin_route_timeout` instead of crashing the host. A handler that must own
-the response (streaming bytes) uses `request.transport` and returns
-`{ handled: true }`.
+`plugin_route_timeout` instead of crashing the host. For byte streams, return
+`{ stream: { stream: readable, status: 200, headers, close } }`: the dispatcher
+sends the Node Readable through Fastify and calls the optional, idempotent
+`close` callback on completion, error, or disconnect. `close` may return a
+promise. Streams returned after a timeout or disconnect are destroyed and
+released without being sent. `request.headers` supplies incoming headers such
+as `range`, and `request.signal` aborts on disconnect or budget expiry.
+
+`request.transport` with `{ handled: true }` remains a **deprecated external
+plugin compatibility API only**, isolated in
+`web/core/server/legacy-plugin-transport.ts`. It contains the real Node pair,
+not a synthetic response. Once a legacy plugin writes headers, the host never
+appends JSON; a subsequent throw/timeout terminates an unfinished response.
+First-party plugins must use the body/stream result contract.
 
 The Files plugin is the reference: `web/plugins/files/server/index.ts` mounts
 `/api/p/files`, `/read`, `/search` and `/download`, reusing the audited
