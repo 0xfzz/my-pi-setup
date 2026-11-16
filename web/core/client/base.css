@@ -888,6 +888,13 @@ a:focus-visible {
   color: var(--fg-dim);
 }
 
+/* A screenshot's placeholder while its image is fetched on expansion. */
+.msg-toolcall-loading {
+  color: var(--fg-faint);
+  font-size: 11px;
+  padding: 4px 0;
+}
+
 .msg-toolcall-result.is-error {
   color: var(--error);
 }

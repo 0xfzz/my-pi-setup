@@ -93,6 +93,8 @@ export interface ToolResultLike {
   /** The edit tool's diff, from the result's `details.diff`. */
   diff?: string;
   images?: Array<{ data: string; mimeType: string }>;
+  /** The history carries this result's images only as a flag; see loadToolResult. */
+  hasImages?: boolean;
 }
 
 /** Tool-result message content → plain text (TextContent blocks only). */
@@ -1067,6 +1069,29 @@ export function usePiSession() {
     };
   }, [selectedId, historyEpoch, applyStream, fetchState, fetchModels]);
 
+  /** Result keys (session + tool call) already requested, so an expansion fetches once. */
+  const requestedToolResults = useRef(new Set<string>());
+
+  /**
+   * Fetch one tool result in full: the images a history response leaves out
+   * until their tool call is expanded. A failed fetch can be retried.
+   */
+  const loadToolResult = useCallback((toolCallId: string) => {
+    if (selectedId === null) return;
+    const key = `${selectedId}\u0000${toolCallId}`;
+    if (requestedToolResults.current.has(key)) return;
+    requestedToolResults.current.add(key);
+    const url = `/api/agent/${encodeURIComponent(selectedId)}/tool-results/${encodeURIComponent(toolCallId)}`;
+    void fetch(url)
+      .then((res) => (res.ok ? (res.json() as Promise<ToolResultLike>) : Promise.reject(new Error(`HTTP ${res.status}`))))
+      .then((full) => {
+        setToolResults((prev) => ({ ...prev, [toolCallId]: full }));
+      })
+      .catch(() => {
+        requestedToolResults.current.delete(key);
+      });
+  }, [selectedId]);
+
   const newSession = useCallback(async (cwd?: string) => {
     try {
       const res = await fetch("/api/agent/new", {
@@ -1212,6 +1237,7 @@ export function usePiSession() {
     sessions,
     sessionsLoading,
     historyLoading,
+    loadToolResult,
     selectedId,
     setSelectedId,
     history,

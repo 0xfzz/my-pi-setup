@@ -4,7 +4,7 @@
 // The transcript stays pinned to the bottom while the user is there, and a
 // jump-to-latest button appears whenever they scroll up.
 
-import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { createContext, memo, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ArrowDown, CaretDown, CaretRight, Stop, Warning } from "@phosphor-icons/react";
 import type { AssistantBlock, BashBlock, ImageBlock, ToolCallBlock } from "./streaming.ts";
 import type { HistoryEntryLike, ToolCallStatus, ToolResultLike } from "./use-session.ts";
@@ -17,6 +17,12 @@ import { inlineLoading } from "./inline-loading.ts";
 import { INITIAL_FOLLOW, reduceFollow, type FollowEvent, type FollowState, type ScrollMetrics } from "./transcript-follow.ts";
 
 const RESULT_PREVIEW_LIMIT = 8_000;
+
+/**
+ * Asks the session to fetch one tool result in full (its images, which the
+ * history leaves out until the call is expanded). Null outside a transcript.
+ */
+const ToolResultLoadContext = createContext<((toolCallId: string) => void) | null>(null);
 const BASH_OUTPUT_PREVIEW_LIMIT = 8_000;
 const DEFAULT_WORKING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -221,9 +227,15 @@ function ToolCallRow({
   status?: ToolCallStatus;
   result?: ToolResultLike;
 }) {
-  // Expanded by default (the command and diff are the point of the row);
-  // collapsible for long output.
-  const [open, setOpen] = useState(true);
+  // Expanded by default (the command and diff are the point of the row), except
+  // a result with screenshots: those start collapsed, so a long session's
+  // history does not render every image at once. Collapsible for long output.
+  const [open, setOpen] = useState(() => result?.hasImages !== true);
+  const loadToolResult = useContext(ToolResultLoadContext);
+  const imagesPending = result?.hasImages === true && result.images === undefined;
+  useEffect(() => {
+    if (open && imagesPending) loadToolResult?.(block.toolCallId);
+  }, [open, imagesPending, loadToolResult, block.toolCallId]);
   const state = status?.state ?? (result ? (result.isError ? "error" : "done") : "done");
   // The tool ran to completion with a clean result: green — the mirror of
   // the red error state, so success and failure read at a glance.
@@ -297,6 +309,7 @@ function ToolCallRow({
               >
                 {result.text.slice(0, RESULT_PREVIEW_LIMIT)}
               </pre>
+              {imagesPending ? <div className="msg-toolcall-loading">Loading screenshot…</div> : null}
               {result.images?.map((image, index) => (
                 <ImageBlockView key={index} block={{ kind: "image", ...image }} />
               ))}
@@ -391,6 +404,8 @@ export interface TranscriptUserMessage {
 export interface TranscriptProps {
   history: HistoryEntryLike[];
   loading?: boolean;
+  /** Fetch one tool result in full (see ToolResultLoadContext). */
+  onLoadToolResult?: (toolCallId: string) => void;
   userMessages: TranscriptUserMessage[];
   streaming: { isStreaming: boolean; streamingMessage: { content: AssistantBlock[] } | null };
   toolStatus: Record<string, ToolCallStatus>;
@@ -480,6 +495,7 @@ const CompactionMarker = memo(function CompactionMarker({
 export function Transcript({
   history,
   loading = false,
+  onLoadToolResult,
   userMessages,
   streaming,
   toolStatus,
@@ -591,7 +607,7 @@ export function Transcript({
   };
 
   return (
-    <>
+    <ToolResultLoadContext.Provider value={onLoadToolResult ?? null}>
       <main className="app-transcript" aria-live="polite" aria-busy={loading} ref={scrollRef} onScroll={handleScroll}>
         <div className="app-transcript-inner" ref={innerRef}>
           {loading ? <div className="app-content-loading"><LoadingSpinner label="Loading conversation…" /></div> : null}
@@ -661,6 +677,6 @@ export function Transcript({
           <ArrowDown size={14} weight="bold" /> {hasUnread ? "new messages" : "latest"}
         </button>
       ) : null}
-    </>
+    </ToolResultLoadContext.Provider>
   );
 }
