@@ -9,7 +9,7 @@
 // screenshot never needs a multi-megabyte request.
 
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type KeyboardEvent } from "react";
-import { ArrowUp, GitBranch, Paperclip, Sparkle, Stop, X } from "@phosphor-icons/react";
+import { ArrowUp, Folder, GitBranch, Paperclip, Sparkle, Stop, X } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { filterCommands, type WebCommand } from "../shared/commands.ts";
@@ -133,15 +133,18 @@ function ContextUsageBar({ usage }: { usage: ContextUsage | null }) {
 }
 
 /**
- * Where the session runs: its directory, and the git branch of that
- * directory when it is a worktree. Both come from the host — the path from
- * the session list, the branch from `/api/agent/:id/branch` — and the branch
- * is simply absent off-repository, so the line never asks the user a
- * question it cannot answer.
+ * Where the session runs, at the top of the input field: a folder icon and the
+ * directory, then a branch pill when that directory is a worktree. The path
+ * comes from the session list the client already has, the branch from
+ * `/api/agent/:id/branch`, and the branch is simply absent off-repository.
+ *
+ * It has a row of its own rather than a place beside the context meter, so a
+ * long path ellipsizes instead of squeezing the model and thinking chips.
  */
-function WorkspaceChip({ path, branch }: { path: string; branch: string | null }) {
+function WorkspaceLine({ path, branch }: { path: string; branch: string | null }) {
   return (
-    <span className="app-workspace-chip" title={branch !== null ? `${path} · ${branch}` : path}>
+    <div className="app-workspace-line" title={branch !== null ? `${path} · ${branch}` : path}>
+      <Folder size={12} className="app-workspace-folder" />
       <span className="app-workspace-path">{path}</span>
       {branch !== null ? (
         <span className="app-workspace-branch">
@@ -150,7 +153,7 @@ function WorkspaceChip({ path, branch }: { path: string; branch: string | null }
           <span className="app-workspace-branch-name">{branch}</span>
         </span>
       ) : null}
-    </span>
+    </div>
   );
 }
 
@@ -448,17 +451,11 @@ export function Composer({
 
   return (
     <div className="app-composer" data-busy={busy ? "true" : undefined}>
-      {/* Two clusters, so the workspace line shrinks beside the meter instead
-          of forcing the model and thinking chips onto extra rows on a phone. */}
+      {/* The workspace line has its own row at the top of the input field; the
+          meter and chips share the row above it. */}
       <div className="app-composer-meta">
-        <div className="app-composer-meta-lead">
-          <ContextUsageBar usage={contextUsage ?? null} />
-          {workspacePath !== undefined && workspacePath !== "" ? (
-            <WorkspaceChip path={workspacePath} branch={workspaceBranch ?? null} />
-          ) : null}
-        </div>
-        <div className="app-composer-meta-trail">
-          {model !== undefined && onOpenModelPicker !== undefined ? (
+        <ContextUsageBar usage={contextUsage ?? null} />
+        {model !== undefined && onOpenModelPicker !== undefined ? (
             <button
               type="button"
               className="app-model-chip"
@@ -480,7 +477,6 @@ export function Composer({
             </button>
           ) : null}
         </div>
-      </div>
       {paletteOpen ? (
         <div className="app-command-palette" role="listbox" aria-label="Commands">
           {matches.map((command, index) => (
@@ -541,6 +537,9 @@ export function Composer({
         </div>
       ) : null}
       <div className="app-composer-row">
+      {workspacePath !== undefined && workspacePath !== "" ? (
+        <WorkspaceLine path={workspacePath} branch={workspaceBranch ?? null} />
+      ) : null}
       <Textarea
         className="app-composer-input flex-1 resize-none max-h-52"
         placeholder={disabled ? "Select or start a session…" : "Message pi…"}

@@ -913,24 +913,33 @@ async function run() {
       "the context meter shows the posted context usage",
     );
 
-    step("8b-workspace: the composer line carries the path and the git branch");
-    // 8b-workspace. The line beside the context meter: the session's directory
-    //   always, its git branch only when that directory is a worktree. This
-    //   bridge runs in /tmp/bridge-proj, which is not a repository.
-    const workspaceChip = page.locator(".app-workspace-chip");
-    await workspaceChip.waitFor({ state: "visible", timeout: 15_000 });
+    step("8b-workspace: the input carries the path and the git branch");
+    // 8b-workspace. The line at the top of the input field: the session's
+    //   directory (with a folder icon) always, its git branch only when that
+    //   directory is a worktree. This bridge runs in /tmp/bridge-proj, which is
+    //   not a repository.
+    const workspaceLine = page.locator(".app-workspace-line");
+    await workspaceLine.waitFor({ state: "visible", timeout: 15_000 });
     assert.equal(await page.locator(".app-workspace-path").innerText(), "/tmp/bridge-proj");
     assert.equal(await page.locator(".app-workspace-branch").count(), 0,
       "a directory that is not a worktree shows no branch");
-    assert.equal(await workspaceChip.getAttribute("title"), "/tmp/bridge-proj");
-    // It belongs to the meter's cluster, i.e. directly right of the context bar.
-    const chipIsRightOfMeter = await page.evaluate(() => {
-      const meter = document.querySelector(".app-context-usage");
-      const chip = document.querySelector(".app-workspace-chip");
-      return meter !== null && chip !== null && meter.parentElement === chip.parentElement
-        && (meter.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    assert.equal(await workspaceLine.getAttribute("title"), "/tmp/bridge-proj");
+    // It sits at the top of the input field: inside the field, above the textarea,
+    // never beside the context meter.
+    const linePlacement = await page.evaluate(() => {
+      const line = document.querySelector(".app-workspace-line");
+      const field = document.querySelector(".app-composer-row");
+      const input = document.querySelector(".app-composer-input");
+      const meta = document.querySelector(".app-composer-meta");
+      if (line === null || field === null || input === null) return null;
+      return {
+        insideField: field.contains(line),
+        aboveInput: line.getBoundingClientRect().bottom <= input.getBoundingClientRect().top + 1,
+        inMeta: meta !== null && meta.contains(line),
+        hasFolderIcon: line.querySelector(".app-workspace-folder") !== null,
+      };
     });
-    assert.ok(chipIsRightOfMeter, "the workspace line sits right of the context meter");
+    assert.deepEqual(linePlacement, { insideField: true, aboveInput: true, inMeta: false, hasFolderIcon: true });
 
     // A session whose directory *is* a worktree: a second bridge on a throwaway
     // repository, so the branch is deterministic and no pi session file is
@@ -946,15 +955,15 @@ async function run() {
     try {
       await page.locator(`.app-session-item[data-id="${repoBridgeId}"]`).waitFor({ timeout: 15_000 });
       await page.click(`.app-session-item[data-id="${repoBridgeId}"]`);
-      await workspaceChip.waitFor({ state: "visible", timeout: 15_000 });
+      await workspaceLine.waitFor({ state: "visible", timeout: 15_000 });
       assert.equal(await page.locator(".app-workspace-path").innerText(), repoDir);
       await page.locator(".app-workspace-branch-name").filter({ hasText: "composer-line" })
         .waitFor({ timeout: 15_000 });
-      assert.equal(await workspaceChip.getAttribute("title"), `${repoDir} · composer-line`,
+      assert.equal(await workspaceLine.getAttribute("title"), `${repoDir} · composer-line`,
         "the tooltip carries the path and the branch together");
       // Switching back must not carry this session's branch onto another one.
       await page.click(`.app-session-item[data-id="${bridgeId}"]`);
-      await workspaceChip.waitFor({ state: "visible", timeout: 15_000 });
+      await workspaceLine.waitFor({ state: "visible", timeout: 15_000 });
       await page.waitForFunction(() => document.querySelector(".app-workspace-branch") === null, undefined, { timeout: 15_000 });
       assert.equal(await page.locator(".app-workspace-path").innerText(), "/tmp/bridge-proj");
     } finally {

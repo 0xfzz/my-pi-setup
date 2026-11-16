@@ -682,18 +682,20 @@ when the bridge opened. The command list (`web_commands`) rides the same
 attach snapshot for the same reason: a fresh bridge caches nothing, and the
 composer's palette reads that cache.
 
-**The workspace line** sits directly right of the meter: the directory the
-session runs in, then its git branch when that directory is a worktree. The
-path comes from the session list the client already holds, so it needs no
-request of its own; the branch comes from `GET /api/agent/:id/branch`, one
-read per selection, because git's answer can change (a checkout, a new clone)
-and nothing else reports it. That route runs `git symbolic-ref --short HEAD`
-in the session's directory — read-only, bounded by a one-second timeout — and
-answers `null` for a detached HEAD, a directory that is not a repository, a
-missing git binary or an unreadable path. A null branch leaves the line to
-the path alone rather than showing an error: the line is context, not session
-state. Both segments ellipsize rather than widening the composer, and the
-tooltip carries the full `<path> · <branch>`.
+**The workspace line** sits at the top of the input field: a folder icon and
+the directory the session runs in, then its git branch when that directory is
+a worktree. It has a row of its own rather than a place beside the context
+meter, so a long path ellipsizes instead of squeezing the model and thinking
+chips. The path comes from the session list the client already holds, so it
+needs no request of its own; the branch comes from `GET /api/agent/:id/branch`,
+one read per selection, because git's answer can change (a checkout, a new
+clone) and nothing else reports it. That route runs
+`git symbolic-ref --short HEAD` in the session's directory — read-only,
+bounded by a one-second timeout — and answers `null` for a detached HEAD, a
+directory that is not a repository, a missing git binary or an unreadable
+path. A null branch leaves the line to the path alone rather than showing an
+error: the line is context, not session state. Both segments ellipsize rather
+than widening the field, and the tooltip carries the full `<path> · <branch>`.
 
 **Extensions can open web dialogs too** — the web's extensibility surface:
 publish a `dialog` view (title, markdown body or lines, up to 8 actions,

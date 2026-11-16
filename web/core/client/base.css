@@ -2245,29 +2245,8 @@ a:focus-visible {
   display: flex;
   align-items: center;
   order: 2;
-  justify-content: space-between;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-/* The meter and the workspace line: this cluster shrinks first, so a long path
- * ellipsizes rather than wrapping the chips onto extra rows. */
-.app-composer-meta-lead {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-/* The model and thinking chips: they keep their size until the lead is spent. */
-.app-composer-meta-trail {
-  display: flex;
-  align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  flex: 0 1 auto;
-  min-width: 0;
   flex-wrap: wrap;
 }
 
@@ -2331,43 +2310,48 @@ a:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  margin-right: auto;
   color: var(--fg-faint);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-/* The workspace line sits directly right of the context meter: the session's
- * directory, then its git branch when the directory is a worktree. The auto
- * margin that used to sit on the meter moves here, so the model chip stays at
- * the row's end while this stays beside the meter. */
-.app-workspace-chip {
-  display: inline-flex;
+/* The workspace line: the session's directory and git branch, inside the top
+ * of the input field. It claims a full row of the field's wrap, so the
+ * textarea and the buttons follow on the next line and a long path ellipsizes
+ * here instead of competing with them for width. */
+.app-workspace-line {
+  display: flex;
   align-items: center;
-  gap: 8px;
-  /* The line may shrink so the path ellipsizes instead of pushing the model
-   * and thinking chips onto extra rows on a phone. */
-  flex: 0 1 auto;
+  gap: 6px;
+  flex: 1 0 100%;
   min-width: 0;
+  padding: 2px 4px 6px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border);
   color: var(--fg-faint);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.app-workspace-folder {
+  flex: none;
 }
 
 .app-workspace-path {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 42ch;
 }
 
 .app-workspace-branch {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  /* Shrinkable, so a long branch ellipsizes instead of pushing the chips
-   * onto another row; 40ch keeps a normal branch name whole on desktop. */
+  /* Shrinkable, so a long branch ellipsizes instead of widening the field;
+   * 40ch keeps a normal branch name whole on a desktop. */
   flex: 0 1 auto;
   min-width: 0;
   max-width: 40ch;
@@ -2434,6 +2418,7 @@ a:focus-visible {
   display: flex;
   gap: 4px;
   align-items: flex-end;
+  flex-wrap: wrap;
   padding: 6px;
   border: 1px solid var(--border);
   border-radius: 14px;
