@@ -98,7 +98,9 @@ regression test (PRD §9 "Compatibility rule"). Default is **retain**.
 | Known path, wrong method | 405 via table scan | 404 (no route) | **retain 405**, generated from the same route declarations / router lookup + allowed-method iteration for plugins |
 | Unknown `/api/*` | 404 JSON after auth | 404 HTML/JSON not-found handler | **retain 404 JSON**, and never an SPA shell for API misses |
 | Body limit (general) | 60,000,000 B manual | `bodyLimit` default 1 MiB | set `bodyLimit: 60_000_000` for the general scope; **4,096** for auth routes; `maxSnapshotBytes` for graph producers |
-| Oversize body | old code threw → endpoint 400/500 | 413 `FST_ERR_CTP_BODY_TOO_LARGE` | **explicit decision**: map parser/limit failures to the historical outcomes via scoped error handling (documented at implementation) |
+| Oversize body | old code threw → endpoint 400/500 | 413 `FST_ERR_CTP_BODY_TOO_LARGE` | **mapped back**: the auth scope's error handler answers 400 for login/refresh/status and keeps logout's clear-cookies + 200, so no endpoint gains a global 413 (PRD §6.3) |
+| Auth body limit | 4,096 B accumulated manually | route `bodyLimit` enforced by Fastify as bytes arrive | adopted; the over-limit answer is mapped to the historical per-endpoint outcome above |
+| Cookie parse/serialize | handwritten `parseCookies` + string concatenation | `@fastify/cookie` `request.cookies` / `reply.setCookie` / `reply.clearCookie` | **adopted**; names, paths, `Max-Age`, `HttpOnly`, `SameSite=Strict`, Secure detection retained. Duplicate-cookie precedence differs (library is last-wins, the old parser was first-wins); recorded, low impact |
 | Content-Type on body parse | general/auth parse JSON ignoring Content-Type | Fastify only parses matching Content-Type | scoped `parseAs`/`addContentTypeParser` adapter to keep the "parse JSON regardless" contract where it existed; graph producer routes require JSON |
 | Empty body | `{}` (general/auth); graph throws | parser error / `{}` | preserve `{}` via scoped parser; test both |
 | Trailing slash | exact match, no redirect | `ignoreTrailingSlash` off; `/x/` ≠ `/x` | keep off; test `/x` vs `/x/` explicitly |
@@ -260,5 +262,13 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   matcher), and a scoped lenient body parser preserving the handwritten body
   contract. The regex `API_ROUTES`/`matchRoute`/`handleApi` table, the
   `readJsonBody` reader and the plugin-manager HTTP adapters are deleted.
-  Remaining Phase 2 work: native auth routes and the graph's native routes; the
-  `/*` delegate still carries the auth endpoints and the static assets.
+  Remaining Phase 2 work: the graph's native routes; the `/*` delegate still
+  carries the static assets.
+- **Phase 3 — in progress**: cookies now go through `@fastify/cookie` (the gate
+  reads `request.cookies`, the routes call `reply.setCookie`/`clearCookie`) and
+  the four auth endpoints are native Fastify routes with a scoped 4,096-byte
+  body limit. The JWT codec (`web/core/auth/jwt.ts`) is still the hand-rolled
+  HS256 implementation: the `fast-jwt` seam and its old/new-token interop tests
+  remain. The `PI_WEB_TRUST_PROXY` / Secure-detection policy adapter is retained
+  in `auth.ts` (raw-header logic, tested) pending the Fastify `trustProxy`
+  mapping; M15's throttle verdict is recorded in §7.

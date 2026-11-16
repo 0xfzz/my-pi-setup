@@ -11,7 +11,7 @@ import { registerSession } from "./sessions.ts";
 import { seedPluginFixtures } from "./plugin-fixtures.ts";
 import { registerCoreRoutes } from "./routes.ts";
 import { sendJson } from "./http.ts";
-import { createAuthHttp, type AuthHttp, type AuthHttpOptions } from "./auth.ts";
+import { createAuthHttp, registerAuthRoutes, type AuthGateReply, type AuthGateRequest, type AuthHttp, type AuthHttpOptions } from "./auth.ts";
 import { createWebApp } from "./app.ts";
 import { registerPluginRoutes } from "./plugin-routes.ts";
 import { getPluginHost } from "./plugin-host.ts";
@@ -167,23 +167,23 @@ function parseRequestUrl(req: IncomingMessage): URL | null {
  * health probe) and the four auth routes themselves. The static client is
  * public too — it has to load to show the login screen — but carries no data.
  */
-function authorizeRequest(req: IncomingMessage, res: ServerResponse, url: URL, auth: AuthHttp): boolean {
+function authorizeRequest(request: AuthGateRequest, reply: AuthGateReply, url: URL, auth: AuthHttp): boolean {
   if (!pathnameIsApi(url.pathname)) return true;
   if (url.pathname === "/api/health") return true;
   if (AUTH_ROUTE_PATHS.has(url.pathname)) return true;
-  return auth.authorize(req, res, url);
+  return auth.authorize(request, reply, url);
 }
 
 /**
  * Dispatch a request no native route claimed. Authentication already ran in
- * `onRequest`; this only routes: the auth endpoints, the not-yet-native API
- * table, and static assets. Removed route-group by route-group in Phase 2.
+ * `onRequest`; every API path (core, plugin, auth) is a native route now, so an
+ * unclaimed `/api` path is a 404 and the rest is a static asset. Removed in
+ * Phase 4 when static delivery moves to @fastify/static.
  */
 async function dispatchUnclaimed(
   req: IncomingMessage,
   res: ServerResponse,
   root: string,
-  auth: AuthHttp,
 ): Promise<void> {
   const url = parseRequestUrl(req);
   if (url === null) {
@@ -192,7 +192,6 @@ async function dispatchUnclaimed(
   }
   try {
     if (pathnameIsApi(url.pathname)) {
-      if (await auth.handleRoute(req, res, url)) return;
       sendJson(res, 404, { error: "not found" });
       return;
     }
@@ -221,7 +220,9 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
   // while the process runs, and the served assets change with it.
   setServedRoot(root);
 
-  const auth = createAuthHttp(options.auth ?? defaultAuthService(), options.authHttp ?? defaultAuthHttpOptions());
+  const authHttp = options.authHttp ?? defaultAuthHttpOptions();
+  const service = options.auth ?? defaultAuthService();
+  const auth = createAuthHttp(service, authHttp);
   // A rebuild replaces the bundle on disk while this process keeps serving.
   // Tell open pages, so every tab converges on one client build instead of
   // each keeping whatever it was opened with.
@@ -235,14 +236,15 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
         sendJson(reply.raw, 400, { error: "bad request" });
         return false;
       }
-      return authorizeRequest(request.raw, reply.raw, url, auth);
+      return authorizeRequest(request, reply, url, auth);
     },
-    delegate: (req, res) => dispatchUnclaimed(req, res, root, auth),
+    delegate: (req, res) => dispatchUnclaimed(req, res, root),
   }).then(async (app) => {
-    // Plugin backend routes and the core API are native now; the kernel matcher
-    // behind the plugin gateway stays dynamic.
+    // Plugin backend routes, the core API and the auth endpoints are native now;
+    // the kernel matcher behind the plugin gateway stays dynamic.
     await registerPluginRoutes(app);
     await registerCoreRoutes(app);
+    await registerAuthRoutes(app, service, authHttp);
     try {
       await app.listen({ port: requestedPort, host });
     } catch (error) {

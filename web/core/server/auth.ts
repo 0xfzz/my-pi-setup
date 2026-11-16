@@ -1,14 +1,21 @@
-// HTTP layer of the web password: the /api/auth routes, the request gate, cookies.
-// The token logic itself is web/core/auth/service.ts; this file only maps it onto HTTP.
+// HTTP layer of the web password: the /api/auth routes and the request gate.
+// The token logic itself is web/core/auth/service.ts; this file only maps it
+// onto HTTP.
 //
-// Browser sessions ride on two HttpOnly, SameSite=Strict cookies, so page script (and any
-// XSS in it) can never read a token, and EventSource — which cannot set headers — still
-// authenticates:
+// Browser sessions ride on two HttpOnly, SameSite=Strict cookies, so page script
+// (and any XSS in it) can never read a token, and EventSource — which cannot set
+// headers — still authenticates:
 //   pi_web_at   the short-lived access JWT, sent to every route;
 //   pi_web_rt   the long-lived refresh JWT, scoped to /api/auth so it travels nowhere else.
 // Programmatic clients can instead ask for the tokens in the response body
 // (`returnTokens: true`) and present `Authorization: Bearer <access token>`.
+//
+// Cookie parsing and serialization are @fastify/cookie's: the gate reads
+// `request.cookies` and the routes call `reply.setCookie`/`clearCookie`. Only the
+// cookie *policy* (names, paths, expiry, Secure detection, credential
+// precedence) stays here. The four routes are native Fastify routes.
 
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { IssuedTokens, WebAuthService } from "../auth/service.ts";
 
@@ -26,35 +33,38 @@ export interface AuthHttpOptions {
   forceSecureCookies?: boolean;
 }
 
+/** What the gate needs from the request; a FastifyRequest satisfies it structurally. */
+export interface AuthGateRequest {
+  readonly raw: IncomingMessage;
+  readonly headers: Record<string, string | string[] | undefined>;
+  readonly cookies: Record<string, string | undefined>;
+}
+
+export interface AuthGateReply {
+  readonly raw: ServerResponse;
+}
+
 export interface AuthHttp {
-  /** Handle /api/auth/*. Returns false for a path that is not an auth route. */
-  handleRoute(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean>;
   /**
-   * The gate for every other /api route. True: carry on. False: the response (401, 403,
-   * 503) has been sent. Passes everything through when no password is set.
+   * The gate for every /api route. True: carry on. False: the response (401, 403,
+   * 503) has been sent through the raw pair. Passes everything through when no
+   * password is set.
    */
-  authorize(req: IncomingMessage, res: ServerResponse, url: URL): boolean;
+  authorize(request: AuthGateRequest, reply: AuthGateReply, url: URL): boolean;
 }
 
-function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string | string[]> = {}): void {
-  res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
-    ...headers,
-  });
-  res.end(JSON.stringify(body));
+interface CookiePolicy {
+  readonly trustProxy: "all" | "off" | "loopback";
+  readonly allowedOrigins: Set<string>;
+  readonly forceSecureCookies: boolean;
 }
 
-function parseCookies(header: string | undefined): Record<string, string> {
-  const cookies: Record<string, string> = {};
-  if (header === undefined) return cookies;
-  for (const part of header.split(";")) {
-    const index = part.indexOf("=");
-    if (index < 0) continue;
-    const name = part.slice(0, index).trim();
-    if (name !== "" && !(name in cookies)) cookies[name] = part.slice(index + 1).trim();
-  }
-  return cookies;
+function policyOf(options: AuthHttpOptions): CookiePolicy {
+  return {
+    trustProxy: options.trustProxy ?? "loopback",
+    allowedOrigins: new Set((options.allowedOrigins ?? []).map((origin) => origin.replace(/\/+$/, "").toLowerCase())),
+    forceSecureCookies: options.forceSecureCookies === true,
+  };
 }
 
 function bearer(header: string | undefined): string | null {
@@ -71,28 +81,339 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-/** Read a small JSON body, refusing anything larger: these routes are reachable before login. */
-async function readSmallJson(req: IncomingMessage): Promise<Record<string, unknown> | null> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    const buffer = chunk as Buffer;
-    size += buffer.length;
-    if (size > MAX_AUTH_BODY_BYTES) return null;
-    chunks.push(buffer);
+function proxyTrusted(req: IncomingMessage, policy: CookiePolicy): boolean {
+  return policy.trustProxy === "all" || (policy.trustProxy === "loopback" && isLoopback(req.socket.remoteAddress));
+}
+
+/**
+ * The address throttling is keyed on: the peer, or the last X-Forwarded-For hop
+ * our own proxy appended (so a client cannot spoof the key by prepending).
+ */
+function clientKey(req: IncomingMessage, policy: CookiePolicy): string {
+  if (proxyTrusted(req, policy)) {
+    const forwarded = firstHeader(req.headers["x-forwarded-for"]);
+    const last = forwarded?.split(",").at(-1)?.trim();
+    if (last !== undefined && last !== "") return last;
   }
-  if (size === 0) return {};
+  return req.socket.remoteAddress ?? "unknown";
+}
+
+function secureRequest(req: IncomingMessage, policy: CookiePolicy): boolean {
+  if (policy.forceSecureCookies) return true;
+  if ((req.socket as { encrypted?: boolean }).encrypted === true) return true;
+  if (proxyTrusted(req, policy) && firstHeader(req.headers["x-forwarded-proto"])?.split(",").at(-1)?.trim() === "https") return true;
+  // A browser sets Origin itself; an https page's own requests carry an https origin.
+  return (firstHeader(req.headers.origin) ?? "").startsWith("https://");
+}
+
+/**
+ * CSRF defence on top of SameSite=Strict (which sibling subdomains can still get
+ * around). Browsers state where a request came from: Sec-Fetch-Site, or at least
+ * Origin. A browser request from anywhere but this site is refused; non-browser
+ * clients send neither.
+ */
+function crossSiteWrite(req: IncomingMessage, policy: CookiePolicy): boolean {
+  const method = req.method ?? "GET";
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return false;
+  const fetchSite = firstHeader(req.headers["sec-fetch-site"]);
+  if (fetchSite !== undefined) return fetchSite !== "same-origin" && fetchSite !== "none";
+  const origin = firstHeader(req.headers.origin);
+  if (origin === undefined) return false;
+  if (policy.allowedOrigins.has(origin.replace(/\/+$/, "").toLowerCase())) return false;
+  let originHost: string;
   try {
-    const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    originHost = new URL(origin).host;
+  } catch {
+    return true;
+  }
+  const host = (proxyTrusted(req, policy) ? firstHeader(req.headers["x-forwarded-host"])?.split(",")[0]?.trim() : undefined) ?? req.headers.host;
+  return host === undefined || originHost.toLowerCase() !== host.toLowerCase();
+}
+
+function cookieOptions(path: string, maxAgeSeconds: number, secure: boolean) {
+  return {
+    path,
+    maxAge: Math.max(0, Math.ceil(maxAgeSeconds)),
+    httpOnly: true,
+    sameSite: "strict" as const,
+    secure,
+  };
+}
+
+function json(reply: FastifyReply, status: number, body: unknown): void {
+  void reply.code(status).header("cache-control", "no-store").send(body);
+}
+
+/**
+ * Parse an auth body the way the handwritten `readSmallJson` did: `{}` for an
+ * empty body, an object or `null` (unusable) otherwise. The route's scoped
+ * parser has already capped the byte length, so this only maps the shape.
+ */
+function parseAuthBody(raw: unknown): Record<string, unknown> | null {
+  if (raw === undefined || raw === null || raw === "") return {};
+  if (typeof raw !== "string") return null;
+  try {
+    const value: unknown = JSON.parse(raw);
     return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
   } catch {
     return null;
   }
 }
 
+function setAuthCookies(reply: FastifyReply, tokens: IssuedTokens, secure: boolean): void {
+  reply.setCookie(ACCESS_COOKIE, tokens.accessToken, cookieOptions("/", (tokens.accessExpiresAt - Date.now()) / 1000, secure));
+  reply.setCookie(REFRESH_COOKIE, tokens.refreshToken, cookieOptions(AUTH_COOKIE_PATH, (tokens.refreshExpiresAt - Date.now()) / 1000, secure));
+}
+
+function clearAuthCookies(reply: FastifyReply, secure: boolean): void {
+  reply.clearCookie(ACCESS_COOKIE, cookieOptions("/", 0, secure));
+  reply.clearCookie(REFRESH_COOKIE, cookieOptions(AUTH_COOKIE_PATH, 0, secure));
+}
+
+function unavailable(reply: FastifyReply): void {
+  json(reply, 503, {
+    error: "Password protection is configured but unreadable, so the server is refusing all requests. Run /web set-password again.",
+    code: "auth_unavailable",
+  });
+}
+
+// ── Route handlers ──────────────────────────────────────────────────────────
+
+function handleStatus(service: WebAuthService, policy: CookiePolicy, request: FastifyRequest, reply: FastifyReply): void {
+  const mode = service.mode();
+  if (mode === "disabled") {
+    json(reply, 200, { required: false, authenticated: true });
+    return;
+  }
+  if (mode === "invalid") {
+    json(reply, 200, { required: true, authenticated: false, unavailable: true });
+    return;
+  }
+  const credentials = accessTokenOf(request);
+  const access = credentials === null ? null : service.verifyAccess(credentials.token);
+  json(reply, 200, {
+    required: true,
+    authenticated: access?.ok === true,
+    ...(access?.ok === true ? { accessExpiresAt: access.expiresAt } : {}),
+  });
+}
+
+async function handleLogin(service: WebAuthService, policy: CookiePolicy, request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const mode = service.mode();
+  if (mode === "disabled") {
+    json(reply, 404, { error: "Password protection is off.", code: "auth_disabled" });
+    return;
+  }
+  if (mode === "invalid") {
+    unavailable(reply);
+    return;
+  }
+  if (crossSiteWrite(request.raw, policy)) {
+    json(reply, 403, { error: "Cross-site request blocked.", code: "cross_site" });
+    return;
+  }
+  const body = parseAuthBody(request.body);
+  if (body === null || typeof body.password !== "string") {
+    json(reply, 400, { error: "Send a JSON body with a password.", code: "bad_request" });
+    return;
+  }
+  const result = await service.login(body.password, clientKey(request.raw, policy), firstHeader(request.headers["user-agent"]));
+  if (!result.ok) {
+    if (result.reason === "rate_limited") {
+      void reply
+        .code(429)
+        .header("cache-control", "no-store")
+        .header("retry-after", String(result.retryAfterSeconds))
+        .send({ error: "Too many attempts. Try again later.", code: "rate_limited", retryAfterSeconds: result.retryAfterSeconds });
+    } else if (result.reason === "unavailable") {
+      unavailable(reply);
+    } else {
+      json(reply, 401, { error: "Wrong password.", code: "invalid_credentials" });
+    }
+    return;
+  }
+  const { tokens } = result;
+  if (body.returnTokens === true) {
+    json(reply, 200, {
+      ok: true,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      accessExpiresAt: tokens.accessExpiresAt,
+      refreshExpiresAt: tokens.refreshExpiresAt,
+    });
+    return;
+  }
+  setAuthCookies(reply, tokens, secureRequest(request.raw, policy));
+  json(reply, 200, { ok: true, accessExpiresAt: tokens.accessExpiresAt, refreshExpiresAt: tokens.refreshExpiresAt });
+}
+
+function handleRefresh(service: WebAuthService, policy: CookiePolicy, request: FastifyRequest, reply: FastifyReply): void {
+  const mode = service.mode();
+  if (mode === "disabled") {
+    json(reply, 404, { error: "Password protection is off.", code: "auth_disabled" });
+    return;
+  }
+  if (mode === "invalid") {
+    unavailable(reply);
+    return;
+  }
+  const body = parseAuthBody(request.body);
+  if (body === null) {
+    json(reply, 400, { error: "Invalid request body.", code: "bad_request" });
+    return;
+  }
+  // A token in the body is the programmatic mode (answered in the body); otherwise the cookie.
+  const bodyToken = typeof body.refreshToken === "string" ? body.refreshToken : null;
+  const cookieToken = request.cookies[REFRESH_COOKIE];
+  const viaBody = bodyToken !== null;
+  if (!viaBody && crossSiteWrite(request.raw, policy)) {
+    json(reply, 403, { error: "Cross-site request blocked.", code: "cross_site" });
+    return;
+  }
+  const token = bodyToken ?? (cookieToken !== undefined && cookieToken !== "" ? cookieToken : null);
+  const secure = secureRequest(request.raw, policy);
+  if (token === null) {
+    if (!viaBody) clearAuthCookies(reply, secure);
+    json(reply, 401, { error: "No refresh token.", code: "refresh_missing" });
+    return;
+  }
+
+  const result = service.refresh(token);
+  if (!result.ok) {
+    if (result.reason === "unavailable") {
+      unavailable(reply);
+      return;
+    }
+    if (!viaBody) clearAuthCookies(reply, secure);
+    const code = result.reason === "reuse_detected" ? "refresh_reuse" : result.reason === "expired" ? "refresh_expired" : "refresh_invalid";
+    json(reply, 401, { error: "Sign in again.", code });
+    return;
+  }
+  if (result.rotated) {
+    const payload = { ok: true, accessExpiresAt: result.tokens.accessExpiresAt, refreshExpiresAt: result.tokens.refreshExpiresAt };
+    if (viaBody) {
+      json(reply, 200, { ...payload, accessToken: result.tokens.accessToken, refreshToken: result.tokens.refreshToken });
+    } else {
+      setAuthCookies(reply, result.tokens, secure);
+      json(reply, 200, payload);
+    }
+    return;
+  }
+  // A duplicate of a refresh that just succeeded: a new access token, and the
+  // refresh cookie the other request set is left alone.
+  if (viaBody) {
+    json(reply, 200, { ok: true, accessExpiresAt: result.accessExpiresAt, accessToken: result.accessToken });
+  } else {
+    reply.setCookie(ACCESS_COOKIE, result.accessToken, cookieOptions("/", (result.accessExpiresAt - Date.now()) / 1000, secure));
+    json(reply, 200, { ok: true, accessExpiresAt: result.accessExpiresAt });
+  }
+}
+
+function handleLogout(service: WebAuthService, policy: CookiePolicy, request: FastifyRequest, reply: FastifyReply): void {
+  const secure = secureRequest(request.raw, policy);
+  const body = parseAuthBody(request.body) ?? {};
+  const bodyToken = typeof body.refreshToken === "string" ? body.refreshToken : null;
+  if (bodyToken === null && crossSiteWrite(request.raw, policy)) {
+    json(reply, 403, { error: "Cross-site request blocked.", code: "cross_site" });
+    return;
+  }
+  const cookieToken = request.cookies[REFRESH_COOKIE];
+  const refreshToken = bodyToken ?? cookieToken;
+  let sessionId = refreshToken !== undefined ? service.sessionOfRefreshToken(refreshToken) : null;
+  if (sessionId === null) {
+    const credentials = accessTokenOf(request);
+    const access = credentials === null ? null : service.verifyAccess(credentials.token);
+    if (access?.ok === true) sessionId = access.sessionId;
+  }
+  if (sessionId !== null) service.logout(sessionId);
+  if (bodyToken === null) clearAuthCookies(reply, secure);
+  json(reply, 200, { ok: true });
+}
+
+// ── Routes ──────────────────────────────────────────────────────────────────
+
+interface AuthRouteSpec {
+  path: string;
+  method: "GET" | "POST";
+  handle: (request: FastifyRequest, reply: FastifyReply) => void | Promise<void>;
+}
+
+/**
+ * Register the four public auth endpoints as native Fastify routes. The body
+ * reader is scoped here with a 4,096-byte limit that Fastify enforces as bytes
+ * arrive; the scope's error handler maps an over-limit (or unparseable) body
+ * back to the historical per-endpoint answer instead of a global 413.
+ */
+export async function registerAuthRoutes(
+  app: FastifyInstance,
+  service: WebAuthService,
+  options: AuthHttpOptions = {},
+): Promise<void> {
+  const policy = policyOf(options);
+  await app.register(async (scope) => {
+    scope.addContentTypeParser("*", { parseAs: "string" }, (_request, body, done) => {
+      done(null, typeof body === "string" ? body : "");
+    });
+    scope.setErrorHandler((error, request, reply) => {
+      const code = (error as { code?: string }).code;
+      if (code === "FST_ERR_CTP_BODY_TOO_LARGE") {
+        const pathname = new URL(request.url, "http://localhost").pathname;
+        // Logout historically treated an unusable body as absent and cleared the
+        // cookies; the other endpoints answered 400, never a global 413.
+        if (pathname === "/api/auth/logout") {
+          clearAuthCookies(reply, secureRequest(request.raw, policy));
+          json(reply, 200, { ok: true });
+          return;
+        }
+        json(reply, 400, { error: "Invalid request body.", code: "bad_request" });
+        return;
+      }
+      json(reply, 500, { error: "internal error" });
+    });
+
+    const routes: readonly AuthRouteSpec[] = [
+      { path: "/api/auth/status", method: "GET", handle: (request, reply) => handleStatus(service, policy, request, reply) },
+      { path: "/api/auth/login", method: "POST", handle: (request, reply) => handleLogin(service, policy, request, reply) },
+      { path: "/api/auth/refresh", method: "POST", handle: (request, reply) => handleRefresh(service, policy, request, reply) },
+      { path: "/api/auth/logout", method: "POST", handle: (request, reply) => handleLogout(service, policy, request, reply) },
+    ];
+    for (const route of routes) {
+      scope.all(route.path, { bodyLimit: MAX_AUTH_BODY_BYTES }, async (request, reply) => {
+        if (request.method !== route.method) {
+          void reply
+            .code(405)
+            .header("allow", route.method)
+            .header("cache-control", "no-store")
+            .send({ error: "method not allowed" });
+          return;
+        }
+        await route.handle(request, reply);
+      });
+    }
+  });
+}
+
+// ── The request gate ────────────────────────────────────────────────────────
+
+/** The credential the request presents: the Bearer header first, then the access cookie. */
+function accessTokenOf(request: { headers: Record<string, string | string[] | undefined>; cookies: Record<string, string | undefined> }): { token: string; viaCookie: boolean } | null {
+  const header = bearer(firstHeader(request.headers.authorization));
+  if (header !== null) return { token: header, viaCookie: false };
+  const fromCookie = request.cookies[ACCESS_COOKIE];
+  return fromCookie !== undefined && fromCookie !== "" ? { token: fromCookie, viaCookie: true } : null;
+}
+
+function sendRawJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    ...headers,
+  });
+  res.end(JSON.stringify(body));
+}
+
 export function createAuthHttp(service: WebAuthService, options: AuthHttpOptions = {}): AuthHttp {
-  const trustProxy = options.trustProxy ?? "loopback";
-  const allowedOrigins = new Set((options.allowedOrigins ?? []).map((origin) => origin.replace(/\/+$/, "").toLowerCase()));
+  const policy = policyOf(options);
   // Open connections (event streams) by session, so logout and revocation can cut them.
   const connections = new Map<string, Set<ServerResponse>>();
 
@@ -104,68 +425,8 @@ export function createAuthHttp(service: WebAuthService, options: AuthHttpOptions
     }
   });
 
-  const proxyTrusted = (req: IncomingMessage): boolean =>
-    trustProxy === "all" || (trustProxy === "loopback" && isLoopback(req.socket.remoteAddress));
-
-  /** The address throttling is keyed on: the peer, or the last X-Forwarded-For hop our own proxy appended. */
-  const clientKey = (req: IncomingMessage): string => {
-    if (proxyTrusted(req)) {
-      const forwarded = firstHeader(req.headers["x-forwarded-for"]);
-      const last = forwarded?.split(",").at(-1)?.trim();
-      if (last !== undefined && last !== "") return last;
-    }
-    return req.socket.remoteAddress ?? "unknown";
-  };
-
-  const secureRequest = (req: IncomingMessage): boolean => {
-    if (options.forceSecureCookies === true) return true;
-    if ((req.socket as { encrypted?: boolean }).encrypted === true) return true;
-    if (proxyTrusted(req) && firstHeader(req.headers["x-forwarded-proto"])?.split(",").at(-1)?.trim() === "https") return true;
-    // A browser sets Origin itself; an https page's own requests carry an https origin.
-    return (firstHeader(req.headers.origin) ?? "").startsWith("https://");
-  };
-
-  /**
-   * CSRF defence on top of SameSite=Strict (which sibling subdomains can still get around).
-   * Browsers state where a request came from: Sec-Fetch-Site, or at least Origin. A browser
-   * request from anywhere but this site is refused; non-browser clients send neither.
-   */
-  const crossSiteWrite = (req: IncomingMessage): boolean => {
-    const method = req.method ?? "GET";
-    if (method === "GET" || method === "HEAD" || method === "OPTIONS") return false;
-    const fetchSite = firstHeader(req.headers["sec-fetch-site"]);
-    if (fetchSite !== undefined) return fetchSite !== "same-origin" && fetchSite !== "none";
-    const origin = firstHeader(req.headers.origin);
-    if (origin === undefined) return false;
-    if (allowedOrigins.has(origin.replace(/\/+$/, "").toLowerCase())) return false;
-    let originHost: string;
-    try {
-      originHost = new URL(origin).host;
-    } catch {
-      return true;
-    }
-    const host = (proxyTrusted(req) ? firstHeader(req.headers["x-forwarded-host"])?.split(",")[0]?.trim() : undefined) ?? req.headers.host;
-    return host === undefined || originHost.toLowerCase() !== host.toLowerCase();
-  };
-
-  const cookie = (name: string, value: string, path: string, maxAgeSeconds: number, secure: boolean): string =>
-    `${name}=${value}; Path=${path}; Max-Age=${Math.max(0, Math.ceil(maxAgeSeconds))}; HttpOnly; SameSite=Strict${secure ? "; Secure" : ""}`;
-
-  const accessCookie = (token: string, expiresAt: number, secure: boolean): string =>
-    cookie(ACCESS_COOKIE, token, "/", (expiresAt - Date.now()) / 1000, secure);
-
-  const authCookies = (tokens: IssuedTokens, secure: boolean): string[] => [
-    accessCookie(tokens.accessToken, tokens.accessExpiresAt, secure),
-    cookie(REFRESH_COOKIE, tokens.refreshToken, AUTH_COOKIE_PATH, (tokens.refreshExpiresAt - Date.now()) / 1000, secure),
-  ];
-
-  const clearCookies = (secure: boolean): string[] => [
-    cookie(ACCESS_COOKIE, "", "/", 0, secure),
-    cookie(REFRESH_COOKIE, "", AUTH_COOKIE_PATH, 0, secure),
-  ];
-
-  const unavailable = (res: ServerResponse): void => {
-    sendJson(res, 503, {
+  const unavailableReply = (res: ServerResponse): void => {
+    sendRawJson(res, 503, {
       error: "Password protection is configured but unreadable, so the server is refusing all requests. Run /web set-password again.",
       code: "auth_unavailable",
     });
@@ -185,40 +446,34 @@ export function createAuthHttp(service: WebAuthService, options: AuthHttpOptions
     });
   };
 
-  const accessTokenOf = (req: IncomingMessage): { token: string; viaCookie: boolean } | null => {
-    const header = bearer(firstHeader(req.headers.authorization));
-    if (header !== null) return { token: header, viaCookie: false };
-    const fromCookie = parseCookies(req.headers.cookie)[ACCESS_COOKIE];
-    return fromCookie !== undefined && fromCookie !== "" ? { token: fromCookie, viaCookie: true } : null;
-  };
-
   const unauthorized = (res: ServerResponse, code: string, error: string): false => {
-    sendJson(res, 401, { error, code }, { "WWW-Authenticate": 'Bearer realm="pi-web"' });
+    sendRawJson(res, 401, { error, code }, { "WWW-Authenticate": 'Bearer realm="pi-web"' });
     return false;
   };
 
-  const authorize = (req: IncomingMessage, res: ServerResponse, url: URL): boolean => {
+  const authorize = (request: AuthGateRequest, reply: AuthGateReply, url: URL): boolean => {
+    const res = reply.raw;
     const mode = service.mode();
     if (mode === "disabled") return true;
     if (mode === "invalid") {
-      unavailable(res);
+      unavailableReply(res);
       return false;
     }
 
     // The bridge routes are for the pi TUI process, which holds the bridge token. A browser
     // session is deliberately not enough to impersonate a session's owner.
     if (url.pathname.startsWith("/api/bridge/")) {
-      const presented = bearer(firstHeader(req.headers.authorization));
+      const presented = bearer(firstHeader(request.headers.authorization));
       if (presented !== null && service.verifyBridgeToken(presented)) return true;
       return unauthorized(res, "unauthenticated", "The pi bridge token is missing or wrong.");
     }
 
-    const credentials = accessTokenOf(req);
+    const credentials = accessTokenOf(request);
     if (credentials === null) return unauthorized(res, "unauthenticated", "Sign in to continue.");
     const access = service.verifyAccess(credentials.token);
     if (!access.ok) {
       if (access.reason === "unavailable") {
-        unavailable(res);
+        unavailableReply(res);
         return false;
       }
       return unauthorized(
@@ -227,179 +482,13 @@ export function createAuthHttp(service: WebAuthService, options: AuthHttpOptions
         access.reason === "expired" ? "The access token expired; refresh it." : "Sign in to continue.",
       );
     }
-    if (credentials.viaCookie && crossSiteWrite(req)) {
-      sendJson(res, 403, { error: "Cross-site request blocked.", code: "cross_site" });
+    if (credentials.viaCookie && crossSiteWrite(request.raw, policy)) {
+      sendRawJson(res, 403, { error: "Cross-site request blocked.", code: "cross_site" });
       return false;
     }
     track(access.sessionId, res);
     return true;
   };
 
-  const status = (req: IncomingMessage, res: ServerResponse): void => {
-    const mode = service.mode();
-    if (mode === "disabled") {
-      sendJson(res, 200, { required: false, authenticated: true });
-      return;
-    }
-    if (mode === "invalid") {
-      sendJson(res, 200, { required: true, authenticated: false, unavailable: true });
-      return;
-    }
-    const credentials = accessTokenOf(req);
-    const access = credentials === null ? null : service.verifyAccess(credentials.token);
-    sendJson(res, 200, {
-      required: true,
-      authenticated: access?.ok === true,
-      ...(access?.ok === true ? { accessExpiresAt: access.expiresAt } : {}),
-    });
-  };
-
-  const login = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    const mode = service.mode();
-    if (mode === "disabled") {
-      sendJson(res, 404, { error: "Password protection is off.", code: "auth_disabled" });
-      return;
-    }
-    if (mode === "invalid") {
-      unavailable(res);
-      return;
-    }
-    if (crossSiteWrite(req)) {
-      sendJson(res, 403, { error: "Cross-site request blocked.", code: "cross_site" });
-      return;
-    }
-    const body = await readSmallJson(req);
-    if (body === null || typeof body.password !== "string") {
-      sendJson(res, 400, { error: "Send a JSON body with a password.", code: "bad_request" });
-      return;
-    }
-    const result = await service.login(body.password, clientKey(req), firstHeader(req.headers["user-agent"]));
-    if (!result.ok) {
-      if (result.reason === "rate_limited") {
-        sendJson(res, 429, { error: "Too many attempts. Try again later.", code: "rate_limited", retryAfterSeconds: result.retryAfterSeconds }, {
-          "Retry-After": String(result.retryAfterSeconds),
-        });
-      } else if (result.reason === "unavailable") {
-        unavailable(res);
-      } else {
-        sendJson(res, 401, { error: "Wrong password.", code: "invalid_credentials" });
-      }
-      return;
-    }
-    const { tokens } = result;
-    if (body.returnTokens === true) {
-      sendJson(res, 200, {
-        ok: true,
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        accessExpiresAt: tokens.accessExpiresAt,
-        refreshExpiresAt: tokens.refreshExpiresAt,
-      });
-      return;
-    }
-    sendJson(
-      res,
-      200,
-      { ok: true, accessExpiresAt: tokens.accessExpiresAt, refreshExpiresAt: tokens.refreshExpiresAt },
-      { "Set-Cookie": authCookies(tokens, secureRequest(req)) },
-    );
-  };
-
-  const refresh = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    const mode = service.mode();
-    if (mode === "disabled") {
-      sendJson(res, 404, { error: "Password protection is off.", code: "auth_disabled" });
-      return;
-    }
-    if (mode === "invalid") {
-      unavailable(res);
-      return;
-    }
-    const body = await readSmallJson(req);
-    if (body === null) {
-      sendJson(res, 400, { error: "Invalid request body.", code: "bad_request" });
-      return;
-    }
-    // A token in the body is the programmatic mode (answered in the body); otherwise the cookie.
-    const bodyToken = typeof body.refreshToken === "string" ? body.refreshToken : null;
-    const cookieToken = parseCookies(req.headers.cookie)[REFRESH_COOKIE];
-    const viaBody = bodyToken !== null;
-    if (!viaBody && crossSiteWrite(req)) {
-      sendJson(res, 403, { error: "Cross-site request blocked.", code: "cross_site" });
-      return;
-    }
-    const token = bodyToken ?? (cookieToken !== undefined && cookieToken !== "" ? cookieToken : null);
-    const secure = secureRequest(req);
-    if (token === null) {
-      sendJson(res, 401, { error: "No refresh token.", code: "refresh_missing" }, viaBody ? {} : { "Set-Cookie": clearCookies(secure) });
-      return;
-    }
-
-    const result = service.refresh(token);
-    if (!result.ok) {
-      if (result.reason === "unavailable") {
-        unavailable(res);
-        return;
-      }
-      const code = result.reason === "reuse_detected" ? "refresh_reuse" : result.reason === "expired" ? "refresh_expired" : "refresh_invalid";
-      sendJson(res, 401, { error: "Sign in again.", code }, viaBody ? {} : { "Set-Cookie": clearCookies(secure) });
-      return;
-    }
-    if (result.rotated) {
-      const { tokens } = result;
-      const payload = { ok: true, accessExpiresAt: tokens.accessExpiresAt, refreshExpiresAt: tokens.refreshExpiresAt };
-      if (viaBody) {
-        sendJson(res, 200, { ...payload, accessToken: tokens.accessToken, refreshToken: tokens.refreshToken });
-      } else {
-        sendJson(res, 200, payload, { "Set-Cookie": authCookies(tokens, secure) });
-      }
-      return;
-    }
-    // A duplicate of a refresh that just succeeded: a new access token, and the refresh
-    // cookie the other request set is left alone (setting the older one would undo it).
-    if (viaBody) {
-      sendJson(res, 200, { ok: true, accessExpiresAt: result.accessExpiresAt, accessToken: result.accessToken });
-    } else {
-      sendJson(res, 200, { ok: true, accessExpiresAt: result.accessExpiresAt }, { "Set-Cookie": accessCookie(result.accessToken, result.accessExpiresAt, secure) });
-    }
-  };
-
-  const logout = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    const secure = secureRequest(req);
-    const body = await readSmallJson(req);
-    const bodyToken = typeof body?.refreshToken === "string" ? body.refreshToken : null;
-    if (bodyToken === null && crossSiteWrite(req)) {
-      sendJson(res, 403, { error: "Cross-site request blocked.", code: "cross_site" });
-      return;
-    }
-    const cookies = parseCookies(req.headers.cookie);
-    const refreshToken = bodyToken ?? cookies[REFRESH_COOKIE];
-    let sessionId = refreshToken !== undefined ? service.sessionOfRefreshToken(refreshToken) : null;
-    if (sessionId === null) {
-      const credentials = accessTokenOf(req);
-      const access = credentials === null ? null : service.verifyAccess(credentials.token);
-      if (access?.ok === true) sessionId = access.sessionId;
-    }
-    if (sessionId !== null) service.logout(sessionId);
-    sendJson(res, 200, { ok: true }, bodyToken === null ? { "Set-Cookie": clearCookies(secure) } : {});
-  };
-
-  const handleRoute = async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> => {
-    const route = url.pathname;
-    if (route !== "/api/auth/status" && route !== "/api/auth/login" && route !== "/api/auth/refresh" && route !== "/api/auth/logout") {
-      return false;
-    }
-    const expected = route === "/api/auth/status" ? "GET" : "POST";
-    if (req.method !== expected) {
-      sendJson(res, 405, { error: "method not allowed" }, { Allow: expected });
-      return true;
-    }
-    if (route === "/api/auth/status") status(req, res);
-    else if (route === "/api/auth/login") await login(req, res);
-    else if (route === "/api/auth/refresh") await refresh(req, res);
-    else await logout(req, res);
-    return true;
-  };
-
-  return { handleRoute, authorize };
+  return { authorize };
 }

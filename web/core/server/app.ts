@@ -29,6 +29,8 @@ export interface HttpRequestFacade {
   readonly raw: IncomingMessage;
   readonly url: string;
   readonly headers: Record<string, string | string[] | undefined>;
+  /** Parsed by @fastify/cookie's onRequest hook, which runs before this gate. */
+  readonly cookies: Record<string, string | undefined>;
 }
 
 export interface HttpReplyFacade {
