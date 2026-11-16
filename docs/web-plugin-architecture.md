@@ -376,7 +376,7 @@ responsibilities is deliberate:
 |---|---|
 | Which routes exist, and for how long | the kernel (registered in `setup`, removed on deactivate/rollback/quarantine) |
 | Path shape inside `/api/p/<pluginId>/` | the plugin (validated: no `..`, no `*`, `:param` segments only) |
-| Authentication, CSRF, body limits | the core server (`web/core/server/http.ts`, `web/core/server/auth.ts`) |
+| Authentication, CSRF, body limits | the core server (`web/core/server/app.ts`, `web/core/server/routes.ts`, `web/core/server/auth.ts`) |
 | Session resolution (`sessionId` → `sessionRoot`) | the dispatcher, before the handler runs |
 | Time budget, error isolation, 502 mapping | the dispatcher (`runWithBudget`, 10 s default) |
 | The bytes/JSON of the answer | the plugin |
