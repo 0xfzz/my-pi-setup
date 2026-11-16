@@ -131,6 +131,49 @@ function toBashExecutionEnd(event: AgentEventLike): AgentEventLike | null {
   };
 }
 
+/**
+ * An appended entry the browser renders without a reload.
+ *
+ * Two kinds qualify. A bash execution projects to its terminal event. A
+ * compaction entry is a custom compactor's work — an extension's `turn_end`
+ * boundary draft (`lib/vcc/controller.ts`), which pi commits through
+ * `_commitBoundaryDrafts` and announces here rather than through
+ * `compaction_start`/`compaction_end` (those belong to pi's own compact paths,
+ * which append the entry directly). The browser only needs the signal: the
+ * marker's text comes from the saved entry, so a custom compactor's summary
+ * renders exactly like pi's own.
+ */
+function toAppendedEntryEvent(event: AgentEventLike): AgentEventLike | null {
+  const entry = isObject(event.entry) ? event.entry : undefined;
+  if (entry?.type === "compaction") return { type: "compaction_applied" };
+  return toBashExecutionEnd(event);
+}
+
+/**
+ * A compaction's life, bounded for the browser.
+ *
+ * The live browser needs only the reason (which decides the status line's
+ * wording), whether the compaction succeeded, and the token counts; the
+ * summary and the preparation stay off the wire. The transcript marker reads
+ * the saved compaction entry from the session file instead, so a live marker
+ * and a reloaded one render from exactly the same source, and a compaction's
+ * several kilobytes never cross the stream twice.
+ */
+function toClientCompactionEvent(event: AgentEventLike): AgentEventLike {
+  const reason = typeof event.reason === "string" ? { reason: event.reason } : {};
+  if (event.type === "compaction_start") return { type: "compaction_start", ...reason };
+  const result = isObject(event.result) ? event.result : undefined;
+  return {
+    type: "compaction_end",
+    ...reason,
+    aborted: event.aborted === true,
+    willRetry: event.willRetry === true,
+    ...(typeof result?.tokensBefore === "number" ? { tokensBefore: result.tokensBefore } : {}),
+    ...(typeof result?.estimatedTokensAfter === "number" ? { tokensAfter: result.estimatedTokensAfter } : {}),
+    ...(typeof event.errorMessage === "string" ? { errorMessage: event.errorMessage } : {}),
+  };
+}
+
 /** The `message_update` delta for a streaming tool call, with its ids kept. */
 function toolCallMetadata(event: Record<string, unknown>): { id: string; toolName: string } | null {
   if (
@@ -167,7 +210,10 @@ export function isSystemMessageEvent(event: AgentEventLike): boolean {
  */
 export function toClientAgentEvent(event: AgentEventLike): AgentEventLike | null {
   if (event.type === "entry_appended") {
-    return toBashExecutionEnd(event);
+    return toAppendedEntryEvent(event);
+  }
+  if (event.type === "compaction_start" || event.type === "compaction_end") {
+    return toClientCompactionEvent(event);
   }
   if (OMITTED_EVENT_TYPES.has(event.type)) return null;
   // Pi appends the prompt and tool loadout to the transcript as system

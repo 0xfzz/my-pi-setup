@@ -10,6 +10,7 @@ import { usePiSession } from "./use-session.ts";
 import { addEntryCommand, needsSettingsDispatch, settingsDialog, settingsPages, settingsPluginIds } from "./model-settings.ts";
 import { useVisualViewport } from "./use-visual-viewport.ts";
 import { Transcript } from "./transcript.tsx";
+import { compactionStatusLabel } from "./compaction.ts";
 import { Composer } from "./composer.tsx";
 import { SessionSidebar } from "./sidebar.tsx";
 import { NewSessionDialog } from "./new-session-dialog.tsx";
@@ -475,10 +476,19 @@ export function AppShell() {
 
   // The transcript's working line shows while a reply streams or the session
   // reports itself running (ui.session.lifecycle); a hidden working model
-  // never forces the line on.
+  // never forces the line on. A compaction keeps the line up on its own: pi
+  // is working, and the label below says what on.
   const showWorking =
     session.streaming.isStreaming
+    || session.compacting !== null
     || (session.uiRunning && (session.working?.visible ?? true));
+
+  // A running compaction renames the working line ("Auto-compacting...",
+  // "Context overflow detected, auto-compacting...") so a long summarization
+  // pause reads as work in progress rather than a stalled reply.
+  const workingLabel = session.compacting !== null
+    ? compactionStatusLabel(session.compacting.reason)
+    : undefined;
 
   // Region overrides: header, status (inside the header), transcript and
   // composer. Resolved from the same per-session views the slots render.
@@ -632,6 +642,7 @@ export function AppShell() {
             toolResults={session.toolResults}
             working={session.working}
             showWorking={showWorking}
+            workingLabel={workingLabel}
             plugins={session.plugins}
             pluginViews={session.pluginViews}
             workingAnchor={<AnchorHost anchor="chat.working" {...anchorHostProps} />}

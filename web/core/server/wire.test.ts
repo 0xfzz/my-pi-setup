@@ -271,3 +271,86 @@ test("isEventIncludedInSnapshot matches the snapshot message object", () => {
   assert.equal(isEventIncludedInSnapshot({ type: "message_start", message: {} }, snapshot), false);
   assert.equal(isEventIncludedInSnapshot({ type: "message_start", message: snapshot }, undefined), false);
 });
+
+test("toClientAgentEvent bounds a compaction's start and end", () => {
+  assert.deepEqual(
+    toClientAgentEvent({ type: "compaction_start", reason: "manual" }),
+    { type: "compaction_start", reason: "manual" },
+  );
+  // The summary and the preparation never cross the wire; the token counts,
+  // the reason and the failure text do.
+  assert.deepEqual(
+    toClientAgentEvent({
+      type: "compaction_end",
+      reason: "threshold",
+      aborted: false,
+      willRetry: false,
+      result: {
+        summary: "x".repeat(50_000),
+        firstKeptEntryId: "entry-1",
+        tokensBefore: 120_000,
+        estimatedTokensAfter: 9_000,
+        usage: { input: 1 },
+        details: { readFiles: ["a.ts"] },
+      },
+    }),
+    {
+      type: "compaction_end",
+      reason: "threshold",
+      aborted: false,
+      willRetry: false,
+      tokensBefore: 120_000,
+      tokensAfter: 9_000,
+    },
+  );
+});
+
+test("toClientAgentEvent keeps a failed compaction's reason and message", () => {
+  assert.deepEqual(
+    toClientAgentEvent({
+      type: "compaction_end",
+      reason: "overflow",
+      aborted: false,
+      willRetry: false,
+      errorMessage: "Context overflow recovery failed: session too small",
+    }),
+    {
+      type: "compaction_end",
+      reason: "overflow",
+      aborted: false,
+      willRetry: false,
+      errorMessage: "Context overflow recovery failed: session too small",
+    },
+  );
+  // A cancelled compaction carries no message: aborted is the signal.
+  assert.deepEqual(
+    toClientAgentEvent({ type: "compaction_end", reason: "manual", aborted: true, willRetry: false }),
+    { type: "compaction_end", reason: "manual", aborted: true, willRetry: false },
+  );
+});
+
+test("toClientAgentEvent announces a compaction entry a custom compactor appended", () => {
+  // VCC commits its compaction as a `turn_end` boundary draft, so pi announces
+  // it as an appended entry rather than compaction_start/compaction_end. The
+  // browser needs the signal to re-read the transcript; the summary stays off
+  // the wire and comes from the session file.
+  assert.deepEqual(
+    toClientAgentEvent({
+      type: "entry_appended",
+      entry: {
+        type: "compaction",
+        id: "c1",
+        summary: "x".repeat(40_000),
+        firstKeptEntryId: "c1",
+        tokensBefore: 99_000,
+        details: { compactor: "pi-vcc" },
+      },
+    }),
+    { type: "compaction_applied" },
+  );
+  // Other custom entries still project to nothing (only bash has a projection).
+  assert.equal(
+    toClientAgentEvent({ type: "entry_appended", entry: { type: "custom", id: "x" } }),
+    null,
+  );
+});

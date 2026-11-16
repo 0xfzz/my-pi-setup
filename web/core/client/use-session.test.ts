@@ -35,3 +35,46 @@ test("fetchModels drops a response for a session the user left", () => {
     "a stale fetch response is discarded before it reaches state",
   );
 });
+
+// Compaction feedback: /compact used to ride a channel nothing listened to for
+// an in-process session, and neither the running compaction nor the boundary
+// it left behind was ever rendered. The hook owns the live half.
+test("use-session tracks a running compaction from its own events", () => {
+  assert.match(source, /case "compaction_start":/, "the start event is handled");
+  assert.match(source, /case "compaction_end":/, "the end event is handled");
+  assert.match(
+    source,
+    /setCompacting\(isCompactionReason\(data\.reason\) \? data\.reason : "manual"\)/,
+    "the reason comes from the event, defaulting to a manual compaction",
+  );
+  assert.match(source, /setCompacting\(null\)/, "the end event clears it");
+  // The selection effect must not carry a compaction across a session switch.
+  assert.match(
+    source,
+    /setSessionCommands\(\[\]\);\n\s*\/\/ Never carry a compaction[\s\S]*?setCompacting\(null\);/,
+    "switching sessions clears the compaction state",
+  );
+});
+
+// A custom compactor (an extension's `turn_end` boundary draft, like VCC)
+// never fires compaction_start/compaction_end: pi announces its entry as an
+// appended entry. The hook must still bring the marker into the transcript.
+test("use-session picks up a compaction an extension appended", () => {
+  assert.match(source, /case "compaction_applied":/, "the appended-compaction signal is handled");
+  assert.match(
+    source,
+    /case "compaction_applied":[\s\S]{0,700}setHistoryEpoch\(\(epoch\) => epoch \+ 1\)/,
+    "it re-reads the transcript rather than trusting the event's payload",
+  );
+});
+
+
+// nothing on disk to mark it: without a transcript row the browser would show
+// a context that never shrank and no explanation.
+test("use-session surfaces a failed automatic compaction", () => {
+  assert.match(
+    source,
+    /if \(errorMessage !== "" && data\.reason !== "manual"\) \{\n\s*appendEntry\(\{ role: "compaction", blocks: \[\], summary: "", error: errorMessage \}\);/,
+    "an automatic compaction failure appends a marker carrying its reason",
+  );
+});

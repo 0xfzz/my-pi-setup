@@ -111,17 +111,37 @@ test("sendCommand routes web_command through the web channel, falling back to pr
   assert.equal(result.status, "ok");
   assert.deepEqual(webCommands, [{ name: "name", args: "renamed" }]);
 
-  // An in-process core (no webCommand): re-route as prompt text for the
-  // expandPromptTemplates path — under the runner-registered name
-  // (/web-<name>), which pi's command runner dispatches with a valid
-  // command context.
-  const prompts: string[] = [];
+  // A bridged core has no compaction of its own: /compact rides the bridge
+  // to the process that owns the session, like every other web command.
+  await sendCommand("fake-session", { type: "web_command", name: "compact", args: "focus on code" });
+  assert.deepEqual(webCommands[1], { name: "compact", args: "focus on code" });
+
+  // An in-process core owns compaction: the browser's /compact runs here,
+  // with no extension and no bus in the path.
+  const compactions: Array<string | undefined> = [];
   registerSession(
-    fakeCore({ sessionId: "inproc", prompt: async (text) => { prompts.push(text); } }),
+    fakeCore({
+      sessionId: "inproc",
+      webCommand: async () => { throw new Error("compaction must not ride the bus in-process"); },
+      compact: async (instructions) => { compactions.push(instructions); },
+    }),
     "/tmp/project",
   );
-  await sendCommand("inproc", { type: "web_command", name: "compact", args: "focus on code" });
-  assert.deepEqual(prompts, ["/web-compact focus on code"]);
+  const inProcess = await sendCommand("inproc", { type: "web_command", name: "compact", args: "focus on code" });
+  assert.deepEqual(inProcess, { status: "ok", data: { accepted: true } });
+  assert.deepEqual(compactions, ["focus on code"]);
+
+  // A failing compaction reports why — "Nothing to compact (session too
+  // small)" is the ordinary case and the banner must be able to show it.
+  registerSession(
+    fakeCore({
+      sessionId: "tiny",
+      compact: async () => { throw new Error("Nothing to compact (session too small)"); },
+    }),
+    "/tmp/project",
+  );
+  const failed = await sendCommand("tiny", { type: "web_command", name: "compact" });
+  assert.deepEqual(failed, { status: "error", error: "Nothing to compact (session too small)" });
 });
 
 test("sendCommand passes @mentions through as typed — the model reads them with pi's read tool", async () => {
@@ -273,6 +293,54 @@ test("readHistory parses entries and tool results, skipping other roles", async 
   // visible conversation — orphans drop.
   assert.equal(history.toolResults.t2, undefined);
   assert.equal(Object.keys(history.toolResults).length, 1);
+});
+
+test("readHistory keeps the compaction boundary — the transcript shows why the context shrank", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-history-"));
+  const file = join(dir, "2026-11-09T00-00-00-000Z_comp1234.jsonl");
+  await writeFile(
+    file,
+    [
+      JSON.stringify({ type: "session", id: "comp1234", cwd: "/tmp/x", timestamp: "2026-11-09T00:00:00Z" }),
+      JSON.stringify({ type: "message", message: { role: "user", content: "first" } }),
+      JSON.stringify({
+        type: "compaction",
+        id: "c1",
+        parentId: "m2",
+        timestamp: "2026-11-09T00:10:00Z",
+        summary: "The user asked about the parser and then the tests.",
+        firstKeptEntryId: "c1",
+        tokensBefore: 128_000,
+        details: { readFiles: ["a.ts"] },
+        usage: { input: 10 },
+        fromHook: false,
+      }),
+      JSON.stringify({ type: "message", message: { role: "user", content: "again" } }),
+    ].join("\n"),
+  );
+
+  const history = await readHistory(file);
+  assert.deepEqual(history.entries, [
+    { role: "user", blocks: [{ kind: "text", text: "first" }] },
+    {
+      role: "compaction",
+      blocks: [],
+      summary: "The user asked about the parser and then the tests.",
+      tokensBefore: 128_000,
+    },
+    { role: "user", blocks: [{ kind: "text", text: "again" }] },
+  ]);
+});
+
+test("readHistory tolerates a compaction entry with no summary or token count", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-history-"));
+  const file = join(dir, "2026-11-09T00-00-00-000Z_comp5678.jsonl");
+  await writeFile(file, JSON.stringify({ type: "compaction", id: "c1" }));
+
+  const history = await readHistory(file);
+  // An empty summary still marks the boundary: the marker is the point, and a
+  // missing field must not drop the entry or crash the read.
+  assert.deepEqual(history.entries, [{ role: "compaction", blocks: [], summary: "" }]);
 });
 
 test("readHistory returns the TAIL when the file exceeds the limit — long sessions stay synced", async () => {

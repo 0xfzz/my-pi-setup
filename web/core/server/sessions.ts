@@ -63,6 +63,13 @@ export interface SessionCore {
   /** Dispatch a web core command (name + args) to the session owner. */
   webCommand?(name: string, args: string): Promise<void>;
   /**
+   * Compact the session's context. Compaction is the core's own (a browser
+   * /compact works on a session this process owns, with no extension in the
+   * path); a bridged core leaves this undefined and the command rides the
+   * bridge to the process that owns the session instead.
+   */
+  compact?(instructions?: string): Promise<void>;
+  /**
    * The in-flight streaming message, tapped from the session's raw events.
    * Browser streams replay it right after `connected` so a mid-turn
    * (re)connect renders the partial reply instead of dropping deltas.
@@ -111,8 +118,15 @@ export type HistoryBlock =
   | { kind: "bash"; command: string; output: string; exitCode?: number; cancelled?: boolean; truncated?: boolean };
 
 export interface HistoryEntry {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "compaction";
   blocks: HistoryBlock[];
+  /**
+   * For a `compaction` entry: the summary that replaced the earlier context,
+   * and the token count it replaced. Both come straight from the session
+   * file, so a live marker and a reloaded one render identically.
+   */
+  summary?: string;
+  tokensBefore?: number;
   /** Set when the assistant reply ended because the run was aborted. */
   aborted?: boolean;
   /** Set when the assistant reply ended in a provider error; its message. */
@@ -365,6 +379,13 @@ function toCore(inner: AgentSession): SessionCore {
       // announced it, on the session bus (the only channel that reaches it —
       // pi evaluates each extension with its own module graph).
       sessionBus(inner.sessionId)?.emit?.(WEB_PLUGIN_WEB_COMMAND_EVENT, { name, args });
+    },
+    // Compaction is the core's own: this process owns the session, so it
+    // runs the compaction directly and the browser's live status, transcript
+    // marker and failure notice all come from this session's own events.
+    compact: async (instructions?: string) => {
+      const trimmed = (instructions ?? "").trim();
+      await inner.compact(trimmed === "" ? undefined : trimmed);
     },
   };
 }
@@ -1074,6 +1095,20 @@ export async function readHistory(sessionFile: string, limit = 200): Promise<Ses
     } catch {
       continue;
     }
+    if (parsed.type === "compaction") {
+      // A compaction boundary: pi replaced the context up to this point with
+      // a summary. The TUI draws it as a transcript row, so the web does too
+      // — without it the conversation appears to jump, and the browser has no
+      // way to say why the earlier turns vanished.
+      const tokensBefore = typeof parsed.tokensBefore === "number" ? parsed.tokensBefore : undefined;
+      pushEntry({
+        role: "compaction",
+        blocks: [],
+        summary: typeof parsed.summary === "string" ? parsed.summary : "",
+        ...(tokensBefore !== undefined ? { tokensBefore } : {}),
+      });
+      continue;
+    }
     if (parsed.type !== "message") continue;
     const message = parsed.message;
     if (typeof message !== "object" || message === null) continue;
@@ -1270,9 +1305,22 @@ export async function sendCommand(id: string, command: SessionCommand): Promise<
       return Promise.resolve({ status: "ok", data: core.getState() });
     }
     case "web_command": {
-      // The web core's command channel. Bridged sessions forward to the
-      // extension registry; in-process sessions re-route through the prompt
-      // path, where the mode-gated pi commands dispatch them.
+      // The web core's command channel. Compaction is the core's own, so an
+      // in-process session runs it here — no pi process is reachable from a
+      // session this server owns, and a bus emit would reach no listener; a
+      // bridged session forwards it to the extension that owns the context.
+      // Everything else goes to the session owner: the extension registry a
+      // bridge relays to, or the runner-registered web-<name> dispatch
+      // targets for the commands that need pi's command context.
+      if (command.name === "compact" && core.compact !== undefined) {
+        return core
+          .compact(command.args)
+          .then(() => ({ status: "ok", data: { accepted: true } }) as const)
+          .catch((error: unknown) => ({
+            status: "error",
+            error: error instanceof Error ? error.message : String(error),
+          }));
+      }
       if (core.webCommand !== undefined) {
         return core
           .webCommand(command.name, command.args ?? "")

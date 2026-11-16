@@ -1142,6 +1142,66 @@ a:focus-visible {
   padding: 2px 0;
 }
 
+/* A compaction boundary: a rule across the reading column with the marker on
+   it, so the shrinking context is explained where it happened. It stays
+   quieter than a message — the summary is folded away until asked for. */
+.msg-compaction {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.msg-compaction-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.msg-compaction-rule {
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border);
+}
+
+.msg-compaction-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--fg-faint);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+button.msg-compaction-label {
+  cursor: pointer;
+}
+
+button.msg-compaction-label:hover {
+  color: var(--fg-dim);
+}
+
+.msg-compaction-chevron {
+  display: inline-flex;
+}
+
+.msg-compaction.is-error .msg-compaction-label {
+  color: var(--error);
+}
+
+.msg-compaction .markdown-body {
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
 /* Thinking inside the live streaming message is expanded by default; the
    summary line gets the accent so "pi is thinking" is visibly alive. */
 .msg-streaming .msg-thinking summary {

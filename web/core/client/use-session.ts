@@ -26,6 +26,7 @@ import type {
 } from "./plugin-system/contract.ts";
 import { pluginStateFrameOf } from "../shared/plugin-state.ts";
 import { buildVerdict, ownBuildId } from "./build-identity.ts";
+import { isCompactionReason, type CompactionReason } from "./compaction.ts";
 
 export type { CustomPanelLike, WebNotificationLike, WidgetModelLike };
 
@@ -63,8 +64,12 @@ export interface SessionSummary {
 }
 
 export interface HistoryEntryLike {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "compaction";
   blocks: AssistantBlock[];
+  /** For a `compaction` entry: the summary that replaced the earlier context. */
+  summary?: string;
+  /** For a `compaction` entry: the token count it replaced. */
+  tokensBefore?: number;
   /** The assistant reply ended because the run was aborted. */
   aborted?: boolean;
   /** The assistant reply ended in a provider error; its message. */
@@ -233,6 +238,12 @@ export function usePiSession() {
   const [sendError, setSendError] = useState<string | null>(null);
   /** Slash commands the selected live session can dispatch. */
   const [sessionCommands, setSessionCommands] = useState<WebCommand[]>([]);
+  /**
+   * A compaction running right now (compaction_start → compaction_end), with
+   * what triggered it. Its own state, not `isStreaming`: a compaction is not a
+   * reply, so the working line has to say which work is happening.
+   */
+  const [compacting, setCompacting] = useState<CompactionReason | null>(null);
   /** The selected session's git branch, or null when its directory has none. */
   const [workspaceBranch, setWorkspaceBranch] = useState<string | null>(null);
   // Bumped when the TUI-side bridge reconnects after a gap: the effect
@@ -523,6 +534,8 @@ export function usePiSession() {
     setUiPrompt(null);
     setToolResults({});
     setSessionCommands([]);
+    // Never carry a compaction from the previous session across the switch.
+    setCompacting(null);
     // The workspace line belongs to the selection: never carry the previous
     // session's branch onto the next one.
     setWorkspaceBranch(null);
@@ -704,6 +717,36 @@ export function usePiSession() {
           // visible before the first assistant token.
           lastAppendedAborted = false;
           applyStream({ type: "run_start" });
+          break;
+        case "compaction_start":
+          // The context is being summarized: the working line switches to the
+          // compaction's own wording, so a long pause reads as work rather
+          // than a hang. The reason decides the wording (manual, threshold,
+          // overflow recovery).
+          setCompacting(isCompactionReason(data.reason) ? data.reason : "manual");
+          break;
+        case "compaction_end": {
+          setCompacting(null);
+          void fetchState(selectedId);
+          // A failed compaction changed nothing, so there is no entry on disk
+          // to mark it. Automatic ones (threshold, overflow recovery) have no
+          // HTTP response to carry the error either, so the marker itself is
+          // the only place the reason survives. A manual /compact reports its
+          // error on the command response, which the composer shows.
+          const errorMessage = typeof data.errorMessage === "string" ? data.errorMessage : "";
+          if (errorMessage !== "" && data.reason !== "manual") {
+            appendEntry({ role: "compaction", blocks: [], summary: "", error: errorMessage });
+          }
+          break;
+        }
+        case "compaction_applied":
+          // A compaction entry landed without the start/end events above: an
+          // extension's own compactor appends it as a `turn_end` boundary
+          // draft (`lib/vcc/controller.ts`), which pi commits directly. The
+          // event carries no summary, and reading it back from the session
+          // file keeps one source of truth for the marker — a custom
+          // compactor's row renders exactly like pi's own.
+          setHistoryEpoch((epoch) => epoch + 1);
           break;
         case "agent_end":
           applyStream({ type: "run_end" });
@@ -1163,6 +1206,16 @@ export function usePiSession() {
     streaming,
     toolStatus,
     sessionState,
+    /**
+     * The compaction running right now: `reason` is null when only the
+     * session's own state says one is in progress (a bridged session reports
+     * isCompacting before its events arrive). Null when nothing is compacting.
+     */
+    compacting: compacting !== null
+      ? { reason: compacting }
+      : sessionState?.isCompacting === true
+        ? { reason: null }
+        : null,
     workspaceBranch,
     connection,
     plugins,

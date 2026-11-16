@@ -9,6 +9,7 @@ import { ArrowDown, CaretDown, CaretRight, Stop, Warning } from "@phosphor-icons
 import type { AssistantBlock, BashBlock, ImageBlock, ToolCallBlock } from "./streaming.ts";
 import type { HistoryEntryLike, ToolCallStatus, ToolResultLike } from "./use-session.ts";
 import type { WebPluginDescriptor, WebView, WorkingModelLike } from "./plugin-system/contract.ts";
+import { compactionMarkerLabel } from "./compaction.ts";
 import { ComponentOverrideHost } from "./plugin-system/ComponentOverrideHost.tsx";
 import { MarkdownBody } from "./plugin-system/markdown.tsx";
 import { LoadingSpinner } from "./plugin-system/LoadingSpinner.tsx";
@@ -351,6 +352,26 @@ export interface TranscriptEntry {
   error?: string;
 }
 
+/**
+ * A compaction boundary in the transcript. The marker is a divider, not a
+ * message: it says where the context was replaced and how much it held, and
+ * the summary that replaced it stays folded until asked for.
+ */
+interface TranscriptCompaction {
+  kind: "compaction";
+  key: string;
+  /** The tokens the summary replaced; undefined when the count is missing. */
+  tokensBefore?: number;
+  summary: string;
+  /** A failed compaction's reason. It has no summary — the entry marks the event. */
+  error?: string;
+}
+
+/** One row of the transcript: a message, or a compaction boundary. */
+type TranscriptItem =
+  | ({ kind: "message" } & TranscriptEntry)
+  | TranscriptCompaction;
+
 export interface TranscriptUserMessage {
   key: number;
   text: string;
@@ -366,6 +387,8 @@ export interface TranscriptProps {
   toolResults: Record<string, ToolResultLike>;
   working: WorkingModelLike | null;
   showWorking: boolean;
+  /** Replaces the working line's text while a compaction runs. */
+  workingLabel?: string;
   /** Plugin hosts for the `chat.working` anchor and the working-indicator override. */
   plugins?: readonly WebPluginDescriptor[];
   pluginViews?: Record<string, WebView> | null;
@@ -397,6 +420,53 @@ const UserBlocks = memo(function UserBlocks({ blocks }: { blocks: AssistantBlock
   );
 });
 
+/**
+ * A compaction boundary: where pi replaced the earlier context with a summary.
+ * Folded by default — the summary is the model's working notes, not the
+ * conversation — but it is one click away, and the token count says how much
+ * context it replaced. A failed compaction has no summary: the row carries
+ * the reason instead, so an automatic compaction that gave up is visible
+ * rather than silent.
+ */
+const CompactionMarker = memo(function CompactionMarker({
+  tokensBefore,
+  summary,
+  error,
+}: {
+  tokensBefore?: number;
+  summary: string;
+  error?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const hasSummary = summary.trim() !== "";
+  return (
+    <div className={`msg-compaction${error !== undefined ? " is-error" : ""}`}>
+      <div className="msg-compaction-head">
+        <span className="msg-compaction-rule" aria-hidden="true" />
+        {hasSummary ? (
+          <button
+            type="button"
+            className="msg-compaction-label"
+            aria-expanded={open}
+            onClick={() => setOpen((value) => !value)}
+          >
+            {compactionMarkerLabel(tokensBefore)}
+            <span className="msg-compaction-chevron" aria-hidden="true">
+              {open ? <CaretDown size={12} /> : <CaretRight size={12} />}
+            </span>
+          </button>
+        ) : (
+          <span className="msg-compaction-label">{compactionMarkerLabel(tokensBefore)}</span>
+        )}
+      </div>
+      {error !== undefined && error !== "" ? (
+        <div className="msg-error"><Warning size={12} weight="fill" /> {error}</div>
+      ) : null}
+      {open && hasSummary ? <MarkdownBody text={summary} /> : null}
+    </div>
+  );
+});
+
 export function Transcript({
   history,
   loading = false,
@@ -406,6 +476,7 @@ export function Transcript({
   toolResults,
   working,
   showWorking,
+  workingLabel,
   plugins,
   pluginViews,
   workingAnchor,
@@ -418,17 +489,27 @@ export function Transcript({
   const [showJump, setShowJump] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
 
-  const entries: TranscriptEntry[] = [
-    ...history.map((entry, index) => ({
-      key: `history-${index}`,
-      role: entry.role,
-      blocks: entry.blocks,
-      ...(entry.aborted === true ? { aborted: true } : {}),
-      ...(entry.error !== undefined ? { error: entry.error } : {}),
-    })),
-    ...userMessages.map((message) => ({
+  const items: TranscriptItem[] = [
+    ...history.map((entry, index): TranscriptItem => entry.role === "compaction"
+      ? {
+        kind: "compaction",
+        key: `history-${index}`,
+        summary: entry.summary ?? "",
+        ...(entry.tokensBefore !== undefined ? { tokensBefore: entry.tokensBefore } : {}),
+        ...(entry.error !== undefined ? { error: entry.error } : {}),
+      }
+      : {
+        kind: "message",
+        key: `history-${index}`,
+        role: entry.role,
+        blocks: entry.blocks,
+        ...(entry.aborted === true ? { aborted: true } : {}),
+        ...(entry.error !== undefined ? { error: entry.error } : {}),
+      }),
+    ...userMessages.map((message): TranscriptItem => ({
+      kind: "message",
       key: `user-${message.key}`,
-      role: "user" as const,
+      role: "user",
       blocks: [
         ...(message.text.trim() !== "" ? [{ kind: "text" as const, text: message.text }] : []),
         ...(message.images ?? []).map((image) => ({
@@ -500,26 +581,33 @@ export function Transcript({
       <main className="app-transcript" aria-live="polite" aria-busy={loading} ref={scrollRef} onScroll={handleScroll}>
         <div className="app-transcript-inner" ref={innerRef}>
           {loading ? <div className="app-content-loading"><LoadingSpinner label="Loading conversation…" /></div> : null}
-          {!loading && entries.length === 0 && !streaming.isStreaming && !showWorking ? (
+          {!loading && items.length === 0 && !streaming.isStreaming && !showWorking ? (
             <div className="app-empty">
               <span className="app-empty-mark" aria-hidden="true">pi</span>
               <h1>What are we working on?</h1>
               <p>Start a session, or pick up where you left off.</p>
             </div>
           ) : null}
-          {entries.map((entry) => (
-            <div key={entry.key} className={`msg msg-${entry.role}`}>
-              {entry.role === "user"
-                ? <UserBlocks blocks={entry.blocks} />
+          {items.map((item) => item.kind === "compaction" ? (
+            <CompactionMarker
+              key={item.key}
+              tokensBefore={item.tokensBefore}
+              summary={item.summary}
+              error={item.error}
+            />
+          ) : (
+            <div key={item.key} className={`msg msg-${item.role}`}>
+              {item.role === "user"
+                ? <UserBlocks blocks={item.blocks} />
                 : (
                   <>
                     <AssistantBlocks
-                      blocks={entry.blocks}
+                      blocks={item.blocks}
                       toolStatus={toolStatus}
                       toolResults={toolResults}
                     />
-                    {entry.aborted === true ? <div className="msg-aborted"><Stop size={12} weight="fill" /> interrupted</div> : null}
-                    {entry.error !== undefined && entry.error !== "" ? <div className="msg-error"><Warning size={12} weight="fill" /> {entry.error}</div> : null}
+                    {item.aborted === true ? <div className="msg-aborted"><Stop size={12} weight="fill" /> interrupted</div> : null}
+                    {item.error !== undefined && item.error !== "" ? <div className="msg-error"><Warning size={12} weight="fill" /> {item.error}</div> : null}
                   </>
                 )}
             </div>
@@ -541,7 +629,7 @@ export function Transcript({
                 plugins={plugins ?? []}
                 views={pluginViews}
               >
-                <WorkingIndicator working={working} fallback="pi is working…" />
+                <WorkingIndicator working={working} fallback={workingLabel ?? "pi is working..."} />
               </ComponentOverrideHost>
               {workingAnchor}
             </div>
