@@ -244,10 +244,15 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   graph runtime/process suites (34 tests).
 - **Phase 2 — in progress**: the kernel's handwritten `matchSegments` matcher is
   replaced by a `find-my-way` facade (`web/core/plugin-contracts/kernel/routes.ts`),
-  one library router per plugin so namespaces stay isolated. Capability/ownership,
-  budget and namespace policy are unchanged; precedence is now library specificity
-  (recorded above and regression-tested). Native core/auth/admin route modules and
-  the graph's native routes are the remaining Phase 2 work; the `/*` delegate still
-  carries those paths. The remaining rows keep their phase column above;
-  native routes register their real content type parsers in a child scope so a
-  delegated request's body is never consumed twice.
+  one library router per plugin so namespaces stay isolated (precedence is now
+  library specificity, regression-tested). The `/api` access gate moved out of
+  the dispatcher into the app's `onRequest` hook (`authorize` in
+  `web/core/server/app.ts`, wired from `main.ts`), so an unauthenticated caller
+  is refused before parsing or validation; the same hook writes the three
+  security headers onto the raw response so a hijacked reply keeps them. The
+  plugin HTTP entry point is now a native route (`registerPluginRoutes`,
+  `scope.all('/api/p/*')`) with a scoped lenient parser preserving the plugin
+  body contract (JSON regardless of Content-Type, `{}` empty, `undefined`
+  malformed). Remaining Phase 2 work: native core/auth/admin routes and the
+  graph's native routes; the `/*` delegate still carries those paths and the
+  static assets.

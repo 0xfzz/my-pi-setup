@@ -13,6 +13,7 @@ import { handleApi } from "./routes.ts";
 import { sendJson } from "./http.ts";
 import { createAuthHttp, type AuthHttp, type AuthHttpOptions } from "./auth.ts";
 import { createWebApp } from "./app.ts";
+import { registerPluginRoutes } from "./plugin-routes.ts";
 import { getPluginHost } from "./plugin-host.ts";
 import { runTeardown, teardownNote } from "./shutdown.ts";
 import { announceBuildChanged } from "./sessions.ts";
@@ -144,31 +145,54 @@ async function serveStatic(res: ServerResponse, root: string, pathname: string):
   }
 }
 
-async function handleRequest(
+/** The four public auth endpoints, which own their own method/error answers. */
+const AUTH_ROUTE_PATHS = new Set([
+  "/api/auth/status",
+  "/api/auth/login",
+  "/api/auth/refresh",
+  "/api/auth/logout",
+]);
+
+function parseRequestUrl(req: IncomingMessage): URL | null {
+  try {
+    return new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The `/api` access gate (PRD §6.1), run in `onRequest` so an unauthenticated
+ * caller is refused before any body is parsed. Public: liveness (the TUI's
+ * health probe) and the four auth routes themselves. The static client is
+ * public too — it has to load to show the login screen — but carries no data.
+ */
+function authorizeRequest(req: IncomingMessage, res: ServerResponse, url: URL, auth: AuthHttp): boolean {
+  if (!pathnameIsApi(url.pathname)) return true;
+  if (url.pathname === "/api/health") return true;
+  if (AUTH_ROUTE_PATHS.has(url.pathname)) return true;
+  return auth.authorize(req, res, url);
+}
+
+/**
+ * Dispatch a request no native route claimed. Authentication already ran in
+ * `onRequest`; this only routes: the auth endpoints, the not-yet-native API
+ * table, and static assets. Removed route-group by route-group in Phase 2.
+ */
+async function dispatchUnclaimed(
   req: IncomingMessage,
   res: ServerResponse,
   root: string,
   auth: AuthHttp,
 ): Promise<void> {
-  // Set before any writeHead, so every response (static, API, errors) carries them.
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("X-Frame-Options", "DENY");
-  let url: URL;
-  try {
-    url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-  } catch {
+  const url = parseRequestUrl(req);
+  if (url === null) {
     sendJson(res, 400, { error: "bad request" });
     return;
   }
   try {
     if (pathnameIsApi(url.pathname)) {
-      // Public: liveness (the TUI's health probe) and the auth routes themselves. The static
-      // client is public too — it has to load to show the login screen — but carries no data.
-      if (url.pathname !== "/api/health") {
-        if (await auth.handleRoute(req, res, url)) return;
-        if (!auth.authorize(req, res, url)) return;
-      }
+      if (await auth.handleRoute(req, res, url)) return;
       const handled = await handleApi(req, res, url);
       if (handled) return;
       sendJson(res, 404, { error: "not found" });
@@ -206,8 +230,19 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
   const stopWatchingBuild = watchClientBuild(root, (build) => announceBuildChanged(build.buildId));
 
   return createWebApp({
-    delegate: (req, res) => handleRequest(req, res, root, auth),
+    // The gate runs before parsing; auth endpoints and public paths pass through.
+    authorize: (request, reply) => {
+      const url = parseRequestUrl(request.raw);
+      if (url === null) {
+        sendJson(reply.raw, 400, { error: "bad request" });
+        return false;
+      }
+      return authorizeRequest(request.raw, reply.raw, url, auth);
+    },
+    delegate: (req, res) => dispatchUnclaimed(req, res, root, auth),
   }).then(async (app) => {
+    // Plugin backend routes are native now; the kernel matcher stays dynamic.
+    await registerPluginRoutes(app);
     try {
       await app.listen({ port: requestedPort, host });
     } catch (error) {

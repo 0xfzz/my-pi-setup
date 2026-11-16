@@ -1,14 +1,16 @@
 // Dispatch for plugin-owned backend routes: /api/p/<pluginId>/<path>.
 //
 // A plugin registers handlers through its runtime context (`ctx.routes`), so the
-// server itself has no per-plugin branch. Every request is authenticated by the
-// normal /api gate first, the plugin must be active (its routes are removed on
-// deactivate), the handler runs under the kernel's route budget, and a thrown or
-// timed-out handler answers 502 instead of crashing the host.
+// server itself has no per-plugin branch. Authentication runs in the app's
+// `onRequest` gate first, the plugin must be active (its routes are removed on
+// deactivate), the handler runs under the kernel's route budget, and a thrown
+// or timed-out handler answers 502 instead of crashing the host.
+//
+// This is a native Fastify route. The kernel's matcher (`resolve`) does the
+// dynamic dispatch; Fastify only owns the path shape and the response.
 
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { getPluginHost } from "./plugin-host.ts";
-import { readJsonBody, sendJson } from "./http.ts";
 import { resolveSessionRoot } from "./sessions.ts";
 import type { PluginRouteRequest, PluginRouteResponse } from "../plugin-contracts/kernel/routes.ts";
 
@@ -30,18 +32,6 @@ export function parsePluginRoutePath(pathname: string): PluginRouteTarget | null
   return { pluginId, path: slash === -1 ? "" : rest.slice(slash + 1) };
 }
 
-/** Methods that carry no body: reading one would wait on the socket. */
-const BODYLESS_METHODS = new Set(["GET", "DELETE", "HEAD"]);
-
-async function requestBody(req: IncomingMessage, method: string): Promise<unknown> {
-  if (BODYLESS_METHODS.has(method)) return undefined;
-  try {
-    return await readJsonBody(req);
-  } catch {
-    return undefined;
-  }
-}
-
 /** The session a plugin route is scoped to: query string first, then the body. */
 function sessionIdOf(query: URLSearchParams, body: unknown): string | undefined {
   const fromQuery = query.get("sessionId");
@@ -53,67 +43,94 @@ function sessionIdOf(query: URLSearchParams, body: unknown): string | undefined 
   return undefined;
 }
 
-function writeResponse(res: ServerResponse, response: PluginRouteResponse): void {
+function sendJson(reply: FastifyReply, status: number, body: unknown): void {
+  reply.code(status).header("cache-control", "no-store").send(body);
+}
+
+function writeResponse(reply: FastifyReply, response: PluginRouteResponse): void {
   const headers = response.headers ?? {};
-  if (Object.keys(headers).length > 0) {
-    for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
-  }
-  sendJson(res, response.status ?? 200, response.body ?? null);
+  for (const [name, value] of Object.entries(headers)) reply.header(name, value);
+  sendJson(reply, response.status ?? 200, response.body ?? null);
 }
 
 /**
- * Handle a plugin route. Returns false when the path is not a plugin route so
- * the caller can continue to its own table; otherwise the response is written.
+ * Register the plugin HTTP entry point as a native route.
+ *
+ * Bodies have their own contract here: a plugin handler has always received a
+ * JSON body parsed regardless of `Content-Type`, an empty body as `{}`, and a
+ * malformed body as `undefined` (never a 400). The parser is scoped to this
+ * route so it cannot change any other route's error ordering.
  */
-export async function handlePluginRoute(
-  req: IncomingMessage,
-  res: ServerResponse,
-  url: URL,
-): Promise<boolean> {
-  const target = parsePluginRoutePath(url.pathname);
-  if (target === null) return false;
-
-  const host = getPluginHost();
-  if (host === null) {
-    sendJson(res, 503, { error: "plugin host not started", code: "plugin_host_unavailable" });
-    return true;
-  }
-
-  const method = (req.method ?? "GET").toUpperCase();
-  const resolved = host.routes.resolve(target.pluginId, method, target.path);
-  if (!resolved.ok) {
-    // 405 when the path exists for another method, 404 when nothing matches.
-    const status = resolved.error === "method not allowed" ? 405 : 404;
-    sendJson(res, status, { error: resolved.error, pluginId: target.pluginId });
-    return true;
-  }
-
-  const body = await requestBody(req, method);
-  const sessionId = sessionIdOf(url.searchParams, body);
-  // Resolve the session root here: the host owns session lifecycle, so a plugin
-  // route never needs the session registry to answer "which project is this?".
-  const sessionRoot = sessionId === undefined ? null : await resolveSessionRoot(sessionId);
-  const request: PluginRouteRequest = {
-    method: resolved.route.method,
-    path: target.path,
-    params: resolved.params,
-    query: url.searchParams,
-    body,
-    ...(sessionId !== undefined ? { sessionId } : {}),
-    ...(sessionRoot !== null ? { sessionRoot } : {}),
-    transport: { request: req, response: res },
-  };
-
-  const outcome = await host.routes.invoke(resolved.handler, request);
-  if (!outcome.ok) {
-    sendJson(res, 502, {
-      error: outcome.message,
-      code: outcome.reason === "timeout" ? "plugin_route_timeout" : "plugin_route_failed",
-      pluginId: target.pluginId,
+export async function registerPluginRoutes(app: FastifyInstance): Promise<void> {
+  await app.register(async (scope) => {
+    scope.addContentTypeParser("*", { parseAs: "string" }, (_request, body, done) => {
+      const text = typeof body === "string" ? body : "";
+      if (text === "") {
+        done(null, {});
+        return;
+      }
+      try {
+        done(null, JSON.parse(text));
+      } catch {
+        done(null, undefined);
+      }
     });
-    return true;
-  }
-  if (outcome.response.handled === true) return true;
-  writeResponse(res, outcome.response);
-  return true;
+
+    scope.all("/api/p/*", async (request, reply) => {
+      const url = new URL(request.url, "http://localhost");
+      const target = parsePluginRoutePath(url.pathname);
+      if (target === null) {
+        sendJson(reply, 404, { error: "not found" });
+        return;
+      }
+
+      const host = getPluginHost();
+      if (host === null) {
+        sendJson(reply, 503, { error: "plugin host not started", code: "plugin_host_unavailable" });
+        return;
+      }
+
+      const resolved = host.routes.resolve(target.pluginId, request.method.toUpperCase(), target.path);
+      if (!resolved.ok) {
+        // 405 when the path exists for another method, 404 when nothing matches.
+        const status = resolved.error === "method not allowed" ? 405 : 404;
+        sendJson(reply, status, { error: resolved.error, pluginId: target.pluginId });
+        return;
+      }
+
+      const body = request.body;
+      const sessionId = sessionIdOf(url.searchParams, body);
+      // Resolve the session root here: the host owns session lifecycle, so a
+      // plugin route never needs the session registry to answer "which project
+      // is this?".
+      const sessionRoot = sessionId === undefined ? null : await resolveSessionRoot(sessionId);
+      const pluginRequest: PluginRouteRequest = {
+        method: resolved.route.method,
+        path: target.path,
+        params: resolved.params,
+        query: url.searchParams,
+        body,
+        ...(sessionId !== undefined ? { sessionId } : {}),
+        ...(sessionRoot !== null ? { sessionRoot } : {}),
+        transport: { request: request.raw, response: reply.raw },
+      };
+
+      const outcome = await host.routes.invoke(resolved.handler, pluginRequest);
+      if (!outcome.ok) {
+        sendJson(reply, 502, {
+          error: outcome.message,
+          code: outcome.reason === "timeout" ? "plugin_route_timeout" : "plugin_route_failed",
+          pluginId: target.pluginId,
+        });
+        return;
+      }
+      if (outcome.response.handled === true) {
+        // The handler owns the raw response (a byte stream); stop Fastify from
+        // sending a second one.
+        reply.hijack();
+        return;
+      }
+      writeResponse(reply, outcome.response);
+    });
+  });
 }

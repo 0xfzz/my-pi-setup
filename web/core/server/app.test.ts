@@ -143,6 +143,41 @@ test("an unclaimed path still reaches the delegate (no HTML shell for the API)",
   }
 });
 
+test("a refusing gate answers before the body is parsed", async () => {
+  const app = await createWebApp({
+    delegate: jsonDelegate({}),
+    authorize: (request, reply) => {
+      if (request.url.startsWith("/api/guarded")) {
+        reply.raw.writeHead(401, { "content-type": "application/json; charset=utf-8" });
+        reply.raw.end(JSON.stringify({ error: "unauthenticated" }));
+        return false;
+      }
+      return true;
+    },
+  });
+  await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = app.server.address();
+  assert.ok(address !== null && typeof address === "object");
+  try {
+    // Invalid JSON: a parsed body would answer 400, so 401 proves the gate ran
+    // first. The raw security headers must survive the hijacked response.
+    const res = await fetch(`http://127.0.0.1:${address.port}/api/guarded`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{not json",
+    });
+    assert.equal(res.status, 401);
+    assert.deepEqual(await res.json(), { error: "unauthenticated" });
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(res.headers.get("x-frame-options"), "DENY");
+
+    const open = await fetch(`http://127.0.0.1:${address.port}/open`);
+    assert.equal(open.status, 200);
+  } finally {
+    await app.close();
+  }
+});
+
 test("node:http remains available for socket fixtures", async () => {
   const server = createServer((_req, res) => {
     res.end("ok");

@@ -40,7 +40,6 @@ import { annotateBuiltinCommands } from "../shared/commands.ts";
 import { attachAgentEventStream, attachSessionsEventStream } from "./event-stream.ts";
 import { handlePluginManagerCommand, handlePluginManagerReport } from "./plugin-admin.ts";
 import { servedClientBuild } from "./client-build.ts";
-import { handlePluginRoute } from "./plugin-routes.ts";
 import { readJsonBody, sendJson } from "./http.ts";
 
 type HttpMethod = "GET" | "POST" | "DELETE";
@@ -646,9 +645,6 @@ export async function handleApi(
   res: ServerResponse,
   url: URL,
 ): Promise<boolean> {
-  // Plugin-owned backend routes first: /api/p/<pluginId>/* dispatches into the
-  // kernel's route registry, so a plugin extends the API without a core edit.
-  if (await handlePluginRoute(req, res, url)) return true;
   for (const route of API_ROUTES) {
     const match = matchRoute(route.match, url.pathname);
     if (match === null) continue;
