@@ -1088,13 +1088,59 @@ function detailsDiff(details: unknown): string | undefined {
  * silently drop every later message — the web looking "not synced" on any
  * long-running session.
  */
+/** Lines pi writes for transcript entries; a tool result is also a message line, so it is excluded below. */
+const ENTRY_LINE_PREFIXES = [Buffer.from('{"type":"message"'), Buffer.from('{"type":"compaction"')];
+const TOOL_RESULT_ROLE = Buffer.from('"role":"toolResult"');
+
+/** Whether one line (no line break) is a transcript entry that the window may hold. */
+function isEntryLine(line: Buffer): boolean {
+  const looksLikeEntry = ENTRY_LINE_PREFIXES.some((prefix) => line.subarray(0, prefix.length).equals(prefix));
+  return looksLikeEntry && !line.includes(TOOL_RESULT_ROLE);
+}
+
+/**
+ * Offset of the line that starts the last `needed` entry lines, or 0 when there
+ * are fewer. A byte scan from the end: no JSON is parsed here. It can still
+ * miscount (a formatting change in pi's JSON), so the caller checks the parsed
+ * window and widens the region when it falls short.
+ */
+export function tailStartOffset(buffer: Buffer, needed: number): number {
+  let found = 0;
+  let lineEnd = buffer.length;
+  while (lineEnd > 0) {
+    const newline = buffer.lastIndexOf(0x0a, lineEnd - 1);
+    const lineStart = newline + 1;
+    if (isEntryLine(buffer.subarray(lineStart, lineEnd))) {
+      found++;
+      if (found >= needed) return lineStart;
+    }
+    if (newline < 0) break;
+    lineEnd = newline;
+  }
+  return 0;
+}
+
 export async function readHistory(sessionFile: string, limit = 200): Promise<SessionHistory> {
-  let text: string;
+  let bytes: Buffer;
   try {
-    text = await readFile(sessionFile, "utf-8");
+    bytes = await readFile(sessionFile);
   } catch {
     return { entries: [], toolResults: {} };
   }
+  let needed = limit;
+  for (;;) {
+    const start = tailStartOffset(bytes, needed);
+    const history = historyFromText(bytes.subarray(start).toString("utf-8"), limit);
+    // The parse decides: an over-counted scan leaves a short window, and the
+    // region widens. A full window is the file's exact tail, because a tool
+    // result is written after its call and so falls inside the region too.
+    if (start === 0 || history.entries.length >= limit) return history;
+    needed *= 2;
+  }
+}
+
+/** The visible window of a session's text (see readHistory). Pure: the caller reads the file. */
+export function historyFromText(text: string, limit: number): SessionHistory {
   // A rolling window over the file in order: the newest `limit` entries
   // survive, the rest roll off. Tool results attach to their calls, which
   // appear earlier in the file than the results, so results are collected

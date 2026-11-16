@@ -1,13 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, utimes, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, rm, utimes, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   clearSessionsForTests,
   listDiskSessions,
   parseSessionCommand,
+  historyFromText,
   readHistory,
+  tailStartOffset,
   registerSession,
   resolveSessionFile,
   sendCommand,
@@ -589,4 +591,75 @@ test("listDiskSessions keeps reading past invalid newest files until the limit i
 
   const listed = await listDiskSessions({ agentDir, limit: 2 });
   assert.deepEqual(listed.map((session) => session.id), ["cccc3333", "bbbb2222"], "the two newest valid sessions, newest first");
+});
+
+/** A long session: user and assistant turns, tool calls with their results, a compaction and a `!` command. */
+function longSessionText(entries: number): string {
+  const lines = [JSON.stringify({ type: "session", id: "longsess", cwd: "/tmp/long" })];
+  const padding = "x".repeat(2_000);
+  for (let index = 0; index < entries; index++) {
+    if (index % 400 === 0) lines.push(JSON.stringify({ type: "compaction", summary: `summary ${index}`, tokensBefore: index }));
+    if (index % 150 === 7) {
+      lines.push(JSON.stringify({ type: "message", message: { role: "bashExecution", command: `ls ${index}`, output: padding.slice(0, 50), exitCode: 0 } }));
+      continue;
+    }
+    if (index % 3 === 0) {
+      lines.push(JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: `ask ${index} ${padding}` }] } }));
+      continue;
+    }
+    if (index % 3 === 1) {
+      lines.push(JSON.stringify({ type: "message", message: { role: "assistant", stopReason: "toolUse", content: [{ type: "text", text: `working ${index}` }, { type: "toolCall", id: `call-${index}`, name: "bash", arguments: { cmd: "ls" } }] } }));
+      continue;
+    }
+    lines.push(JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: `call-${index - 1}`, toolName: "bash", isError: false, content: [{ type: "text", text: `out ${index} ${padding}` }] } }));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+test("readHistory over a file larger than its first read returns exactly the whole-file window", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-history-tail-"));
+  try {
+    const file = join(dir, "long.jsonl");
+    const text = longSessionText(2_500);
+    await writeFile(file, text);
+    // Larger than the first tail read, so a small window reads only the tail and a window past the first read doubles it.
+    assert.ok(Buffer.byteLength(text) > 1024 * 1024, "the fixture is larger than the first tail read");
+    for (const limit of [1, 3, 25, 200, 2_600]) {
+      const tail = await readHistory(file, limit);
+      assert.deepEqual(tail, historyFromText(text, limit), `limit ${limit}`);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("readHistory on a session with fewer entries than the limit returns every entry", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-history-short-"));
+  try {
+    const file = join(dir, "short.jsonl");
+    const text = longSessionText(12);
+    await writeFile(file, text);
+    assert.deepEqual(await readHistory(file, 200), historyFromText(text, 200));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("tailStartOffset starts at the line that begins the newest N entry lines, skipping other lines, and is 0 when there are fewer", () => {
+  const lines = [
+    '{"type":"session","id":"x"}',
+    '{"type":"message","n":1}',
+    '{"type":"model_change","n":9}',
+    '{"type":"compaction","n":2}',
+    '{"type":"message","message":{"role":"toolResult","toolCallId":"c"}}',
+    '{"type":"message","n":3}',
+    "",
+  ];
+  const buffer = Buffer.from(lines.join("\n"));
+  const startOf = (line: string) => buffer.indexOf(line);
+  // A tool result is a message line but not a window entry, so it never starts the window.
+  assert.equal(tailStartOffset(buffer, 1), startOf('{"type":"message","n":3}'));
+  assert.equal(tailStartOffset(buffer, 2), startOf('{"type":"compaction","n":2}'));
+  assert.equal(tailStartOffset(buffer, 3), startOf('{"type":"message","n":1}'));
+  assert.equal(tailStartOffset(buffer, 4), 0, "fewer entry lines than asked: the whole text");
 });
