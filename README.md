@@ -186,8 +186,8 @@ truly cut across all of them (tool policy, naming, clipboard, the intent graph):
 npm run tidy      # typecheck + lint:smell + tests (root and web) in one gate
 ```
 
-The only accepted failures are the two documented `native … inline custom UI reproduces
-clipping…` tests. Details in [verification](docs/verification.md).
+The gate must pass clean: there are no accepted baseline failures. Details in
+[verification](docs/verification.md).
 
 ## Credits
 

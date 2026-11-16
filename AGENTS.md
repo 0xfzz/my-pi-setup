@@ -13,8 +13,7 @@ covered by that safety net.
 - **Keep the tree clean at the end of a task.** Run `git status` and commit or
   explicitly discard every change. A dirty tree at hand-off is unfinished work.
 - **Verify before committing.** `npm test`, `npm run typecheck` and the web
-  gate (`npm run test:web`) must pass (the two documented TUI clipping
-  failures are the only accepted baseline failures).
+  gate (`npm run test:web`) must pass.
   The pre-commit hook also runs `oxlint` on the staged TypeScript files — see
   [Smell gate](#smell-gate).
 - **Use a scoped conventional message** so history stays greppable:
@@ -54,9 +53,7 @@ npm run test:web
 `npm run tidy` runs exactly those four in that order. Use it before a commit
 rather than remembering the list.
 
-The only accepted baseline failures are the two `native regular/fullscreen inline
-custom UI reproduces clipping…` tests. Anything else is a new failure and must be
-fixed before the commit.
+There are no accepted baseline failures. Any failure must be fixed before the commit.
 
 ## Smell gate
 

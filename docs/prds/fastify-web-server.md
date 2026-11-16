@@ -300,7 +300,7 @@ npm run lint:dead
 npm --prefix web run test:e2e
 ```
 
-`tidy` runs typecheck, smell lint, root tests, and web checks/build/tests. Only the two documented native regular/fullscreen TUI clipping failures are accepted baseline failures. Record unrun/blocked browser prerequisites honestly; they are not green acceptance.
+`tidy` runs typecheck, smell lint, root tests, and web checks/build/tests. There are no accepted baseline failures: the former native regular/fullscreen TUI clipping baseline was fixed in the test fixture (the `test(provider)` commit bound the real dialog methods), not waived. Record unrun/blocked browser prerequisites honestly; they are not green acceptance.
 
 ### Removal audit and exception ledger
 
