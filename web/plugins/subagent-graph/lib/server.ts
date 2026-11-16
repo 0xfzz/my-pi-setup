@@ -50,7 +50,6 @@
  */
 import { randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import type { IncomingMessage } from "node:http";
 import { createServer as createNetServer, Socket } from "node:net";
 import type { Server as NetServer } from "node:net";
 import { join, resolve } from "node:path";
@@ -63,6 +62,7 @@ import type { FastifySchema } from "fastify";
 import { HTTP_HEADERS_SCHEMA, objectSchema } from "../../../../lib/http-schema-policy.ts";
 import { GRAPH_LEASE_SCHEMA, GRAPH_PUBLISH_SCHEMA, graphSchemaError } from "../../../../lib/graph-request-schema.ts";
 import { registerMethodFallback } from "../../../core/http/method-fallback.ts";
+import { httpLoggerOptions, lineLogStream } from "../../../core/http/observability.ts";
 import { SUBAGENT_GRAPH_PROTOCOL } from "./protocol.ts";
 import type {
   SubagentGraphArtifact,
@@ -475,8 +475,7 @@ function hostHeaderAllowed(host: string | undefined, port: number): boolean {
   return isLoopbackHostname(parsed.hostname) && effectivePort === port;
 }
 
-function originAllowed(req: IncomingMessage, port: number): boolean {
-  const origin = req.headers.origin;
+function originAllowed(origin: string | undefined, fetchSite: string | undefined, port: number): boolean {
   if (typeof origin === "string" && origin.length > 0) {
     let parsed: URL;
     try {
@@ -487,7 +486,6 @@ function originAllowed(req: IncomingMessage, port: number): boolean {
     const effectivePort = parsed.port === "" ? (parsed.protocol === "https:" ? 443 : 80) : Number(parsed.port);
     if (parsed.protocol !== "http:" || !isLoopbackHostname(parsed.hostname) || effectivePort !== port) return false;
   }
-  const fetchSite = req.headers["sec-fetch-site"];
   if (typeof fetchSite === "string" && fetchSite === "cross-site") return false;
   return true;
 }
@@ -593,6 +591,8 @@ class SubagentGraphRuntime {
     const app = await createGraphApp({
       staticRoot: this.#options.webRoot,
       heartbeatInterval: this.#options.ssePingMs,
+      // Framework diagnostics share the runtime's line sink instead of stdout.
+      logger: { ...httpLoggerOptions(), stream: lineLogStream(line => this.#options.log(line)) },
       guard: (request, reply) => this.#guard(request, reply),
     });
     this.#app = app;
@@ -660,7 +660,7 @@ class SubagentGraphRuntime {
       void reply.code(403).header("cache-control", "no-store").send({ error: "invalid host" });
       return false;
     }
-    if (!originAllowed(request.raw, this.#port)) {
+    if (!originAllowed(request.headers.origin, request.headers["sec-fetch-site"], this.#port)) {
       void reply.code(403).header("cache-control", "no-store").send({ error: "invalid origin" });
       return false;
     }

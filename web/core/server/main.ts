@@ -2,7 +2,6 @@
 // Fastify listener and bounded teardown. Static delivery is registered by the
 // app factory; domain API handlers live in routes.ts.
 
-import { type IncomingMessage } from "node:http";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { registerSession } from "./sessions.ts";
@@ -10,6 +9,7 @@ import { seedPluginFixtures } from "./plugin-fixtures.ts";
 import { registerCoreRoutes } from "./routes.ts";
 import { createAuthHttp, registerAuthRoutes, type AuthGateReply, type AuthGateRequest, type AuthHttp, type AuthHttpOptions } from "./auth.ts";
 import { createWebApp } from "./app.ts";
+import { httpLoggerOptions } from "../http/observability.ts";
 import { registerPluginRoutes } from "./plugin-routes.ts";
 import { getPluginHost } from "./plugin-host.ts";
 import { runTeardown, teardownNote } from "./shutdown.ts";
@@ -80,9 +80,9 @@ const AUTH_ROUTE_PATHS = new Set([
   "/api/auth/logout",
 ]);
 
-function parseRequestUrl(req: IncomingMessage): URL | null {
+function parseRequestUrl(url: string, host: string | undefined): URL | null {
   try {
-    return new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    return new URL(url, `http://${host ?? "localhost"}`);
   } catch {
     return null;
   }
@@ -124,9 +124,11 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
   const stopWatchingBuild = watchClientBuild(root, (build) => announceBuildChanged(build.buildId));
 
   return createWebApp({
+    // Framework diagnostics: request ids and redacted structured error logs.
+    logger: httpLoggerOptions(),
     // The gate runs before parsing; auth endpoints and public paths pass through.
     authorize: (request, reply) => {
-      const url = parseRequestUrl(request.raw);
+      const url = parseRequestUrl(request.url, request.headers.host);
       if (url === null) {
         void reply.code(400).header("cache-control", "no-store").send({ error: "bad request" });
         return false;

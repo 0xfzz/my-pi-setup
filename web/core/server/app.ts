@@ -9,7 +9,7 @@
 // Native route groups own their parser scopes and @fastify/static serves the
 // configured build root. There is no production catch-all dispatcher.
 
-import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyLoggerOptions, type FastifyRequest, type FastifyReply } from "fastify";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import { fastifySSE } from "@fastify/sse";
@@ -36,6 +36,11 @@ export interface WebAppOptions {
    * mechanism that makes socket shutdown bounded (PRD §M13).
    */
   onClose?: () => void | Promise<void>;
+  /**
+   * Framework request diagnostics (M14). Production passes the shared
+   * redacted logger; the default keeps factories quiet for tests.
+   */
+  logger?: FastifyLoggerOptions;
 }
 
 /**
@@ -77,9 +82,9 @@ export async function createWebApp(options: WebAppOptions = {}): Promise<Fastify
     // the old closeAllConnections() did.
     forceCloseConnections: true,
     bodyLimit: MAX_WEB_BODY_BYTES,
-    // Diagnostics are not enabled yet; enabling the logger changes nothing for
-    // clients and is deferred to the observability row (M14).
-    logger: false,
+    // Diagnostics are opt-in from the composition root: request ids always
+    // exist, and the shared policy redacts credentials when logging is on.
+    logger: options.logger ?? false,
   });
 
   // Native routes own their parser scopes. The root parser consumes nothing

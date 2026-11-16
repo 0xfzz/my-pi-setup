@@ -15,7 +15,7 @@
  * the allowlisted UI layouts. Producer routes scope their JSON compatibility
  * parser and byte cap; Fastify owns request consumption.
  */
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyLoggerOptions } from "fastify";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import { fastifySSE } from "@fastify/sse";
@@ -36,6 +36,8 @@ export interface GraphAppOptions {
    * stay in `server.ts`.
    */
   guard?: (request: FastifyRequest, reply: FastifyReply) => boolean;
+  /** Framework request diagnostics routed to the runtime's log sink (M14). */
+  logger?: FastifyLoggerOptions;
 }
 
 /**
@@ -75,7 +77,7 @@ export async function createGraphApp(options: GraphAppOptions): Promise<FastifyI
     ajv: { customOptions: HTTP_AJV_OPTIONS },
     // close() must tear down live SSE clients and half-open sockets.
     forceCloseConnections: true,
-    logger: false,
+    logger: options.logger ?? false,
   });
 
   // Non-producer routes ignore bodies; producer routes override this parser

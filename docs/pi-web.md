@@ -258,6 +258,13 @@ live session.
   and use `Authorization: Bearer <accessToken>`; refresh with
   `POST /api/auth/refresh {"refreshToken": "..."}` (one refresh at a time).
 
+**Diagnostics.** Both hosts run on Fastify. Request ids are always assigned;
+a structured logger is enabled at `warn` level so ordinary requests stay
+silent and only warnings/errors are emitted. The request field set is
+credential-safe: the query string (which can carry a graph bootstrap token) is
+dropped, and headers/bodies are never serialized. Startup/process messages and
+the plugin action audit are separate and unchanged.
+
 ## HTTP API
 
 | Route | Method | Purpose |

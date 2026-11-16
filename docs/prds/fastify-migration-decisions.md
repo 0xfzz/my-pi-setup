@@ -85,7 +85,7 @@ application-owned per PRD §3.
 | M11 | `main.ts` `serveStatic`/`MIME_TYPES`/`resolveStaticPath`; graph `#serveStatic` fallback | `@fastify/static` + allowed-path hooks | build-ID HTML stamping, primary SPA fallback, graph restricted types + CSP | `main.test.ts`, graph runtime | 4 |
 | M12 | `files.ts` `parseRange`/disposition/`stream.pipe(res)` | Fastify stream reply + `@fastify/send` range/content-disposition helpers | descriptor acquisition (`O_NOFOLLOW`), root/symlink/size policy, `file.before-read` veto, forced-attachment rules | `files.test.ts`, `files-stream.test.ts` | 4 |
 | M13 | `main.ts` `closeAllConnections`; `auth.ts` connection map; graph `#closing` | Fastify `preClose`/`onClose`, `close`, `closeAllConnections` option, stream cleanup | bounded teardown, child cleanup, graph singleton release, watchers | `web-shutdown-budget.test.ts`, graph runtime | 1/4 |
-| M14 | ad-hoc boot/`console` lines, no request ids | Fastify `requestId` + structured logger, redacting hooks | redaction, existing process/startup messages, plugin audit | `main.test.ts` | 1 |
+| M14 | ad-hoc boot/`console` lines, no request ids | Fastify request ids + structured logger with credential-safe request serialization | redaction, existing process/startup messages, plugin audit | `request-logging.test.ts` | 5 complete |
 | M15 | `LoginThrottle` (`throttle.ts`) counters/windows/eviction | `@fastify/rate-limit` where equivalent | failure-only accounting, pre-hash admission, success refund/reset, lock duration, global backstop | `web/core/auth/*.test.ts` | 3 |
 
 ## 4. Old/new behaviour decisions
@@ -366,6 +366,3 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   covered by deterministic producer tests and real sockets. The shared HTTP
   zone cannot import either host runtime (enforced by `web-boundaries.test.ts`).
   `npm run tidy`, `npm run lint:dead` and both browser e2e suites pass.
-- **Release audit still required**: Phase 4 completion is not PRD completion.
-  M14 diagnostics must be resolved
-  and the full removal/exception ledger verified before release.
