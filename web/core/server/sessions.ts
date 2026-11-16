@@ -13,6 +13,7 @@ import {
   type AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { buildWebTree, type WebTreeNode } from "../../../lib/web-tree.ts";
+import type { ServerReloadState } from "../../../lib/web-ui-reload.ts";
 import { createStreamTracker, type StreamSnapshot } from "./stream-tracker.ts";
 import { compileHttpSchema } from "../http/schema.ts";
 import { SESSION_COMMAND_SCHEMA, sessionCommandSchemaError } from "../../../lib/session-command-schema.ts";
@@ -620,6 +621,21 @@ function sessionInfoOf(handle: SessionHandle): SessionInfo {
 
 export function listLiveSessions(): SessionInfo[] {
   return [...liveSessions.values()].map(sessionInfoOf);
+}
+
+/**
+ * What a restart would cost right now. In-process sessions die with this
+ * process; bridged ones keep running elsewhere but lose their web front end.
+ * The reload guard uses both counts before it stops the server.
+ */
+export function reloadStateOf(): ServerReloadState {
+  const state: ServerReloadState = { liveSessions: 0, runningSessions: 0, bridgedSessions: 0 };
+  for (const handle of liveSessions.values()) {
+    if (handle.core.bridgeOf !== undefined) state.bridgedSessions++;
+    else state.liveSessions++;
+    if (handle.core.getState().isStreaming) state.runningSessions++;
+  }
+  return state;
 }
 
 /**

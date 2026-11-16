@@ -35,6 +35,7 @@ import {
   listAllSessions,
   parseSessionCommand,
   readHistory,
+  reloadStateOf,
   resolveSessionFile,
   sendCommand,
   startSession,
@@ -108,6 +109,11 @@ function handleHealth(_request: FastifyRequest, reply: FastifyReply): void {
     // bundle and reloads onto it.
     buildId: servedClientBuild()?.buildId ?? null,
   });
+}
+
+/** Live session counts used by the reload guard before it stops this process. */
+function handleReloadState(_request: FastifyRequest, reply: FastifyReply): void {
+  asJson(reply, 200, reloadStateOf());
 }
 
 async function handleReloadNotice(request: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -629,6 +635,7 @@ async function handleAgent(request: FastifyRequest, reply: FastifyReply): Promis
 
 const CORE_ROUTES: readonly CoreRoute[] = [
   { path: "/api/health", methods: { GET: handleHealth } },
+  { path: "/api/reload-state", methods: { GET: handleReloadState } },
   { path: "/api/reload-notice", methods: { POST: handleReloadNotice } },
   { path: "/api/plugins", methods: { GET: handlePluginsList } },
   { path: "/api/plugin-manager", methods: { GET: handlePluginManagerReport } },

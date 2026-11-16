@@ -54,7 +54,7 @@ import {
   type WebCommandDescriptor,
 } from "../web/core/plugin-contracts/web-commands.ts";
 import { defaultIsPidAlive, defaultReadState, defaultServerDir, defaultWebUiStatePath, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiCommandResult, type WebUiDeps } from "../lib/web-ui.ts";
-import { repoRootFromServerDir, sourceWatchRoots, watchSources, type SourceWatcher } from "../lib/web-ui-reload.ts";
+import { parseReloadState, repoRootFromServerDir, sourceWatchRoots, watchSources, type SourceWatcher } from "../lib/web-ui-reload.ts";
 import { WebAuthConfigCache, loadWebAuthConfig, removeWebPassword, webAuthConfigPath, writeWebPassword } from "../web/core/auth/config.ts";
 import { MIN_PASSWORD_LENGTH, passwordProblem } from "../web/core/auth/password.ts";
 import { providerKeyInput } from "../lib/provider/provider-key-input.ts";
@@ -301,6 +301,20 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     sessionId: sessionIdOf(ctx),
     // A restart drops this session's bridge and any prompt in flight: it waits for the turn.
     turnRunning: () => !(ctx.isIdle?.() ?? true),
+    // The terminal's idle flag cannot see sessions the web server owns. Ask
+    // the server too, so a browser turn or an open web session defers the
+    // restart just like a TUI turn does.
+    fetchReloadState: async () => {
+      try {
+        const res = await fetch(`${bridgeServerUrl()}/api/reload-state`, {
+          headers: bridgeHeaders(),
+          signal: AbortSignal.timeout(2_000),
+        });
+        return res.ok ? parseReloadState(await res.json()) : null;
+      } catch {
+        return null;
+      }
+    },
     onProgress: (message: string) => {
       if (ctx.hasUI) ctx.ui.setStatus(WEB_PROGRESS_STATUS_KEY, message);
     },

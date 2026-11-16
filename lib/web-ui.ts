@@ -28,7 +28,9 @@ import {
   acquireReloadLock,
   autoReloadAction,
   buildRecordPath,
+  deferralMessage,
   evaluateChange,
+  parseReloadState,
   readBuildRecord,
   reloadLockPath,
   repoRootFromServerDir,
@@ -36,6 +38,8 @@ import {
   writeBuildRecord,
   type AutoReloadAction,
   type BuildRecord,
+  type ReloadSafety,
+  type ServerReloadState,
   type SourceChange,
   type SourceFingerprints,
 } from "./web-ui-reload.ts";
@@ -96,6 +100,8 @@ export interface WebUiDeps {
   pkillCommand: string;
   isPidAlive: (pid: number) => boolean;
   fetchHealth: (url: string) => Promise<boolean>;
+  /** Live session counts from the server, or null when it cannot answer. */
+  fetchReloadState: () => Promise<ServerReloadState | null>;
   checkServerDir: (dir: string) => boolean;
   spawnServer: (cwd: string) => { pid?: number; unref?: () => void };
   hasBuild: (cwd: string) => boolean;
@@ -278,6 +284,18 @@ export async function defaultFetchHealth(url = DEFAULT_HEALTH_ENDPOINT): Promise
   }
 }
 
+/** Read the server's own session counts, or null when it cannot answer. */
+export async function defaultFetchReloadState(url = DEFAULT_HEALTH_ENDPOINT): Promise<ServerReloadState | null> {
+  try {
+    const res = await fetch(`${webRootUrl(url)}/api/reload-state`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    return res.ok ? parseReloadState(await res.json()) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Kill process gracefully with SIGTERM. */
 /** Grace period for a SIGTERM'd server before /web reload force-kills it. */
 const DEFAULT_STOP_GRACE_MS = 10_000;
@@ -452,6 +470,7 @@ function resolveDeps(overrides: Partial<WebUiDeps> = {}): WebUiDeps {
     pkillCommand,
     isPidAlive: overrides.isPidAlive ?? defaultIsPidAlive,
     fetchHealth: overrides.fetchHealth ?? defaultFetchHealth,
+    fetchReloadState: overrides.fetchReloadState ?? defaultFetchReloadState,
     checkServerDir: overrides.checkServerDir ?? existsSync,
     spawnServer: overrides.spawnServer ?? defaultSpawnServer,
     hasBuild: overrides.hasBuild ?? defaultHasBuild,
@@ -807,7 +826,11 @@ export async function reloadWebUiIfChanged(options: Partial<WebUiDeps> = {}): Pr
   const release = deps.acquireReloadLock();
   if (!release) return { status: "busy" };
   try {
-    return await applyAutoReload(deps, autoReloadAction(change, healthy, deps.turnRunning()), change, healthy);
+    const safety: ReloadSafety = {
+      turnRunning: deps.turnRunning(),
+      server: healthy ? await deps.fetchReloadState() : null,
+    };
+    return await applyAutoReload(deps, autoReloadAction(change, healthy, safety), change, healthy, safety);
   } finally {
     release();
   }
@@ -818,9 +841,10 @@ async function applyAutoReload(
   action: AutoReloadAction,
   change: SourceChange,
   healthy: boolean,
+  safety: ReloadSafety,
 ): Promise<AutoReloadResult> {
   if (action === "defer") {
-    return { status: "deferred", message: "pi-web server code changed; the restart waits until the running turn settles." };
+    return { status: "deferred", message: deferralMessage(safety) };
   }
   if (action === "rebuild-client") return rebuildClientInPlace(deps);
   deps.onProgress(change.build ? "pi-web sources changed: rebuilding and reloading…" : "pi-web plugin code changed: reloading…");

@@ -112,6 +112,45 @@ export function evaluateChange(current: SourceFingerprints, record: Pick<BuildRe
   return { build: record.build !== current.build, runtime: record.runtime !== current.runtime };
 }
 
+/** What the running server knows about sessions a restart would destroy. */
+export interface ServerReloadState {
+  /** Sessions owned in-process by the web server (a restart kills them). */
+  liveSessions: number;
+  /** How many of those sessions have a turn in flight. */
+  runningSessions: number;
+  /** Sessions owned elsewhere and bridged into the web (a restart drops the bridge). */
+  bridgedSessions: number;
+}
+
+export const EMPTY_RELOAD_STATE: ServerReloadState = {
+  liveSessions: 0,
+  runningSessions: 0,
+  bridgedSessions: 0,
+};
+
+/** Read an untrusted reload-state response without trusting extra fields or bad counts. */
+export function parseReloadState(value: unknown): ServerReloadState | null {
+  if (value === null || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const count = (key: keyof ServerReloadState): number | null => {
+    const n = record[key];
+    return typeof n === "number" && Number.isInteger(n) && n >= 0 ? n : null;
+  };
+  const liveSessions = count("liveSessions");
+  const runningSessions = count("runningSessions");
+  const bridgedSessions = count("bridgedSessions");
+  if (liveSessions === null || runningSessions === null || bridgedSessions === null) return null;
+  return { liveSessions, runningSessions, bridgedSessions };
+}
+
+/** Inputs to the reload decision: the local session plus what the server reports. */
+export interface ReloadSafety {
+  /** True while a turn runs in the terminal session that owns this watcher. */
+  turnRunning: boolean;
+  /** Server-reported session counts, or null when the server cannot answer. */
+  server: ServerReloadState | null;
+}
+
 /**
  * What an automatic reload does with a source change.
  *
@@ -119,16 +158,30 @@ export function evaluateChange(current: SourceFingerprints, record: Pick<BuildRe
  *   reads the build from disk and announces the new build id, so open pages reload
  *   themselves; the server and every session bridged to it keep running.
  * - `restart`: a server-side change (or a server that is down) needs a new process.
- *   Restarting drops the bridge and any prompt in flight, so it runs only when no
- *   turn is running.
- * - `defer`: a restart is needed but a turn is running; it waits for the turn to settle.
+ *   Restarting kills in-process sessions and drops bridges, so it runs only when
+ *   the server reports none.
+ * - `defer`: a restart is needed but a session, bridge or turn is live; it waits.
  */
 export type AutoReloadAction = "rebuild-client" | "restart" | "defer";
 
-export function autoReloadAction(change: SourceChange, healthy: boolean, turnRunning: boolean): AutoReloadAction {
+export function autoReloadAction(change: SourceChange, healthy: boolean, safety: ReloadSafety): AutoReloadAction {
   if (!healthy) return "restart";
   if (!change.runtime) return "rebuild-client";
-  return turnRunning ? "defer" : "restart";
+  if (safety.turnRunning) return "defer";
+  const server = safety.server;
+  if (server !== null && (server.liveSessions > 0 || server.bridgedSessions > 0)) return "defer";
+  return "restart";
+}
+
+/** Say what is keeping a restart pending, so the TUI notice names the real blocker. */
+export function deferralMessage(safety: ReloadSafety): string {
+  const server = safety.server;
+  const live = (server?.liveSessions ?? 0) + (server?.bridgedSessions ?? 0);
+  if (live > 0) {
+    const noun = live === 1 ? "session" : "sessions";
+    return `pi-web server code changed; the restart waits until ${live} live web ${noun} close.`;
+  }
+  return "pi-web server code changed; the restart waits until the running turn settles.";
 }
 
 /** Where the build record lives: next to the state file, so a test's temp state keeps its record too. */

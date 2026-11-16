@@ -8,13 +8,16 @@ import {
   acquireReloadLock,
   autoReloadAction,
   buildRecordPath,
+  EMPTY_RELOAD_STATE,
   evaluateChange,
   fingerprintInputs,
+  parseReloadState,
   readBuildRecord,
   sourceFingerprints,
   sourceWatchRoots,
   watchSources,
   writeBuildRecord,
+  type ReloadSafety,
 } from "../lib/web-ui-reload.ts";
 import { formatElapsed, reloadWebUi, reloadWebUiIfChanged, startWebUi, type WebUiDeps, type WebUiState } from "../lib/web-ui.ts";
 
@@ -198,6 +201,7 @@ function fakeServer(options: { build?: "current" | "stale"; runtime?: "current" 
     startupTimeoutMs: 1000,
     sleep: async () => {},
     fetchHealth: async () => up,
+    fetchReloadState: async () => EMPTY_RELOAD_STATE,
     // The fake pid is not a real process, so liveness is the fake's own answer.
     isPidAlive: () => up,
     readState: async () => state,
@@ -498,20 +502,44 @@ test("elapsed time reads as seconds, then minutes and seconds", () => {
   assert.equal(formatElapsed(-5), "0s");
 });
 
+function safety(turnRunning = false, server: ReloadSafety["server"] = null): ReloadSafety {
+  return { turnRunning, server };
+}
+
 test("autoReloadAction: a client-only change rebuilds in place, whatever is running", () => {
-  assert.equal(autoReloadAction({ build: true, runtime: false }, true, false), "rebuild-client");
-  assert.equal(autoReloadAction({ build: true, runtime: false }, true, true), "rebuild-client", "a running turn does not block a client rebuild");
+  assert.equal(autoReloadAction({ build: true, runtime: false }, true, safety()), "rebuild-client");
+  assert.equal(autoReloadAction({ build: true, runtime: false }, true, safety(true)), "rebuild-client", "a running turn does not block a client rebuild");
+  assert.equal(
+    autoReloadAction({ build: true, runtime: false }, true, safety(false, { liveSessions: 2, runningSessions: 1, bridgedSessions: 1 })),
+    "rebuild-client",
+    "web sessions do not block a client rebuild",
+  );
 });
 
-test("autoReloadAction: a server-code change restarts once no turn is running, and waits while one is", () => {
-  assert.equal(autoReloadAction({ build: false, runtime: true }, true, false), "restart");
-  assert.equal(autoReloadAction({ build: false, runtime: true }, true, true), "defer");
-  assert.equal(autoReloadAction({ build: true, runtime: true }, true, true), "defer", "a mixed change waits too");
+test("autoReloadAction: a server-code change restarts once no turn or session is live", () => {
+  assert.equal(autoReloadAction({ build: false, runtime: true }, true, safety()), "restart");
+  assert.equal(autoReloadAction({ build: false, runtime: true }, true, safety(true)), "defer");
+  assert.equal(autoReloadAction({ build: true, runtime: true }, true, safety(true)), "defer", "a mixed change waits too");
+});
+
+test("autoReloadAction: a live web session or bridge defers a server restart", () => {
+  const live = { liveSessions: 1, runningSessions: 0, bridgedSessions: 0 };
+  const bridged = { liveSessions: 0, runningSessions: 1, bridgedSessions: 1 };
+  assert.equal(autoReloadAction({ build: false, runtime: true }, true, safety(false, live)), "defer", "an idle web session still dies on restart");
+  assert.equal(autoReloadAction({ build: false, runtime: true }, true, safety(false, bridged)), "defer", "a bridge drop is not hot reload either");
 });
 
 test("autoReloadAction: a server that is down is restarted, never deferred or rebuilt in place", () => {
-  assert.equal(autoReloadAction({ build: true, runtime: false }, false, true), "restart");
-  assert.equal(autoReloadAction({ build: false, runtime: true }, false, true), "restart");
+  assert.equal(autoReloadAction({ build: true, runtime: false }, false, safety(true)), "restart");
+  assert.equal(autoReloadAction({ build: false, runtime: true }, false, safety(true)), "restart");
+});
+
+test("parseReloadState rejects malformed or negative counts from an untrusted response", () => {
+  assert.deepEqual(parseReloadState({ liveSessions: 1, runningSessions: 0, bridgedSessions: 2 }), { liveSessions: 1, runningSessions: 0, bridgedSessions: 2 });
+  assert.equal(parseReloadState({ liveSessions: -1, runningSessions: 0, bridgedSessions: 0 }), null);
+  assert.equal(parseReloadState({ liveSessions: 1, runningSessions: 0 }), null);
+  assert.equal(parseReloadState({ liveSessions: "1", runningSessions: 0, bridgedSessions: 0 }), null);
+  assert.equal(parseReloadState(null), null);
 });
 
 test("a client-only change rebuilds in place: the server is never stopped and the build record is refreshed", async () => {
@@ -565,6 +593,37 @@ test("a deferred server-code change restarts once the turn has settled", async (
     fake.deps.turnRunning = () => false;
     const result = await reloadWebUiIfChanged(fake.deps);
     assert.equal(result.status, "started");
+    assert.deepEqual(fake.calls, ["kill 1111", "removeState", "spawn", "record"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a runtime change waits while a web-created session is live, even when the terminal is idle", async () => {
+  const dir = await tree();
+  try {
+    const fake = fakeServer({ runtime: "stale", statePath: join(dir, "state.json") });
+    fake.deps.fetchReloadState = async () => ({ liveSessions: 1, runningSessions: 0, bridgedSessions: 0 });
+    const result = await reloadWebUiIfChanged(fake.deps);
+    assert.equal(result.status, "deferred");
+    assert.match(result.message, /1 live web session/);
+    assert.deepEqual(fake.calls, [], "the server and its in-process session are untouched");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a deferred restart runs once the last web session closes", async () => {
+  const dir = await tree();
+  try {
+    const fake = fakeServer({ runtime: "stale", statePath: join(dir, "state.json") });
+    let liveSessions = 1;
+    fake.deps.fetchReloadState = async () => ({ liveSessions, runningSessions: 0, bridgedSessions: 0 });
+    const first = await reloadWebUiIfChanged(fake.deps);
+    assert.equal(first.status, "deferred");
+    liveSessions = 0;
+    const second = await reloadWebUiIfChanged(fake.deps);
+    assert.equal(second.status, "started");
     assert.deepEqual(fake.calls, ["kill 1111", "removeState", "spawn", "record"]);
   } finally {
     await rm(dir, { recursive: true, force: true });
