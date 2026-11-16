@@ -266,12 +266,14 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   `readJsonBody` reader and the plugin-manager HTTP adapters are deleted.
   Remaining Phase 2 work: the graph's native routes; the `/*` delegate still
   carries the static assets.
-- **Phase 3 — in progress**: cookies now go through `@fastify/cookie` (the gate
-  reads `request.cookies`, the routes call `reply.setCookie`/`clearCookie`) and
-  the four auth endpoints are native Fastify routes with a scoped 4,096-byte
-  body limit. The JWT codec (`web/core/auth/jwt.ts`) is now the `fast-jwt`
-  seam (HS256-only, `checkTyp`, cache off, injected clock), and the
-  old/new wire-format interop is pinned in `tests/web-auth.test.ts`. The
-  `PI_WEB_TRUST_PROXY` / Secure-detection policy adapter is retained
-  in `auth.ts` (raw-header logic, tested) pending the Fastify `trustProxy`
-  mapping; M15's throttle verdict is recorded in §7.
+- **Phase 3 — done**: cookies go through `@fastify/cookie` (the gate reads
+  `request.cookies`, the routes call `reply.setCookie`/`clearCookie`) and the
+  four auth endpoints are native Fastify routes with a scoped 4,096-byte body
+  limit. The JWT codec (`web/core/auth/jwt.ts`) is the `fast-jwt` seam
+  (HS256-only, `checkTyp`, cache off, injected clock), with the old/new
+  wire-format interop pinned in `tests/web-auth.test.ts`. The
+  `PI_WEB_TRUST_PROXY` / Secure-detection contract is the small tested policy
+  adapter in `auth.ts` (§4): the forwarded host/proto and the throttling key are
+  derived from the raw headers this module already owns, so no Fastify
+  `trustProxy` / `request.ip` path is needed (nothing reads it). M15's throttle
+  verdict is recorded in §7.
