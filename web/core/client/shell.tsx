@@ -672,6 +672,8 @@ export function AppShell() {
           model={session.sessionState?.model}
           thinkingLevel={session.sessionState?.thinkingLevel}
           contextUsage={session.sessionState?.contextUsage ?? null}
+          workspacePath={headerCwd === "" ? undefined : headerCwd}
+          workspaceBranch={session.workspaceBranch}
           onOpenModelPicker={() => setModelPickerOpen(true)}
           onOpenThinkingPicker={() => setThinkingPickerOpen(true)}
           onWebCommand={handleWebCommand}

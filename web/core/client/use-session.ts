@@ -233,6 +233,8 @@ export function usePiSession() {
   const [sendError, setSendError] = useState<string | null>(null);
   /** Slash commands the selected live session can dispatch. */
   const [sessionCommands, setSessionCommands] = useState<WebCommand[]>([]);
+  /** The selected session's git branch, or null when its directory has none. */
+  const [workspaceBranch, setWorkspaceBranch] = useState<string | null>(null);
   // Bumped when the TUI-side bridge reconnects after a gap: the effect
   // re-runs, reloading history in case events were missed while it was away.
   const [historyEpoch, setHistoryEpoch] = useState(0);
@@ -464,6 +466,24 @@ export function usePiSession() {
     }
   }, []);
 
+  /**
+   * The selected session's git branch for the composer's workspace line.
+   *
+   * Best-effort and one-shot per selection: a null branch (not a worktree, or
+   * no git) simply leaves the line to the path alone, and a failed read never
+   * blocks the session.
+   */
+  const fetchWorkspaceBranch = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/agent/${encodeURIComponent(id)}/branch`);
+      if (!res.ok) return;
+      const body = (await res.json()) as { branch?: unknown };
+      setWorkspaceBranch(typeof body.branch === "string" && body.branch !== "" ? body.branch : null);
+    } catch {
+      // The line is context, not session state: no branch is a valid answer.
+    }
+  }, []);
+
   // The web picker's model list. The SSE `web_models` push keeps it live;
   // this fetch is the initial read so a session switch never shows the
   // previous session's list.
@@ -503,6 +523,9 @@ export function usePiSession() {
     setUiPrompt(null);
     setToolResults({});
     setSessionCommands([]);
+    // The workspace line belongs to the selection: never carry the previous
+    // session's branch onto the next one.
+    setWorkspaceBranch(null);
     // The picker must not carry the previous session's models across the
     // switch; the fetch below (or the session's web_models push) refills it.
     setModels({ models: [] });
@@ -640,6 +663,7 @@ export function usePiSession() {
     // The initial state read (model, thinking, context): the model chip
     // renders from it before any session_state push arrives.
     void fetchState(selectedId);
+    void fetchWorkspaceBranch(selectedId);
 
     const source = new EventSource(`/api/agent/${encodeURIComponent(selectedId)}/events`);
     source.onmessage = (event: MessageEvent<string>) => {
@@ -1139,6 +1163,7 @@ export function usePiSession() {
     streaming,
     toolStatus,
     sessionState,
+    workspaceBranch,
     connection,
     plugins,
     pluginViews,

@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { startWebServer, resolveStaticPath } from "./main.ts";
 import { registerWebPlugins } from "./plugin-host.ts";
 import { WEB_PLUGINS } from "../../plugins/index.ts";
@@ -18,6 +20,11 @@ registerWebPlugins(WEB_PLUGINS);
 test.afterEach(() => {
   clearSessionsForTests();
 });
+
+/** `git init` in a fixture directory; the branch route only needs a worktree. */
+async function runGit(args: string[], cwd: string): Promise<void> {
+  await promisify(execFile)("git", args, { cwd });
+}
 
 /** Read SSE frames from a stream until `predicate` matches the buffered text. */
 function createFrameReader(reader: ReadableStreamDefaultReader<Uint8Array>) {
@@ -237,6 +244,29 @@ test("GET /api/agent/:id returns the projected state", async () => {
   });
 });
 
+test("GET /api/agent/:id/branch answers the session directory's git branch, and null off-repository", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "pi-web-branch-route-"));
+  const loose = await mkdtemp(join(tmpdir(), "pi-web-branch-none-"));
+  try {
+    await runGit(["init", "-q", "--initial-branch=workspace-line"], repo);
+    registerSession(fakeCore("branch-session"), repo);
+    registerSession(fakeCore("loose-session"), loose);
+    await withServer(async (baseUrl) => {
+      const tracked = await fetch(`${baseUrl}/api/agent/branch-session/branch`);
+      assert.equal(tracked.status, 200);
+      assert.deepEqual(await tracked.json(), { branch: "workspace-line" });
+      // A directory that is not a worktree is a null branch, not an error: the
+      // composer line simply has nothing to add.
+      const looseBranch = await fetch(`${baseUrl}/api/agent/loose-session/branch`);
+      assert.equal(looseBranch.status, 200);
+      assert.deepEqual(await looseBranch.json(), { branch: null });
+    });
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+    await rm(loose, { recursive: true, force: true });
+  }
+});
+
 test("agent routes return 404 for unknown sessions", async () => {
   await withServer(async (baseUrl) => {
     const command = await fetch(`${baseUrl}/api/agent/never-seen`, {
@@ -248,6 +278,9 @@ test("agent routes return 404 for unknown sessions", async () => {
 
     const history = await fetch(`${baseUrl}/api/agent/never-seen/history`);
     assert.equal(history.status, 404);
+
+    const branch = await fetch(`${baseUrl}/api/agent/never-seen/branch`);
+    assert.equal(branch.status, 404);
 
     const state = await fetch(`${baseUrl}/api/agent/never-seen`);
     assert.equal(state.status, 404);

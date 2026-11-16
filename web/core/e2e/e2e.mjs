@@ -5,11 +5,12 @@
 // (realtime view update without reload) and the instant-action shortcut.
 
 import { chromium } from "playwright";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, mkdtemp, rm, rmdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import assert from "node:assert/strict";
 
 const PORT = 30_000 + Math.floor(Math.random() * 10_000);
@@ -22,6 +23,11 @@ const PLUGIN_STATE = join(pluginStateDir, "plugins.json");
 
 /** Step marker: an e2e log that pinpoints where a stall happens. */
 const step = (name) => console.log(`[e2e] ${name}`);
+
+/** `git` for the workspace-line fixture; the step owns the throwaway repository. */
+async function runGit(args, cwd) {
+  await promisify(execFile)("git", args, { cwd });
+}
 
 /** Wait for a bridge command matching the predicate (10s deadline). */
 async function waitForBridgeCommand(commands, matches, timeoutMs = 10_000) {
@@ -906,6 +912,55 @@ async function run() {
       (await contextMeter.textContent())?.includes("42%") && (await contextMeter.textContent())?.includes("84k / 200k"),
       "the context meter shows the posted context usage",
     );
+
+    step("8b-workspace: the composer line carries the path and the git branch");
+    // 8b-workspace. The line beside the context meter: the session's directory
+    //   always, its git branch only when that directory is a worktree. This
+    //   bridge runs in /tmp/bridge-proj, which is not a repository.
+    const workspaceChip = page.locator(".app-workspace-chip");
+    await workspaceChip.waitFor({ state: "visible", timeout: 15_000 });
+    assert.equal(await page.locator(".app-workspace-path").innerText(), "/tmp/bridge-proj");
+    assert.equal(await page.locator(".app-workspace-branch").count(), 0,
+      "a directory that is not a worktree shows no branch");
+    assert.equal(await workspaceChip.getAttribute("title"), "/tmp/bridge-proj");
+    // It belongs to the meter's cluster, i.e. directly right of the context bar.
+    const chipIsRightOfMeter = await page.evaluate(() => {
+      const meter = document.querySelector(".app-context-usage");
+      const chip = document.querySelector(".app-workspace-chip");
+      return meter !== null && chip !== null && meter.parentElement === chip.parentElement
+        && (meter.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    });
+    assert.ok(chipIsRightOfMeter, "the workspace line sits right of the context meter");
+
+    // A session whose directory *is* a worktree: a second bridge on a throwaway
+    // repository, so the branch is deterministic and no pi session file is
+    // written (bridges carry no session file).
+    const repoDir = await mkdtemp(join(tmpdir(), "pi-web-e2e-repo-"));
+    await runGit(["init", "-q", "--initial-branch=composer-line"], repoDir);
+    const repoBridgeId = "bridge-workspace-session";
+    const repoBridge = await fetch(
+      `${BASE}/api/bridge/${repoBridgeId}/attach?cwd=${encodeURIComponent(repoDir)}`,
+      { headers: { accept: "text/event-stream" } },
+    );
+    assert.equal(repoBridge.status, 200);
+    try {
+      await page.locator(`.app-session-item[data-id="${repoBridgeId}"]`).waitFor({ timeout: 15_000 });
+      await page.click(`.app-session-item[data-id="${repoBridgeId}"]`);
+      await workspaceChip.waitFor({ state: "visible", timeout: 15_000 });
+      assert.equal(await page.locator(".app-workspace-path").innerText(), repoDir);
+      await page.locator(".app-workspace-branch-name").filter({ hasText: "composer-line" })
+        .waitFor({ timeout: 15_000 });
+      assert.equal(await workspaceChip.getAttribute("title"), `${repoDir} · composer-line`,
+        "the tooltip carries the path and the branch together");
+      // Switching back must not carry this session's branch onto another one.
+      await page.click(`.app-session-item[data-id="${bridgeId}"]`);
+      await workspaceChip.waitFor({ state: "visible", timeout: 15_000 });
+      await page.waitForFunction(() => document.querySelector(".app-workspace-branch") === null, undefined, { timeout: 15_000 });
+      assert.equal(await page.locator(".app-workspace-path").innerText(), "/tmp/bridge-proj");
+    } finally {
+      await repoBridge.body?.cancel().catch(() => {});
+      await rm(repoDir, { recursive: true, force: true });
+    }
     step("8b-phone: Return, focus zoom and independent keyboard viewport");
     await assertPhoneComposer(browser, bridgeId, bridgeCommands);
     await composerInput.fill("/");

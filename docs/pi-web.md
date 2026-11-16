@@ -269,6 +269,7 @@ live session.
 | `/api/agent/:id/models` | GET | the picker's model list (scoped or available) |
 | `/api/agent/:id/model` | POST | apply a model (`/model <provider/id>`) |
 | `/api/agent/:id/thinking` | POST | set the thinking level |
+| `/api/agent/:id/branch` | GET | the session directory's git branch, or null |
 | `/api/directories` | GET | directory listing for path pickers |
 | `/api/changelog` | GET | pi's changelog for the `/changelog` dialog |
 | `/api/sessions/:id` | DELETE | delete a session (`session.before-delete` may veto) |
@@ -680,6 +681,19 @@ browser attaching later sees the current reading rather than the one cached
 when the bridge opened. The command list (`web_commands`) rides the same
 attach snapshot for the same reason: a fresh bridge caches nothing, and the
 composer's palette reads that cache.
+
+**The workspace line** sits directly right of the meter: the directory the
+session runs in, then its git branch when that directory is a worktree. The
+path comes from the session list the client already holds, so it needs no
+request of its own; the branch comes from `GET /api/agent/:id/branch`, one
+read per selection, because git's answer can change (a checkout, a new clone)
+and nothing else reports it. That route runs `git symbolic-ref --short HEAD`
+in the session's directory — read-only, bounded by a one-second timeout — and
+answers `null` for a detached HEAD, a directory that is not a repository, a
+missing git binary or an unreadable path. A null branch leaves the line to
+the path alone rather than showing an error: the line is context, not session
+state. Both segments ellipsize rather than widening the composer, and the
+tooltip carries the full `<path> · <branch>`.
 
 **Extensions can open web dialogs too** — the web's extensibility surface:
 publish a `dialog` view (title, markdown body or lines, up to 8 actions,

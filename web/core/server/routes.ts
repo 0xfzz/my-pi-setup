@@ -34,6 +34,7 @@ import {
   startSession,
 } from "./sessions.ts";
 import { handlePiApiRequest } from "./pi-api.ts";
+import { gitBranch } from "./git-branch.ts";
 import { piBuiltinCommands } from "../pi-api/index.ts";
 import { annotateBuiltinCommands } from "../shared/commands.ts";
 import { attachAgentEventStream, attachSessionsEventStream } from "./event-stream.ts";
@@ -513,6 +514,21 @@ async function handleAgentSetThinking(ctx: ApiRouteContext): Promise<void> {
   }
 }
 
+async function handleAgentBranch(ctx: ApiRouteContext): Promise<void> {
+  const { res, param: sessionId } = ctx;
+  // The branch of the directory the session runs in. The path itself is on
+  // the session list the client already has; only git's answer has to be
+  // asked for, and it is decoration: a directory that is not a worktree (or
+  // has no git) answers null rather than failing the composer's line.
+  const core = await ensureSession(sessionId);
+  const cwd = core === null ? undefined : getSession(sessionId)?.cwd;
+  if (cwd === undefined) {
+    sendJson(res, 404, { error: "Session not found" });
+    return;
+  }
+  sendJson(res, 200, { branch: await gitBranch(cwd) });
+}
+
 async function handleChangelog(ctx: ApiRouteContext): Promise<void> {
   const { res } = ctx;
   // The web port of /changelog: the installed pi package's changelog,
@@ -615,6 +631,7 @@ const API_ROUTES: readonly ApiRoute[] = [
   { match: new RegExp(`^/api/agent/(${id})/models$`), methods: ["GET"], handle: handleAgentModels },
   { match: new RegExp(`^/api/agent/(${id})/model$`), methods: ["POST"], handle: handleAgentSetModel },
   { match: new RegExp(`^/api/agent/(${id})/thinking$`), methods: ["POST"], handle: handleAgentSetThinking },
+  { match: new RegExp(`^/api/agent/(${id})/branch$`), methods: ["GET"], handle: handleAgentBranch },
   { match: "/api/changelog", methods: ["GET"], handle: handleChangelog },
   { match: new RegExp(`^/api/agent/(${id})$`), methods: ["GET", "POST"], handle: handleAgent },
 ];

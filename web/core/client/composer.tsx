@@ -9,7 +9,7 @@
 // screenshot never needs a multi-megabyte request.
 
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type KeyboardEvent } from "react";
-import { ArrowUp, Paperclip, Sparkle, Stop, X } from "@phosphor-icons/react";
+import { ArrowUp, GitBranch, Paperclip, Sparkle, Stop, X } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { filterCommands, type WebCommand } from "../shared/commands.ts";
@@ -49,6 +49,10 @@ export interface ComposerProps {
   onWebCommandDispatch?: (name: string, args: string) => void;
   /** Live context-window usage for the meter above the input. */
   contextUsage?: ContextUsage | null;
+  /** The directory the session runs in; absent until a session is selected. */
+  workspacePath?: string;
+  /** The git branch of that directory, when it is a worktree. */
+  workspaceBranch?: string | null;
 }
 
 const PALETTE_LIMIT = 8;
@@ -128,6 +132,28 @@ function ContextUsageBar({ usage }: { usage: ContextUsage | null }) {
   );
 }
 
+/**
+ * Where the session runs: its directory, and the git branch of that
+ * directory when it is a worktree. Both come from the host — the path from
+ * the session list, the branch from `/api/agent/:id/branch` — and the branch
+ * is simply absent off-repository, so the line never asks the user a
+ * question it cannot answer.
+ */
+function WorkspaceChip({ path, branch }: { path: string; branch: string | null }) {
+  return (
+    <span className="app-workspace-chip" title={branch !== null ? `${path} · ${branch}` : path}>
+      <span className="app-workspace-path">{path}</span>
+      {branch !== null ? (
+        <span className="app-workspace-branch">
+          <GitBranch size={11} weight="bold" />
+          {/* A named span, so a long branch ellipsizes instead of clipping mid-glyph. */}
+          <span className="app-workspace-branch-name">{branch}</span>
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 export function Composer({
   disabled,
   busy,
@@ -142,6 +168,8 @@ export function Composer({
   onWebCommand,
   onWebCommandDispatch,
   contextUsage,
+  workspacePath,
+  workspaceBranch,
   sessionId,
 }: ComposerProps) {
   const [text, setText] = useState("");
@@ -420,9 +448,17 @@ export function Composer({
 
   return (
     <div className="app-composer" data-busy={busy ? "true" : undefined}>
+      {/* Two clusters, so the workspace line shrinks beside the meter instead
+          of forcing the model and thinking chips onto extra rows on a phone. */}
       <div className="app-composer-meta">
-        <ContextUsageBar usage={contextUsage ?? null} />
-        {model !== undefined && onOpenModelPicker !== undefined ? (
+        <div className="app-composer-meta-lead">
+          <ContextUsageBar usage={contextUsage ?? null} />
+          {workspacePath !== undefined && workspacePath !== "" ? (
+            <WorkspaceChip path={workspacePath} branch={workspaceBranch ?? null} />
+          ) : null}
+        </div>
+        <div className="app-composer-meta-trail">
+          {model !== undefined && onOpenModelPicker !== undefined ? (
             <button
               type="button"
               className="app-model-chip"
@@ -444,6 +480,7 @@ export function Composer({
             </button>
           ) : null}
         </div>
+      </div>
       {paletteOpen ? (
         <div className="app-command-palette" role="listbox" aria-label="Commands">
           {matches.map((command, index) => (
