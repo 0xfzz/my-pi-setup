@@ -231,7 +231,7 @@ interface RawResponse {
 function rawRequest(
   port: number,
   path: string,
-  options: { method?: string; headers?: Record<string, string> } = {},
+  options: { method?: string; headers?: Record<string, string>; chunks?: readonly string[] } = {},
 ): Promise<RawResponse> {
   const headers: Record<string, string> = { host: `127.0.0.1:${port}`, ...options.headers };
   return new Promise((resolveResponse, reject) => {
@@ -250,6 +250,7 @@ function rawRequest(
       },
     );
     req.on("error", reject);
+    for (const chunk of options.chunks ?? []) req.write(chunk);
     req.end();
   });
 }
@@ -438,6 +439,27 @@ test("graph producer parsing preserves status envelopes and rejects auth/method/
       assert.deepEqual(await response.json(), { error: entry.error });
       assert.equal(response.headers.get("cache-control"), "no-store");
       assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+    }
+  });
+});
+
+test("graph Fastify reader caps chunked UTF-8 bodies and schemas never coerce leases", async () => {
+  await withServer({ idleMs: 0, maxSnapshotBytes: 128 }, async ({ handle }) => {
+    const response = await rawRequest(handle.port, "/api/producer/publish", {
+      method: "POST", headers: { authorization: `Bearer ${handle.producerToken}`, "content-type": "application/json" },
+      chunks: ["é".repeat(40), "é".repeat(40)],
+    });
+    assert.equal(response.status, 413);
+    assert.deepEqual(JSON.parse(response.body), { error: "payload too large" });
+    for (const body of [
+      { sessionId: 42, producerId: "producer_test" },
+      { sessionId: "session", producerId: "producer_test", generation: "1" },
+    ]) {
+      const invalid = await fetch(apiUrl(handle, "api/producer/heartbeat"), {
+        method: "POST", headers: { authorization: `Bearer ${handle.producerToken}`, "content-type": "application/json" }, body: JSON.stringify(body),
+      });
+      assert.equal(invalid.status, 400);
+      assert.match((await invalid.json()).error, /^invalid (sessionId|generation)$/);
     }
   });
 });

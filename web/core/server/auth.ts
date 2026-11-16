@@ -18,6 +18,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { IssuedTokens, WebAuthService } from "../auth/service.ts";
+import { registerLenientJsonParser, parsedJsonBody } from "../http/json-body.ts";
+import { registerMethodFallback } from "../http/method-fallback.ts";
+import { AUTH_LOGIN_SCHEMA, AUTH_REFRESH_SCHEMA, PERMISSIVE_BODY_SCHEMA, coreRequestSchema } from "./request-schemas.ts";
 
 export const ACCESS_COOKIE = "pi_web_at";
 export const REFRESH_COOKIE = "pi_web_rt";
@@ -148,11 +151,9 @@ function json(reply: FastifyReply, status: number, body: unknown): void {
  * empty body, an object or `null` (unusable) otherwise. The route's scoped
  * parser has already capped the byte length, so this only maps the shape.
  */
-function parseAuthBody(raw: unknown): Record<string, unknown> | null {
-  if (raw === undefined || raw === null || raw === "") return {};
-  if (typeof raw !== "string") return null;
+function parseAuthBody(request: FastifyRequest): Record<string, unknown> | null {
   try {
-    const value: unknown = JSON.parse(raw);
+    const value = parsedJsonBody(request);
     return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
   } catch {
     return null;
@@ -211,12 +212,12 @@ async function handleLogin(service: WebAuthService, policy: CookiePolicy, reques
     json(reply, 403, { error: "Cross-site request blocked.", code: "cross_site" });
     return;
   }
-  const body = parseAuthBody(request.body);
-  if (body === null || typeof body.password !== "string") {
+  const body = parseAuthBody(request);
+  if (body === null || request.validationError) {
     json(reply, 400, { error: "Send a JSON body with a password.", code: "bad_request" });
     return;
   }
-  const result = await service.login(body.password, clientKey(request.raw, policy), firstHeader(request.headers["user-agent"]));
+  const result = await service.login(body.password as string, clientKey(request.raw, policy), firstHeader(request.headers["user-agent"]));
   if (!result.ok) {
     if (result.reason === "rate_limited") {
       void reply
@@ -256,8 +257,8 @@ function handleRefresh(service: WebAuthService, policy: CookiePolicy, request: F
     unavailable(reply);
     return;
   }
-  const body = parseAuthBody(request.body);
-  if (body === null) {
+  const body = parseAuthBody(request);
+  if (body === null || request.validationError) {
     json(reply, 400, { error: "Invalid request body.", code: "bad_request" });
     return;
   }
@@ -310,7 +311,7 @@ function handleRefresh(service: WebAuthService, policy: CookiePolicy, request: F
 
 function handleLogout(service: WebAuthService, policy: CookiePolicy, request: FastifyRequest, reply: FastifyReply): void {
   const secure = secureRequest(request.raw, policy);
-  const body = parseAuthBody(request.body) ?? {};
+  const body = parseAuthBody(request) ?? {};
   const bodyToken = typeof body.refreshToken === "string" ? body.refreshToken : null;
   if (bodyToken === null && crossSiteWrite(request.raw, policy)) {
     json(reply, 403, { error: "Cross-site request blocked.", code: "cross_site" });
@@ -335,6 +336,7 @@ interface AuthRouteSpec {
   path: string;
   method: "GET" | "POST";
   handle: (request: FastifyRequest, reply: FastifyReply) => void | Promise<void>;
+  body?: Record<string, unknown>;
 }
 
 /**
@@ -350,9 +352,7 @@ export async function registerAuthRoutes(
 ): Promise<void> {
   const policy = policyOf(options);
   await app.register(async (scope) => {
-    scope.addContentTypeParser("*", { parseAs: "string" }, (_request, body, done) => {
-      done(null, typeof body === "string" ? body : "");
-    });
+    registerLenientJsonParser(scope);
     scope.setErrorHandler((error, request, reply) => {
       const code = (error as { code?: string }).code;
       if (code === "FST_ERR_CTP_BODY_TOO_LARGE") {
@@ -372,21 +372,22 @@ export async function registerAuthRoutes(
 
     const routes: readonly AuthRouteSpec[] = [
       { path: "/api/auth/status", method: "GET", handle: (request, reply) => handleStatus(service, policy, request, reply) },
-      { path: "/api/auth/login", method: "POST", handle: (request, reply) => handleLogin(service, policy, request, reply) },
-      { path: "/api/auth/refresh", method: "POST", handle: (request, reply) => handleRefresh(service, policy, request, reply) },
+      { path: "/api/auth/login", method: "POST", body: AUTH_LOGIN_SCHEMA, handle: (request, reply) => handleLogin(service, policy, request, reply) },
+      { path: "/api/auth/refresh", method: "POST", body: AUTH_REFRESH_SCHEMA, handle: (request, reply) => handleRefresh(service, policy, request, reply) },
       { path: "/api/auth/logout", method: "POST", handle: (request, reply) => handleLogout(service, policy, request, reply) },
     ];
     for (const route of routes) {
-      scope.all(route.path, { bodyLimit: MAX_AUTH_BODY_BYTES }, async (request, reply) => {
-        if (request.method !== route.method) {
-          void reply
-            .code(405)
-            .header("allow", route.method)
-            .header("cache-control", "no-store")
-            .send({ error: "method not allowed" });
-          return;
-        }
-        await route.handle(request, reply);
+      scope.route({
+        method: route.method, url: route.path, bodyLimit: MAX_AUTH_BODY_BYTES,
+        attachValidation: true,
+        schema: coreRequestSchema({ path: route.path, ...(route.method === "POST" ? { body: route.body ?? PERMISSIVE_BODY_SCHEMA } : {}) }),
+        handler: route.handle,
+      });
+      registerMethodFallback(scope, {
+        path: route.path, methods: [route.method],
+        refuse: async (_request, reply) => {
+          void reply.code(405).header("allow", route.method).header("cache-control", "no-store").send({ error: "method not allowed" });
+        },
       });
     }
   });

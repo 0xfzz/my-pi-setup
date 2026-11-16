@@ -11,6 +11,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { SSERouteOptions } from "@fastify/sse";
 import { openEventChannel, SSE_ROUTE_OPTIONS, type EventChannel } from "../http/sse.ts";
+import { registerLenientJsonParser, parsedJsonBody as bodyOf } from "../http/json-body.ts";
+import { registerMethodFallback } from "../http/method-fallback.ts";
+import { SESSION_COMMAND_SCHEMA } from "../../../lib/session-command-schema.ts";
+import { PI_API_BODY_SCHEMA } from "../../../lib/pi-api-schema.ts";
+import { coreRequestSchema, MODEL_BODY_SCHEMA, THINKING_BODY_SCHEMA, ACTION_BODY_SCHEMA, PERMISSIVE_BODY_SCHEMA } from "./request-schemas.ts";
 import { randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { existsSync, statSync } from "node:fs";
@@ -58,6 +63,8 @@ interface CoreRoute {
   path: string;
   methods: Partial<Record<HttpMethod, CoreHandler>>;
   sse?: SSERouteOptions;
+  body?: Record<string, unknown>;
+  query?: readonly string[];
 }
 
 // ── Request helpers ─────────────────────────────────────────────────────────
@@ -73,26 +80,12 @@ function mainEventChannel(reply: FastifyReply): EventChannel {
 
 /** The query string with `URLSearchParams` semantics (first value wins). */
 function queryOf(request: FastifyRequest): URLSearchParams {
-  return new URL(request.url, "http://localhost").searchParams;
+  return new URLSearchParams(request.query as Record<string, string>);
 }
 
 function paramOf(request: FastifyRequest, name: string): string {
   const params = request.params as Record<string, string> | undefined;
   return params?.[name] ?? "";
-}
-
-/**
- * Parse the request body the way the handwritten `readJsonBody` did: `{}` for
- * an empty body, otherwise JSON.parse, which throws on malformed input so each
- * endpoint keeps its own error mapping. The route's scoped parser hands the raw
- * string here, so no path double-reads the stream.
- */
-function bodyOf(request: FastifyRequest): unknown {
-  const raw = request.body;
-  if (raw === undefined || raw === null) return {};
-  const text = typeof raw === "string" ? raw : JSON.stringify(raw);
-  if (text === "") return {};
-  return JSON.parse(text);
 }
 
 /** The host's own dialog channel: the bridge's built-in pickers. */
@@ -490,8 +483,8 @@ async function handleAgentSetModel(request: FastifyRequest, reply: FastifyReply)
     return;
   }
   try {
-    const body = bodyOf(request) as { provider?: unknown; id?: unknown };
-    if (typeof body.provider !== "string" || typeof body.id !== "string") {
+    const body = bodyOf(request) as { provider: string; id: string };
+    if (request.validationError) {
       asJson(reply, 400, { error: "provider and id are required" });
       return;
     }
@@ -514,8 +507,8 @@ async function handleAgentSetThinking(request: FastifyRequest, reply: FastifyRep
     return;
   }
   try {
-    const body = bodyOf(request) as { level?: unknown };
-    if (typeof body.level !== "string") {
+    const body = bodyOf(request) as { level: string };
+    if (request.validationError) {
       asJson(reply, 400, { error: "level is required" });
       return;
     }
@@ -615,14 +608,14 @@ const CORE_ROUTES: readonly CoreRoute[] = [
   { path: "/api/plugins", methods: { GET: handlePluginsList } },
   { path: "/api/plugin-manager", methods: { GET: handlePluginManagerReport } },
   { path: "/api/plugin-manager/:id/:command", methods: { POST: handlePluginManagerCommand } },
-  { path: "/api/plugins/action", methods: { POST: handlePluginAction } },
+  { path: "/api/plugins/action", methods: { POST: handlePluginAction }, body: ACTION_BODY_SCHEMA },
   { path: "/api/bridge/:id/attach", methods: { GET: handleBridgeAttach }, sse: { ...SSE_ROUTE_OPTIONS, heartbeat: true } },
   { path: "/api/bridge/:id/events", methods: { POST: handleBridgeEvents } },
   { path: "/api/bridge/:id/detach", methods: { POST: handleBridgeDetach } },
-  { path: "/api/agent/:id/pi_api", methods: { POST: handlePiApi } },
-  { path: "/api/directories", methods: { GET: handleDirectories } },
+  { path: "/api/agent/:id/pi_api", methods: { POST: handlePiApi }, body: PI_API_BODY_SCHEMA },
+  { path: "/api/directories", methods: { GET: handleDirectories }, query: ["path"] },
   { path: "/api/sessions/events", methods: { GET: handleSessionsEvents }, sse: SSE_ROUTE_OPTIONS },
-  { path: "/api/sessions", methods: { GET: handleSessionsList } },
+  { path: "/api/sessions", methods: { GET: handleSessionsList }, query: ["q"] },
   { path: "/api/sessions/:id", methods: { DELETE: handleSessionDelete } },
   { path: "/api/agent/new", methods: { POST: handleAgentNew } },
   { path: "/api/agent/:id/events", methods: { GET: handleAgentEvents }, sse: SSE_ROUTE_OPTIONS },
@@ -630,36 +623,36 @@ const CORE_ROUTES: readonly CoreRoute[] = [
   { path: "/api/agent/:id/commands", methods: { GET: handleAgentCommands } },
   { path: "/api/agent/:id/tree", methods: { GET: handleAgentTree } },
   { path: "/api/agent/:id/models", methods: { GET: handleAgentModels } },
-  { path: "/api/agent/:id/model", methods: { POST: handleAgentSetModel } },
-  { path: "/api/agent/:id/thinking", methods: { POST: handleAgentSetThinking } },
+  { path: "/api/agent/:id/model", methods: { POST: handleAgentSetModel }, body: MODEL_BODY_SCHEMA },
+  { path: "/api/agent/:id/thinking", methods: { POST: handleAgentSetThinking }, body: THINKING_BODY_SCHEMA },
   { path: "/api/agent/:id/branch", methods: { GET: handleAgentBranch } },
   { path: "/api/changelog", methods: { GET: handleChangelog } },
-  { path: "/api/agent/:id", methods: { GET: handleAgent, POST: handleAgent } },
+  { path: "/api/agent/:id", methods: { GET: handleAgent, POST: handleAgent }, body: SESSION_COMMAND_SCHEMA },
 ];
 
 /**
  * Register the core API as native Fastify routes.
  *
  * The body parser is scoped to this plugin so it cannot change another route's
- * error ordering: the raw body string is handed to `bodyOf`, which preserves
- * the handwritten contract (JSON parsed regardless of Content-Type, `{}` for an
- * empty body, a throw the endpoint maps for malformed input).
+ * error ordering: parse once before schemas, independently of Content-Type;
+ * use `{}` for empty input and let handlers map malformed JSON at their
+ * established decision point via attachValidation/parsedJsonBody.
  */
 export async function registerCoreRoutes(app: FastifyInstance): Promise<void> {
   await app.register(async (scope) => {
-    scope.addContentTypeParser("*", { parseAs: "string" }, (_request, body, done) => {
-      done(null, typeof body === "string" ? body : "");
-    });
-
+    registerLenientJsonParser(scope);
     for (const route of CORE_ROUTES) {
-      scope.all(route.path, { sse: route.sse }, async (request, reply) => {
-        const handler = route.methods[request.method as HttpMethod];
-        if (handler === undefined) {
-          // Known path, unsupported method. Only the auth routes send `Allow`.
-          asJson(reply, 405, { error: "method not allowed" });
-          return;
-        }
-        await handler(request, reply);
+      for (const [method, handler] of Object.entries(route.methods)) {
+        scope.route({
+          method: method as HttpMethod, url: route.path, sse: route.sse,
+          attachValidation: true,
+          schema: coreRequestSchema({ path: route.path, query: route.query, ...(method === "POST" ? { body: route.body ?? PERMISSIVE_BODY_SCHEMA } : {}) }),
+          handler,
+        });
+      }
+      registerMethodFallback(scope, {
+        path: route.path, methods: Object.keys(route.methods),
+        refuse: async (_request, reply) => { asJson(reply, 405, { error: "method not allowed" }); },
       });
     }
   });

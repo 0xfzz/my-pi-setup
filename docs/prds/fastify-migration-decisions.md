@@ -31,6 +31,7 @@ target and the PRD asks for pinned versions selected during feasibility.
 | `@fastify/rate-limit` | 11.2.2 | M15 equivalence evaluation | peer `fastify ^5` |
 | `@fastify/send` | 4.2.1 | range/content-disposition/MIME helpers (M12) | node ≥20 |
 | `find-my-way` | 9.10.1 | live dynamic matcher behind the kernel facade (M3) | node ≥20 |
+| `ajv` | 8.20.0 | same engine as Fastify; shared schemas for independently callable command/pi_api validators (M6) | no runtime-floor increase |
 
 `@fastify/jwt` and `fast-jwt` share the same underlying `fast-jwt` codec, so
 there is one implementation even when the HTTP decorator is also registered
@@ -103,6 +104,11 @@ regression test (PRD §9 "Compatibility rule"). Default is **retain**.
 | Cookie parse/serialize | handwritten `parseCookies` + string concatenation | `@fastify/cookie` `request.cookies` / `reply.setCookie` / `reply.clearCookie` | **adopted**; names, paths, `Max-Age`, `HttpOnly`, `SameSite=Strict`, Secure detection retained. Library parsing uses the first duplicate and URI-decodes values. The graph's former last-wins/raw-value parser is deliberately replaced; a runtime regression pins both duplicate orders and encoded values |
 | Content-Type on body parse | general/auth parse JSON ignoring Content-Type | Fastify only parses matching Content-Type | scoped `parseAs`/`addContentTypeParser` adapter to keep the "parse JSON regardless" contract where it existed; graph producer routes require JSON |
 | Empty body | `{}` (general/auth); graph throws | parser error / `{}` | preserve `{}` via scoped parser; test both |
+| Schema mutation | handwritten checks do not coerce/default/strip | Ajv normally coerces/defaults/removes extras | **disabled explicitly on both hosts**: `coerceTypes:false`, `useDefaults:false`, `removeAdditional:false`, `ownProperties:true`, `allErrors:false`; unknown extension fields survive |
+| Duplicate query values | WHATWG first value | query parser returns arrays | native router `querystringParser` uses WHATWG parsing with a first-value projection; handlers consume `request.query` |
+| Shape error ordering | session/action/confirmation checks at endpoint-specific points | validation immediately rejects | `attachValidation` preserves those decision points; schema-validated protocol entry points use the same Ajv engine/schema rather than parallel field checkers |
+| Invalid-input text | JSON.parse details and handwritten pi_api text | schema paths/keywords | **adopted** stable `Invalid JSON body` (existing endpoint status retained) and pi_api schema-path errors without input values; command/auth/graph status envelopes remain. Schema string lengths use Unicode code points; MCP add config is explicitly an object (arrays rejected as 400, not a downstream failure) |
+| Method bodies | transitional all-method routes accumulated irrelevant bodies | per-method routes can reject early | native real methods plus generated complement `onRequest` fallbacks reject 405/401 before parsing or validation; no duplicated path matcher |
 | Trailing slash | exact match, no redirect | `ignoreTrailingSlash` off; `/x/` ≠ `/x` | keep off; test `/x` vs `/x/` explicitly |
 | `Cache-Control: no-store` JSON | every JSON reply | none | policy helper sets cache per status family (JSON `no-store`; SSE `no-cache, no-transform`) |
 | SSE content-type | `text/event-stream` (graph: `; charset=utf-8`) | plugin writes `text/event-stream` | keep plugin value; graph charset difference is cosmetic and documented |
@@ -279,7 +285,7 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   M11 removed it from both factories after the native/static routes landed.
   Factory/lifecycle coverage: `web/core/server/app.test.ts` plus the existing
   graph runtime/process suites (34 tests).
-- **Phase 2 — in progress**: the kernel's handwritten `matchSegments` matcher is
+- **Phase 2 — complete**: the kernel's handwritten `matchSegments` matcher is
   replaced by a `find-my-way` facade (`web/core/plugin-contracts/kernel/routes.ts`),
   one library router per plugin so namespaces stay isolated (precedence is now
   library specificity, regression-tested). The `/api` access gate moved out of
@@ -293,13 +299,19 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   `scope.all('/api/p/*')`) with a scoped lenient parser preserving the plugin
   body contract (JSON regardless of Content-Type, `{}` empty, `undefined`
   malformed). The core API is now a native route table (`registerCoreRoutes` in
-  `web/core/server/routes.ts`): real Fastify paths with `:params`, a generated
-  per-path dispatcher that answers 405 for a known path with an unsupported
-  method (so known-path 405 versus unknown-path 404 survives without a second
-  matcher), and a scoped lenient body parser preserving the handwritten body
-  contract. The regex `API_ROUTES`/`matchRoute`/`handleApi` table, the
+  `web/core/server/routes.ts`): real per-method Fastify paths with `:params`,
+  generated method-complement refusal routes (405 before body consumption),
+  and a scoped lenient parser preserving the JSON/empty/error contract while
+  exposing parsed bodies to native schemas. The regex `API_ROUTES`/`matchRoute`/`handleApi` table, the
   `readJsonBody` reader and the plugin-manager HTTP adapters are deleted.
-  M11 removed this host's remaining static delegate.
+  M11 removed this host's remaining static delegate. Core/auth/graph declarations
+  now carry full request schemas and explicit non-mutating Ajv settings.
+  Shared schemas replace command attachment/field checks, pi_api structural
+  checks and graph lease checks; independent callable protocol parsers use
+  the same declared Ajv version. Domain snapshot projection, action ordering,
+  credential selection and fallback policy remain application-owned.
+  `request-schemas.test.ts`, `tests/http-schema-policy.test.ts` and graph
+  chunked UTF-8/lease regressions protect this boundary.
 - **Phase 2b (graph) — API routes native**: the graph host's loopback
   Host/Origin gate moved out of the dispatcher into the app factory's
   `onRequest` hook (`guard` in `web/plugins/subagent-graph/lib/app.ts`, wired
@@ -355,5 +367,5 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   zone cannot import either host runtime (enforced by `web-boundaries.test.ts`).
   `npm run tidy`, `npm run lint:dead` and both browser e2e suites pass.
 - **Release audit still required**: Phase 4 completion is not PRD completion.
-  Remaining declarative request schemas and M14 diagnostics must be resolved
+  M14 diagnostics must be resolved
   and the full removal/exception ledger verified before release.

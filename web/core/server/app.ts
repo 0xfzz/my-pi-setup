@@ -14,6 +14,7 @@ import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import { fastifySSE } from "@fastify/sse";
 import { registerClientStatic } from "./client-static.ts";
+import { HTTP_AJV_OPTIONS, firstQueryValues } from "../../../lib/http-schema-policy.ts";
 
 /** The general pi-web request body cap (base64 images, downscaled client-side). */
 const MAX_WEB_BODY_BYTES = 60_000_000;
@@ -70,7 +71,8 @@ export async function createWebApp(options: WebAppOptions = {}): Promise<Fastify
     // The primary host's GET routes must not acquire HEAD side effects.
     exposeHeadRoutes: false,
     // `/x` and `/x/` are different paths in the current contract.
-    ignoreTrailingSlash: false,
+    routerOptions: { ignoreTrailingSlash: false, querystringParser: firstQueryValues },
+    ajv: { customOptions: HTTP_AJV_OPTIONS },
     // close() must tear down live SSE streams and half-open sockets, exactly as
     // the old closeAllConnections() did.
     forceCloseConnections: true,

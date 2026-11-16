@@ -20,6 +20,7 @@ import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import { fastifySSE } from "@fastify/sse";
 import { registerGraphStatic } from "./static.ts";
+import { HTTP_AJV_OPTIONS, firstQueryValues } from "../../../../lib/http-schema-policy.ts";
 import type { FastifyRequest, FastifyReply } from "fastify";
 
 export interface GraphAppOptions {
@@ -70,7 +71,8 @@ export async function createGraphApp(options: GraphAppOptions): Promise<FastifyI
     // The graph's static contract answers GET and HEAD explicitly; automatic
     // HEAD routes would add a second, differently-behaving path.
     exposeHeadRoutes: false,
-    ignoreTrailingSlash: false,
+    routerOptions: { ignoreTrailingSlash: false, querystringParser: firstQueryValues },
+    ajv: { customOptions: HTTP_AJV_OPTIONS },
     // close() must tear down live SSE clients and half-open sockets.
     forceCloseConnections: true,
     logger: false,

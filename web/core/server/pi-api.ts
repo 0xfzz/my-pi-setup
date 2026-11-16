@@ -10,7 +10,8 @@
  * This module owns only lifecycle + validation; pi owns the behavior.
  */
 import { createPiApiRegistry, PI_API_MODULES } from "../pi-api/index.ts";
-import { parsePiApiBody, type PiApiName, type PiApiParams, type PiApiResult } from "../shared/pi-api.ts";
+import type { PiApiName, PiApiParams, PiApiResult } from "../shared/pi-api.ts";
+import { parsePiApiBody } from "./pi-api-body.ts";
 
 export type PiApiCall =
   | { ok: true; result: PiApiResult[PiApiName] }

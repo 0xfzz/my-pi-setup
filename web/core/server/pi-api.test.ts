@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handlePiApiRequest } from "./pi-api.ts";
-import { parsePiApiBody } from "../shared/pi-api.ts";
+import { parsePiApiBody } from "./pi-api-body.ts";
 test("parsePiApiBody validates the wire form", () => {
   assert.deepEqual(parsePiApiBody({ api: "commands.builtin", params: {} }), {
     api: "commands.builtin",

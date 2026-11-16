@@ -59,6 +59,10 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { openEventChannel, SSE_ROUTE_OPTIONS, type EventChannel } from "../../../core/http/sse.ts";
 
 import { createGraphApp } from "./app.ts";
+import type { FastifySchema } from "fastify";
+import { HTTP_HEADERS_SCHEMA, objectSchema } from "../../../../lib/http-schema-policy.ts";
+import { GRAPH_LEASE_SCHEMA, GRAPH_PUBLISH_SCHEMA, graphSchemaError } from "../../../../lib/graph-request-schema.ts";
+import { registerMethodFallback } from "../../../core/http/method-fallback.ts";
 import { SUBAGENT_GRAPH_PROTOCOL } from "./protocol.ts";
 import type {
   SubagentGraphArtifact,
@@ -195,6 +199,7 @@ interface GraphApiRoute {
   path: string;
   method: "GET" | "POST";
   auth: ApiAuth;
+  schema?: FastifySchema;
   handle: (request: FastifyRequest, reply: FastifyReply) => void | Promise<void>;
 }
 
@@ -681,8 +686,7 @@ class SubagentGraphRuntime {
 
   // ── Browser bootstrap ────────────────────────────────────────────────────
 
-  #bootstrap(url: URL, reply: FastifyReply): void {
-    const token = url.searchParams.get("token") ?? "";
+  #bootstrap(token: string, reply: FastifyReply): void {
     if (!safeEqual(token, this.#bootstrapToken)) {
       void reply.code(403).send({ error: "invalid bootstrap token" });
       return;
@@ -733,8 +737,8 @@ class SubagentGraphRuntime {
     await app.register(async scope => {
       scope.addHook("onRequest", async (_request, reply) => { reply.header("cache-control", "no-store"); });
       scope.setErrorHandler((error, _request, reply) => this.#fail(reply, error));
-      scope.all("/bootstrap", async (request, reply) => {
-        this.#bootstrap(new URL(request.url, "http://localhost"), reply);
+      scope.all("/bootstrap", { schema: { headers: HTTP_HEADERS_SCHEMA, querystring: objectSchema({ token: { type: "string" } }) } }, async (request, reply) => {
+        this.#bootstrap((request.query as { token?: string }).token ?? "", reply);
       });
       this.#registerEventsRoute(scope);
       this.#registerReadRoutes(scope);
@@ -746,8 +750,8 @@ class SubagentGraphRuntime {
     const routes: readonly GraphApiRoute[] = [
       { path: "/api/health", method: "GET", auth: "any", handle: (_request, reply) => { void reply.send(this.stats()); } },
       { path: "/api/sessions", method: "GET", auth: "browser", handle: (_request, reply) => { void reply.send({ sessions: this.#sessionSummaries() }); } },
-      { path: "/api/session", method: "GET", auth: "browser", handle: (request, reply) => this.#sendSession(reply, new URL(request.url, "http://localhost")) },
-      { path: "/api/artifact", method: "GET", auth: "browser", handle: (request, reply) => this.#sendArtifact(reply, new URL(request.url, "http://localhost")) },
+      { path: "/api/session", method: "GET", auth: "browser", schema: { querystring: objectSchema({ id: { type: "string" } }) }, handle: (request, reply) => this.#sendSession(reply, new URLSearchParams(request.query as Record<string, string>)) },
+      { path: "/api/artifact", method: "GET", auth: "browser", schema: { querystring: objectSchema({ session: { type: "string" }, id: { type: "string" }, version: { type: "string" } }) }, handle: (request, reply) => this.#sendArtifact(reply, new URLSearchParams(request.query as Record<string, string>)) },
     ];
     for (const route of routes) this.#registerApiRoute(app, route);
   }
@@ -763,28 +767,39 @@ class SubagentGraphRuntime {
         catch (error) { done(error instanceof Error ? error : new ValidationError("invalid JSON")); }
       });
       for (const route of [
-        { path: "/api/producer/publish", method: "POST", auth: "producer", handle: (request, reply) => this.#publish(request.body, reply) },
-        { path: "/api/producer/heartbeat", method: "POST", auth: "producer", handle: (request, reply) => this.#heartbeat(request.body, reply) },
-        { path: "/api/producer/unregister", method: "POST", auth: "producer", handle: (request, reply) => this.#unregister(request.body, reply) },
+        { path: "/api/producer/publish", method: "POST", auth: "producer", schema: { body: GRAPH_PUBLISH_SCHEMA }, handle: (request, reply) => this.#publish(request.body, reply) },
+        { path: "/api/producer/heartbeat", method: "POST", auth: "producer", schema: { body: GRAPH_LEASE_SCHEMA }, handle: (request, reply) => this.#heartbeat(request.body, reply) },
+        { path: "/api/producer/unregister", method: "POST", auth: "producer", schema: { body: GRAPH_LEASE_SCHEMA }, handle: (request, reply) => this.#unregister(request.body, reply) },
       ] satisfies GraphApiRoute[]) this.#registerApiRoute(scope, route);
     });
   }
 
   #registerApiRoute(app: FastifyInstance, route: GraphApiRoute): void {
-    app.all(route.path, {
-      bodyLimit: this.#options.maxSnapshotBytes,
+    app.route({
+      method: route.method, url: route.path, bodyLimit: this.#options.maxSnapshotBytes,
+      schema: { headers: HTTP_HEADERS_SCHEMA, querystring: objectSchema({}), ...route.schema },
+      attachValidation: true,
       onRequest: async (request, reply) => {
-        if (!this.#apiAuthorized(route.auth, request)) {
-          return reply.code(401).send({ error: "unauthorized" });
-        }
-        if (request.method !== route.method) {
-          return reply.code(405).send({ error: `method not allowed; use ${route.method}` });
-        }
+        if (!this.#apiAuthorized(route.auth, request)) return reply.code(401).send({ error: "unauthorized" });
         if (route.method === "POST" && !request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
           return reply.code(415).send({ error: "expected application/json" });
         }
       },
-    }, route.handle);
+      handler: async (request, reply) => {
+        if (request.validationError) {
+          const detail = request.validationError.validation?.[0];
+          throw new ValidationError(detail ? graphSchemaError(detail) : "invalid request");
+        }
+        await route.handle(request, reply);
+      },
+    });
+    registerMethodFallback(app, {
+      path: route.path, methods: [route.method],
+      refuse: async (request, reply) => {
+        const authorized = this.#apiAuthorized(route.auth, request);
+        void reply.code(authorized ? 405 : 401).send({ error: authorized ? `method not allowed; use ${route.method}` : "unauthorized" });
+      },
+    });
   }
 
   #sessionSummaries(): SubagentGraphSessionSummary[] {
@@ -819,8 +834,8 @@ class SubagentGraphRuntime {
     };
   }
 
-  #sendSession(reply: FastifyReply, url: URL): void {
-    const sessionId = url.searchParams.get("id") ?? "";
+  #sendSession(reply: FastifyReply, query: URLSearchParams): void {
+    const sessionId = query.get("id") ?? "";
     const record = this.#sessions.get(sessionId);
     if (record === undefined) {
       void reply.code(404).send({ error: "unknown session" });
@@ -829,9 +844,9 @@ class SubagentGraphRuntime {
     void reply.send({ session: this.#sessionView(record) });
   }
 
-  #sendArtifact(reply: FastifyReply, url: URL): void {
-    const sessionId = url.searchParams.get("session") ?? "";
-    const artifactId = url.searchParams.get("id") ?? "";
+  #sendArtifact(reply: FastifyReply, query: URLSearchParams): void {
+    const sessionId = query.get("session") ?? "";
+    const artifactId = query.get("id") ?? "";
     const record = this.#sessions.get(sessionId);
     if (record === undefined) {
       void reply.code(404).send({ error: "unknown session" });
@@ -842,7 +857,7 @@ class SubagentGraphRuntime {
       void reply.code(404).send({ error: "unknown artifact" });
       return;
     }
-    const versionParam = url.searchParams.get("version");
+    const versionParam = query.get("version");
     if (versionParam !== null) {
       const version = Number(versionParam);
       if (!Number.isInteger(version) || version < 0) {
@@ -917,25 +932,14 @@ class SubagentGraphRuntime {
     const sessionId = envelope.sessionId;
     const producerId = envelope.producerId;
     const generation = envelope.generation ?? 0;
-    if (typeof sessionId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/.test(sessionId)) {
-      throw new ValidationError("invalid sessionId");
-    }
-    if (typeof producerId !== "string" || !/^[A-Za-z0-9_-]{8,64}$/.test(producerId)) {
-      throw new ValidationError("invalid producerId");
-    }
-    if (typeof generation !== "number" || !Number.isInteger(generation) || generation < 0 || generation > 1e9) {
-      throw new ValidationError("invalid generation");
-    }
-    return { sessionId, producerId, generation };
+    // Native producer schemas establish these types before entering domain code.
+    return { sessionId: sessionId as string, producerId: producerId as string, generation: generation as number };
   }
 
   #publish(body: unknown, reply: FastifyReply): void {
     const envelope = envelopeDict(body);
     const { sessionId, producerId, generation } = this.#leaseIds(envelope);
-    const revision = envelope.revision;
-    if (typeof revision !== "number" || !Number.isInteger(revision) || revision < 1 || revision > 1e9) {
-      throw new ValidationError("invalid revision");
-    }
+    const revision = envelope.revision as number;
     const snapshot = sanitizeSnapshot(envelope.snapshot);
     if (snapshot.session.id !== sessionId) {
       throw new ValidationError("sessionId does not match snapshot.session.id");

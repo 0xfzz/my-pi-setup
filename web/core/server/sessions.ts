@@ -14,6 +14,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { buildWebTree, type WebTreeNode } from "../../../lib/web-tree.ts";
 import { createStreamTracker, type StreamSnapshot } from "./stream-tracker.ts";
+import { compileHttpSchema } from "../http/schema.ts";
+import { SESSION_COMMAND_SCHEMA, sessionCommandSchemaError } from "../../../lib/session-command-schema.ts";
 import { createReadStream, existsSync } from "node:fs";
 import { open, readFile, readdir, stat, unlink } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -1180,65 +1182,23 @@ export type CommandResult =
   | { status: "not_found" }
   | { status: "error"; error: string };
 
-/** Prompt attachments: base64 image blocks, bounded in count and size. */
-function parsePromptImages(images: unknown): PromptImage[] | { error: string } {
-  if (images === undefined) return [];
-  if (!Array.isArray(images)) return { error: "images must be an array" };
-  if (images.length > 8) return { error: "too many images (max 8)" };
-  const parsed: PromptImage[] = [];
-  for (const raw of images) {
-    if (typeof raw !== "object" || raw === null) return { error: "images entries must be objects" };
-    const image = raw as { data?: unknown; mimeType?: unknown };
-    if (typeof image.data !== "string" || image.data === "") {
-      return { error: "images entries require non-empty data" };
-    }
-    if (typeof image.mimeType !== "string" || !image.mimeType.startsWith("image/")) {
-      return { error: "images entries require an image/* mimeType" };
-    }
-    if (image.data.length > 6_000_000) {
-      return { error: "image too large (max ~6 MB of base64 per image)" };
-    }
-    parsed.push({ data: image.data, mimeType: image.mimeType });
-  }
-  return parsed;
-}
+const validateSessionCommand = compileHttpSchema<SessionCommand>(SESSION_COMMAND_SCHEMA);
 
+/** Schema owns structure; this adapter keeps image-only and command normalization policy. */
 export function parseSessionCommand(body: unknown): SessionCommand | { error: string } {
-  if (typeof body !== "object" || body === null) return { error: "body must be an object" };
-  const command = body as Record<string, unknown>;
-  if (command.type === "prompt") {
-    if (typeof command.message !== "string") {
-      return { error: "prompt requires a message" };
-    }
-    // An image-only prompt carries an empty message.
-    if (command.message.trim() === "" && !Array.isArray(command.images)) {
-      return { error: "prompt requires a non-empty message" };
-    }
-    const images = parsePromptImages(command.images);
-    if ("error" in images) return { error: images.error };
-    return {
-      type: "prompt",
-      message: command.message,
-      ...(images.length > 0 ? { images } : {}),
-    };
+  if (!validateSessionCommand(body)) {
+    const error = validateSessionCommand.errors?.[0];
+    return { error: error ? sessionCommandSchemaError(error) : "invalid command" };
   }
-  if (command.type === "abort") return { type: "abort" };
-  if (command.type === "get_state") return { type: "get_state" };
-  if (command.type === "web_command") {
-    if (typeof command.name !== "string" || command.name.trim() === "") {
-      return { error: "web_command requires a name" };
-    }
-    const name = command.name.trim();
-    if (!/^[a-z0-9][a-z0-9_-]*$/i.test(name)) {
-      return { error: "web_command name must be a simple identifier" };
-    }
-    return {
-      type: "web_command",
-      name,
-      ...(typeof command.args === "string" ? { args: command.args.slice(0, 4_000) } : {}),
-    };
+  if (body.type === "prompt") {
+    if (body.message.trim() === "" && body.images === undefined) return { error: "prompt requires a non-empty message" };
+    const images = body.images?.map(({ data, mimeType }) => ({ data, mimeType })) ?? [];
+    return { type: "prompt", message: body.message, ...(images.length > 0 ? { images } : {}) };
   }
-  return { error: `unknown command type: ${String(command.type)}` };
+  if (body.type === "web_command") {
+    return { type: "web_command", name: body.name.trim(), ...(typeof body.args === "string" ? { args: body.args.slice(0, 4_000) } : {}) };
+  }
+  return { type: body.type };
 }
 
 /** Route a command to a live session (no implicit spawn: the routes ensure liveness). */
