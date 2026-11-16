@@ -2530,6 +2530,59 @@ button.msg-compaction-label:hover {
 
 }
 
+/* Phones: dialogs rise as a bottom sheet bounded by the visual viewport (so the
+   on-screen keyboard never hides the input), and the settings sidebar becomes a
+   horizontal strip of pages above the content instead of a 150px column that
+   squeezes every list row and clips the scope tabs. */
+@media (max-width: 720px) {
+  .app-dialog-backdrop {
+    align-items: flex-end;
+  }
+
+  .app-dialog,
+  .app-dialog.wide,
+  .app-dialog-wide {
+    width: 100vw;
+    max-width: 100vw;
+    max-height: calc(var(--app-viewport-height, 100dvh) * 0.92);
+    border-radius: 14px 14px 0 0;
+    border-width: 1px 0 0;
+    padding: 14px 14px max(14px, env(safe-area-inset-bottom));
+    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.45);
+  }
+
+  .app-dialog-columns {
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .app-dialog-sidebar {
+    flex-direction: row;
+    width: auto;
+    margin: 0 0 10px;
+    padding: 0 0 8px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .app-dialog-sidebar-entry {
+    flex: none;
+    width: auto;
+    white-space: nowrap;
+  }
+
+  .app-dialog-tabs {
+    flex-wrap: wrap;
+  }
+
+  .app-dialog-tab {
+    flex: 1 1 auto;
+  }
+}
+
 /* iOS zooms focused text fields smaller than 16px. Keep pinch zoom enabled. */
 @media (pointer: coarse), (max-width: 720px) {
   .app-composer-input,
