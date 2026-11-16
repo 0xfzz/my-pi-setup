@@ -14,6 +14,7 @@ import { ComponentOverrideHost } from "./plugin-system/ComponentOverrideHost.tsx
 import { MarkdownBody } from "./plugin-system/markdown.tsx";
 import { LoadingSpinner } from "./plugin-system/LoadingSpinner.tsx";
 import { inlineLoading } from "./inline-loading.ts";
+import { assistantBlocksPropsEqual } from "./tool-block-memo.ts";
 import { INITIAL_FOLLOW, reduceFollow, type FollowEvent, type FollowState, type ScrollMetrics } from "./transcript-follow.ts";
 
 const RESULT_PREVIEW_LIMIT = 8_000;
@@ -377,7 +378,7 @@ export const AssistantBlocks = memo(function AssistantBlocks({
       })}
     </>
   );
-});
+}, assistantBlocksPropsEqual);
 
 export interface TranscriptEntry {
   key: string;
