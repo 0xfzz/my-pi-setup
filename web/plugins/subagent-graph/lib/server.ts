@@ -225,6 +225,16 @@ interface ResolvedOptions extends Required<Omit<SubagentGraphServerOptions, "now
   log: (line: string) => void;
 }
 
+/** Which credential a graph API route accepts. */
+type ApiAuth = "any" | "browser" | "producer";
+
+interface GraphApiRoute {
+  path: string;
+  method: "GET" | "POST";
+  auth: ApiAuth;
+  handle: (req: IncomingMessage, res: ServerResponse, url: URL) => void | Promise<void>;
+}
+
 class HttpError extends Error {
   readonly status: number;
   constructor(status: number, message: string) {
@@ -677,6 +687,7 @@ class SubagentGraphRuntime {
       guard: (req, res) => this.#guard(req, res),
     });
     this.#app = app;
+    this.#registerApiRoutes(app);
     this.#configureServer(app);
     const preferred = this.#options.preferredPort;
     if (preferred > 0) {
@@ -742,14 +753,17 @@ class SubagentGraphRuntime {
       sendJson(res, 403, { error: "invalid origin" });
       return false;
     }
+    // Every request that passed the gate counts as activity, whichever route
+    // (native or delegated) ends up serving it — this is what keeps a
+    // heartbeating producer from idling the server out.
+    this.#lastActivityAt = this.#options.now();
     return true;
   }
 
   async #handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
       const host = req.headers.host;
-      // Host and Origin were validated in the app's `onRequest` guard.
-      this.#lastActivityAt = this.#options.now();
+      // Host, Origin and activity were handled by the app's `onRequest` guard.
       const url = new URL(req.url ?? "/", `http://${host}`);
       if (url.pathname === "/bootstrap") {
         this.#bootstrap(url, res);
@@ -828,68 +842,86 @@ class SubagentGraphRuntime {
     return token;
   }
 
-  #requireProducer(req: IncomingMessage): void {
-    if (!this.#isProducer(req)) throw new HttpError(401, "unauthorized");
-  }
-
-  #requireBrowser(req: IncomingMessage): void {
-    if (this.#browserToken(req) === null) throw new HttpError(401, "unauthorized");
-  }
-
-  #requireAny(req: IncomingMessage): void {
-    if (this.#isProducer(req)) return;
-    if (this.#browserToken(req) !== null) return;
-    throw new HttpError(401, "unauthorized");
+  /** Whether a request satisfies a route's API authentication requirement. */
+  #apiAuthorized(requirement: ApiAuth, req: IncomingMessage): boolean {
+    if (requirement === "producer") return this.#isProducer(req);
+    if (requirement === "browser") return this.#browserToken(req) !== null;
+    return this.#isProducer(req) || this.#browserToken(req) !== null;
   }
 
   // ── API ──────────────────────────────────────────────────────────────────
 
+  /**
+   * Register the graph's API as native Fastify routes. Authentication runs in
+   * each route's `onRequest` hook, so it is decided before any body is read —
+   * the order the old dispatcher used. The handlers keep the runtime's raw
+   * response helpers and body reader (`#readEnvelope`), which the app's no-op
+   * content type parser deliberately leaves on the wire.
+   */
+  #registerApiRoutes(app: FastifyInstance): void {
+    const routes: readonly GraphApiRoute[] = [
+      { path: "/api/health", method: "GET", auth: "any", handle: (_req, res) => sendJson(res, 200, this.stats()) },
+      {
+        path: "/api/sessions",
+        method: "GET",
+        auth: "browser",
+        handle: (_req, res) => sendJson(res, 200, { sessions: this.#sessionSummaries() }),
+      },
+      { path: "/api/session", method: "GET", auth: "browser", handle: (_req, res, url) => this.#sendSession(res, url) },
+      { path: "/api/artifact", method: "GET", auth: "browser", handle: (_req, res, url) => this.#sendArtifact(res, url) },
+      { path: "/api/producer/publish", method: "POST", auth: "producer", handle: (req, res) => this.#publish(req, res) },
+      {
+        path: "/api/producer/heartbeat",
+        method: "POST",
+        auth: "producer",
+        handle: (req, res) => this.#heartbeat(req, res),
+      },
+      {
+        path: "/api/producer/unregister",
+        method: "POST",
+        auth: "producer",
+        handle: (req, res) => this.#unregister(req, res),
+      },
+    ];
+    for (const route of routes) {
+      app.all(
+        route.path,
+        {
+          onRequest: async (request, reply) => {
+            if (this.#apiAuthorized(route.auth, request.raw)) return;
+            sendJson(reply.raw, 401, { error: "unauthorized" });
+            reply.hijack();
+          },
+        },
+        async (request, reply) => {
+          if (request.method !== route.method) {
+            reply.hijack();
+            sendJson(reply.raw, 405, { error: `method not allowed; use ${route.method}` });
+            return;
+          }
+          const url = new URL(request.url, `http://${request.headers.host ?? "localhost"}`);
+          reply.hijack();
+          try {
+            await route.handle(request.raw, reply.raw, url);
+          } catch (error) {
+            this.#fail(reply.raw, error);
+          }
+        },
+      );
+    }
+  }
+
+  /** Only the SSE stream still reaches the dispatcher (Phase 4 moves it). */
   async #api(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
-    const method = req.method ?? "GET";
-    switch (url.pathname) {
-      case "/api/health":
-        this.#requireMethod(method, "GET");
-        this.#requireAny(req);
-        sendJson(res, 200, this.stats());
-        return;
-      case "/api/sessions":
-        this.#requireMethod(method, "GET");
-        this.#requireBrowser(req);
-        sendJson(res, 200, { sessions: this.#sessionSummaries() });
-        return;
-      case "/api/session":
-        this.#requireMethod(method, "GET");
-        this.#requireBrowser(req);
-        this.#sendSession(res, url);
-        return;
-      case "/api/artifact":
-        this.#requireMethod(method, "GET");
-        this.#requireBrowser(req);
-        this.#sendArtifact(res, url);
-        return;
-      case "/api/events":
-        this.#requireMethod(method, "GET");
-        this.#requireBrowser(req);
+    if (url.pathname === "/api/events") {
+      this.#requireMethod(req.method ?? "GET", "GET");
+      if (this.#apiAuthorized("browser", req)) {
         this.#openEvents(req, res);
         return;
-      case "/api/producer/publish":
-        this.#requireMethod(method, "POST");
-        this.#requireProducer(req);
-        await this.#publish(req, res);
-        return;
-      case "/api/producer/heartbeat":
-        this.#requireMethod(method, "POST");
-        this.#requireProducer(req);
-        await this.#heartbeat(req, res);
-        return;
-      case "/api/producer/unregister":
-        this.#requireMethod(method, "POST");
-        this.#requireProducer(req);
-        await this.#unregister(req, res);
-        return;
-      default:
-        sendJson(res, 404, { error: "not found" });
+      }
+      throw new HttpError(401, "unauthorized");
     }
+    sendJson(res, 404, { error: "not found" });
   }
 
   #requireMethod(method: string, expected: "GET" | "POST"): void {

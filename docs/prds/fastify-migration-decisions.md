@@ -263,16 +263,21 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   method (so known-path 405 versus unknown-path 404 survives without a second
   matcher), and a scoped lenient body parser preserving the handwritten body
   contract. The regex `API_ROUTES`/`matchRoute`/`handleApi` table, the
-  `readJsonBody` reader and the plugin-manager HTTP adapters are deleted.
-  Remaining Phase 2 work: the graph's native routes; the `/*` delegate still
-  carries the static assets.
-- **Phase 2b (graph) — started**: the graph host's loopback Host/Origin gate
-  moved out of the dispatcher into the app factory's `onRequest` hook
-  (`guard` in `web/plugins/subagent-graph/lib/app.ts`, wired from
-  `server.ts`), matching the primary host. It covers every request — native
-  route, delegate, 404 — and the runtime still owns the policy and the `#port`
-  (known only after `listen`). The dispatcher no longer performs the check, so
-  its 403 responses now come from the shared `sendJson` path.
+  `readJsonBody` reader and the plugin-manager HTTP adapters are deleted. The
+  `/*` delegate now carries only the static assets on this host.
+- **Phase 2b (graph) — API routes native**: the graph host's loopback
+  Host/Origin gate moved out of the dispatcher into the app factory's
+  `onRequest` hook (`guard` in `web/plugins/subagent-graph/lib/app.ts`, wired
+  from `server.ts`), matching the primary host, and the graph API is a native
+  route table (`#registerApiRoutes`): `/api/health`, `/api/sessions`,
+  `/api/session`, `/api/artifact` and the three producer POSTs. Authentication
+  runs in each route's `onRequest` hook, so it is still decided before any body
+  is read; method mismatches keep their 405, unknown `/api/*` keeps its 404 via
+  the dispatcher, and the request-activity stamp moved into `#guard` so a
+  heartbeating producer still prevents the idle shutdown. The handlers keep the
+  runtime's raw writers and `#readEnvelope`; `/api/events` (SSE) is the only
+  path still on the dispatcher. Remaining Phase 2 work: the `/*` delegate
+  carries `/api/events`, `/bootstrap` and the static assets.
 - **Phase 3 — done**: cookies go through `@fastify/cookie` (the gate reads
   `request.cookies`, the routes call `reply.setCookie`/`clearCookie`) and the
   four auth endpoints are native Fastify routes with a scoped 4,096-byte body
