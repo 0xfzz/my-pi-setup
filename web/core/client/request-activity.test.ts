@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createRequestActivity } from "./request-activity.ts";
+import { createRequestActivity, isTurnRequest } from "./request-activity.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -88,5 +88,42 @@ test("loading preserves fetch arguments and streamed response metadata", async (
   assert.equal(response.status, 307);
   assert.equal(response.headers.get("location"), "https://example.test/next");
   assert.equal(response.body, null);
+  assert.equal(activity.getSnapshot(), 0);
+});
+
+const SESSION = "/api/agent/01a1c103-session";
+const post = (body: unknown): RequestInit => ({ method: "POST", body: JSON.stringify(body) });
+
+test("a prompt or web command to a session is a turn request, the rest are not", () => {
+  assert.equal(isTurnRequest(SESSION, post({ type: "prompt", message: "hi" })), true);
+  assert.equal(isTurnRequest(SESSION, post({ type: "web_command", name: "reload" })), true);
+  assert.equal(isTurnRequest(SESSION, post({ type: "abort" })), false, "abort answers at once");
+  assert.equal(isTurnRequest(SESSION, { method: "GET" }), false);
+  assert.equal(isTurnRequest(`${SESSION}/history`, { method: "GET" }), false);
+  assert.equal(isTurnRequest("/api/agent/new", post({ type: "prompt" })), false, "creating a session is not a turn");
+  assert.equal(isTurnRequest(SESSION, { method: "POST", body: "not json" }), false);
+  assert.equal(isTurnRequest(new URL(`http://x${SESSION}`), post({ type: "prompt", message: "x" })), true);
+});
+
+test("a turn request is not counted, so the loading card stays down for the whole reply", async () => {
+  const turn = deferred<Response>();
+  const activity = createRequestActivity(() => turn.promise);
+  const reply = activity.fetch(SESSION, post({ type: "prompt", message: "long task" }));
+  assert.equal(activity.getSnapshot(), 0, "a prompt that waits out the turn is not network work");
+  turn.resolve(new Response("ok"));
+  await reply;
+});
+
+test("ordinary requests are still counted while a turn is running", async () => {
+  const turn = deferred<Response>();
+  const history = deferred<Response>();
+  const activity = createRequestActivity((input) => (String(input).endsWith("/history") ? history.promise : turn.promise));
+  const reply = activity.fetch(SESSION, post({ type: "prompt", message: "x" }));
+  const read = activity.fetch(`${SESSION}/history`);
+  assert.equal(activity.getSnapshot(), 1);
+  history.resolve(new Response("ok"));
+  await read;
+  turn.resolve(new Response("ok"));
+  await reply;
   assert.equal(activity.getSnapshot(), 0);
 });

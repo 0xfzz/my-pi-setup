@@ -2,6 +2,27 @@
 // fetches and body reads without buffering, consuming or changing their data.
 const BODY_READERS = new Set(["json", "text", "blob", "arrayBuffer", "formData", "bytes"]);
 
+/**
+ * A request whose answer arrives only when the agent's turn ends: a prompt or a
+ * web command posted to a session. Its pending time is the turn itself, which
+ * the transcript's working line already shows; counting it would keep the
+ * loading card up for the whole of every reply. Abort and every other request
+ * answer at once, so they stay tracked.
+ */
+export function isTurnRequest(input: RequestInfo | URL, init?: RequestInit): boolean {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  const path = new URL(url, "http://local").pathname;
+  if (path === "/api/agent/new" || !/^\/api\/agent\/[^/]+$/.test(path)) return false;
+  if ((init?.method ?? "GET").toUpperCase() !== "POST") return false;
+  if (typeof init?.body !== "string") return false;
+  try {
+    const type = (JSON.parse(init.body) as { type?: unknown }).type;
+    return type === "prompt" || type === "web_command";
+  } catch {
+    return false;
+  }
+}
+
 export function createRequestActivity(fetcher: typeof fetch) {
   const listeners = new Set<() => void>();
   let pending = 0;
@@ -34,8 +55,10 @@ export function createRequestActivity(fetcher: typeof fetch) {
     });
   }
 
-  const trackedFetch: typeof fetch = async (input, init) =>
-    observeBody(await track(() => fetcher(input, init)));
+  const trackedFetch: typeof fetch = async (input, init) => {
+    if (isTurnRequest(input, init)) return fetcher(input, init);
+    return observeBody(await track(() => fetcher(input, init)));
+  };
 
   return {
     fetch: trackedFetch,
