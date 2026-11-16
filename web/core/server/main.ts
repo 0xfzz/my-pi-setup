@@ -3,7 +3,7 @@
 // static/directory/auth/SSE serving stays here, per
 // docs/prds/minimal-pi-web.md.
 
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { extname, join, resolve, sep } from "node:path";
@@ -12,6 +12,7 @@ import { seedPluginFixtures } from "./plugin-fixtures.ts";
 import { handleApi } from "./routes.ts";
 import { sendJson } from "./http.ts";
 import { createAuthHttp, type AuthHttp, type AuthHttpOptions } from "./auth.ts";
+import { createWebApp } from "./app.ts";
 import { getPluginHost } from "./plugin-host.ts";
 import { runTeardown, teardownNote } from "./shutdown.ts";
 import { announceBuildChanged } from "./sessions.ts";
@@ -199,34 +200,36 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
   setServedRoot(root);
 
   const auth = createAuthHttp(options.auth ?? defaultAuthService(), options.authHttp ?? defaultAuthHttpOptions());
-  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    void handleRequest(req, res, root, auth);
-  });
   // A rebuild replaces the bundle on disk while this process keeps serving.
   // Tell open pages, so every tab converges on one client build instead of
   // each keeping whatever it was opened with.
   const stopWatchingBuild = watchClientBuild(root, (build) => announceBuildChanged(build.buildId));
 
-  return new Promise<WebServerHandle>((resolveStart, rejectStart) => {
-    server.once("error", rejectStart);
-    server.listen(requestedPort, host, () => {
-      const address = server.address();
-      const port = typeof address === "object" && address !== null ? address.port : requestedPort;
-      resolveStart({
-        port,
-        host,
-        close: () => {
-          stopWatchingBuild();
-          return new Promise<void>((resolveClose) => {
-            // SSE streams never end on their own; close() must tear them down
-            // or a lingering event stream keeps the server's close callback
-            // from ever firing.
-            server.closeAllConnections();
-            server.close(() => resolveClose());
-          });
-        },
-      });
-    });
+  return createWebApp({
+    delegate: (req, res) => handleRequest(req, res, root, auth),
+  }).then(async (app) => {
+    try {
+      await app.listen({ port: requestedPort, host });
+    } catch (error) {
+      // A failed bind releases the watcher and the app; the caller sees the
+      // original EADDRINUSE/EACCES rather than a leaked handle.
+      stopWatchingBuild();
+      await app.close().catch(() => {});
+      throw error;
+    }
+    const address = app.server.address();
+    const port = typeof address === "object" && address !== null ? address.port : requestedPort;
+    return {
+      port,
+      host,
+      close: () => {
+        stopWatchingBuild();
+        // Fastify's forceCloseConnections tears down live SSE streams and
+        // half-open sockets, so a lingering event stream cannot keep close()
+        // from ever resolving.
+        return app.close();
+      },
+    };
   });
 }
 
