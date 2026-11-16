@@ -24,6 +24,14 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 export interface GraphAppOptions {
   /** Handles every request; it owns the response via the raw Node pair. */
   delegate: (request: IncomingMessage, response: ServerResponse) => Promise<void>;
+  /**
+   * The graph's loopback Host/Origin gate (PRD §6.1). Runs in `onRequest`
+   * before any route or the delegate, answers on the raw response itself when
+   * it refuses, and returns false in that case. Kept as a callback so the
+   * runtime's `#port` (known only after `listen`) and its Host/Origin policy
+   * stay in `server.ts`.
+   */
+  guard?: (request: IncomingMessage, response: ServerResponse) => boolean;
 }
 
 /**
@@ -85,10 +93,19 @@ export async function createGraphApp(options: GraphAppOptions): Promise<FastifyI
     void reply.code(404).header("cache-control", "no-store").send({ error: "not found" });
   });
 
+  if (options.guard) {
+    const guard = options.guard;
+    app.addHook("onRequest", async (request, reply) => {
+      if (guard(request.raw, reply.raw)) return;
+      // The guard wrote its own 403 through the raw pair; stop Fastify from
+      // sending a second response.
+      reply.hijack();
+    });
+  }
+
   app.all("/*", async (request, reply) => {
     reply.hijack();
     await options.delegate(request.raw, reply.raw);
   });
-
   return app;
 }

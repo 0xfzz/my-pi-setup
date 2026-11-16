@@ -672,7 +672,10 @@ class SubagentGraphRuntime {
   }
 
   async #listen(): Promise<void> {
-    const app = await createGraphApp({ delegate: (req, res) => this.#handle(req, res) });
+    const app = await createGraphApp({
+      delegate: (req, res) => this.#handle(req, res),
+      guard: (req, res) => this.#guard(req, res),
+    });
     this.#app = app;
     this.#configureServer(app);
     const preferred = this.#options.preferredPort;
@@ -729,17 +732,23 @@ class SubagentGraphRuntime {
 
   // ── Request dispatch ─────────────────────────────────────────────────────
 
+  /** Loopback Host/Origin gate, run in `onRequest` for every request. */
+  #guard(req: IncomingMessage, res: ServerResponse): boolean {
+    if (!hostHeaderAllowed(req.headers.host, this.#port)) {
+      sendJson(res, 403, { error: "invalid host" });
+      return false;
+    }
+    if (!originAllowed(req, this.#port)) {
+      sendJson(res, 403, { error: "invalid origin" });
+      return false;
+    }
+    return true;
+  }
+
   async #handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
       const host = req.headers.host;
-      if (!hostHeaderAllowed(host, this.#port)) {
-        sendJson(res, 403, { error: "invalid host" });
-        return;
-      }
-      if (!originAllowed(req, this.#port)) {
-        sendJson(res, 403, { error: "invalid origin" });
-        return;
-      }
+      // Host and Origin were validated in the app's `onRequest` guard.
       this.#lastActivityAt = this.#options.now();
       const url = new URL(req.url ?? "/", `http://${host}`);
       if (url.pathname === "/bootstrap") {

@@ -266,6 +266,13 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   `readJsonBody` reader and the plugin-manager HTTP adapters are deleted.
   Remaining Phase 2 work: the graph's native routes; the `/*` delegate still
   carries the static assets.
+- **Phase 2b (graph) — started**: the graph host's loopback Host/Origin gate
+  moved out of the dispatcher into the app factory's `onRequest` hook
+  (`guard` in `web/plugins/subagent-graph/lib/app.ts`, wired from
+  `server.ts`), matching the primary host. It covers every request — native
+  route, delegate, 404 — and the runtime still owns the policy and the `#port`
+  (known only after `listen`). The dispatcher no longer performs the check, so
+  its 403 responses now come from the shared `sendJson` path.
 - **Phase 3 — done**: cookies go through `@fastify/cookie` (the gate reads
   `request.cookies`, the routes call `reply.setCookie`/`clearCookie`) and the
   four auth endpoints are native Fastify routes with a scoped 4,096-byte body
