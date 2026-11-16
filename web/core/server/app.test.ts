@@ -7,9 +7,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createWebApp } from "./app.ts";
+import { createWebApp as buildWebApp, type WebAppOptions } from "./app.ts";
 
-/** A delegate that answers JSON, standing in for the not-yet-migrated dispatcher. */
+// Raw fixture routes exercise lifecycle/early-refusal without retaining a
+// catch-all dispatcher in the production factory.
+async function createWebApp({ delegate, ...options }: WebAppOptions & {
+  delegate: (request: IncomingMessage, response: ServerResponse) => Promise<void>;
+}) {
+  const app = await buildWebApp(options);
+  app.all("/*", async (request, reply) => {
+    reply.hijack();
+    await delegate(request.raw, reply.raw);
+  });
+  return app;
+}
+
+/** A raw fixture response used to exercise the app's lifecycle. */
 function jsonDelegate(body: unknown) {
   return (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     response.writeHead(200, { "content-type": "application/json; charset=utf-8" });

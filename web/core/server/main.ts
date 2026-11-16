@@ -1,12 +1,10 @@
-// Minimal pi-web server — static client assets, auth wiring and the HTTP
-// host. The plugin registry and session-core API live in routes.ts; the
-// static/directory/auth/SSE serving stays here, per
-// docs/prds/minimal-pi-web.md.
+// pi-web composition root: auth service, build watcher, native route groups,
+// Fastify listener and bounded teardown. Static delivery is registered by the
+// app factory; domain API handlers live in routes.ts.
 
-import { type IncomingMessage, type ServerResponse } from "node:http";
-import { readFile } from "node:fs/promises";
+import { type IncomingMessage } from "node:http";
 import { fileURLToPath } from "node:url";
-import { extname, join, resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import { registerSession } from "./sessions.ts";
 import { seedPluginFixtures } from "./plugin-fixtures.ts";
 import { registerCoreRoutes } from "./routes.ts";
@@ -17,7 +15,7 @@ import { registerPluginRoutes } from "./plugin-routes.ts";
 import { getPluginHost } from "./plugin-host.ts";
 import { runTeardown, teardownNote } from "./shutdown.ts";
 import { announceBuildChanged } from "./sessions.ts";
-import { setServedRoot, servedClientBuild, stampBuildId, watchClientBuild } from "./client-build.ts";
+import { setServedRoot, watchClientBuild } from "./client-build.ts";
 import { webAuthConfigPath } from "../auth/config.ts";
 import { WebAuthService } from "../auth/service.ts";
 
@@ -26,25 +24,6 @@ import { WebAuthService } from "../auth/service.ts";
 // extension checks this flag so it does not bridge a web-resumed session back
 // to the server that owns it.
 process.env.PI_WEB_SERVER_PROCESS = "1";
-
-const MIME_TYPES: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".ico": "image/x-icon",
-  ".json": "application/json; charset=utf-8",
-  ".map": "application/json; charset=utf-8",
-  // Flyfish File Viewer's self-hosted runtime assets (/file-viewer/).
-  ".wasm": "application/wasm",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-  ".ttf": "font/ttf",
-  ".pfb": "application/x-font-type1",
-  ".bcmap": "application/octet-stream",
-};
 
 const DEFAULT_PORT = Number(process.env.PI_WEB_PORT ?? 30142);
 const DEFAULT_HOST = process.env.PI_WEB_HOST ?? "127.0.0.1";
@@ -94,57 +73,6 @@ function defaultAuthHttpOptions(): AuthHttpOptions {
   };
 }
 
-/**
- * Resolve a request path to a file inside `root`.
- * Returns null when the path escapes the root or is unsafe.
- */
-export function resolveStaticPath(root: string, pathname: string): string | null {
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(pathname);
-  } catch {
-    return null;
-  }
-  if (decoded.includes("..") || decoded.includes("\0")) return null;
-  const relative = decoded === "/" ? "index.html" : decoded.replace(/^\/+/, "");
-  const target = resolve(root, relative);
-  if (target !== root && !target.startsWith(root + sep)) return null;
-  return target;
-}
-
-async function serveStatic(res: ServerResponse, root: string, pathname: string): Promise<void> {
-  const target = resolveStaticPath(root, pathname);
-  if (!target) {
-    sendJson(res, 404, { error: "not found" });
-    return;
-  }
-  try {
-    const data = await readFile(target);
-    const type = MIME_TYPES[extname(target).toLowerCase()] ?? "application/octet-stream";
-    // The shell is stamped with the build it belongs to, so the page can name
-    // the bundle it is running; every other asset is served as it is on disk.
-    const buildId = extname(target) === ".html" ? servedClientBuild()?.buildId ?? null : null;
-    const body = buildId !== null ? stampBuildId(data.toString("utf8"), buildId) : data;
-    res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-cache" });
-    res.end(body);
-  } catch {
-    // SPA fallback: client-side routes (/plugins/todo, …) have no file behind
-    // them; every extension-less GET falls back to the app shell.
-    if (!extname(target)) {
-      try {
-        const index = await readFile(join(root, "index.html"), "utf8");
-        const buildId = servedClientBuild()?.buildId ?? null;
-        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
-        res.end(buildId === null ? index : stampBuildId(index, buildId));
-        return;
-      } catch {
-        // Fall through to 404.
-      }
-    }
-    sendJson(res, 404, { error: "not found" });
-  }
-}
-
 /** The four public auth endpoints, which own their own method/error answers. */
 const AUTH_ROUTE_PATHS = new Set([
   "/api/auth/status",
@@ -172,38 +100,6 @@ function authorizeRequest(request: AuthGateRequest, reply: AuthGateReply, url: U
   if (url.pathname === "/api/health") return true;
   if (AUTH_ROUTE_PATHS.has(url.pathname)) return true;
   return auth.authorize(request, reply, url);
-}
-
-/**
- * Dispatch a request no native route claimed. Authentication already ran in
- * `onRequest`; every API path (core, plugin, auth) is a native route now, so an
- * unclaimed `/api` path is a 404 and the rest is a static asset. Removed in
- * Phase 4 when static delivery moves to @fastify/static.
- */
-async function dispatchUnclaimed(
-  req: IncomingMessage,
-  res: ServerResponse,
-  root: string,
-): Promise<void> {
-  const url = parseRequestUrl(req);
-  if (url === null) {
-    sendJson(res, 400, { error: "bad request" });
-    return;
-  }
-  try {
-    if (pathnameIsApi(url.pathname)) {
-      sendJson(res, 404, { error: "not found" });
-      return;
-    }
-    if (req.method === "GET") {
-      await serveStatic(res, root, url.pathname);
-      return;
-    }
-    sendJson(res, 405, { error: "method not allowed" });
-  } catch {
-    if (!res.headersSent) sendJson(res, 500, { error: "internal error" });
-    else res.end();
-  }
 }
 
 function pathnameIsApi(pathname: string): boolean {
@@ -238,7 +134,7 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
       }
       return authorizeRequest(request, reply, url, auth);
     },
-    delegate: (req, res) => dispatchUnclaimed(req, res, root),
+    staticRoot: root,
     // Cut live event streams deterministically as part of close(), before
     // Fastify force-closes whatever is left.
     onClose: () => auth.close(),

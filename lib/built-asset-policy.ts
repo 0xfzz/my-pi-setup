@@ -1,0 +1,30 @@
+// Static roots contain trusted build outputs, never session/project files.
+
+/** Explicitly avoid new validators, range responses, caching and redirects. */
+export const BUILT_ASSET_OPTIONS = {
+  etag: false,
+  lastModified: false,
+  acceptRanges: false,
+  cacheControl: false,
+  redirect: false,
+  dotfiles: "deny" as const,
+  suppressWarning: true, // A missing build root is supported before first build.
+};
+
+/** Lexical policy only; @fastify/static owns URL-to-file resolution. */
+export function assetPathname(url: string): string | null {
+  try {
+    const path = decodeURIComponent(url.split("?")[0] ?? "/");
+    if (path.includes("\0") || path.includes("\\")) return null;
+    if (path.split("/").some(segment => segment.startsWith("."))) return null;
+    return path;
+  } catch {
+    return null;
+  }
+}
+
+export function isStaticMiss(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("statusCode" in error)) return false;
+  return typeof error.statusCode === "number" && error.statusCode >= 400 && error.statusCode < 500;
+}
+

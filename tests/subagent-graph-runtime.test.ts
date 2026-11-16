@@ -619,11 +619,10 @@ test("static assets are allowlisted, traversal-safe, and carry a WASM-capable CS
     assert.equal((await rawRequest(handle.port, "/assets/.hidden.js")).status, 404);
     assert.equal((await rawRequest(handle.port, "/secret.txt")).status, 404);
     assert.equal((await rawRequest(handle.port, "/assets/app.ts")).status, 404);
-    // WHATWG URL parsing itself collapses `%2e%2e` dot segments, so this lands on
-    // the subagent-graph index — proof it did not escape to a parent directory.
+    // Adopt the static library's stricter noncanonical-path rejection instead
+    // of WHATWG-normalizing traversal into an otherwise valid index request.
     const normalizedDots = await rawRequest(handle.port, "/assets/%2e%2e/index.html");
-    assert.equal(normalizedDots.status, 200);
-    assert.match(normalizedDots.body, /subagent-graph/);
+    assert.equal(normalizedDots.status, 404);
     // Encoded slashes are not normalized by the URL parser; the segment check
     // rejects the traversal before any join can normalize it.
     assert.equal((await rawRequest(handle.port, "/assets/%2e%2e%2fsecret.txt")).status, 404);

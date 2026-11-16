@@ -50,9 +50,11 @@ web/
   app.tsx       client composition root: wires the core shell to the
                 first-party plugin panels/pages before the first render
   core/         everything plugins may depend on — the one-way boundary
-    server/     plain Node HTTP (tsx, no framework)
-      main.ts          static client, auth wiring, directories, SSE serving
-      routes.ts        the /api route table: sessions, agent, bridge, plugins
+    server/     Fastify HTTP host (tsx)
+      app.ts           app factory: cookies/headers/errors, static registration
+      main.ts          listener lifecycle, auth and build-watcher wiring
+      client-static.ts @fastify/static + stamped HTML/extensionless SPA policy
+      routes.ts        native /api routes: sessions, agent, bridge, plugins
       sessions.ts      session core: spawn/resume via the SDK, live registry,
                        commands (prompt/abort/web_command), disk scan, history
       wire.ts          event projection for the browser

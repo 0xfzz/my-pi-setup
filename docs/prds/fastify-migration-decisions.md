@@ -109,8 +109,10 @@ regression test (PRD §9 "Compatibility rule"). Default is **retain**.
 | SSE heartbeat | JSON `data: {"type":"heartbeat"}` every 30 s | plugin writes `: heartbeat` comment | **disable plugin heartbeat**, emit our JSON data heartbeat (wire preserved) |
 | SSE Accept negotiation | always streams | `manual` attaches unconditionally; `only` can 406 | use `sse: 'manual'` so every client that worked before still streams |
 | SSE `retry: 2000` | standalone preamble frame | part of the first message | emit `{ retry: 2000, data }` on graph connect; document the combined frame |
-| Static ETag/Last-Modified/redirects | none | `@fastify/static` sends them | configure `etag:false`, `lastModified:false`, `redirect:false` to keep the on-disk contract |
-| Static index/listing | explicit root→index.html, no listing | index on, listing off | index on, listing off; dotfiles denied |
+| Static ETag/Last-Modified/redirects | none | `@fastify/static` sends them | **retained** with `etag:false`, `lastModified:false`, `redirect:false`, `acceptRanges:false`; built assets remain full 200 with `no-cache` (not Files downloads) |
+| Static index/listing | explicit root→index.html, no listing | index on, listing off | primary: explicit root index plus extensionless SPA fallback, `index:false`; graph: root index (root then dist), no directory indexes under asset prefixes; no listing; dotfiles denied |
+| Static MIME | hand-maintained maps | maintained MIME database | **adopted** library MIME values, including JavaScript `application/javascript; charset=utf-8` rather than `text/javascript`; WASM/fonts/opaque viewer assets are regression-tested |
+| Static containment/noncanonical paths | graph realpath containment; primary lexical containment; graph WHATWG URL normalization could turn encoded dot segments into an index request | library rejects noncanonical paths before serving | **adopted stricter rejection**, mapped to 404: encoded traversal is never an alternate index URL; both hosts reject out-of-root symlinks and dotfiles. Graph allowed layouts/types remain policy callbacks |
 | Plugin route precedence | first-registration-wins | `find-my-way` specificity (static > param) | **adopted specificity** in the kernel matcher; regression-tested in `tests/web-plugin-routes.test.ts`; not "identical" |
 | Proxy trust | `PI_WEB_TRUST_PROXY` → custom last-hop key | Fastify `trustProxy` | small tested policy adapter for the throttling key / forwarded host / proto (PRD §6.4) |
 | JWT codec | hand-rolled HS256 in `jwt.ts` | `fast-jwt` signer/verifier, HS256-only, `checkTyp`, `cache:false` | **adopted**; the claim policy stays in `jwt.ts` (issuer/audience/use/kid, required claim types, `exp`/`iat` with leeway). The wire format is byte-identical — interop is pinned both ways in `tests/web-auth.test.ts` |
@@ -259,9 +261,8 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   (port 0, bind-failure rejection, build watcher, bounded teardown, same
   `WebServerHandle`); the graph runtime owns its `listen`/port-fallback/`close`
   with `forceCloseConnections` replacing the old idle/close/guard bookkeeping.
-  Requests that have no native route yet reach the pre-existing dispatcher
-  through one bounded `/*` delegate (`reply.hijack`) — the PRD's permitted
-  transitional wrapper; it shrinks route-group by route-group in Phase 2.
+  Phase 1 introduced a bounded `/*` delegate for incremental route conversion;
+  M11 removed it from both factories after the native/static routes landed.
   Factory/lifecycle coverage: `web/core/server/app.test.ts` plus the existing
   graph runtime/process suites (34 tests).
 - **Phase 2 — in progress**: the kernel's handwritten `matchSegments` matcher is
@@ -281,8 +282,8 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   method (so known-path 405 versus unknown-path 404 survives without a second
   matcher), and a scoped lenient body parser preserving the handwritten body
   contract. The regex `API_ROUTES`/`matchRoute`/`handleApi` table, the
-  `readJsonBody` reader and the plugin-manager HTTP adapters are deleted. The
-  `/*` delegate now carries only the static assets on this host.
+  `readJsonBody` reader and the plugin-manager HTTP adapters are deleted.
+  M11 removed this host's remaining static delegate.
 - **Phase 2b (graph) — API routes native**: the graph host's loopback
   Host/Origin gate moved out of the dispatcher into the app factory's
   `onRequest` hook (`guard` in `web/plugins/subagent-graph/lib/app.ts`, wired
@@ -293,9 +294,9 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   is read; method mismatches keep their 405, unknown `/api/*` keeps its 404 via
   the dispatcher, and the request-activity stamp moved into `#guard` so a
   heartbeating producer still prevents the idle shutdown. The handlers keep the
-  runtime's raw writers and `#readEnvelope`; `/api/events` (SSE) is the only
-  path still on the dispatcher. Remaining Phase 2 work: the `/*` delegate
-  carries `/api/events`, `/bootstrap` and the static assets.
+  runtime's raw writers and `#readEnvelope`. M11 registered `/api/events`
+  and `/bootstrap` natively as well, then deleted `#handle`/`#api` and the
+  factory delegate; the SSE transport itself still needs M10.
 - **Phase 3 — done**: cookies go through `@fastify/cookie` (the gate reads
   `request.cookies`, the routes call `reply.setCookie`/`clearCookie`) and the
   four auth endpoints are native Fastify routes with a scoped 4,096-byte body
@@ -315,4 +316,12 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   real-socket tests for early writes, handled ownership, failures/timeouts and
   disconnect. Late streamed results after budget/disconnect are also released.
   M13 has the app close callback and shutdown regression from `cc10cb1`.
-  M10 (four SSE transports) and M11 (both static roots) remain unfinished.
+  M11 is complete: `@fastify/static` serves both roots; the primary shell's
+  onSend transform stamps build identity and fixes Content-Length, while the
+  scoped not-found policy owns extensionless SPA fallback. Graph prefixes,
+  root/dist index precedence, placeholder/CSP and type/containment rules are
+  retained without manual streaming or MIME tables. Pure shared policy lives
+  in `lib/built-asset-policy.ts` so the standalone graph host never imports
+  the primary runtime. Static behavior is covered by `static.test.ts`, the
+  main/rebuild tests and the real-socket graph runtime suite. Only M10's four
+  SSE transports remain unfinished in the Phase 4 split.

@@ -11,19 +11,19 @@
  * Constructing the app does not listen and installs no signal handlers; the
  * runtime in `server.ts` owns the listener, the port fallback and shutdown.
  *
- * Routes still live in the runtime's dispatcher and reach it through one
- * bounded wildcard delegate (`reply.hijack`). Root content type parsers are
- * no-ops so a delegated request's body stays on the wire for the runtime's own
- * reader — `readBody` enforces `maxSnapshotBytes` as bytes arrive.
+ * The runtime registers native API/bootstrap routes; @fastify/static serves
+ * the allowlisted UI layouts. Root parsers remain no-ops until the producer
+ * body reader is migrated; `readBody` still enforces `maxSnapshotBytes`.
  */
 import Fastify, { type FastifyInstance } from "fastify";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
+import { registerGraphStatic } from "./static.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 export interface GraphAppOptions {
-  /** Handles every request; it owns the response via the raw Node pair. */
-  delegate: (request: IncomingMessage, response: ServerResponse) => Promise<void>;
+  /** Built graph UI root; missing builds use the local placeholder page. */
+  staticRoot: string;
   /**
    * The graph's loopback Host/Origin gate (PRD §6.1). Runs in `onRequest`
    * before any route or the delegate, answers on the raw response itself when
@@ -73,8 +73,8 @@ export async function createGraphApp(options: GraphAppOptions): Promise<FastifyI
     logger: false,
   });
 
-  // No body parser consumes a delegated request: the runtime reads the raw
-  // stream itself and enforces maxSnapshotBytes.
+  // Producer routes still own their raw body reader and maxSnapshotBytes;
+  // the root parser must not consume that stream before the route sees it.
   app.removeAllContentTypeParsers();
   app.addContentTypeParser("*", (_request, _payload, done) => {
     done(null, undefined);
@@ -89,10 +89,6 @@ export async function createGraphApp(options: GraphAppOptions): Promise<FastifyI
     void reply.code(500).header("cache-control", "no-store").send({ error: "internal error" });
   });
 
-  app.setNotFoundHandler((request, reply) => {
-    void reply.code(404).header("cache-control", "no-store").send({ error: "not found" });
-  });
-
   if (options.guard) {
     const guard = options.guard;
     app.addHook("onRequest", async (request, reply) => {
@@ -103,9 +99,6 @@ export async function createGraphApp(options: GraphAppOptions): Promise<FastifyI
     });
   }
 
-  app.all("/*", async (request, reply) => {
-    reply.hijack();
-    await options.delegate(request.raw, reply.raw);
-  });
+  await registerGraphStatic(app, options.staticRoot);
   return app;
 }

@@ -49,12 +49,11 @@
  * slots, so only lapsed records are reclaimed.
  */
 import { randomBytes, timingSafeEqual, createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { chmod, lstat, mkdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer as createNetServer, Socket } from "node:net";
 import type { Server as NetServer } from "node:net";
-import { extname, join, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 
@@ -104,43 +103,6 @@ interface SingletonHandle {
 }
 
 const COOKIE_NAME = "pi_subagent-graph";
-
-/** Content types the server is willing to serve. Anything else is a 404, not a download. */
-const CONTENT_TYPES: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".map": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".webp": "image/webp",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-  ".wasm": "application/wasm",
-  ".txt": "text/plain; charset=utf-8",
-  ".ico": "image/x-icon",
-};
-
-// `wasm-unsafe-eval` (not `unsafe-eval`) is what Graphviz's WASM compile needs;
-// it does not permit evaluating JavaScript strings.
-const HTML_CSP = [
-  "default-src 'self'",
-  "script-src 'self' 'wasm-unsafe-eval'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
-  "font-src 'self' data:",
-  "connect-src 'self'",
-  "worker-src 'self' blob:",
-  "child-src 'self' blob:",
-  "object-src 'none'",
-  "base-uri 'none'",
-  "form-action 'none'",
-  "frame-ancestors 'none'",
-].join("; ");
 
 export interface SubagentGraphServerOptions {
   /** Private per-user directory holding `server.json` and `producer-token`. */
@@ -500,14 +462,6 @@ function sendJson(res: ServerResponse, status: number, body: unknown, extraHeade
   res.end(JSON.stringify(body));
 }
 
-function sendText(res: ServerResponse, status: number, body: string, type = "text/plain; charset=utf-8"): void {
-  securityHeaders(res);
-  res.setHeader("content-type", type);
-  res.setHeader("cache-control", "no-store");
-  res.statusCode = status;
-  res.end(body);
-}
-
 function parseCookies(header: string | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   if (!header) return out;
@@ -683,7 +637,7 @@ class SubagentGraphRuntime {
 
   async #listen(): Promise<void> {
     const app = await createGraphApp({
-      delegate: (req, res) => this.#handle(req, res),
+      staticRoot: this.#options.webRoot,
       guard: (req, res) => this.#guard(req, res),
     });
     this.#app = app;
@@ -758,25 +712,6 @@ class SubagentGraphRuntime {
     // heartbeating producer from idling the server out.
     this.#lastActivityAt = this.#options.now();
     return true;
-  }
-
-  async #handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    try {
-      const host = req.headers.host;
-      // Host, Origin and activity were handled by the app's `onRequest` guard.
-      const url = new URL(req.url ?? "/", `http://${host}`);
-      if (url.pathname === "/bootstrap") {
-        this.#bootstrap(url, res);
-        return;
-      }
-      if (url.pathname.startsWith("/api/")) {
-        await this.#api(req, res, url);
-        return;
-      }
-      await this.#static(req, res, url.pathname);
-    } catch (error) {
-      this.#fail(res, error);
-    }
   }
 
   #fail(res: ServerResponse, error: unknown): void {
@@ -859,6 +794,14 @@ class SubagentGraphRuntime {
    * content type parser deliberately leaves on the wire.
    */
   #registerApiRoutes(app: FastifyInstance): void {
+    app.all("/bootstrap", async (request, reply) => {
+      reply.hijack();
+      try {
+        this.#bootstrap(new URL(request.url, "http://localhost"), reply.raw);
+      } catch (error) {
+        this.#fail(reply.raw, error);
+      }
+    });
     const routes: readonly GraphApiRoute[] = [
       { path: "/api/health", method: "GET", auth: "any", handle: (_req, res) => sendJson(res, 200, this.stats()) },
       {
@@ -869,6 +812,7 @@ class SubagentGraphRuntime {
       },
       { path: "/api/session", method: "GET", auth: "browser", handle: (_req, res, url) => this.#sendSession(res, url) },
       { path: "/api/artifact", method: "GET", auth: "browser", handle: (_req, res, url) => this.#sendArtifact(res, url) },
+      { path: "/api/events", method: "GET", auth: "browser", handle: (req, res) => this.#openEvents(req, res) },
       { path: "/api/producer/publish", method: "POST", auth: "producer", handle: (req, res) => this.#publish(req, res) },
       {
         path: "/api/producer/heartbeat",
@@ -909,23 +853,6 @@ class SubagentGraphRuntime {
         },
       );
     }
-  }
-
-  /** Only the SSE stream still reaches the dispatcher (Phase 4 moves it). */
-  async #api(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
-    if (url.pathname === "/api/events") {
-      this.#requireMethod(req.method ?? "GET", "GET");
-      if (this.#apiAuthorized("browser", req)) {
-        this.#openEvents(req, res);
-        return;
-      }
-      throw new HttpError(401, "unauthorized");
-    }
-    sendJson(res, 404, { error: "not found" });
-  }
-
-  #requireMethod(method: string, expected: "GET" | "POST"): void {
-    if (method !== expected) throw new HttpError(405, `method not allowed; use ${expected}`);
   }
 
   #sessionSummaries(): SubagentGraphSessionSummary[] {
@@ -1244,139 +1171,6 @@ class SubagentGraphRuntime {
       if (oldest === undefined) break;
       this.#tombstones.delete(oldest);
     }
-  }
-
-  // ── Static assets ────────────────────────────────────────────────────────
-
-  async #static(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<void> {
-    const method = req.method ?? "GET";
-    if (method !== "GET" && method !== "HEAD") {
-      throw new HttpError(405, "method not allowed");
-    }
-    const file = await this.#resolveAsset(pathname);
-    if (file === null) {
-      if (pathname === "/" || pathname === "/index.html") {
-        this.#sendFallbackIndex(res, method);
-        return;
-      }
-      sendText(res, 404, "not found");
-      return;
-    }
-    const info = await stat(file).catch(() => null);
-    if (info === null || !info.isFile()) {
-      sendText(res, 404, "not found");
-      return;
-    }
-    const extension = extname(file).toLowerCase();
-    const type = CONTENT_TYPES[extension];
-    if (type === undefined) {
-      sendText(res, 404, "not found");
-      return;
-    }
-    securityHeaders(res);
-    res.setHeader("content-type", type);
-    res.setHeader("cache-control", "no-cache");
-    if (extension === ".html") res.setHeader("content-security-policy", HTML_CSP);
-    res.setHeader("content-length", String(info.size));
-    res.statusCode = 200;
-    if (method === "HEAD") {
-      res.end();
-      return;
-    }
-    await new Promise<void>((resolveStream, rejectStream) => {
-      const stream = createReadStream(file);
-      stream.on("error", error => {
-        stream.destroy();
-        rejectStream(error);
-      });
-      stream.on("end", () => resolveStream());
-      stream.pipe(res);
-    }).catch(error => {
-      this.#log(`asset stream failed: ${String(error)}`);
-      if (!res.headersSent) sendText(res, 500, "internal error");
-      else res.destroy();
-    });
-  }
-
-  /**
-   * Resolve `relative` under `root` and prove with realpath that it did not
-   * escape (a symlink inside dist could otherwise point at any user file).
-   */
-  async #containedFile(root: string, relative: string): Promise<string | null> {
-    const extension = extname(relative).toLowerCase();
-    if (CONTENT_TYPES[extension] === undefined) return null;
-    const target = resolve(root, relative);
-    try {
-      const realRoot = await realpath(root);
-      const realTarget = await realpath(target);
-      if (realTarget !== realRoot && !realTarget.startsWith(realRoot + sep)) return null;
-      return realTarget;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Map a URL path to a file inside the subagent-graph web root, refusing traversal,
-   * dotfiles, unknown extensions, and anything outside the resolved root.
-   */
-  async #resolveAsset(pathname: string): Promise<string | null> {
-    let decoded: string;
-    try {
-      decoded = decodeURIComponent(pathname);
-    } catch {
-      return null;
-    }
-    if (decoded.includes("\u0000") || decoded.includes("\\")) return null;
-    const root = this.#options.webRoot;
-    // The UI bundle may live beside index.html or be built into dist/; support
-    // both layouts without exposing the rest of the tree.
-    if (decoded === "/" || decoded === "/index.html") {
-      return (await this.#containedFile(root, "index.html")) ?? (await this.#containedFile(root, "dist/index.html"));
-    }
-    // Split the URL tail BEFORE any path join: `join()` normalizes `..`, which
-    // would turn `/assets/%2e%2e/index.html` into a valid in-root path instead of
-    // rejecting the traversal.
-    let base: string;
-    let tail: string;
-    if (decoded.startsWith("/assets/")) {
-      base = "dist";
-      tail = decoded.slice("/assets/".length);
-    } else if (decoded.startsWith("/dist/")) {
-      base = "dist";
-      tail = decoded.slice("/dist/".length);
-    } else if (/^\/[A-Za-z0-9][A-Za-z0-9._-]*\.(css|html|svg|ico|js|mjs|map|wasm|woff2|png|webp)$/.test(decoded)) {
-      base = "";
-      tail = decoded.slice(1);
-    } else {
-      return null;
-    }
-    if (tail === "") return null;
-    const segments = tail.split("/");
-    if (segments.some(segment => segment === "" || segment === "." || segment === ".." || segment.startsWith("."))) {
-      return null;
-    }
-    return this.#containedFile(root, base === "" ? tail : `${base}/${tail}`);
-  }
-
-  #sendFallbackIndex(res: ServerResponse, method: string): void {
-    // The runtime is useful before the UI bundle exists (and tests should not
-    // depend on a build step), so `/` always answers with a small local page.
-    const html = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Pi subagent-graph</title>
-<style>body{font-family:system-ui,sans-serif;margin:2rem;color:#ddd;background:#15171c}a{color:#8ab4f8}</style>
-</head><body><h1>Pi subagent-graph</h1>
-<p>The subagent-graph API is running, but no UI bundle was found in <code>web/plugins/subagent-graph/app/</code>.</p>
-<p>Build the UI (or place <code>web/plugins/subagent-graph/app/index.html</code>) and reload.</p>
-<p>API: <a href="/api/sessions">/api/sessions</a></p>
-</body></html>`;
-    securityHeaders(res);
-    res.setHeader("content-type", "text/html; charset=utf-8");
-    res.setHeader("content-security-policy", HTML_CSP);
-    res.setHeader("cache-control", "no-store");
-    res.statusCode = 200;
-    if (method === "HEAD") res.end();
-    else res.end(html);
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────────

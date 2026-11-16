@@ -6,15 +6,13 @@
 // body parsing, cookies, security headers, the error/not-found policy and
 // lifecycle hooks.
 //
-// Routes move onto native Fastify declarations in the following phases. Until a
-// path is converted it falls through to `delegate`, the pre-existing dispatcher,
-// through a single bounded wildcard. The delegate receives the untouched Node
-// request/response pair: this app installs no-op content type parsers at the
-// root so a delegated request's body is never consumed twice.
+// Native route groups own their parser scopes and @fastify/static serves the
+// configured build root. There is no production catch-all dispatcher.
 
 import Fastify, { type FastifyInstance } from "fastify";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
+import { registerClientStatic } from "./client-static.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 /** The general pi-web request body cap (base64 images, downscaled client-side). */
@@ -38,12 +36,8 @@ export interface HttpReplyFacade {
 }
 
 export interface WebAppOptions {
-  /**
-   * Handles a request no native route claimed. It owns the response: the app
-   * hijacks Fastify's reply and hands over the raw Node pair. Removed once
-   * every path has a native route.
-   */
-  delegate: (request: IncomingMessage, response: ServerResponse) => Promise<void>;
+  /** Built client root; omit when constructing an API-only/test app. */
+  staticRoot?: string;
   /**
    * The `/api` access gate. Returns true to let the request continue; false
    * when it has already answered through the raw pair. It runs in `onRequest`,
@@ -99,7 +93,7 @@ function applyRawSecurityHeaders(response: ServerResponse): void {
  * Build the pi-web Fastify app without listening. Callers own `listen`,
  * `close`, and any signal handling.
  */
-export async function createWebApp(options: WebAppOptions): Promise<FastifyInstance> {
+export async function createWebApp(options: WebAppOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({
     // The primary host's GET routes must not acquire HEAD side effects.
     exposeHeadRoutes: false,
@@ -114,8 +108,8 @@ export async function createWebApp(options: WebAppOptions): Promise<FastifyInsta
     logger: false,
   });
 
-  // Native routes register their own real parsers in a child scope; at the root
-  // a delegated request's body must stay on the wire for the old dispatcher.
+  // Native routes own their parser scopes. The root parser consumes nothing
+  // for routes that do not take bodies, including static/method refusals.
   app.removeAllContentTypeParsers();
   app.addContentTypeParser("*", (_request, _payload, done) => {
     done(null, undefined);
@@ -154,15 +148,13 @@ export async function createWebApp(options: WebAppOptions): Promise<FastifyInsta
     void reply.code(500).header("cache-control", "no-store").send({ error: "internal error" });
   });
 
-  app.setNotFoundHandler((request, reply) => {
-    // The API never answers with an HTML shell.
-    void reply.code(404).header("cache-control", "no-store").send({ error: "not found" });
-  });
-
-  app.all("/*", async (request, reply) => {
-    reply.hijack();
-    await options.delegate(request.raw, reply.raw);
-  });
+  if (options.staticRoot !== undefined) {
+    await registerClientStatic(app, options.staticRoot);
+  } else {
+    app.setNotFoundHandler((_request, reply) => {
+      void reply.code(404).header("cache-control", "no-store").send({ error: "not found" });
+    });
+  }
 
   return app;
 }

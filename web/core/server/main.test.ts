@@ -5,7 +5,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { startWebServer, resolveStaticPath } from "./main.ts";
+import { startWebServer } from "./main.ts";
+import { assetPathname } from "../../../lib/built-asset-policy.ts";
 import { registerWebPlugins } from "./plugin-host.ts";
 import { WEB_PLUGINS } from "../../plugins/index.ts";
 import {
@@ -143,14 +144,12 @@ test("non-GET requests are rejected with 405", async () => {
   });
 });
 
-test("resolveStaticPath rejects traversal and accepts real paths", () => {
-  const root = resolve("/tmp/some-dist");
-  assert.equal(resolveStaticPath(root, "/"), `${root}/index.html`);
-  assert.equal(resolveStaticPath(root, "/app.js"), `${root}/app.js`);
-  assert.equal(resolveStaticPath(root, "/..%2f..%2fetc%2fpasswd"), null);
-  assert.equal(resolveStaticPath(root, "/%2e%2e/secret"), null);
-  assert.equal(resolveStaticPath(root, "/\0etc"), null);
-  assert.equal(resolveStaticPath(root, "/a/../../etc/passwd"), null);
+test("static lexical policy rejects traversal before library resolution", () => {
+  assert.equal(assetPathname("/"), "/");
+  assert.equal(assetPathname("/app.js?build=1"), "/app.js");
+  for (const path of ["/..%2f..%2fetc%2fpasswd", "/%2e%2e/secret", "/\0etc", "/a/../../etc/passwd", "/.hidden", "/%5csecret", "/%zz"]) {
+    assert.equal(assetPathname(path), null, path);
+  }
 });
 
 function fakeCore(id: string): SessionCore {

@@ -79,7 +79,7 @@ There are no browser actions for spawning, steering, stopping agents, running sh
 
 Artifact HTML is not executable. Remote embedded resources are restricted, and graph labels/SVG are treated as untrusted. Raw terminal tails, full transcripts, and producer credentials are not part of the subagent graph protocol.
 
-All browser libraries and Graphviz WASM are served locally after the build. No native Graphviz installation or CDN is required.
+All browser libraries and Graphviz WASM are served locally after the build. No native Graphviz installation or CDN is required. `@fastify/static` serves the root index (falling back to `dist/index.html`) and the `/assets/`/`/dist/` aliases, retaining the graph's extension allowlist, realpath containment, GET/HEAD behavior and HTML-only CSP. Missing builds show the local placeholder; dotfiles and noncanonical traversal paths are rejected instead of normalized into an index request.
 
 ## Development
 
