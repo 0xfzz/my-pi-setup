@@ -173,6 +173,7 @@ export class WebUiStore {
   private sequence = 0;
   private scheduled = false;
   private readonly listeners = new Set<(revision: number) => void>();
+  private cachedSnapshot: WebUiSnapshot | null = null;
   private readonly retentionMs: number;
   private readonly maxEvents: number;
 
@@ -212,6 +213,7 @@ export class WebUiStore {
       timestamp: Date.now(),
     }].slice(-DIAGNOSTIC_LIMIT);
     this.state.revision++;
+    this.cachedSnapshot = null;
     this.notify();
     return false;
   }
@@ -297,10 +299,17 @@ export class WebUiStore {
       this.lastSequence.set(this.streamKey(event, part), event.sequence);
     }
     this.state.revision++;
+    this.cachedSnapshot = null;
     const session = this.state.sessions[event.sessionId] ?? freshSession();
     this.applyEvent(session, event);
     session.revision = this.state.revision;
-    this.state.sessions[event.sessionId] = session;
+    if (event.type === "ui.session.lifecycle" && session.closed) {
+      // The journal still answers a late client, but the cloned snapshot browsers
+      // receive no longer grows with every session that has ever connected.
+      delete this.state.sessions[event.sessionId];
+    } else {
+      this.state.sessions[event.sessionId] = session;
+    }
     this.state.metrics.accepted++;
     this.journalize(event);
     this.notify();
@@ -376,8 +385,10 @@ export class WebUiStore {
     this.state.metrics.coalesced++;
   }
 
+  /** One immutable snapshot per revision; every browser frame on a tick shares it. */
   snapshot(): WebUiSnapshot {
-    return deepFreeze(structuredClone(this.state));
+    if (this.cachedSnapshot === null) this.cachedSnapshot = deepFreeze(structuredClone(this.state));
+    return this.cachedSnapshot;
   }
 
   /**
@@ -409,6 +420,7 @@ export class WebUiStore {
       this.state.sessions[sessionId] = session;
     }
     this.state.revision++;
+    this.cachedSnapshot = null;
     this.notify();
   }
 
@@ -445,6 +457,7 @@ export class WebUiStore {
     this.journal = [];
     this.lastSequence.clear();
     this.rates.clear();
+    this.cachedSnapshot = null;
     this.notify();
   }
 

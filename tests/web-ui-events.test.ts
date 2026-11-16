@@ -177,3 +177,30 @@ test("UI store: persistence projection keeps non-dialog views and restores them"
   assert.equal(restored.snapshot().sessions.s1.views["web-core"], undefined);
   assert.deepEqual(restored.snapshot().sessions.s2.views.todo, { type: "list", title: "Tasks", items: ["a"] });
 });
+
+test("the store caches one frozen snapshot per revision, and invalidates it when state changes", () => {
+  const store = new WebUiStore();
+  const first = store.snapshot();
+  assert.equal(store.snapshot(), first, "an unchanged store returns the same immutable snapshot");
+  assert.throws(() => { first.sessions["session-a"] = undefined as never; });
+  store.publish("session-a", "ui.working.changed", { message: "Working" });
+  const second = store.snapshot();
+  assert.notEqual(second, first, "a publish invalidates the cache");
+  assert.equal(store.snapshot(), second, "the new snapshot is cached until the next change");
+  assert.equal(second.revision, 1);
+  assert.equal(second.sessions["session-a"]?.working.message, "Working");
+});
+
+test("a closed session is evicted from the snapshot, and a session that returns is added back fresh", () => {
+  const store = new WebUiStore();
+  store.publish("gone", "ui.working.changed", { message: "Working" });
+  store.publish("live", "ui.working.changed", { message: "Still here" });
+  store.publish("gone", "ui.session.lifecycle", { running: false, closed: true });
+  const snapshot = store.snapshot();
+  assert.equal(snapshot.sessions["gone"], undefined, "a closed session is gone from the snapshot the browsers receive");
+  assert.equal(snapshot.sessions["live"]?.working.message, "Still here");
+  store.publish("gone", "ui.working.changed", { message: "Back" });
+  const returning = store.snapshot().sessions["gone"];
+  assert.equal(returning?.working.message, "Back");
+  assert.equal(returning?.closed, false, "the stale closed flag is not carried over");
+});
