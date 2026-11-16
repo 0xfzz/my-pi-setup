@@ -12,6 +12,9 @@ export function objectSchema(properties: Record<string, unknown>, required: stri
   return { type: "object", properties, required, additionalProperties: true };
 }
 
+/** Node surfaces duplicate credential headers as arrays; accept both shapes. */
+const HEADER_VALUE = { anyOf: [{ type: "string" }, { type: "array", items: { type: "string" } }] };
+
 /** WHATWG parsing, with the established first-value policy for duplicate keys. */
 export function firstQueryValues(query: string): Record<string, string> {
   return Object.fromEntries([...new URLSearchParams(query)].reverse());
@@ -24,5 +27,5 @@ export function routeParamsSchema(path: string): Record<string, unknown> {
 }
 
 export const HTTP_HEADERS_SCHEMA = objectSchema({
-  authorization: { type: "string" }, cookie: { type: "string" }, "content-type": { type: "string" },
+  authorization: HEADER_VALUE, cookie: HEADER_VALUE, "content-type": HEADER_VALUE,
 });

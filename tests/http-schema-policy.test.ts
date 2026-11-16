@@ -29,6 +29,8 @@ test("native query policy preserves first values and treats prototype names as o
   assert.equal(Object.getPrototypeOf(query), Object.prototype);
   assert.deepEqual(routeParamsSchema("/api/plugin-manager/:id/:command").required, ["id", "command"]);
   assert.equal(compileHttpSchema(HTTP_HEADERS_SCHEMA)({ authorization: "Bearer x", extension: "kept" }), true);
+  // Duplicate credential headers surface as arrays and must not fail the schema.
+  assert.equal(compileHttpSchema(HTTP_HEADERS_SCHEMA)({ authorization: ["Bearer x", "Bearer y"], cookie: ["a=1", "b=2"] }), true);
 });
 
 test("command schema owns bounded attachments and reports field-specific errors", () => {
