@@ -4,6 +4,7 @@ import {
   BUBBLY_FRAME_COLORS,
   BUBBLY_INDICATOR_OPTIONS,
   BUBBLY_TEXT_INTERVAL_MS,
+  bubblyMessageCycle,
   bubblyMessageSegments,
   BubblyWordAnimator,
 } from "../lib/bubbly-spinner.ts";
@@ -28,11 +29,18 @@ export default function bubblySpinnerExtension(pi: ExtensionAPI) {
     });
   }
 
+  // The web loops one word's wave on its own timer, so a word is published once,
+  // not once per tick: a tick is about 8 events a second to every browser.
+  let publishedWord: string | undefined;
   function postWorkingMessage(): void {
-    const segments = bubblyMessageSegments(animator.word, animator.currentTick);
+    if (animator.word === publishedWord) return;
+    publishedWord = animator.word;
+    const segments = bubblyMessageSegments(animator.word, 0);
     publishWebUi(pi, "ctx.ui.working", "ui.working.changed", {
       message: segments.map((segment) => segment.text).join(""),
       messageSegments: segments,
+      messageFrames: bubblyMessageCycle(animator.word),
+      messageIntervalMs: BUBBLY_TEXT_INTERVAL_MS,
     });
   }
 

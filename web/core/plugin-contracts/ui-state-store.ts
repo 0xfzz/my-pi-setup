@@ -81,7 +81,7 @@ function freshSession(): WebUiSessionState {
     revision: 0,
     running: false,
     closed: false,
-    working: { message: null, visible: true, frames: null, intervalMs: 80, messageSegments: null, frameColors: null },
+    working: { message: null, visible: true, frames: null, intervalMs: 80, messageSegments: null, frameColors: null, messageFrames: null, messageIntervalMs: null },
     statuses: {},
     widgets: {},
     custom: {},

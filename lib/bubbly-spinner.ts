@@ -321,8 +321,7 @@ export class BubblyWordAnimator {
   }
 
   public nextFrame(): string {
-    const letterCount = this.currentWord.replace(/[^a-zA-Z]/g, "").length;
-    const cycleLen = Math.max(1, letterCount + 4);
+    const cycleLen = bubblyCycleLength(this.currentWord);
 
     this.globalTick++;
     this.tick++;
@@ -451,6 +450,16 @@ export function applyTrailingPurpleGradient(word: string, tick: number): string 
 
 /** The same gradient as colored segments for the web working line. */
 export interface BubblyMessageSegment { text: string; color: string; bold: boolean }
+
+/** Ticks in one bubble-wave cycle of a word: one tick per letter, then four more. */
+export function bubblyCycleLength(word: string): number {
+  return Math.max(1, word.replace(/[^a-zA-Z]/g, "").length + 4);
+}
+
+/** The web working line for every tick of one wave cycle, so the browser can loop it without a message per tick. */
+export function bubblyMessageCycle(word: string): BubblyMessageSegment[][] {
+  return Array.from({ length: bubblyCycleLength(word) }, (_, tick) => bubblyMessageSegments(word, tick));
+}
 
 export function bubblyMessageSegments(word: string, tick: number): BubblyMessageSegment[] {
   return bubblyCharSegments(word, tick).map((segment) => ({

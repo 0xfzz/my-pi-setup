@@ -15,6 +15,19 @@ test("publisher validates declarative data and leaves session/source sequencing 
   assert.equal(emitted.length, 1);
 });
 
+test("a working word cycle is validated: one segment list per tick, bounded, with a sane interval", () => {
+  const target = { events: { emit: () => undefined } };
+  const segment = { text: "B", color: "#bd93f9", bold: true };
+  // Deliberately malformed payloads: the validator, not the type, is what is under test.
+  const accepts = (payload: unknown) => publishWebUi(target, "fixture", "ui.working.changed", payload as never).ok;
+  assert.equal(accepts({ messageFrames: [[segment], [segment, segment]], messageIntervalMs: 120 }), true, "a valid cycle");
+  assert.equal(accepts({ messageFrames: [] }), true, "an empty cycle is a valid no-op");
+  assert.equal(accepts({ messageFrames: Array.from({ length: 65 }, () => [segment]) }), false, "more frames than a word can cycle");
+  assert.equal(accepts({ messageFrames: ["not a list"] }), false, "a frame must be a segment list");
+  assert.equal(accepts({ messageFrames: [[{ text: "B", color: "red" }]] }), false, "a segment colour must be hex");
+  assert.equal(accepts({ messageIntervalMs: 5 }), false, "an interval below the floor is refused");
+});
+
 test("UI store: working message, visibility, frames, interval and resets survive validation", async () => {
   const store = new WebUiStore();
   const revisions: number[] = [];
@@ -22,7 +35,7 @@ test("UI store: working message, visibility, frames, interval and resets survive
   assert.equal(store.publish("session-a", "ui.working.changed", { message: "Ratiocinating…" }), true);
   store.publish("session-a", "ui.working.changed", { visible: false });
   store.publish("session-a", "ui.working.changed", { frames: ["·", "●"], intervalMs: 120 });
-  assert.deepEqual(store.snapshot().sessions["session-a"].working, { message: "Ratiocinating…", visible: false, frames: ["·", "●"], intervalMs: 120, messageSegments: null, frameColors: null });
+  assert.deepEqual(store.snapshot().sessions["session-a"].working, { message: "Ratiocinating…", visible: false, frames: ["·", "●"], intervalMs: 120, messageSegments: null, frameColors: null, messageFrames: null, messageIntervalMs: null });
   assert.deepEqual(revisions, [], "delivery cannot block producer");
   await Promise.resolve();
   assert.deepEqual(revisions, [3], "visual notifications coalesce");

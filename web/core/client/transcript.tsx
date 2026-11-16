@@ -59,7 +59,19 @@ export function WorkingIndicator({
   const message = label ?? working?.message ?? fallback;
   // The plugin's styled segments describe its own words; a replacement label
   // renders as plain text.
-  const segments = label !== undefined ? undefined : working?.messageSegments;
+  // The word's wave arrives once as a cycle; this indicator loops it on its own
+  // timer, so the transcript does not re-render per tick.
+  const cycle = working?.messageFrames ?? null;
+  const cycleLength = cycle?.length ?? 0;
+  const cycleIntervalMs = working?.messageIntervalMs ?? 120;
+  const [cycleTick, setCycleTick] = useState(0);
+  useEffect(() => {
+    if (cycleLength < 2) return;
+    const timer = setInterval(() => setCycleTick((tick) => tick + 1), cycleIntervalMs);
+    return () => clearInterval(timer);
+  }, [cycleLength, cycleIntervalMs]);
+  const cycleSegments = cycle !== null && cycleLength > 0 ? cycle[cycleTick % cycleLength] : undefined;
+  const segments = label !== undefined ? undefined : (cycleSegments ?? working?.messageSegments);
   return (
     <span className="plugin-working-line">
       <span

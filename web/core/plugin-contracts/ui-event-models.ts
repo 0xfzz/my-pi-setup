@@ -18,7 +18,7 @@ export const WEB_PLUGIN_UI_SYNC_EVENT = "web-plugin:ui-sync";
  * registry is the source of truth.
  */
 export const WEB_MODELS_CHANGED_EVENT = "web-plugin:models-changed";
-export interface WorkingModel { message: string | null; visible: boolean; frames: string[] | null; intervalMs: number; messageSegments?: WorkingSegment[] | null; frameColors?: (string | null)[] | null }
+export interface WorkingModel { message: string | null; visible: boolean; frames: string[] | null; intervalMs: number; messageSegments?: WorkingSegment[] | null; frameColors?: (string | null)[] | null; messageFrames?: WorkingSegment[][] | null; messageIntervalMs?: number | null }
 /** A segment of colored working text; `color` is a CSS hex color, or null to inherit. */
 export interface WorkingSegment { text: string; color: string | null; bold?: boolean }
 export interface WebNotification { id: string; message: string; level: "info" | "warning" | "error"; timestamp: number }
@@ -79,7 +79,7 @@ export function validateWebUiEvent(input: unknown): UiValidation {
     if (!record(e) || e.version !== 1 || !key(e.eventId) || !key(e.sessionId) || !key(e.sourceKey) || !["extension", "host", "browser"].includes(String(e.source)) || !Number.isSafeInteger(e.sequence) || Number(e.sequence) < 1 || typeof e.timestamp !== "number" || e.timestamp < 0 || !record(e.payload)) throw new Error("invalid event envelope");
     const p = e.payload;
     const fields: Partial<Record<WebUiType, string[]>> = {
-      "ui.working.changed": ["message", "visible", "frames", "intervalMs", "messageSegments", "frameColors"], "ui.status.changed": ["key", "text"],
+      "ui.working.changed": ["message", "visible", "frames", "intervalMs", "messageSegments", "frameColors", "messageFrames", "messageIntervalMs"], "ui.status.changed": ["key", "text"],
       "ui.widget.changed": ["key", "lines", "placement"], "ui.custom.changed": ["id", "method", "lines"],
       "ui.title.changed": ["text"], "ui.editor.changed": ["text"], "ui.view.changed": ["pluginId", "view"],
       "ui.layout.changed": ["pluginId", "contributionId", "placement"], "ui.session.lifecycle": ["running", "closed", "project"],
@@ -91,9 +91,13 @@ export function validateWebUiEvent(input: unknown): UiValidation {
     let valid = false;
     switch (e.type) {
       case "ui.working.changed": {
-        const segmentsOk = p.messageSegments === undefined || p.messageSegments === null || (Array.isArray(p.messageSegments) && p.messageSegments.length <= 240 && p.messageSegments.every((segment) => record(segment) && text(segment.text, 200) && (segment.color === undefined || segment.color === null || colorHex(segment.color)) && (segment.bold === undefined || typeof segment.bold === "boolean")));
+        const segmentsValid = (segments: unknown[]): boolean => segments.length <= 240 && segments.every((segment) => record(segment) && text(segment.text, 200) && (segment.color === undefined || segment.color === null || colorHex(segment.color)) && (segment.bold === undefined || typeof segment.bold === "boolean"));
+        const segmentsOk = p.messageSegments === undefined || p.messageSegments === null || (Array.isArray(p.messageSegments) && segmentsValid(p.messageSegments));
+        // One word's wave cycle: a list of segment lists, one per tick, looped by the browser.
+        const messageFramesOk = p.messageFrames === undefined || p.messageFrames === null || (Array.isArray(p.messageFrames) && p.messageFrames.length <= 64 && p.messageFrames.every((frame) => Array.isArray(frame) && segmentsValid(frame)));
+        const messageIntervalOk = p.messageIntervalMs === undefined || p.messageIntervalMs === null || (Number.isInteger(p.messageIntervalMs) && Number(p.messageIntervalMs) >= 40 && Number(p.messageIntervalMs) <= 10000);
         const frameColorsOk = p.frameColors === undefined || p.frameColors === null || (Array.isArray(p.frameColors) && p.frameColors.length <= 120 && p.frameColors.every((color) => color === null || colorHex(color)));
-        valid = Object.keys(p).length > 0 && (p.message === undefined || p.message === null || text(p.message)) && (p.visible === undefined || typeof p.visible === "boolean") && (p.frames === undefined || p.frames === null || (Array.isArray(p.frames) && p.frames.length <= 120 && p.frames.every(f => text(f, 128)))) && (p.intervalMs === undefined || (Number.isInteger(p.intervalMs) && Number(p.intervalMs) >= 40 && Number(p.intervalMs) <= 10000)) && segmentsOk && frameColorsOk; break;
+        valid = Object.keys(p).length > 0 && (p.message === undefined || p.message === null || text(p.message)) && (p.visible === undefined || typeof p.visible === "boolean") && (p.frames === undefined || p.frames === null || (Array.isArray(p.frames) && p.frames.length <= 120 && p.frames.every(f => text(f, 128)))) && (p.intervalMs === undefined || (Number.isInteger(p.intervalMs) && Number(p.intervalMs) >= 40 && Number(p.intervalMs) <= 10000)) && segmentsOk && frameColorsOk && messageFramesOk && messageIntervalOk; break;
       }
       case "ui.status.changed": valid = key(p.key) && (p.text === null || text(p.text)); break;
       case "ui.widget.changed": valid = key(p.key) && (p.lines === null || lines(p.lines)) && ["aboveEditor", "belowEditor"].includes(String(p.placement)); break;

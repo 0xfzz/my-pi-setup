@@ -8,9 +8,12 @@ import {
   BUBBLY_FRAME_COLORS,
   BUBBLY_FRAMES,
   BUBBLY_INDICATOR_OPTIONS,
+  BUBBLY_TEXT_INTERVAL_MS,
   BubblyWordAnimator,
   applyBubbleCase,
   applyTrailingPurpleGradient,
+  bubblyCycleLength,
+  bubblyMessageCycle,
   bubblyMessageSegments,
   VerbRotator,
   bigEnglishSpinnerVerbs,
@@ -287,4 +290,65 @@ test("bubblySpinnerExtension registers hooks and manages working indicator/messa
 
   // Test session_shutdown cleans up
   await events.get("session_shutdown")!({}, fakeCtx);
+});
+
+test("the web cycle has one frame per tick of the animator's wave, and each frame is that tick's segments", () => {
+  for (const word of ["Bubbling", "Hi", "a-b c", "Z"]) {
+    const cycle = bubblyMessageCycle(word);
+    assert.equal(cycle.length, bubblyCycleLength(word), word);
+    cycle.forEach((frame, tick) => assert.deepEqual(frame, bubblyMessageSegments(word, tick), `${word} tick ${tick}`));
+  }
+});
+
+test("a word with no letters still gets a one-tick-plus-four cycle, never an empty one", () => {
+  assert.equal(bubblyCycleLength("..."), 4);
+  assert.equal(bubblyCycleLength(""), 4);
+});
+
+test("the animator's wave wraps at the same length the web cycle uses", () => {
+  const animator = new BubblyWordAnimator(new VerbRotator(["Bubbling"]));
+  const word = animator.word;
+  for (let index = 0; index < bubblyCycleLength(word) - 1; index++) animator.nextFrame();
+  assert.equal(animator.currentWavePass, 0, "one tick short of the cycle is still the first pass");
+  animator.nextFrame();
+  assert.equal(animator.currentWavePass, 1, "the full cycle completes exactly one pass");
+});
+
+test("the wave reaches the web once per word, while the TUI still gets every tick", (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+  const messages: string[] = [];
+  const webEvents: string[] = [];
+  const fakeCtx = {
+    ui: {
+      setWorkingIndicator: () => undefined,
+      setWorkingMessage: (message: string) => {
+        messages.push(message);
+      },
+      notify: () => undefined,
+    },
+  };
+  const fakePi: any = {
+    events: {
+      emit: (channel: string, data: any) => {
+        if (channel === WEB_UI_EVENT && data?.type === "ui.working.changed") webEvents.push(JSON.stringify(data.payload));
+      },
+    },
+    on: (event: string, handler: (event: unknown, ctx: unknown) => unknown) => {
+      handlers.set(event, handler);
+      return () => undefined;
+    },
+    registerCommand: () => undefined,
+  };
+  bubblySpinnerExtension(fakePi);
+
+  void handlers.get("agent_start")!({}, fakeCtx);
+  const publishedAtStart = webEvents.length;
+  const tuiBefore = messages.length;
+  // Ten ticks: fewer than the three passes a word lasts, so the word does not change.
+  t.mock.timers.tick(BUBBLY_TEXT_INTERVAL_MS * 10);
+  assert.equal(messages.length - tuiBefore, 10, "the TUI is redrawn on every tick");
+  assert.equal(webEvents.length, publishedAtStart, "the web is not sent a message per tick");
+  void handlers.get("agent_end")!({}, fakeCtx);
+  t.mock.timers.reset();
 });
