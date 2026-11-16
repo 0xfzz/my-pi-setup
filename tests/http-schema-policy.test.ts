@@ -52,6 +52,8 @@ test("pi_api conditional schemas validate write shapes without restricting exten
   for (const body of [
     { api: "unknown" }, { api: "autocomplete.suggestions", params: { line: "x", cursorCol: "1" } },
     { api: "mcp.write", params: { action: "add", name: "test", config: {} } },
+    // `config` must be an object: an array is rejected up front, not downstream.
+    { api: "mcp.write", params: { action: "add", scope: "project", name: "test", config: [] } },
     { api: "mcp.write", params: { action: "patch", name: "test" } },
     { api: "auth.login", params: { providerId: "p", authType: "invalid" } },
   ]) assert.equal(validate(body), false, JSON.stringify(body));

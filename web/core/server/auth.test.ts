@@ -197,6 +197,11 @@ test("login rejects malformed bodies and oversized bodies before doing any work"
     assert.equal((await call(h, jar, "POST", "/api/auth/login", {})).status, 400);
     assert.equal((await call(h, jar, "POST", "/api/auth/login", { password: 12 })).status, 400);
     assert.equal((await call(h, jar, "POST", "/api/auth/login", { password: "x".repeat(10_000) })).status, 400);
+    // The same byte limit covers the other auth routes: refresh answers 400,
+    // while logout treats an unusable body as absent and still clears cookies.
+    assert.equal((await call(h, jar, "POST", "/api/auth/refresh", { refreshToken: "x".repeat(10_000) })).status, 400);
+    assert.equal((await call(h, jar, "POST", "/api/auth/logout", { junk: "x".repeat(10_000) })).status, 200);
+    assert.equal(jar.cookies.size, 0, "oversized logout still clears cookies");
     assert.equal((await call(h, jar, "GET", "/api/auth/login")).status, 405);
   });
 });

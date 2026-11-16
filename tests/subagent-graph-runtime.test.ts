@@ -417,6 +417,17 @@ test("graph library cookies use first duplicate and decoded values without leaki
   });
 });
 
+test("a duplicate query key on a graph route projects the first value, not an array", async () => {
+  await withServer({ idleMs: 0 }, async ({ handle }) => {
+    const cookie = await bootstrapCookie(handle);
+    // The querystring schema types `id` as a string, so a parsed array would be a
+    // 400 schema failure. A 404 for an unknown session proves first-value projection.
+    const duplicate = await getJson(handle, "api/session?id=missing&id=other", cookie);
+    assert.equal(duplicate.status, 404);
+    assert.deepEqual(duplicate.body, { error: "unknown session" });
+  });
+});
+
 test("graph producer parsing preserves status envelopes and rejects auth/method/type before bodies", async () => {
   await withServer({ idleMs: 0, maxSnapshotBytes: 128 }, async ({ handle }) => {
     const cases = [

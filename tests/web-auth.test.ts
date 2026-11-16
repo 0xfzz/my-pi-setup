@@ -74,8 +74,14 @@ test("jwt: signs and verifies, and rejects tampering, wrong use, wrong key and e
   // Expiry, with leeway for clock skew.
   assert.equal(verifyJwt(token, { ...base, now: now + 62_000 }).ok, true, "inside the 5s leeway");
   assert.deepEqual(verifyJwt(token, { ...base, now: now + 66_000 }), { ok: false, reason: "expired" });
+  // The exact 1-second boundary: expired iff exp + leeway <= now (seconds).
+  assert.equal(verifyJwt(token, { ...base, now: now + 64_999 }).ok, true, "one ms before exp+leeway stays valid");
+  assert.deepEqual(verifyJwt(token, { ...base, now: now + 65_000 }), { ok: false, reason: "expired" }, "exactly exp+leeway is expired");
   // Issued in the future beyond the leeway.
   assert.deepEqual(verifyJwt(token, { ...base, now: now - 30_000 }), { ok: false, reason: "not_yet_valid" });
+  // The symmetric not-before boundary: rejected iff iat - leeway > now (seconds).
+  assert.deepEqual(verifyJwt(token, { ...base, now: now - 5_000 }), { ok: true, claims }, "exactly iat-leeway is accepted");
+  assert.deepEqual(verifyJwt(token, { ...base, now: now - 5_001 }), { ok: false, reason: "not_yet_valid" }, "one ms past iat-leeway is rejected");
   // Garbage never throws.
   for (const junk of ["", "a.b", "a.b.c.d", "x".repeat(5000), "....", "e30.e30.e30"]) {
     assert.equal(verifyJwt(junk, base).ok, false);
