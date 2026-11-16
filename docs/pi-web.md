@@ -119,16 +119,21 @@ both frontends. `extensions/web.ts` does the bridging:
 - The extension posts the session's events back (batched at 25 ms —
   message deltas included), plus the TUI-side plugin views and
   working-indicator bus events, so the web renders the TUI's turns, plugin
-  surfaces and working line in realtime.
+  surfaces and working line in realtime — including pi's compaction events
+  (`session_before_compact`, `session_compact`, `session_compact_failed`),
+  in the same wire shape an in-process session produces.
 - **Two command channels, two registries.** `pi.registerCommand` is pi's —
   for genuine TUI commands (pi's built-ins like `/compact` already own
   those names there; shadowing them is exactly the "conflicts with
   built-in" warning). The **web core registry** (`extensions/web.ts`)
   registers the same names for the web and dispatches through its own
   bridge channel `{type:"web_command"}` — the handlers call pi's ctx
-  methods (`ctx.compact`, rename, new-session, reload). In-process hosts
-  re-route through the prompt path, where the mode-gated pi commands
-  dispatch them.
+  methods (`ctx.compact`, rename, new-session, reload). Compaction is the
+  exception: a session the server owns runs it directly on its own core
+  (there is no pi process to ask, and a bus emit reaches no listener), while
+  a bridged session forwards the command to the extension that holds the
+  context; the other commands re-route through the prompt path, where the
+  mode-gated pi commands dispatch them.
 - When the extension (re)posts its command list (`web_commands` events),
   the bridge fans a `commands_changed` event to the browser streams; the
   client refetches `/api/agent/:id/commands`, so a `/reload` in the TUI
@@ -650,7 +655,7 @@ answers them with its own. The composer intercepts the ported names
 | `/copy` | clipboard | browser clipboard (last assistant text) |
 | `/export` | file export | markdown transcript download |
 | `/resume` | session selector | the session sidebar |
-| `/compact`, `/name`, `/new`, `/clone`, `/reload`, `/web` | direct | dispatched as session commands |
+| `/compact`, `/name`, `/new`, `/clone`, `/reload`, `/web` | direct | dispatched as session commands; `/compact` also renders the live status and the transcript marker |
 
 Every pi built-in is ported or dispatched — nothing is terminal-only, so the
 composer's TUI-only notice is currently unreachable (it stays as the guard
@@ -696,6 +701,39 @@ directory that is not a repository, a missing git binary or an unreadable
 path. A null branch leaves the line to the path alone rather than showing an
 error: the line is context, not session state. Both segments ellipsize rather
 than widening the field, and the tooltip carries the full `<path> · <branch>`.
+
+**Compaction** is announced twice over, because pi has two paths for it and
+they are not the same event. Pi's own compactions — a typed `/compact`, the
+context threshold, overflow recovery — emit `compaction_start` and
+`compaction_end`. A compaction an extension contributes as a `turn_end`
+boundary draft (this repo's VCC controller is one) is committed directly by
+pi and announced as an appended `compaction` entry instead, with no start or
+end at all. The wire projects both: the start/end pair keeps its reason,
+cancellation flag, token counts and failure text, and an appended compaction
+entry becomes a `compaction_applied` signal. The summary never crosses the
+wire either way — the transcript marker reads the saved entry, so a custom
+compactor's row renders exactly like pi's own and a reloaded transcript shows
+the same thing as the live one.
+
+The browser shows the state in two places. While a compaction runs, the
+working line takes over with pi's own wording — "Compacting context...",
+"Auto-compacting...", or "Context overflow detected, auto-compacting..." —
+which replaces a plugin's working message rather than deferring to it, since
+the compaction is not the plugin's work. Afterwards, a `Compacting` marker row
+in the transcript says how many tokens the summary replaced and folds the
+summary away until clicked. A *failed* compaction is different: it changed
+nothing, so there is no entry to read. A manual failure comes back on the
+command response and shows in the composer; an automatic one has no HTTP
+response to carry it, so the marker row itself holds the reason — otherwise
+the browser would show a context that never shrank and no explanation why.
+
+One asymmetry is worth knowing. For a session the **TUI owns**, the browser's
+events come from the extension, which forwards the three `session_*` compaction
+events and nothing else — the extension API does not surface the internal
+appended-entry event to extensions. So a boundary-draft compaction in a
+TUI-owned session is not announced live; its marker appears on the next
+transcript read (a reconnect, a session switch, or a reload). A session the
+**server owns** has no such gap: its core sees the entry directly.
 
 **Extensions can open web dialogs too** — the web's extensibility surface:
 publish a `dialog` view (title, markdown body or lines, up to 8 actions,

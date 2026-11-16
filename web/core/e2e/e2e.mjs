@@ -1138,6 +1138,47 @@ async function run() {
     // The composer cleared: the command did not go out as prompt text.
     assert.equal(await composerInput.inputValue(), "");
 
+    step("8e-compaction: a bridged session's compaction is visible in the browser");
+    // 8e-compaction. A TUI-owned session announces compaction through the
+    //     extension, which forwards it in the same wire shape an in-process
+    //     session produces. The live status must replace the working model's
+    //     own wording (this fixture session reports "Ratiocinating..."), and a
+    //     failed automatic compaction must leave a marker row — it has no HTTP
+    //     response to carry the error.
+    const postBridgeEvents = async (events) => {
+      await fetch(`${BASE}/api/bridge/${bridgeId}/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ events }),
+      });
+    };
+    // The compaction forces the working line on even though this session is not
+    // streaming — that is the point: a long summarization pause must read as
+    // work in progress rather than as nothing happening.
+    await postBridgeEvents([{ type: "compaction_start", reason: "threshold" }]);
+    const compactingLine = page.locator(".msg-working", { hasText: "Auto-compacting..." });
+    await compactingLine.waitFor({ state: "visible", timeout: 10_000 });
+    // A failed automatic compaction leaves its reason in the transcript, since
+    // there is no command response to carry it.
+    await postBridgeEvents([{
+      type: "compaction_end",
+      reason: "threshold",
+      aborted: false,
+      willRetry: false,
+      errorMessage: "Auto-compaction failed: the summary would not reduce context",
+    }]);
+    const failureRow = page.locator(".msg-compaction.is-error");
+    await failureRow.waitFor({ state: "visible", timeout: 10_000 });
+    assert.ok(
+      (await failureRow.innerText()).includes("Auto-compaction failed"),
+      "a failed automatic compaction leaves the reason in the transcript",
+    );
+    await compactingLine.waitFor({ state: "hidden", timeout: 10_000 });
+    // The transcript marker itself is read from the session file, which this
+    // bridge has no file for: the entry projection is covered by
+    // core/server/sessions.test.ts and the browser render by the seeded-file
+    // check, so this step stops at the event path.
+
     step("8e-reload: the reload indicator tracks a dispatched /reload");
     await composerInput.fill("/reload");
     await page.locator(".app-command-item", { hasText: "reload" }).first().waitFor({

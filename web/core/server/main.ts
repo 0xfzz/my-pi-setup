@@ -372,6 +372,47 @@ function registerFixtureSession(): void {
     return parts;
   };
 
+  /** The compaction the fixture is running, if any (reported as isCompacting). */
+  let compacting: "manual" | "threshold" | null = null;
+
+  /**
+   * Simulate a compaction the way pi's own compact paths announce one: a start
+   * event, the summarizing pause, then an end event. `instructions` picks the
+   * outcome the e2e needs — "fail" ends with pi's failure text for an
+   * automatic compaction (which has no HTTP response to carry the error, so
+   * the browser's marker row is the only carrier), "abort" ends cancelled, and
+   * anything else succeeds. No entry is written: the fixture has no session
+   * file, and the transcript marker is covered against a seeded file.
+   */
+  const simulateCompaction = async (instructions: string): Promise<void> => {
+    const reason = instructions === "fail" ? "threshold" : "manual";
+    compacting = reason;
+    emit({ type: "compaction_start", reason });
+    await delay(600);
+    compacting = null;
+    if (instructions === "abort") {
+      emit({ type: "compaction_end", reason, aborted: true, willRetry: false });
+      return;
+    }
+    if (instructions === "fail") {
+      emit({
+        type: "compaction_end",
+        reason,
+        aborted: false,
+        willRetry: false,
+        errorMessage: "Auto-compaction failed: fixture says the summary would not reduce context",
+      });
+      return;
+    }
+    emit({
+      type: "compaction_end",
+      reason,
+      aborted: false,
+      willRetry: false,
+      result: { tokensBefore: 128432, estimatedTokensAfter: 12000 },
+    });
+  };
+
   const simulateTurn = async (): Promise<void> => {
     emit({ type: "agent_start" });
     // Assistant message 1: text + a tool call.
@@ -449,6 +490,12 @@ function registerFixtureSession(): void {
       prompt: async () => {
         void simulateTurn();
       },
+      // The core's own compaction path (web/core/server/sessions.ts): the
+      // browser's /compact reaches the fixture exactly as it reaches a real
+      // in-process session.
+      compact: async (instructions?: string) => {
+        await simulateCompaction(instructions ?? "");
+      },
       abort: async () => {},
       isStreaming: () => false,
       getSessionName: () => sessionName,
@@ -457,7 +504,7 @@ function registerFixtureSession(): void {
         sessionFile: "",
         isStreaming: false,
         isBashRunning: false,
-        isCompacting: false,
+        isCompacting: compacting !== null,
         model: undefined,
         contextUsage: null,
         thinkingLevel: "off",
