@@ -890,7 +890,9 @@ test("session start converges a server that was started from older sources", asy
     // The server runs the build recorded at its start; the sources moved on since.
     fingerprints: async () => ({ build: "b2", runtime: "r" }),
     readRecord: async () => ({ build: "b", runtime: "r", builtAt: "t" }),
-    writeRecord: async () => {},
+    writeRecord: async () => {
+      calls.push("record");
+    },
     acquireReloadLock: () => () => {},
     notifyReloading: async () => {},
     pollIntervalMs: 1,
@@ -908,10 +910,10 @@ test("session start converges a server that was started from older sources", asy
   handlers.get("session_start")!({}, ctx);
   // The convergence runs in the background so a slow rebuild never blocks the session.
   const deadline = Date.now() + 2_000;
-  while (!calls.includes("spawn") && Date.now() < deadline) await new Promise((resolve) => setImmediate(resolve));
+  while (!calls.includes("record") && Date.now() < deadline) await new Promise((resolve) => setImmediate(resolve));
   handlers.get("session_shutdown")!({}, ctx);
 
-  assert.deepEqual(calls, ["kill 1111", "removeState", "build", "spawn"], "the stale server is rebuilt and restarted");
+  assert.deepEqual(calls, ["build", "record"], "the stale client is rebuilt in place; the server it runs is current, so it is not restarted");
 });
 
 test("session start leaves a server that already matches the sources alone", async () => {

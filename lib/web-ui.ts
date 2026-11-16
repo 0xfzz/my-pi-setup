@@ -26,6 +26,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   acquireReloadLock,
+  autoReloadAction,
   buildRecordPath,
   evaluateChange,
   readBuildRecord,
@@ -33,6 +34,7 @@ import {
   repoRootFromServerDir,
   sourceFingerprints,
   writeBuildRecord,
+  type AutoReloadAction,
   type BuildRecord,
   type SourceChange,
   type SourceFingerprints,
@@ -99,6 +101,8 @@ export interface WebUiDeps {
   hasBuild: (cwd: string) => boolean;
   buildServer: (cwd: string) => Promise<{ ok: boolean; error?: string }>;
   rebuild: boolean;
+  /** True while a turn runs on this server: a restart that would drop it waits. */
+  turnRunning: () => boolean;
   /** Fingerprints of the build inputs and our runtime inputs right now. */
   fingerprints: () => Promise<SourceFingerprints>;
   /** The record of the last successful build and start, or null when there is none. */
@@ -452,6 +456,7 @@ function resolveDeps(overrides: Partial<WebUiDeps> = {}): WebUiDeps {
     spawnServer: overrides.spawnServer ?? defaultSpawnServer,
     hasBuild: overrides.hasBuild ?? defaultHasBuild,
     buildServer: overrides.buildServer ?? defaultBuildServer,
+    turnRunning: overrides.turnRunning ?? (() => false),
     rebuild: overrides.rebuild ?? false,
     fingerprints: overrides.fingerprints ?? (async () => sourceFingerprints(serverDir, repoRootFromServerDir(serverDir))),
     readRecord: overrides.readRecord ?? (() => readBuildRecord(buildRecordPath(statePath))),
@@ -774,6 +779,7 @@ export async function reloadWebUi(options: Partial<WebUiDeps> = {}): Promise<Web
 
 export type AutoReloadResult =
   | { status: "idle" | "unchanged" | "busy" }
+  | { status: "deferred"; message: string }
   | WebUiCommandResult;
 
 /**
@@ -800,13 +806,49 @@ export async function reloadWebUiIfChanged(options: Partial<WebUiDeps> = {}): Pr
 
   const release = deps.acquireReloadLock();
   if (!release) return { status: "busy" };
+  try {
+    return await applyAutoReload(deps, autoReloadAction(change, healthy, deps.turnRunning()), change, healthy);
+  } finally {
+    release();
+  }
+}
+
+async function applyAutoReload(
+  deps: WebUiDeps,
+  action: AutoReloadAction,
+  change: SourceChange,
+  healthy: boolean,
+): Promise<AutoReloadResult> {
+  if (action === "defer") {
+    return { status: "deferred", message: "pi-web server code changed; the restart waits until the running turn settles." };
+  }
+  if (action === "rebuild-client") return rebuildClientInPlace(deps);
   deps.onProgress(change.build ? "pi-web sources changed: rebuilding and reloading…" : "pi-web plugin code changed: reloading…");
   if (healthy) {
     await deps.notifyReloading("There are code changes — reloading…").catch(() => undefined);
   }
-  try {
-    return await reloadWebUi(deps);
-  } finally {
-    release();
+  return reloadWebUi(deps);
+}
+
+/**
+ * Rebuild the client into the directory the running server already serves. The
+ * server reads each request's assets from disk and announces the new build id,
+ * so no process is stopped. A failed build leaves the previous build on disk and
+ * the record stale, so the next save tries again.
+ */
+async function rebuildClientInPlace(deps: WebUiDeps): Promise<WebUiCommandResult> {
+  const before = await deps.fingerprints();
+  deps.onProgress("pi-web client sources changed: rebuilding in place; the server keeps running…");
+  const built = await deps.buildServer(deps.serverDir);
+  if (!built.ok) {
+    return {
+      status: "error",
+      message: `pi-web client rebuild failed: ${built.error ?? "unknown error"}. The server keeps serving the previous build.`,
+    };
   }
+  await deps.writeRecord(before);
+  return {
+    status: "info",
+    message: "pi-web client rebuilt. Open pages reload on their own; the server and its sessions kept running.",
+  };
 }

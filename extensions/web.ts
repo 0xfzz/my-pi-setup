@@ -298,6 +298,8 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
 
   const depsFor = (ctx: ExtensionContext): Partial<WebUiDeps> => ({
     sessionId: sessionIdOf(ctx),
+    // A restart drops this session's bridge and any prompt in flight: it waits for the turn.
+    turnRunning: () => !(ctx.isIdle?.() ?? true),
     onProgress: (message: string) => {
       if (ctx.hasUI) ctx.ui.setStatus(WEB_PROGRESS_STATUS_KEY, message);
     },
@@ -331,6 +333,8 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
    * detached, to whatever server URL was current by then.
    */
   let bridgeGeneration = 0;
+  /** A server-code change arrived during a turn; its restart runs when the turn settles. */
+  let webRestartPending = false;
 
   const stopBridge = (): void => {
     bridgeGeneration++;
@@ -846,6 +850,10 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   pi.on("ui_prompt_start", forwardToBridge);
   pi.on("ui_prompt_end", forwardToBridge);
   pi.on("agent_settled", (event, ctx) => {
+    if (webRestartPending) {
+      webRestartPending = false;
+      void autoReload(ctx);
+    }
     forwardToBridge(event);
     if (bridgeSessionId !== null) {
       void postBridgeState(bridgeSessionId, {
@@ -1616,7 +1624,8 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     const result = await withProgress(ctx, () => reloadWebUiIfChanged(depsFor(ctx)));
     // Only a reload that actually ran has a message; idle, unchanged and busy stay quiet.
     if (!("message" in result)) return;
-    logWebUiTelemetry("auto-reload", result, sessionIdOf(ctx));
+    if (result.status === "deferred") webRestartPending = true;
+    else logWebUiTelemetry("auto-reload", result, sessionIdOf(ctx));
     const level = result.status === "error" ? "error" : "info";
     // The session may have moved on; a notice that cannot be shown is not worth failing over.
     try {

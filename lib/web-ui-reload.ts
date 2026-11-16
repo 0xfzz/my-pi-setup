@@ -112,6 +112,25 @@ export function evaluateChange(current: SourceFingerprints, record: Pick<BuildRe
   return { build: record.build !== current.build, runtime: record.runtime !== current.runtime };
 }
 
+/**
+ * What an automatic reload does with a source change.
+ *
+ * - `rebuild-client`: a client-only change is rebuilt in place. The running server
+ *   reads the build from disk and announces the new build id, so open pages reload
+ *   themselves; the server and every session bridged to it keep running.
+ * - `restart`: a server-side change (or a server that is down) needs a new process.
+ *   Restarting drops the bridge and any prompt in flight, so it runs only when no
+ *   turn is running.
+ * - `defer`: a restart is needed but a turn is running; it waits for the turn to settle.
+ */
+export type AutoReloadAction = "rebuild-client" | "restart" | "defer";
+
+export function autoReloadAction(change: SourceChange, healthy: boolean, turnRunning: boolean): AutoReloadAction {
+  if (!healthy) return "restart";
+  if (!change.runtime) return "rebuild-client";
+  return turnRunning ? "defer" : "restart";
+}
+
 /** Where the build record lives: next to the state file, so a test's temp state keeps its record too. */
 export function buildRecordPath(statePath: string): string {
   return join(dirname(statePath), "web-ui-build.json");

@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import {
   acquireReloadLock,
+  autoReloadAction,
   buildRecordPath,
   evaluateChange,
   fingerprintInputs,
@@ -325,7 +326,8 @@ test("the automatic reload stays idle when no state file exists and the server i
 test("the automatic reload tells connected browsers there are code changes before stopping the server", async () => {
   const dir = await tree();
   try {
-    const fake = fakeServer({ build: "stale", statePath: join(dir, "state.json") });
+    // A server-code change is the only kind that stops the server now; a client-only change rebuilds in place.
+    const fake = fakeServer({ runtime: "stale", statePath: join(dir, "state.json") });
     const notices: string[] = [];
     fake.deps.notifyReloading = async (message) => {
       notices.push(message);
@@ -494,4 +496,77 @@ test("elapsed time reads as seconds, then minutes and seconds", () => {
   assert.equal(formatElapsed(42_900), "42s");
   assert.equal(formatElapsed(125_000), "2m 05s");
   assert.equal(formatElapsed(-5), "0s");
+});
+
+test("autoReloadAction: a client-only change rebuilds in place, whatever is running", () => {
+  assert.equal(autoReloadAction({ build: true, runtime: false }, true, false), "rebuild-client");
+  assert.equal(autoReloadAction({ build: true, runtime: false }, true, true), "rebuild-client", "a running turn does not block a client rebuild");
+});
+
+test("autoReloadAction: a server-code change restarts once no turn is running, and waits while one is", () => {
+  assert.equal(autoReloadAction({ build: false, runtime: true }, true, false), "restart");
+  assert.equal(autoReloadAction({ build: false, runtime: true }, true, true), "defer");
+  assert.equal(autoReloadAction({ build: true, runtime: true }, true, true), "defer", "a mixed change waits too");
+});
+
+test("autoReloadAction: a server that is down is restarted, never deferred or rebuilt in place", () => {
+  assert.equal(autoReloadAction({ build: true, runtime: false }, false, true), "restart");
+  assert.equal(autoReloadAction({ build: false, runtime: true }, false, true), "restart");
+});
+
+test("a client-only change rebuilds in place: the server is never stopped and the build record is refreshed", async () => {
+  const dir = await tree();
+  try {
+    const fake = fakeServer({ build: "stale", statePath: join(dir, "state.json") });
+    const result = await reloadWebUiIfChanged(fake.deps);
+    assert.equal(result.status, "info");
+    assert.match(result.message, /server and its sessions kept running/);
+    assert.deepEqual(fake.calls, ["build", "record"], "no kill, no spawn: the running server serves the new build from disk");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a failed client rebuild keeps the running server and leaves the record stale, so the next save retries", async () => {
+  const dir = await tree();
+  try {
+    const fake = fakeServer({ build: "stale", statePath: join(dir, "state.json") });
+    fake.deps.buildServer = async () => {
+      fake.calls.push("build");
+      return { ok: false, error: "syntax error in shell.tsx" };
+    };
+    const result = await reloadWebUiIfChanged(fake.deps);
+    assert.equal(result.status, "error");
+    assert.match(result.message, /keeps serving the previous build/);
+    assert.deepEqual(fake.calls, ["build"], "the record is not written, and nothing was stopped");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a server-code change waits while a turn runs: no kill, and no record, so the restart is still pending", async () => {
+  const dir = await tree();
+  try {
+    const fake = fakeServer({ runtime: "stale", statePath: join(dir, "state.json") });
+    fake.deps.turnRunning = () => true;
+    const result = await reloadWebUiIfChanged(fake.deps);
+    assert.equal(result.status, "deferred");
+    assert.match(result.message, /waits until the running turn settles/);
+    assert.deepEqual(fake.calls, [], "the server, its bridge and any prompt in flight are untouched");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a deferred server-code change restarts once the turn has settled", async () => {
+  const dir = await tree();
+  try {
+    const fake = fakeServer({ runtime: "stale", statePath: join(dir, "state.json") });
+    fake.deps.turnRunning = () => false;
+    const result = await reloadWebUiIfChanged(fake.deps);
+    assert.equal(result.status, "started");
+    assert.deepEqual(fake.calls, ["kill 1111", "removeState", "spawn", "record"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
