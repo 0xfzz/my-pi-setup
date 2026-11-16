@@ -113,6 +113,8 @@ regression test (PRD §9 "Compatibility rule"). Default is **retain**.
 | Static index/listing | explicit root→index.html, no listing | index on, listing off | index on, listing off; dotfiles denied |
 | Plugin route precedence | first-registration-wins | `find-my-way` specificity (static > param) | **adopted specificity** in the kernel matcher; regression-tested in `tests/web-plugin-routes.test.ts`; not "identical" |
 | Proxy trust | `PI_WEB_TRUST_PROXY` → custom last-hop key | Fastify `trustProxy` | small tested policy adapter for the throttling key / forwarded host / proto (PRD §6.4) |
+| JWT codec | hand-rolled HS256 in `jwt.ts` | `fast-jwt` signer/verifier, HS256-only, `checkTyp`, `cache:false` | **adopted**; the claim policy stays in `jwt.ts` (issuer/audience/use/kid, required claim types, `exp`/`iat` with leeway). The wire format is byte-identical — interop is pinned both ways in `tests/web-auth.test.ts` |
+| JWT clock/expiry | `now` + `leewaySeconds` passed per call; expired iff `exp + leeway ≤ now` | the library binds `clockTimestamp` at construction | **decision**: one verifier per call carries the injected clock, with `ignoreExpiration`/`ignoreNotBefore` so the injected clock and the exact 1-second expiry boundary are unchanged, and `cache:false` so a stale clock decision cannot leak |
 
 ## 5. SSE stability review — `@fastify/sse` 0.6.1
 
@@ -267,8 +269,9 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
 - **Phase 3 — in progress**: cookies now go through `@fastify/cookie` (the gate
   reads `request.cookies`, the routes call `reply.setCookie`/`clearCookie`) and
   the four auth endpoints are native Fastify routes with a scoped 4,096-byte
-  body limit. The JWT codec (`web/core/auth/jwt.ts`) is still the hand-rolled
-  HS256 implementation: the `fast-jwt` seam and its old/new-token interop tests
-  remain. The `PI_WEB_TRUST_PROXY` / Secure-detection policy adapter is retained
+  body limit. The JWT codec (`web/core/auth/jwt.ts`) is now the `fast-jwt`
+  seam (HS256-only, `checkTyp`, cache off, injected clock), and the
+  old/new wire-format interop is pinned in `tests/web-auth.test.ts`. The
+  `PI_WEB_TRUST_PROXY` / Secure-detection policy adapter is retained
   in `auth.ts` (raw-header logic, tested) pending the Fastify `trustProxy`
   mapping; M15's throttle verdict is recorded in §7.

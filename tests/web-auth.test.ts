@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -85,6 +85,40 @@ test("jwt: signs and verifies, and rejects tampering, wrong use, wrong key and e
   const sig = createHmac("sha256", access).update(`${badHeader}.${p}`).digest("base64url");
   assert.equal(verifyJwt(`${badHeader}.${p}.${sig}`, base).ok, false);
 });
+
+test("jwt: the fast-jwt codec is wire-compatible with the hand-rolled HS256 tokens", () => {
+  const secret = Buffer.alloc(32, 11);
+  const access = deriveKey(secret, "access");
+  const now = 1_800_000_000_000;
+  const claims: JwtClaims = {
+    iss: "pi-web", aud: "pi-web", sub: "owner", use: "access",
+    iat: now / 1000, exp: now / 1000 + 60, jti: "j", sid: "s",
+  };
+  const base = { key: access, kid: "k1", use: "access" as const, now, leewaySeconds: 5 };
+
+  // A token minted by the previous hand-rolled implementation still verifies...
+  assert.deepEqual(verifyJwt(legacySign(claims, access, "k1"), base), { ok: true, claims });
+
+  // ...and a token minted now is still readable by the old hand-rolled verifier.
+  const [header, payload, signature] = signJwt(claims, access, "k1").split(".") as [string, string, string];
+  assert.deepEqual(JSON.parse(Buffer.from(header, "base64url").toString()), { alg: "HS256", typ: "JWT", kid: "k1" });
+  assert.deepEqual(JSON.parse(Buffer.from(payload, "base64url").toString()), claims);
+  assert.equal(legacyVerify(`${header}.${payload}.${signature}`, access), true);
+});
+
+/** The pre-migration signer, kept only to pin the wire format across the swap. */
+function legacySign(claims: JwtClaims, key: Buffer, kid: string): string {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT", kid })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
+  return `${header}.${payload}.${createHmac("sha256", key).update(`${header}.${payload}`).digest("base64url")}`;
+}
+
+/** The pre-migration verifier, kept only to pin the wire format across the swap. */
+function legacyVerify(token: string, key: Buffer): boolean {
+  const [header, payload, signature] = token.split(".") as [string, string, string];
+  const expected = createHmac("sha256", key).update(`${header}.${payload}`).digest();
+  return timingSafeEqual(Buffer.from(signature, "base64url"), expected);
+}
 
 test("password: hashes with a salt, verifies, and rejects malformed records", async () => {
   const a = await hashPassword(PASSWORD);
