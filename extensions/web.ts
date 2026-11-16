@@ -58,6 +58,7 @@ import { repoRootFromServerDir, sourceWatchRoots, watchSources, type SourceWatch
 import { WebAuthConfigCache, loadWebAuthConfig, removeWebPassword, webAuthConfigPath, writeWebPassword } from "../web/core/auth/config.ts";
 import { MIN_PASSWORD_LENGTH, passwordProblem } from "../web/core/auth/password.ts";
 import { providerKeyInput } from "../lib/provider/provider-key-input.ts";
+import { slimBridgeEvent } from "../lib/bridge-event-slim.ts";
 
 export interface WebExtensionOptions {
   deps?: Partial<WebUiDeps>;
@@ -821,8 +822,9 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   };
 
   // Forward the session stream to the web while the bridge is attached.
+  // Deltas go across the bridge without the cumulative message (see lib/bridge-event-slim.ts).
   const forwardToBridge = (event: unknown): void => {
-    bridgePoster?.post(event);
+    bridgePoster?.post(slimBridgeEvent(event));
   };
   pi.on("agent_start", (event, ctx) => {
     forwardToBridge(event);
