@@ -141,23 +141,6 @@ export function AppShell() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // Plugin pages: /plugins/:id renders the descriptor's page surface with
-  // its live view for the selected session and its actions.
-  const pluginId = parsePluginRoute(route);
-  if (pluginId !== null) {
-    const plugin = session.plugins.find((p) => p.id === pluginId);
-    if (plugin !== undefined) {
-      return (
-        <PluginPage
-          plugin={plugin}
-          view={session.pluginViews[plugin.id] ?? null}
-          sessionId={session.selectedId}
-          plugins={session.plugins}
-        />
-      );
-    }
-  }
-
   const headerStatus = session.connection === "connected"
     ? (session.sessionState?.model
       ? `${session.sessionState.model.provider}/${session.sessionState.model.id}`
@@ -719,6 +702,25 @@ export function AppShell() {
       sessionId={session.selectedId}
     />
   );
+
+  // Plugin pages: /plugins/:id renders the descriptor's page surface with its
+  // live view for the selected session and its actions. This sits below every
+  // hook on purpose: the plugin list arrives from `/api/plugins` one render
+  // after the first, so an early return above the later hooks rendered fewer
+  // hooks than the previous pass and blanked the page (React's "rendered fewer
+  // hooks than expected").
+  const pluginId = parsePluginRoute(route);
+  const pagePlugin = pluginId === null ? undefined : session.plugins.find((p) => p.id === pluginId);
+  if (pagePlugin !== undefined) {
+    return (
+      <PluginPage
+        plugin={pagePlugin}
+        view={session.pluginViews[pagePlugin.id] ?? null}
+        sessionId={session.selectedId}
+        plugins={session.plugins}
+      />
+    );
+  }
 
   return (
     <div className="app-shell">
