@@ -19,7 +19,7 @@ import {
   writeBuildRecord,
   type ReloadSafety,
 } from "../lib/web-ui-reload.ts";
-import { formatElapsed, reloadWebUi, reloadWebUiIfChanged, startWebUi, type WebUiDeps, type WebUiState } from "../lib/web-ui.ts";
+import { formatElapsed, reloadWebUi, reloadWebUiIfChanged, startWebUi, stopWebUi, type WebUiDeps, type WebUiState } from "../lib/web-ui.ts";
 
 async function tree(): Promise<string> {
   return mkdtemp(join(tmpdir(), "web-ui-reload-"));
@@ -186,10 +186,10 @@ test("the watcher fires once after a quiet period, and ignores node_modules chur
 });
 
 /** A fake managed server: health follows whether the process was started and not killed. */
-function fakeServer(options: { build?: "current" | "stale"; runtime?: "current" | "stale"; statePath: string; lock?: boolean; up?: boolean }) {
+function fakeServer(options: { build?: "current" | "stale"; runtime?: "current" | "stale"; statePath: string; lock?: boolean; up?: boolean; watcher?: boolean }) {
   const calls: string[] = [];
   let up = options.up ?? true;
-  let state: WebUiState | null = { ...FAKE_START_STATE };
+  let state: WebUiState | null = { ...FAKE_START_STATE, ...(options.watcher ? { watcherPid: 2223 } : {}) };
   const record = { build: "b", runtime: "r", builtAt: "t" };
   const current = { build: options.build === "stale" ? "b2" : "b", runtime: options.runtime === "stale" ? "r2" : "r" };
   const deps: Partial<WebUiDeps> = {
@@ -228,6 +228,12 @@ function fakeServer(options: { build?: "current" | "stale"; runtime?: "current" 
       up = true;
       return { pid: 2222, unref: () => {} };
     },
+    ...(options.watcher
+      ? { spawnWatcher: () => {
+          calls.push("spawnWatcher");
+          return { pid: 3333, unref: () => {} };
+        } }
+      : {}),
     buildServer: async () => {
       calls.push("build");
       return { ok: true };
@@ -625,6 +631,65 @@ test("a deferred restart runs once the last web session closes", async () => {
     const second = await reloadWebUiIfChanged(fake.deps);
     assert.equal(second.status, "started");
     assert.deepEqual(fake.calls, ["kill 1111", "removeState", "spawn", "record"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("/web start records the detached watcher so it can be stopped with the server", async () => {
+  const dir = await tree();
+  try {
+    const statePath = join(dir, "state.json");
+    let healthCalls = 0;
+    const spawned: string[] = [];
+    const result = await startWebUi({
+      statePath,
+      checkServerDir: () => true,
+      hasBuild: () => true,
+      fingerprints: async () => ({ build: "b", runtime: "r" }),
+      readRecord: async () => ({ build: "b", runtime: "r", builtAt: "t" }),
+      readState: async () => null,
+      fetchHealth: async () => ++healthCalls > 1,
+      spawnServer: () => {
+        spawned.push("server");
+        return { pid: 4444, unref: () => {} };
+      },
+      spawnWatcher: () => {
+        spawned.push("watcher");
+        return { pid: 5555, unref: () => {} };
+      },
+      pollIntervalMs: 1,
+      startupTimeoutMs: 1000,
+      sleep: async () => {},
+    });
+    assert.equal(result.status, "started");
+    assert.deepEqual(spawned, ["server", "watcher"]);
+    const saved = await import("../lib/web-ui.ts").then((m) => m.defaultReadState(statePath));
+    assert.deepEqual(saved && typeof saved === "object" ? saved.watcherPid : undefined, 5555);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("/web stop stops the detached watcher before the server", async () => {
+  const dir = await tree();
+  try {
+    const fake = fakeServer({ watcher: true, statePath: join(dir, "state.json") });
+    const result = await stopWebUi(fake.deps);
+    assert.equal(result.status, "stopped");
+    assert.deepEqual(fake.calls, ["kill 2223", "kill 1111", "removeState"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("/web reload replaces the detached watcher with the server", async () => {
+  const dir = await tree();
+  try {
+    const fake = fakeServer({ runtime: "stale", watcher: true, statePath: join(dir, "state.json") });
+    const result = await reloadWebUiIfChanged(fake.deps);
+    assert.equal(result.status, "started");
+    assert.deepEqual(fake.calls, ["kill 2223", "kill 1111", "removeState", "spawn", "spawnWatcher", "record"]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -22,7 +22,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   acquireReloadLock,
@@ -60,6 +60,8 @@ export interface WebUiState {
   url: string;
   startedBy: string;
   startedAt: string;
+  /** Detached source watcher, when the command layer installed one. */
+  watcherPid?: number;
 }
 
 export type WebUiStateStatus = WebUiState | null | "corrupt";
@@ -104,6 +106,8 @@ export interface WebUiDeps {
   fetchReloadState: () => Promise<ServerReloadState | null>;
   checkServerDir: (dir: string) => boolean;
   spawnServer: (cwd: string) => { pid?: number; unref?: () => void };
+  /** Optional detached watcher; provided by the command layer so tests spawn nothing. */
+  spawnWatcher?: (cwd: string, statePath: string) => { pid?: number; unref?: () => void };
   hasBuild: (cwd: string) => boolean;
   buildServer: (cwd: string) => Promise<{ ok: boolean; error?: string }>;
   rebuild: boolean;
@@ -389,6 +393,27 @@ export function defaultSpawnServer(cwd: string): { pid?: number; unref?: () => v
   return { pid: child.pid, unref: () => child.unref() };
 }
 
+/**
+ * Spawn the detached source watcher. It outlives every pi session, so a source
+ * edit is seen even when no terminal session is open to own a watcher.
+ */
+export function defaultSpawnWatcher(cwd: string, statePath: string): { pid?: number; unref?: () => void } {
+  const repoRoot = resolve(cwd, "..");
+  const child = spawn(process.execPath, [
+    "--experimental-strip-types",
+    join(repoRoot, "scripts", "web-reload-watcher.mjs"),
+    cwd,
+    statePath,
+  ], {
+    cwd: repoRoot,
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, PI_WEB_PORT: String(DEFAULT_WEB_UI_PORT) },
+  });
+  child.unref();
+  return { pid: child.pid, unref: () => child.unref() };
+}
+
 /** Read and parse web-ui state from disk. */
 export async function defaultReadState(statePath: string): Promise<WebUiStateStatus> {
   try {
@@ -407,7 +432,11 @@ export async function defaultReadState(statePath: string): Promise<WebUiStateSta
       // Older builds wrote the health endpoint into `url`; the field means the
       // web's origin, so a state file written by them still reports the right
       // address instead of `…/api/health`.
-      return { ...state, url: webRootUrl(state.url) };
+      return {
+        ...state,
+        url: webRootUrl(state.url),
+        ...(typeof parsed.watcherPid === "number" && parsed.watcherPid > 0 ? { watcherPid: parsed.watcherPid } : {}),
+      };
     }
     return "corrupt";
   } catch (error: any) {
@@ -473,6 +502,7 @@ function resolveDeps(overrides: Partial<WebUiDeps> = {}): WebUiDeps {
     fetchReloadState: overrides.fetchReloadState ?? defaultFetchReloadState,
     checkServerDir: overrides.checkServerDir ?? existsSync,
     spawnServer: overrides.spawnServer ?? defaultSpawnServer,
+    ...(overrides.spawnWatcher !== undefined ? { spawnWatcher: overrides.spawnWatcher } : {}),
     hasBuild: overrides.hasBuild ?? defaultHasBuild,
     buildServer: overrides.buildServer ?? defaultBuildServer,
     turnRunning: overrides.turnRunning ?? (() => false),
@@ -621,12 +651,21 @@ export async function startWebUi(options: Partial<WebUiDeps> = {}): Promise<WebU
   }
 
   const rootUrl = webRootUrl(deps.healthUrl);
+  let watcherPid: number | undefined;
+  if (deps.spawnWatcher !== undefined) {
+    try {
+      watcherPid = deps.spawnWatcher(deps.serverDir, deps.statePath).pid;
+    } catch {
+      // A watcher that cannot start costs auto-reload, not the server itself.
+    }
+  }
   const newState: WebUiState = {
     pid,
     port: DEFAULT_WEB_UI_PORT,
     url: rootUrl,
     startedBy: deps.sessionId,
     startedAt: deps.isoTimestamp(),
+    ...(watcherPid !== undefined ? { watcherPid } : {}),
   };
 
   try {
@@ -662,6 +701,7 @@ export async function stopWebUi(options: Partial<WebUiDeps> = {}): Promise<WebUi
   const decision = decideStop(state, healthy, deps.isPidAlive);
 
   if (decision.action === "kill") {
+    if (state !== "corrupt" && state?.watcherPid !== undefined) deps.killProcess(state.watcherPid);
     deps.killProcess(decision.pid);
     await deps.removeState(deps.statePath);
     return {
@@ -773,6 +813,7 @@ export async function reloadWebUi(options: Partial<WebUiDeps> = {}): Promise<Web
     if (state !== null) await deps.removeState(deps.statePath);
   } else if (decision.action === "kill") {
     deps.onProgress(`Stopping pi-web (PID ${decision.pid})…`);
+    if (state !== null && state !== "corrupt" && state.watcherPid !== undefined) deps.killProcess(state.watcherPid);
     deps.killProcess(decision.pid);
     await deps.removeState(deps.statePath);
     if (!(await waitUntilDown(deps, decision.pid))) {

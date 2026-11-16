@@ -53,8 +53,8 @@ import {
   announcedCommandList,
   type WebCommandDescriptor,
 } from "../web/core/plugin-contracts/web-commands.ts";
-import { defaultIsPidAlive, defaultReadState, defaultServerDir, defaultWebUiStatePath, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiCommandResult, type WebUiDeps } from "../lib/web-ui.ts";
-import { parseReloadState, repoRootFromServerDir, sourceWatchRoots, watchSources, type SourceWatcher } from "../lib/web-ui-reload.ts";
+import { defaultIsPidAlive, defaultReadState, defaultSpawnWatcher, defaultWebUiStatePath, reloadWebUi, reloadWebUiIfChanged, startWebUi, statusWebUi, stopWebUi, type WebUiCommandResult, type WebUiDeps } from "../lib/web-ui.ts";
+import { parseReloadState } from "../lib/web-ui-reload.ts";
 import { WebAuthConfigCache, loadWebAuthConfig, removeWebPassword, webAuthConfigPath, writeWebPassword } from "../web/core/auth/config.ts";
 import { MIN_PASSWORD_LENGTH, passwordProblem } from "../web/core/auth/password.ts";
 import { providerKeyInput } from "../lib/provider/provider-key-input.ts";
@@ -64,15 +64,12 @@ export interface WebExtensionOptions {
   deps?: Partial<WebUiDeps>;
   /** Reload on source changes while a session runs. Defaults to on; PI_WEB_AUTO_RELOAD=0 turns it off. */
   autoReload?: boolean;
-  /** Quiet period before a change triggers a reload. */
-  autoReloadDebounceMs?: number;
   /** Where the web password record lives; defaults to ~/.pi/agent/web-auth.json (PI_WEB_AUTH_FILE overrides). */
   authConfigPath?: string;
   /** Masked password prompt; defaults to the TUI's hidden-input component. Tests inject their own. */
   askSecret?: (ctx: ExtensionContext, title: string) => Promise<string | undefined>;
 }
 
-export const AUTO_RELOAD_DEBOUNCE_MS = 2_000;
 /** One status line, updated in place while a start, reload or automatic reload runs. */
 export const WEB_PROGRESS_STATUS_KEY = "web-reload";
 
@@ -299,6 +296,9 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
 
   const depsFor = (ctx: ExtensionContext): Partial<WebUiDeps> => ({
     sessionId: sessionIdOf(ctx),
+    // The watcher is a detached process started with the server, not a child
+    // of this terminal session: edits are seen with no pi TUI open.
+    spawnWatcher: defaultSpawnWatcher,
     // A restart drops this session's bridge and any prompt in flight: it waits for the turn.
     turnRunning: () => !(ctx.isIdle?.() ?? true),
     // The terminal's idle flag cannot see sessions the web server owns. Ask
@@ -330,7 +330,6 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     }
   };
 
-  let watcher: SourceWatcher | undefined;
   const autoReloadEnabled = options.autoReload !== false && process.env.PI_WEB_AUTO_RELOAD !== "0";
 
   // --- the live session bridge ----------------------------------------------
@@ -1608,23 +1607,11 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   pi.on("session_start", (_event, ctx) => {
     lastCtxForCommands = ctx;
     // Inside the web server process the extension is loaded as part of an
-    // in-process session resume; it must not self-bridge or watch sources.
+    // in-process session resume; it must not self-bridge or reload its own host.
     if (inWebServerProcess) return;
-    if (autoReloadEnabled && !watcher) {
-      const serverDir = options.deps?.serverDir ?? defaultServerDir();
-      watcher = watchSources({
-        roots: sourceWatchRoots(serverDir, repoRootFromServerDir(serverDir)),
-        debounceMs: options.autoReloadDebounceMs ?? AUTO_RELOAD_DEBOUNCE_MS,
-        onChange: () => {
-          void autoReload(ctx);
-        },
-      });
-    }
-    // A server outlives the session that started it, and the watcher only sees
-    // edits made while this session runs. Without a check here, a session that
-    // joins a server started from older sources attaches to a web UI rendering
-    // the previous build — the same page showing two plugin versions depending
-    // on which session started the server. Converge once, at start.
+    // A detached watcher covers edits while any session is open. This start-up
+    // check still catches a server left behind by older sources (or by a
+    // version without the watcher) before this session attaches to it.
     if (autoReloadEnabled) void autoReload(ctx);
     // Sync this live session with the web UI whenever the server is up.
     void attachBridge(ctx);
@@ -1632,8 +1619,6 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
 
   pi.on("session_shutdown", () => {
     stopBridge();
-    watcher?.close();
-    watcher = undefined;
   });
 
   async function autoReload(ctx: ExtensionContext): Promise<void> {
