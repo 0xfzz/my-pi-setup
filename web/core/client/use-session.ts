@@ -4,9 +4,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getAuth } from "./auth.ts";
+import { createFrameCoalescer, type FrameCoalescer } from "./frame-coalescer.ts";
 import {
   INITIAL_STREAMING_STATE,
   assistantEntryFromMessage,
+  streamCommitTiming,
   streamReducer,
   toAssistantBlocks,
   type AssistantBlock,
@@ -278,13 +280,24 @@ export function usePiSession() {
     setReloading(true);
     window.location.reload();
   }, []);
+  // Token deltas render at most once per frame; the render reads the latest
+  // state, so a frame always shows everything applied so far. Structural
+  // actions flush at once (see streamCommitTiming).
+  const [streamRender] = useState<FrameCoalescer>(() => createFrameCoalescer<number>(
+    () => setStreaming(streamingRef.current),
+    {
+      request: (callback) => requestAnimationFrame(callback),
+      cancel: (handle) => cancelAnimationFrame(handle),
+    },
+  ));
+  useEffect(() => () => streamRender.dispose(), [streamRender]);
   const applyStream = useCallback((action: StreamAction) => {
     const next = streamReducer(streamingRef.current, action);
-    if (next !== streamingRef.current) {
-      streamingRef.current = next;
-      setStreaming(next);
-    }
-  }, []);
+    if (next === streamingRef.current) return;
+    streamingRef.current = next;
+    if (streamCommitTiming(action) === "frame") streamRender.request();
+    else streamRender.flush();
+  }, [streamRender]);
 
   // A /reload re-runs the extension and re-attaches the bridge; if no
   // completion signal lands (commands_changed, bridge_resync, session_state),

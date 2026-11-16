@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   INITIAL_STREAMING_STATE,
   assistantEntryFromMessage,
+  streamCommitTiming,
   streamReducer,
   toAssistantBlocks,
 } from "./streaming.ts";
@@ -245,4 +246,20 @@ test("assistantEntryFromMessage falls back to a default provider error when the 
     assistantEntryFromMessage({ content: [], stopReason: "error", errorMessage: "" }),
     { blocks: [], error: "provider error" },
   );
+});
+
+test("a delta waits for the next frame", () => {
+  assert.equal(streamCommitTiming({ type: "delta", event: { type: "text_delta", delta: "x" } } as never), "frame");
+});
+
+test("every non-delta action renders immediately, so a run's start and end never lag", () => {
+  for (const action of [
+    { type: "run_start" },
+    { type: "message_start", message: { role: "assistant", content: [] } },
+    { type: "snapshot", message: { role: "assistant", content: [] } },
+    { type: "message_end" },
+    { type: "run_end" },
+  ] as const) {
+    assert.equal(streamCommitTiming(action as never), "immediate", action.type);
+  }
 });

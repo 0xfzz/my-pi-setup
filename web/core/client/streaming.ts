@@ -72,6 +72,16 @@ export type StreamAction =
   | { type: "message_end" }
   | { type: "run_end" };
 
+/**
+ * When a streaming update may reach the screen. Deltas arrive once per token,
+ * so they wait for the next frame; every other action changes what the
+ * transcript shows (a message starting, committing or a run ending), so it
+ * renders at once.
+ */
+export function streamCommitTiming(action: StreamAction): "frame" | "immediate" {
+  return action.type === "delta" ? "frame" : "immediate";
+}
+
 export const INITIAL_STREAMING_STATE: StreamingState = {
   isStreaming: false,
   streamingMessage: null,
