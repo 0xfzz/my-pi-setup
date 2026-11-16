@@ -401,6 +401,47 @@ test("a hostile JSON body cannot smuggle __proto__ into server state", async () 
 
 // ── Browser auth ────────────────────────────────────────────────────────────
 
+test("graph library cookies use first duplicate and decoded values without leaking credentials", async () => {
+  await withServer({ idleMs: 0 }, async ({ handle }) => {
+    const cookie = await bootstrapCookie(handle);
+    const [name, value] = cookie.split("=");
+    assert.equal((await getJson(handle, "api/sessions", `${cookie}; ${name}=invalid`)).status, 200);
+    assert.equal((await getJson(handle, "api/sessions", `${name}=invalid; ${cookie}`)).status, 401);
+    const encoded = [...value!].map(char => `%${char.charCodeAt(0).toString(16)}`).join("");
+    assert.equal((await getJson(handle, "api/sessions", `${name}=${encoded}`)).status, 200);
+    const rejected = await fetch(apiUrl(handle, "api/sessions"));
+    assert.equal(rejected.headers.get("x-frame-options"), "DENY");
+    assert.equal(rejected.headers.get("cross-origin-resource-policy"), "same-origin");
+    assert.deepEqual(await rejected.json(), { error: "unauthorized" });
+  });
+});
+
+test("graph producer parsing preserves status envelopes and rejects auth/method/type before bodies", async () => {
+  await withServer({ idleMs: 0, maxSnapshotBytes: 128 }, async ({ handle }) => {
+    const cases = [
+      { body: "", status: 400, error: "empty body" },
+      { body: "{", status: 400, error: "invalid JSON" },
+      { body: "[]", status: 400, error: "request body must be a JSON object" },
+      { body: "null", status: 400, error: "request body must be a JSON object" },
+      { body: " ".repeat(129), status: 413, error: "payload too large" },
+      { body: " ".repeat(129), token: "invalid", status: 401, error: "unauthorized" },
+      { body: " ".repeat(129), method: "PUT", status: 405, error: "method not allowed; use POST" },
+      { body: " ".repeat(129), type: "text/plain", status: 415, error: "expected application/json" },
+    ];
+    for (const entry of cases) {
+      const response = await fetch(apiUrl(handle, "api/producer/publish"), {
+        method: entry.method ?? "POST",
+        headers: { authorization: `Bearer ${entry.token ?? handle.producerToken}`, "content-type": entry.type ?? "application/json" },
+        body: entry.body,
+      });
+      assert.equal(response.status, entry.status, JSON.stringify(entry));
+      assert.deepEqual(await response.json(), { error: entry.error });
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+    }
+  });
+});
+
 test("browser bootstrap mints an HttpOnly cookie and every browser API requires it", async () => {
   await withServer({}, async ({ handle }) => {
     assert.equal((await fetch(apiUrl(handle, "api/sessions"))).status, 401);

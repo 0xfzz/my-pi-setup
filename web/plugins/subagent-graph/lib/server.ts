@@ -50,12 +50,12 @@
  */
 import { randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { IncomingMessage } from "node:http";
 import { createServer as createNetServer, Socket } from "node:net";
 import type { Server as NetServer } from "node:net";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { openEventChannel, SSE_ROUTE_OPTIONS, type EventChannel } from "../../../core/http/sse.ts";
 
 import { createGraphApp } from "./app.ts";
@@ -195,7 +195,7 @@ interface GraphApiRoute {
   path: string;
   method: "GET" | "POST";
   auth: ApiAuth;
-  handle: (req: IncomingMessage, res: ServerResponse, url: URL) => void | Promise<void>;
+  handle: (request: FastifyRequest, reply: FastifyReply) => void | Promise<void>;
 }
 
 class HttpError extends Error {
@@ -446,36 +446,6 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(left, right);
 }
 
-function securityHeaders(res: ServerResponse): void {
-  res.setHeader("x-content-type-options", "nosniff");
-  res.setHeader("referrer-policy", "no-referrer");
-  res.setHeader("x-frame-options", "DENY");
-  res.setHeader("cross-origin-resource-policy", "same-origin");
-  res.setHeader("cross-origin-opener-policy", "same-origin");
-}
-
-function sendJson(res: ServerResponse, status: number, body: unknown, extraHeaders?: Record<string, string>): void {
-  securityHeaders(res);
-  res.setHeader("content-type", "application/json; charset=utf-8");
-  res.setHeader("cache-control", "no-store");
-  if (extraHeaders) for (const [key, value] of Object.entries(extraHeaders)) res.setHeader(key, value);
-  res.statusCode = status;
-  res.end(JSON.stringify(body));
-}
-
-function parseCookies(header: string | undefined): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (!header) return out;
-  for (const part of header.split(";")) {
-    const index = part.indexOf("=");
-    if (index <= 0) continue;
-    const key = part.slice(0, index).trim();
-    const value = part.slice(index + 1).trim();
-    if (key) out[key] = value;
-  }
-  return out;
-}
-
 function bearer(header: string | undefined): string | null {
   if (typeof header !== "string") return null;
   const match = /^Bearer\s+([0-9a-f]{64})$/i.exec(header.trim());
@@ -515,28 +485,6 @@ function originAllowed(req: IncomingMessage, port: number): boolean {
   const fetchSite = req.headers["sec-fetch-site"];
   if (typeof fetchSite === "string" && fetchSite === "cross-site") return false;
   return true;
-}
-
-async function readBody(req: IncomingMessage, max: number): Promise<Buffer> {
-  const declared = req.headers["content-length"];
-  if (typeof declared === "string") {
-    const length = Number(declared);
-    if (!Number.isFinite(length) || length < 0) throw new HttpError(400, "invalid content-length");
-    if (length > max) throw new HttpError(413, "payload too large");
-  }
-  const chunks: Buffer[] = [];
-  let size = 0;
-  let tooLarge = false;
-  for await (const chunk of req) {
-    const buffer = typeof chunk === "string" ? Buffer.from(chunk) : (chunk as Buffer);
-    size += buffer.length;
-    if (size > max) tooLarge = true;
-    else chunks.push(buffer);
-    // Stop buffering but keep draining so the 413 can still be delivered.
-    if (size > max * 2) break;
-  }
-  if (tooLarge) throw new HttpError(413, "payload too large");
-  return Buffer.concat(chunks);
 }
 
 function envelopeDict(value: unknown): Record<string, unknown> {
@@ -640,10 +588,10 @@ class SubagentGraphRuntime {
     const app = await createGraphApp({
       staticRoot: this.#options.webRoot,
       heartbeatInterval: this.#options.ssePingMs,
-      guard: (req, res) => this.#guard(req, res),
+      guard: (request, reply) => this.#guard(request, reply),
     });
     this.#app = app;
-    this.#registerApiRoutes(app);
+    await this.#registerApiRoutes(app);
     this.#configureServer(app);
     const preferred = this.#options.preferredPort;
     if (preferred > 0) {
@@ -702,13 +650,13 @@ class SubagentGraphRuntime {
   // ── Request dispatch ─────────────────────────────────────────────────────
 
   /** Loopback Host/Origin gate, run in `onRequest` for every request. */
-  #guard(req: IncomingMessage, res: ServerResponse): boolean {
-    if (!hostHeaderAllowed(req.headers.host, this.#port)) {
-      sendJson(res, 403, { error: "invalid host" });
+  #guard(request: FastifyRequest, reply: FastifyReply): boolean {
+    if (!hostHeaderAllowed(request.headers.host, this.#port)) {
+      void reply.code(403).header("cache-control", "no-store").send({ error: "invalid host" });
       return false;
     }
-    if (!originAllowed(req, this.#port)) {
-      sendJson(res, 403, { error: "invalid origin" });
+    if (!originAllowed(request.raw, this.#port)) {
+      void reply.code(403).header("cache-control", "no-store").send({ error: "invalid origin" });
       return false;
     }
     // Every request that passed the gate counts as activity, whichever route
@@ -718,29 +666,25 @@ class SubagentGraphRuntime {
     return true;
   }
 
-  #fail(res: ServerResponse, error: unknown): void {
-    if (res.headersSent) {
-      res.end();
+  #fail(reply: FastifyReply, error: unknown): void {
+    if (reply.sent) return;
+    if (error instanceof HttpError || error instanceof ValidationError) {
+      void reply.code(error.status).send({ error: error.message });
       return;
     }
-    if (error instanceof HttpError) {
-      sendJson(res, error.status, { error: error.message });
+    if (error instanceof Error && "code" in error && error.code === "FST_ERR_CTP_BODY_TOO_LARGE") {
+      void reply.code(413).send({ error: "payload too large" });
       return;
     }
-    if (error instanceof ValidationError) {
-      sendJson(res, error.status, { error: error.message });
-      return;
-    }
-    this.#log(`request failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
-    sendJson(res, 500, { error: "internal error" });
+    void reply.code(500).send({ error: "internal error" });
   }
 
   // ── Browser bootstrap ────────────────────────────────────────────────────
 
-  #bootstrap(url: URL, res: ServerResponse): void {
+  #bootstrap(url: URL, reply: FastifyReply): void {
     const token = url.searchParams.get("token") ?? "";
     if (!safeEqual(token, this.#bootstrapToken)) {
-      sendJson(res, 403, { error: "invalid bootstrap token" });
+      void reply.code(403).send({ error: "invalid bootstrap token" });
       return;
     }
     const sessionToken = randomBytes(32).toString("base64url");
@@ -751,26 +695,21 @@ class SubagentGraphRuntime {
       if (oldest === undefined) break;
       this.#browserSessions.delete(oldest);
     }
-    securityHeaders(res);
-    res.setHeader("cache-control", "no-store");
-    res.setHeader(
-      "set-cookie",
-      `${COOKIE_NAME}=${sessionToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(BROWSER_SESSION_TTL_MS / 1000)}`,
-    );
-    res.statusCode = 302;
-    res.setHeader("location", "/");
-    res.end();
+    reply.setCookie(COOKIE_NAME, sessionToken, {
+      path: "/", httpOnly: true, sameSite: "strict", maxAge: Math.floor(BROWSER_SESSION_TTL_MS / 1000),
+    });
+    void reply.redirect("/");
   }
 
   // ── Authentication ───────────────────────────────────────────────────────
 
-  #isProducer(req: IncomingMessage): boolean {
+  #isProducer(req: FastifyRequest): boolean {
     const token = bearer(req.headers.authorization);
     return token !== null && safeEqual(token, this.#producerToken);
   }
 
-  #browserToken(req: IncomingMessage): string | null {
-    const token = parseCookies(req.headers.cookie)[COOKIE_NAME];
+  #browserToken(req: FastifyRequest): string | null {
+    const token = req.cookies[COOKIE_NAME];
     if (!token) return null;
     const expiresAt = this.#browserSessions.get(token);
     if (expiresAt === undefined) return null;
@@ -782,7 +721,7 @@ class SubagentGraphRuntime {
   }
 
   /** Whether a request satisfies a route's API authentication requirement. */
-  #apiAuthorized(requirement: ApiAuth, req: IncomingMessage): boolean {
+  #apiAuthorized(requirement: ApiAuth, req: FastifyRequest): boolean {
     if (requirement === "producer") return this.#isProducer(req);
     if (requirement === "browser") return this.#browserToken(req) !== null;
     return this.#isProducer(req) || this.#browserToken(req) !== null;
@@ -790,73 +729,62 @@ class SubagentGraphRuntime {
 
   // ── API ──────────────────────────────────────────────────────────────────
 
-  /**
-   * Register the graph's API as native Fastify routes. Authentication runs in
-   * each route's `onRequest` hook, so it is decided before any body is read —
-   * the order the old dispatcher used. The handlers keep the runtime's raw
-   * response helpers and body reader (`#readEnvelope`), which the app's no-op
-   * content type parser deliberately leaves on the wire.
-   */
-  #registerApiRoutes(app: FastifyInstance): void {
-    app.all("/bootstrap", async (request, reply) => {
-      reply.hijack();
-      try {
-        this.#bootstrap(new URL(request.url, "http://localhost"), reply.raw);
-      } catch (error) {
-        this.#fail(reply.raw, error);
-      }
+  async #registerApiRoutes(app: FastifyInstance): Promise<void> {
+    await app.register(async scope => {
+      scope.addHook("onRequest", async (_request, reply) => { reply.header("cache-control", "no-store"); });
+      scope.setErrorHandler((error, _request, reply) => this.#fail(reply, error));
+      scope.all("/bootstrap", async (request, reply) => {
+        this.#bootstrap(new URL(request.url, "http://localhost"), reply);
+      });
+      this.#registerEventsRoute(scope);
+      this.#registerReadRoutes(scope);
+      await this.#registerProducerRoutes(scope);
     });
-    this.#registerEventsRoute(app);
+  }
+
+  #registerReadRoutes(app: FastifyInstance): void {
     const routes: readonly GraphApiRoute[] = [
-      { path: "/api/health", method: "GET", auth: "any", handle: (_req, res) => sendJson(res, 200, this.stats()) },
-      {
-        path: "/api/sessions",
-        method: "GET",
-        auth: "browser",
-        handle: (_req, res) => sendJson(res, 200, { sessions: this.#sessionSummaries() }),
-      },
-      { path: "/api/session", method: "GET", auth: "browser", handle: (_req, res, url) => this.#sendSession(res, url) },
-      { path: "/api/artifact", method: "GET", auth: "browser", handle: (_req, res, url) => this.#sendArtifact(res, url) },
-      { path: "/api/producer/publish", method: "POST", auth: "producer", handle: (req, res) => this.#publish(req, res) },
-      {
-        path: "/api/producer/heartbeat",
-        method: "POST",
-        auth: "producer",
-        handle: (req, res) => this.#heartbeat(req, res),
-      },
-      {
-        path: "/api/producer/unregister",
-        method: "POST",
-        auth: "producer",
-        handle: (req, res) => this.#unregister(req, res),
-      },
+      { path: "/api/health", method: "GET", auth: "any", handle: (_request, reply) => { void reply.send(this.stats()); } },
+      { path: "/api/sessions", method: "GET", auth: "browser", handle: (_request, reply) => { void reply.send({ sessions: this.#sessionSummaries() }); } },
+      { path: "/api/session", method: "GET", auth: "browser", handle: (request, reply) => this.#sendSession(reply, new URL(request.url, "http://localhost")) },
+      { path: "/api/artifact", method: "GET", auth: "browser", handle: (request, reply) => this.#sendArtifact(reply, new URL(request.url, "http://localhost")) },
     ];
-    for (const route of routes) {
-      app.all(
-        route.path,
-        {
-          onRequest: async (request, reply) => {
-            if (this.#apiAuthorized(route.auth, request.raw)) return;
-            sendJson(reply.raw, 401, { error: "unauthorized" });
-            reply.hijack();
-          },
-        },
-        async (request, reply) => {
-          if (request.method !== route.method) {
-            reply.hijack();
-            sendJson(reply.raw, 405, { error: `method not allowed; use ${route.method}` });
-            return;
-          }
-          const url = new URL(request.url, `http://${request.headers.host ?? "localhost"}`);
-          reply.hijack();
-          try {
-            await route.handle(request.raw, reply.raw, url);
-          } catch (error) {
-            this.#fail(reply.raw, error);
-          }
-        },
-      );
-    }
+    for (const route of routes) this.#registerApiRoute(app, route);
+  }
+
+  async #registerProducerRoutes(app: FastifyInstance): Promise<void> {
+    await app.register(async scope => {
+      scope.addContentTypeParser("*", { parseAs: "string" }, (_request, body, done) => {
+        if (typeof body !== "string" || body.length === 0) { done(new ValidationError("empty body")); return; }
+        let parsed: unknown;
+        try { parsed = JSON.parse(body); }
+        catch { done(new ValidationError("invalid JSON")); return; }
+        try { done(null, envelopeDict(parsed)); }
+        catch (error) { done(error instanceof Error ? error : new ValidationError("invalid JSON")); }
+      });
+      for (const route of [
+        { path: "/api/producer/publish", method: "POST", auth: "producer", handle: (request, reply) => this.#publish(request.body, reply) },
+        { path: "/api/producer/heartbeat", method: "POST", auth: "producer", handle: (request, reply) => this.#heartbeat(request.body, reply) },
+        { path: "/api/producer/unregister", method: "POST", auth: "producer", handle: (request, reply) => this.#unregister(request.body, reply) },
+      ] satisfies GraphApiRoute[]) this.#registerApiRoute(scope, route);
+    });
+  }
+
+  #registerApiRoute(app: FastifyInstance, route: GraphApiRoute): void {
+    app.all(route.path, {
+      bodyLimit: this.#options.maxSnapshotBytes,
+      onRequest: async (request, reply) => {
+        if (!this.#apiAuthorized(route.auth, request)) {
+          return reply.code(401).send({ error: "unauthorized" });
+        }
+        if (request.method !== route.method) {
+          return reply.code(405).send({ error: `method not allowed; use ${route.method}` });
+        }
+        if (route.method === "POST" && !request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+          return reply.code(415).send({ error: "expected application/json" });
+        }
+      },
+    }, route.handle);
   }
 
   #sessionSummaries(): SubagentGraphSessionSummary[] {
@@ -891,45 +819,45 @@ class SubagentGraphRuntime {
     };
   }
 
-  #sendSession(res: ServerResponse, url: URL): void {
+  #sendSession(reply: FastifyReply, url: URL): void {
     const sessionId = url.searchParams.get("id") ?? "";
     const record = this.#sessions.get(sessionId);
     if (record === undefined) {
-      sendJson(res, 404, { error: "unknown session" });
+      void reply.code(404).send({ error: "unknown session" });
       return;
     }
-    sendJson(res, 200, { session: this.#sessionView(record) });
+    void reply.send({ session: this.#sessionView(record) });
   }
 
-  #sendArtifact(res: ServerResponse, url: URL): void {
+  #sendArtifact(reply: FastifyReply, url: URL): void {
     const sessionId = url.searchParams.get("session") ?? "";
     const artifactId = url.searchParams.get("id") ?? "";
     const record = this.#sessions.get(sessionId);
     if (record === undefined) {
-      sendJson(res, 404, { error: "unknown session" });
+      void reply.code(404).send({ error: "unknown session" });
       return;
     }
     const artifact = record.snapshot.artifacts.find(item => item.id === artifactId);
     if (artifact === undefined) {
-      sendJson(res, 404, { error: "unknown artifact" });
+      void reply.code(404).send({ error: "unknown artifact" });
       return;
     }
     const versionParam = url.searchParams.get("version");
     if (versionParam !== null) {
       const version = Number(versionParam);
       if (!Number.isInteger(version) || version < 0) {
-        sendJson(res, 400, { error: "invalid version" });
+        void reply.code(400).send({ error: "invalid version" });
         return;
       }
       if (version !== artifact.version) {
         // The producer only publishes current catalog entries; a request for a
         // superseded body gets an explicit conflict, not stale content.
-        sendJson(res, 409, { error: "artifact version changed", version: artifact.version });
+        void reply.code(409).send({ error: "artifact version changed", version: artifact.version });
         return;
       }
     }
     const body: SubagentGraphArtifact = artifact;
-    sendJson(res, 200, { artifact: body });
+    void reply.send({ artifact: body });
   }
 
   // ── SSE ──────────────────────────────────────────────────────────────────
@@ -939,7 +867,7 @@ class SubagentGraphRuntime {
     app.all("/api/events", {
       sse: { ...SSE_ROUTE_OPTIONS, heartbeat: true },
       onRequest: async (request, reply) => {
-        if (this.#apiAuthorized("browser", request.raw)) return;
+        if (this.#apiAuthorized("browser", request)) return;
         return reply.code(401).header("cache-control", "no-store").send({ error: "unauthorized" });
       },
     }, async (request, reply) => {
@@ -985,22 +913,6 @@ class SubagentGraphRuntime {
 
   // ── Producer transport ───────────────────────────────────────────────────
 
-  async #readEnvelope(req: IncomingMessage): Promise<Record<string, unknown>> {
-    const type = req.headers["content-type"];
-    if (typeof type !== "string" || !type.toLowerCase().startsWith("application/json")) {
-      throw new HttpError(415, "expected application/json");
-    }
-    const body = await readBody(req, this.#options.maxSnapshotBytes);
-    if (body.length === 0) throw new ValidationError("empty body");
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(body.toString("utf8"));
-    } catch {
-      throw new ValidationError("invalid JSON");
-    }
-    return envelopeDict(parsed);
-  }
-
   #leaseIds(envelope: Record<string, unknown>): { sessionId: string; producerId: string; generation: number } {
     const sessionId = envelope.sessionId;
     const producerId = envelope.producerId;
@@ -1017,8 +929,8 @@ class SubagentGraphRuntime {
     return { sessionId, producerId, generation };
   }
 
-  async #publish(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const envelope = await this.#readEnvelope(req);
+  #publish(body: unknown, reply: FastifyReply): void {
+    const envelope = envelopeDict(body);
     const { sessionId, producerId, generation } = this.#leaseIds(envelope);
     const revision = envelope.revision;
     if (typeof revision !== "number" || !Number.isInteger(revision) || revision < 1 || revision > 1e9) {
@@ -1034,7 +946,7 @@ class SubagentGraphRuntime {
     // has since expired or been replaced must not create a fresh lease from an
     // in-flight packet that predates the takeover.
     if (this.#tombstones.has(producerId)) {
-      sendJson(res, 410, { error: "superseded" });
+      void reply.code(410).send({ error: "superseded" });
       return;
     }
 
@@ -1053,7 +965,7 @@ class SubagentGraphRuntime {
       this.#admit();
       this.#sessions.set(sessionId, record);
       this.#notify();
-      sendJson(res, 200, { instanceId: this.#instanceId, generation: record.generation, revision, accepted: true });
+      void reply.send({ instanceId: this.#instanceId, generation: record.generation, revision, accepted: true });
       return;
     }
 
@@ -1067,16 +979,16 @@ class SubagentGraphRuntime {
       record.connected = true;
       record.registeredAt = now;
       this.#notify();
-      sendJson(res, 200, { instanceId: this.#instanceId, generation: record.generation, revision, accepted: true });
+      void reply.send({ instanceId: this.#instanceId, generation: record.generation, revision, accepted: true });
       return;
     }
 
     if (generation > 0 && generation !== record.generation) {
-      sendJson(res, 410, { error: "superseded", generation: record.generation });
+      void reply.code(410).send({ error: "superseded", generation: record.generation });
       return;
     }
     if (revision <= record.revision) {
-      sendJson(res, 409, { error: "stale revision", revision: record.revision, generation: record.generation });
+      void reply.code(409).send({ error: "stale revision", revision: record.revision, generation: record.generation });
       return;
     }
     record.revision = revision;
@@ -1084,25 +996,25 @@ class SubagentGraphRuntime {
     record.lastSeen = now;
     record.connected = true;
     this.#notify();
-    sendJson(res, 200, { instanceId: this.#instanceId, generation: record.generation, revision, accepted: true });
+    void reply.send({ instanceId: this.#instanceId, generation: record.generation, revision, accepted: true });
   }
 
-  async #heartbeat(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const envelope = await this.#readEnvelope(req);
+  #heartbeat(body: unknown, reply: FastifyReply): void {
+    const envelope = envelopeDict(body);
     const { sessionId, producerId, generation } = this.#leaseIds(envelope);
     if (this.#tombstones.has(producerId)) {
-      sendJson(res, 410, { error: "superseded" });
+      void reply.code(410).send({ error: "superseded" });
       return;
     }
     const record = this.#sessions.get(sessionId);
     if (record === undefined) {
       // After a server restart the producer must re-register with a full
       // snapshot; a heartbeat alone cannot reconstruct domain state.
-      sendJson(res, 404, { error: "unregistered", instanceId: this.#instanceId });
+      void reply.code(404).send({ error: "unregistered", instanceId: this.#instanceId });
       return;
     }
     if (record.producerId !== producerId || (generation > 0 && generation !== record.generation)) {
-      sendJson(res, 410, { error: "superseded" });
+      void reply.code(410).send({ error: "superseded" });
       return;
     }
     const now = this.#options.now();
@@ -1110,21 +1022,21 @@ class SubagentGraphRuntime {
     record.lastSeen = now;
     record.connected = true;
     if (!wasConnected) this.#notify();
-    sendJson(res, 200, { ok: true, instanceId: this.#instanceId, generation: record.generation, revision: record.revision });
+    void reply.send({ ok: true, instanceId: this.#instanceId, generation: record.generation, revision: record.revision });
   }
 
-  async #unregister(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const envelope = await this.#readEnvelope(req);
+  #unregister(body: unknown, reply: FastifyReply): void {
+    const envelope = envelopeDict(body);
     const { sessionId, producerId } = this.#leaseIds(envelope);
     const record = this.#sessions.get(sessionId);
     if (record === undefined) {
-      sendJson(res, 200, { ok: true, removed: false });
+      void reply.send({ ok: true, removed: false });
       return;
     }
     if (record.producerId !== producerId) {
       // Closing a producer that was already replaced is a no-op, never a
       // removal of the current owner's state.
-      sendJson(res, 200, { ok: true, removed: false, reason: "not owner" });
+      void reply.send({ ok: true, removed: false, reason: "not owner" });
       return;
     }
     // A graceful close is a retraction: the session is gone, so the card goes
@@ -1135,7 +1047,7 @@ class SubagentGraphRuntime {
     // restart can resume them.
     this.#sessions.delete(sessionId);
     this.#notify();
-    sendJson(res, 200, { ok: true, removed: true });
+    void reply.send({ ok: true, removed: true });
   }
 
   #admit(): void {

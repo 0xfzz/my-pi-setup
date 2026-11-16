@@ -12,15 +12,15 @@
  * runtime in `server.ts` owns the listener, the port fallback and shutdown.
  *
  * The runtime registers native API/bootstrap routes; @fastify/static serves
- * the allowlisted UI layouts. Root parsers remain no-ops until the producer
- * body reader is migrated; `readBody` still enforces `maxSnapshotBytes`.
+ * the allowlisted UI layouts. Producer routes scope their JSON compatibility
+ * parser and byte cap; Fastify owns request consumption.
  */
 import Fastify, { type FastifyInstance } from "fastify";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import { fastifySSE } from "@fastify/sse";
 import { registerGraphStatic } from "./static.ts";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { FastifyRequest, FastifyReply } from "fastify";
 
 export interface GraphAppOptions {
   /** Built graph UI root; missing builds use the local placeholder page. */
@@ -29,16 +29,16 @@ export interface GraphAppOptions {
   heartbeatInterval?: number;
   /**
    * The graph's loopback Host/Origin gate (PRD §6.1). Runs in `onRequest`
-   * before any route or the delegate, answers on the raw response itself when
-   * it refuses, and returns false in that case. Kept as a callback so the
+   * before parsing/validation, answers through Fastify when it refuses, and
+   * returns false in that case. Kept as a callback so the
    * runtime's `#port` (known only after `listen`) and its Host/Origin policy
    * stay in `server.ts`.
    */
-  guard?: (request: IncomingMessage, response: ServerResponse) => boolean;
+  guard?: (request: FastifyRequest, reply: FastifyReply) => boolean;
 }
 
 /**
- * The graph host's actual header policy (see `securityHeaders` in server.ts):
+ * The graph host's header policy:
  * nosniff, no-referrer, frame-deny, plus resource/opener isolation.
  *
  * CSP is deliberately not global — the runtime sets it only on HTML responses,
@@ -76,8 +76,8 @@ export async function createGraphApp(options: GraphAppOptions): Promise<FastifyI
     logger: false,
   });
 
-  // Producer routes still own their raw body reader and maxSnapshotBytes;
-  // the root parser must not consume that stream before the route sees it.
+  // Non-producer routes ignore bodies; producer routes override this parser
+  // in their own scope with Fastify-owned accumulation and maxSnapshotBytes.
   app.removeAllContentTypeParsers();
   app.addContentTypeParser("*", (_request, _payload, done) => {
     done(null, undefined);
@@ -96,10 +96,7 @@ export async function createGraphApp(options: GraphAppOptions): Promise<FastifyI
   if (options.guard) {
     const guard = options.guard;
     app.addHook("onRequest", async (request, reply) => {
-      if (guard(request.raw, reply.raw)) return;
-      // The guard wrote its own 403 through the raw pair; stop Fastify from
-      // sending a second response.
-      reply.hijack();
+      guard(request, reply);
     });
   }
 

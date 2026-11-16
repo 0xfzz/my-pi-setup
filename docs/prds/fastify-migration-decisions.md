@@ -100,7 +100,7 @@ regression test (PRD §9 "Compatibility rule"). Default is **retain**.
 | Body limit (general) | 60,000,000 B manual | `bodyLimit` default 1 MiB | set `bodyLimit: 60_000_000` for the general scope; **4,096** for auth routes; `maxSnapshotBytes` for graph producers |
 | Oversize body | old code threw → endpoint 400/500 | 413 `FST_ERR_CTP_BODY_TOO_LARGE` | **mapped back**: the auth scope's error handler answers 400 for login/refresh/status and keeps logout's clear-cookies + 200, so no endpoint gains a global 413 (PRD §6.3) |
 | Auth body limit | 4,096 B accumulated manually | route `bodyLimit` enforced by Fastify as bytes arrive | adopted; the over-limit answer is mapped to the historical per-endpoint outcome above |
-| Cookie parse/serialize | handwritten `parseCookies` + string concatenation | `@fastify/cookie` `request.cookies` / `reply.setCookie` / `reply.clearCookie` | **adopted**; names, paths, `Max-Age`, `HttpOnly`, `SameSite=Strict`, Secure detection retained. Duplicate-cookie precedence differs (library is last-wins, the old parser was first-wins); recorded, low impact |
+| Cookie parse/serialize | handwritten `parseCookies` + string concatenation | `@fastify/cookie` `request.cookies` / `reply.setCookie` / `reply.clearCookie` | **adopted**; names, paths, `Max-Age`, `HttpOnly`, `SameSite=Strict`, Secure detection retained. Library parsing uses the first duplicate and URI-decodes values. The graph's former last-wins/raw-value parser is deliberately replaced; a runtime regression pins both duplicate orders and encoded values |
 | Content-Type on body parse | general/auth parse JSON ignoring Content-Type | Fastify only parses matching Content-Type | scoped `parseAs`/`addContentTypeParser` adapter to keep the "parse JSON regardless" contract where it existed; graph producer routes require JSON |
 | Empty body | `{}` (general/auth); graph throws | parser error / `{}` | preserve `{}` via scoped parser; test both |
 | Trailing slash | exact match, no redirect | `ignoreTrailingSlash` off; `/x/` ≠ `/x` | keep off; test `/x` vs `/x/` explicitly |
@@ -308,9 +308,14 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   is read; method mismatches keep their 405, unknown `/api/*` keeps its 404 via
   the dispatcher, and the request-activity stamp moved into `#guard` so a
   heartbeating producer still prevents the idle shutdown. The handlers keep the
-  runtime's raw writers and `#readEnvelope`. M11 registered `/api/events`
-  and `/bootstrap` natively as well, then deleted `#handle`/`#api` and the
-  factory delegate. M10 now uses native library-backed SSE for `/api/events`.
+  runtime's raw writers and `#readEnvelope` during the intermediate migration.
+  Those are now removed: all finite routes use Fastify replies, bootstrap uses
+  `setCookie`/`redirect`, and Helmet owns headers including gate/error replies.
+  A scoped `parseAs: 'string'` parser preserves empty/invalid/non-object JSON
+  errors while Fastify consumes and caps the body at `maxSnapshotBytes`.
+  Auth, method and Content-Type checks run before parsing (401/405/415 before
+  oversized input); graph oversize remains 413. M11 deleted `#handle`/`#api`
+  and the factory delegate; M10 uses library-backed SSE for `/api/events`.
 - **Phase 3 — primary auth done**: cookies go through `@fastify/cookie` (the gate reads
   `request.cookies`, the routes call `reply.setCookie`/`clearCookie`) and the
   four auth endpoints are native Fastify routes with a scoped 4,096-byte body
@@ -344,6 +349,6 @@ See the test file for the assertions; the results are the Phase 0 exit gate.
   zone cannot import either host runtime (enforced by `web-boundaries.test.ts`).
   `npm run tidy`, `npm run lint:dead` and both browser e2e suites pass.
 - **Release audit still required**: Phase 4 completion is not PRD completion.
-  Surviving graph body accumulation/raw finite replies/cookie/header helpers,
-  remaining declarative request schemas, and M14 diagnostics must be resolved
+  Remaining primary auth raw replies/security-header duplication, declarative
+  request schemas, and M14 diagnostics must be resolved
   and the full removal/exception ledger verified before release.
