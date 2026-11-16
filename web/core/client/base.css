@@ -2583,6 +2583,36 @@ button.msg-compaction-label:hover {
   }
 }
 
+/* Touch screens: rows, tabs and the close X get WCAG-sized tap targets (44px
+   for rows and actions, 40px minimum for the compact chrome) instead of the
+   desktop's 15px-high hit areas. */
+@media (pointer: coarse) {
+  .app-dialog-item,
+  .app-plugin-dialog-item,
+  .app-dialog-entry {
+    min-height: 44px;
+  }
+
+  .app-dialog-tab,
+  .app-dialog-sidebar-entry {
+    min-height: 40px;
+  }
+
+  .app-dialog-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0;
+  }
+
+  .app-dialog-action,
+  .app-dialog-head-action {
+    min-height: 44px;
+  }
+}
+
 /* iOS zooms focused text fields smaller than 16px. Keep pinch zoom enabled. */
 @media (pointer: coarse), (max-width: 720px) {
   .app-composer-input,
