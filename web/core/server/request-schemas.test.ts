@@ -56,6 +56,19 @@ test("native bodies are parsed once regardless of Content-Type, with strict comm
   } finally { await app.close(); }
 });
 
+test("a trailing slash that matches no route is 404, not a method refusal", async () => {
+  const app = await api();
+  try {
+    // `/api/sessions/` matches `/api/sessions/:id` with an empty id. GET is not
+    // that route's method, but the path is not a real resource either.
+    const response = await app.inject({ url: "/api/sessions/" });
+    assert.equal(response.statusCode, 404);
+    assert.deepEqual(response.json(), { error: "not found" });
+    // The real route with the same empty id keeps its own answer for its method.
+    assert.equal((await app.inject({ url: "/api/health/" })).statusCode, 404);
+  } finally { await app.close(); }
+});
+
 test("known method misses and unauthorized misses reject before parsing or validation", async () => {
   const app = await api();
   let consumed = 0;
