@@ -3,7 +3,7 @@
   "name": "Files",
   "version": "1.0.0",
   "engines": { "piWeb": "^1.0.0", "sdk": "^1.0.0" },
-  "main": { "server": "./server/index.ts" },
+  "main": { "server": "./server/index.ts", "browser": "./browser/index.ts" },
   "trust": "trusted",
   "capabilities": ["routes", "fs.read:*"],
   "activation": ["onStartup"],

@@ -22,6 +22,8 @@ function camel(id: string): string {
 export const PUBLIC_PROTOCOL_PATHS: readonly string[] = [
   "web/core/protocol/",
   "web/core/client/protocol-client.ts",
+  "web/core/client/plugin-system/panel-registry.tsx",
+  "web/core/client/plugin-system/browser-loader.ts",
   "web/core/adapters/",
   "web/core/plugin-contracts/view.ts",
   "web/core/plugin-contracts/descriptor.ts",

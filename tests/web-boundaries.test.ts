@@ -366,3 +366,14 @@ test("the client and plugins never call the pi_api route directly", () => {
   }
   assert.deepEqual(offenders, [], `pi_api routes belong in web/core/client/protocol-client.ts:\n  ${offenders.join("\n  ")}`);
 });
+
+test("migrated panels self-register from plugin-owned browser halves", () => {
+  const app = readFileSync(join(process.cwd(), "web", "app.tsx"), "utf8");
+  assert.equal(app.includes('import "./plugins/panels.tsx"'), false, "the composition root must not import the old plugin panel list");
+  assert.match(app, /mountPluginBrowserHalves/, "the composition root must mount plugin-owned halves");
+  for (const name of ["files", "artifacts", "router"]) {
+    const half = join(process.cwd(), "web", "plugins", name, "browser", "index.ts");
+    const source = readFileSync(half, "utf8");
+    assert.match(source, /registerPluginPanel/, `${name} must register its own panel`);
+  }
+});

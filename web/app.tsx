@@ -11,10 +11,23 @@ import { AppShell } from "./core/client/shell.tsx";
 import { RequestLoading } from "./core/client/request-loading.tsx";
 import { initTheme } from "./core/client/theme.ts";
 import { installBrowserLogging } from "./core/client/logging.ts";
-// Side-effect import: registers the Files and Artifacts bespoke panels.
-import "./plugins/panels.tsx";
+// Plugin-owned browser halves register their own panels; core only provides
+// the registry and context (web/core has no plugin-specific import).
+import { ProtocolClient } from "./core/client/protocol-client.ts";
+import { mountPluginBrowserHalves } from "./plugins/browser-halves.ts";
 // Side-effect import: registers the MCP manager bespoke page.
 import "./plugins/pages.tsx";
+
+mountPluginBrowserHalves(document.body, {
+  protocol: new ProtocolClient({ sessionId: "browser" }),
+  host: {},
+  theme: {},
+  logger: { info: () => undefined, warn: (message) => console.warn(message) },
+  dom: {
+    text: (value) => document.createTextNode(value),
+    clear: (element) => { element.replaceChildren(); },
+  },
+});
 
 // Before the first paint: the theme is on <html> before React renders.
 initTheme();
