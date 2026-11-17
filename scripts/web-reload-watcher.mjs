@@ -67,7 +67,7 @@ async function attemptReload() {
 }
 
 const watcher = watchSources({
-  roots: sourceWatchRoots(serverDir, repoRootFromServerDir(serverDir)),
+  roots: sourceWatchRoots(serverDir, repoRootFromServerDir(serverDir), process.env),
   debounceMs: DEBOUNCE_MS,
   onChange: () => void attemptReload(),
 });

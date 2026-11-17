@@ -21,6 +21,7 @@
  * `web-ui-build.json` next to the state file.
  */
 import { createHash } from "node:crypto";
+import { pluginProjectRoots } from "./plugin-project.ts";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, watch, writeFileSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -99,9 +100,9 @@ export function fingerprintInputs(root: string, dirs: readonly string[], files: 
 }
 
 /** Fingerprints for the vendored fork (`serverDir`) and our runtime files (under `repoRoot`). */
-export function sourceFingerprints(serverDir: string, repoRoot: string): SourceFingerprints {
+export function sourceFingerprints(serverDir: string, repoRoot: string, env: Record<string, string | undefined> = process.env): SourceFingerprints {
   return {
-    build: fingerprintInputs(serverDir, BUILD_INPUT_DIRS, BUILD_INPUT_FILES),
+    build: fingerprintInputs(serverDir, [...BUILD_INPUT_DIRS, ...pluginProjectRoots(env)], BUILD_INPUT_FILES),
     runtime: fingerprintInputs(repoRoot, RUNTIME_INPUT_DIRS, []),
   };
 }
@@ -298,9 +299,10 @@ export function watchSources(options: { roots: readonly string[]; debounceMs: nu
  * Top-level config files are not watched; they are still in the fingerprint, so the next
  * `/web start` or `/web reload` picks them up.
  */
-export function sourceWatchRoots(serverDir: string, repoRoot: string): string[] {
+export function sourceWatchRoots(serverDir: string, repoRoot: string, env: Record<string, string | undefined> = process.env): string[] {
   return [
     ...BUILD_INPUT_DIRS.map((dir) => join(serverDir, dir)),
     ...RUNTIME_INPUT_DIRS.map((dir) => join(repoRoot, dir)),
+    ...pluginProjectRoots(env),
   ];
 }
