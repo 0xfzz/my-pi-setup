@@ -1,7 +1,7 @@
 // Client composition root: wires the core shell to the first-party plugin
 // panel registrations before the first render. This file lives OUTSIDE
 // web/core so the core client never imports a plugin — panels self-register
-// into the core plugin-system registry (see web/plugins/panels.tsx).
+// into the core plugin-system registry from their own browser halves.
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";

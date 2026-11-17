@@ -315,7 +315,7 @@ the plugin action audit are separate and unchanged.
 | `/api/agent/:id/events` | GET | the SSE stream |
 | `/api/agent/:id/history` | GET | one transcript page (`cursor`, `direction=older|newer`, `limit`) |
 | `/api/agent/:id/commands` | GET | pi's runtime built-ins + the session's live commands |
-| `/api/agent/:id/pi_api` | POST | call a pi built-in api (below) |
+| `/api/agent/:id/protocol` | POST | versioned Bridge Protocol envelopes (the retired `pi_api` alias is gone) |
 | `/api/agent/:id/tree` | GET | pi's tree, projected for the web picker |
 | `/api/agent/:id/models` | GET | the picker's model list (scoped or available) |
 | `/api/agent/:id/model` | POST | apply a model (`/model <provider/id>`) |
@@ -327,17 +327,19 @@ the plugin action audit are separate and unchanged.
 
 Every non-GET API request to a wrong method gets 405; unknown sessions 404. With a web password set, every route except `/api/health` and `/api/auth/*` answers 401 without a valid access token (see [Password protection](#password-protection-publishing-the-web)).
 
-## The pi_api facade — pi's built-ins, called not copied
+## Bridge Protocol — pi's built-ins, called not copied
 
-The web never reimplements pi features. Every web capability maps to a
-**pi built-in api** it calls at runtime through one generic route:
+The web never reimplements pi features. Every web capability crosses one
+versioned seam: `POST /api/agent/:id/protocol` carries a `pi-web-bridge` v1
+envelope (`kind`, `name`, `messageId`, `source`, `payload`) and gets a reply
+envelope or a named `BridgeError`. Commands and queries dispatch to core
+adapters; events stream over the existing SSE routes. The old `pi_api` route
+was a Phase 7 alias and is retired. The catalog and parity matrix are
+generated in [bridge-protocol-catalog.md](bridge-protocol-catalog.md) and
+[bridge-protocol-parity.md](bridge-protocol-parity.md).
 
-```
-POST /api/agent/:id/pi_api   { "api": "<name>", "params": { … } }
-                             → { "ok": true, "result": … } | { "ok": false, "error": … }
-```
-
-The contract lives in `web/core/shared/pi-api.ts` (names, params, results);
+The wire vocabulary of the 15 built-in APIs still lives in `web/core/shared/pi-api.ts`
+(names, params, results);
 `web/core/pi-api/` implements it as pluggable modules over pi's own code:
 
 | api | pi implementation | web surface |
@@ -378,7 +380,7 @@ Three consequences worth stating:
   fires, so the web bridge is not attached yet. Answer it once in the
   terminal (or pre-set it from the web) and it is persisted.
 
-### Extending the facade
+### Extending an adapter
 
 Add a module and register it — the route, validation and lifecycle are
 generic:

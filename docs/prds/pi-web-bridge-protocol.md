@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | Accepted 2026-11-17 — all decision gates resolved (see §13) |
+| **Status** | Implemented 2026-11-17 — all decision gates resolved (see §13) |
 | **Owner** | Faiz |
 | **Source** | Migrated from the workspace artifact `pi-web-bridge-protocol-prd` v1 |
 | **Derived plan** | [Technical implementation plan & spec](./pi-web-bridge-protocol-implementation-plan.md) |

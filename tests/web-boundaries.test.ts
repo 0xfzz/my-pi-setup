@@ -369,6 +369,8 @@ test("the client and plugins never call the pi_api route directly", () => {
 
 test("migrated panels self-register from plugin-owned browser halves", () => {
   const app = readFileSync(join(process.cwd(), "web", "app.tsx"), "utf8");
+  const routes = readFileSync(join(process.cwd(), "web", "core", "server", "routes.ts"), "utf8");
+  assert.equal(routes.includes("/api/agent/:id/pi_api"), false, "the pi_api route alias must be retired");
   assert.equal(app.includes('import "./plugins/panels.tsx"'), false, "the composition root must not import the old plugin panel list");
   assert.match(app, /mountPluginBrowserHalves/, "the composition root must mount plugin-owned halves");
   for (const name of ["files", "artifacts", "router"]) {

@@ -408,15 +408,18 @@ capability, exactly like `ctx.hooks` and `ctx.services`, so a manifest that
 forgot it fails activation with a named error instead of silently exposing an
 endpoint.
 
-## The pi_api facade (read-only built-ins)
+## Bridge Protocol (built-ins and extension surfaces)
 
 When the web needs a pi built-in *capability* (not behavior change), it
-calls it through `POST /api/agent/:id/pi_api` — the facade in
-`web/core/pi-api/` runs pi's own implementation. Today:
-`autocomplete.suggestions` (pi's editor completion for the `@` picker)
-and `commands.builtin` (pi's built-in command list). The facade is
-read-only by design; anything that *changes* pi state goes through the
-bridge commands, where pi runs it.
+sends a versioned envelope through `POST /api/agent/:id/protocol`. Core
+adapters call the facade in `web/core/pi-api/` and pi's own implementation;
+the client never reaches pi directly. `autocomplete.suggestions` and
+`commands.builtin` are queries; `settings.*`, `trust.*`, `auth.*` and
+`mcp.*` are commands or queries in the generated
+[catalog](bridge-protocol-catalog.md). Extension surfaces arrive through
+the bridge extension's typed publisher, always with the source extension
+id. Browser halves of trusted plugin projects consume the same protocol
+client; disabling one removes only its contributions.
 
 ## The decision test
 

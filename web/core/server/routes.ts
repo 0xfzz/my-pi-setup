@@ -14,7 +14,6 @@ import { openEventChannel, SSE_ROUTE_OPTIONS, type EventChannel } from "../http/
 import { registerLenientJsonParser, parsedJsonBody as bodyOf } from "../http/json-body.ts";
 import { registerMethodFallback } from "../http/method-fallback.ts";
 import { SESSION_COMMAND_SCHEMA } from "../../../lib/session-command-schema.ts";
-import { PI_API_BODY_SCHEMA } from "../../../lib/pi-api-schema.ts";
 import { decodeHistoryCursor } from "../../../lib/history-cursor.ts";
 import { CLIENT_LOG_BODY_SCHEMA, coreRequestSchema, MODEL_BODY_SCHEMA, THINKING_BODY_SCHEMA, ACTION_BODY_SCHEMA, PERMISSIVE_BODY_SCHEMA } from "./request-schemas.ts";
 import { parseBrowserLogEntries, type BrowserLogEntry } from "../shared/web-log-browser.ts";
@@ -45,7 +44,6 @@ import {
 } from "./sessions.ts";
 import { createHistoryCache, fileStamp } from "./history-cache.ts";
 import { toWireToolResults } from "./tool-result-wire.ts";
-import { handlePiApiRequest } from "./pi-api.ts";
 import { createInProcessBinding } from "../protocol/bindings/in-process.ts";
 import { parseEnvelope } from "../protocol/envelope.ts";
 import { BRIDGE_PROTOCOL_VERSION, HELLO, type Hello } from "../protocol/version.ts";
@@ -359,22 +357,10 @@ async function handleBridgeDetach(request: FastifyRequest, reply: FastifyReply):
   asJson(reply, 200, { ok: true });
 }
 
-async function handlePiApi(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const sessionId = paramOf(request, "id");
-  const handle = getSession(sessionId);
-  if (handle === undefined) {
-    asJson(reply, 404, { error: "Session not found" });
-    return;
-  }
-  const body = bodyOf(request);
-  const outcome = await handlePiApiRequest(handle.cwd, body);
-  asJson(reply, outcome.status, outcome.body);
-}
-
 /**
  * The protocol binding's HTTP+SSE entry. One route for every catalog message:
  * the client sends an envelope, the binding validates it and dispatches to the
- * same adapters the in-process sessions use. Legacy routes stay as aliases.
+ * same adapters in-process sessions use.
  */
 async function handleProtocol(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const sessionId = paramOf(request, "id");
@@ -797,7 +783,6 @@ const CORE_ROUTES: readonly CoreRoute[] = [
   { path: "/api/bridge/:id/attach", methods: { GET: handleBridgeAttach }, sse: { ...SSE_ROUTE_OPTIONS, heartbeat: true } },
   { path: "/api/bridge/:id/events", methods: { POST: handleBridgeEvents } },
   { path: "/api/bridge/:id/detach", methods: { POST: handleBridgeDetach } },
-  { path: "/api/agent/:id/pi_api", methods: { POST: handlePiApi }, body: PI_API_BODY_SCHEMA },
   { path: "/api/agent/:id/protocol", methods: { POST: handleProtocol }, body: PERMISSIVE_BODY_SCHEMA },
   { path: "/api/directories", methods: { GET: handleDirectories }, query: ["path"] },
   { path: "/api/sessions/events", methods: { GET: handleSessionsEvents }, sse: SSE_ROUTE_OPTIONS },

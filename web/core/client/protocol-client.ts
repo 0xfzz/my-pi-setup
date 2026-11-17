@@ -178,7 +178,7 @@ export function protocolClient(sessionId: string): ProtocolClient {
 export const PROTOCOL_MESSAGE_COUNT = MESSAGE_CATALOG.length;
 
 /**
- * Drop-in for legacy pi_api fetch call sites during the alias window. The
+ * Compatibility helper for the old pi_api wire shape. The route is retired;
  * wire shape is preserved so components need no parallel error vocabulary;
  * new code should call `client.piApi()` directly.
  */

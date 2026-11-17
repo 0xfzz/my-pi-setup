@@ -1,16 +1,7 @@
-// The pi_api contract: the web client calls pi's BUILT-IN APIs through this
-// RPC surface instead of the web reimplementing them. Every api name maps to
-// a real pi callable — see docs/pi-web.md for the interface map and how to
-// extend it.
-//
-// Transport (bridged sessions):
-//   POST /api/agent/:id/pi_api {api, params}
-//     → the server enqueues a pi_api_request command on the bridge
-//     → the extension (running inside pi) calls the native pi API
-//     → the extension posts a web_api_response event (correlated by id)
-//     → the server resolves the pending request and replies to the client.
-// In-process sessions implement the same handler on the session core.
-
+// The pi_api wire vocabulary: names, params and results for pi's BUILT-IN
+// APIs. The browser reaches these through Bridge Protocol messages carried by
+// POST /api/agent/:id/protocol; the retired /pi_api route is gone. The
+// implementations still call pi's own modules — see docs/pi-web.md.
 export type PiApiName =
   | "autocomplete.suggestions"
   | "commands.builtin"

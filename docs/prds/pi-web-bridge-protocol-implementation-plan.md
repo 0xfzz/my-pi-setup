@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | Active implementation plan — all gates resolved (§9) |
+| **Status** | Implemented 2026-11-17 — all eight phases committed, gates resolved (§9) |
 | **Owner** | Faiz |
 | **Source of truth** | [docs/prds/pi-web-bridge-protocol.md](./pi-web-bridge-protocol.md) |
 | **Builds on** | [web-plugin-architecture](../web-plugin-architecture.md), [pi-web](../pi-web.md), [pi-web-plugin-platform](./pi-web-plugin-platform.md) |
