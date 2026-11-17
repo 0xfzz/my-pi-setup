@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { assetPathname, BUILT_ASSET_OPTIONS, isStaticMiss } from "../lib/built-asset-policy.ts";
+import { assetPathname, BUILT_ASSET_OPTIONS, isSpaFallbackPath, isStaticMiss } from "../lib/built-asset-policy.ts";
 
 test("built assets do not acquire cache validators, range responses or directory redirects", () => {
   assert.equal(BUILT_ASSET_OPTIONS.etag, false);
@@ -17,6 +17,15 @@ test("asset path policy strips queries and decodes once without normalizing trav
   }
   for (const path of ["/%zz", "/.env", "/assets/%2e%2e/index.html", "/assets/..%2fsecret.js", "/assets/%5csecret.js", "/%00.txt"]) {
     assert.equal(assetPathname(path), null, path);
+  }
+});
+
+test("SPA fallback accepts extensionless routes and dotted plugin page ids, not static assets", () => {
+  for (const path of ["/", "/plugins/todo", "/plugins/core.plugin-manager", "/plugins/acme.metrics"]) {
+    assert.equal(isSpaFallbackPath(path), true, path);
+  }
+  for (const path of ["/app.js", "/plugins/core.plugin-manager.js", "/assets/app.css"]) {
+    assert.equal(isSpaFallbackPath(path), false, path);
   }
 });
 

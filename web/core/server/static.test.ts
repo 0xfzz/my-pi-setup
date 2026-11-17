@@ -23,7 +23,7 @@ test("primary static delivery preserves SPA, build identity, methods and cache p
   const base = `http://127.0.0.1:${server.port}`;
   try {
     await t.test("shell and every extensionless SPA path are stamped with the correct length", async () => {
-      for (const path of ["/", "/index.html", "/plugins/todo", "/nested/", "/nested"]) {
+      for (const path of ["/", "/index.html", "/plugins/todo", "/plugins/core.plugin-manager", "/nested/", "/nested"]) {
         const response = await fetch(base + path);
         assert.equal(response.status, 200, path);
         assert.equal(response.headers.get("content-type"), "text/html; charset=utf-8");
@@ -53,6 +53,9 @@ test("primary static delivery preserves SPA, build identity, methods and cache p
         assert.match(response.headers.get("content-type")!, /application\/json/);
         await response.arrayBuffer();
       }
+      const missingAsset = await fetch(`${base}/plugins/core.plugin-manager.js`);
+      assert.equal(missingAsset.status, 404);
+      assert.deepEqual(await missingAsset.json(), { error: "not found" });
       for (const method of ["POST", "HEAD"]) {
         const response = await fetch(`${base}/app.js`, { method });
         assert.equal(response.status, 405);

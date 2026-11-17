@@ -2,11 +2,11 @@
 // extensionless SPA fallback and the HTML build-identity transform.
 import staticFiles from "@fastify/static";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { extname, join, sep } from "node:path";
+import { join, sep } from "node:path";
 import { realpath, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { servedClientBuild, stampBuildId } from "./client-build.ts";
-import { assetPathname, BUILT_ASSET_OPTIONS, isStaticMiss } from "../../../lib/built-asset-policy.ts";
+import { assetPathname, BUILT_ASSET_OPTIONS, isSpaFallbackPath, isStaticMiss } from "../../../lib/built-asset-policy.ts";
 
 // onFile must reject to veto the selected build output. This host owns I/O;
 // the shared policy module remains pure and independent of either server.
@@ -78,7 +78,7 @@ export async function registerClientStatic(app: FastifyInstance, root: string): 
         return reply.code(405).header("cache-control", "no-store").send({ error: "method not allowed" });
       }
       // A failed fallback calls notFound again; never recurse on a missing index.
-      if (!extname(path) && !fallbackAttempted.has(request) && await hasShell(root)) {
+      if (isSpaFallbackPath(path) && !fallbackAttempted.has(request) && await hasShell(root)) {
         fallbackAttempted.add(request);
         return reply.code(200).sendFile("index.html");
       }
