@@ -126,6 +126,7 @@ const ZONES: readonly ZoneRules[] = [
       "web/core/plugin-contracts/ui-contracts.ts",
       "web/core/plugin-contracts/view.ts",
       "web/core/plugin-contracts/actions.ts",
+      "web/core/plugin-contracts/kernel/catalog.ts",
     ],
     typeOnlyAllow: null,
     why: "the protocol is transport-neutral and pure; it reuses only the pure UI vocabulary",
@@ -252,7 +253,7 @@ const ZONES: readonly ZoneRules[] = [
     // The plugin contract/vocabulary: shared by pi-side publishers and web
     // renderers. It must not depend on either side's runtime.
     dir: "web/core/plugin-contracts",
-    runtimeAllow: ["web/core/plugin-contracts/", "node:"],
+    runtimeAllow: ["web/core/plugin-contracts/", "web/core/protocol/manifest-extension.ts", "node:"],
     typeOnlyAllow: null,
     why: "the plugin contract layer cannot depend on the web or pi runtimes",
   },

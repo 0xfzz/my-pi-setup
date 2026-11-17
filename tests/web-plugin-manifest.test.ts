@@ -23,6 +23,12 @@ function expectError(input: unknown, pattern: RegExp) {
   if (!result.ok) assert.match(result.error, pattern);
 }
 
+function expectOk(input: unknown) {
+  const result = validateManifest(input);
+  assert.equal(result.ok, true, result.ok ? "" : result.error);
+  return result;
+}
+
 test("a complete manifest is accepted and normalised with defaults", () => {
   const result = validateManifest(base());
   assert.ok(result.ok);
@@ -104,8 +110,10 @@ test("an unimplemented activation event is refused, not accepted and ignored", (
   assert.equal(ok.ok, true);
 });
 
-test("a browser entry point is refused: no loader can serve one", () => {
-  expectError({ ...base(), trust: "trusted", main: { browser: "./client.ts" } }, /main\.browser is not a known entry point/);
+test("a browser entry point requires trust and stays inside the plugin", () => {
+  expectOk({ ...base(), trust: "trusted", main: { browser: "./client.ts" } });
+  expectError({ ...base(), trust: "declarative", main: { browser: "./client.ts" } }, /main\.browser requires trust/);
+  expectError({ ...base(), trust: "trusted", main: { browser: "../client.ts" } }, /main\.browser requires trust/);
 });
 
 test("trust has no sandbox tier: a manifest cannot claim a guarantee the host lacks", () => {

@@ -4,6 +4,7 @@
  * declared shape or the whole manifest is rejected with a named error.
  */
 import { TRUSTED_ONLY, validateCapabilities, type Capability } from "./capabilities.ts";
+import { isAllowedBrowserEntry } from "../../protocol/manifest-extension.ts";
 import { isValidRange } from "./semver.ts";
 
 export const PLUGIN_ID_PATTERN = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)*$/;
@@ -32,7 +33,7 @@ export interface PluginManifest {
   name: string;
   version: string;
   engines: { piWeb: string; sdk: string };
-  main: { server?: string };
+  main: { server?: string; browser?: string };
   trust: TrustTier;
   capabilities: Capability[];
   dependsOn: Record<string, string>;
@@ -70,6 +71,11 @@ function rangeMap(value: unknown, field: string): { ok: true; value: Record<stri
   return { ok: true, value: out };
 }
 
+/** Trust is validated again later; this only gates entry-point parsing. */
+function trustInput(value: unknown): "declarative" | "trusted" {
+  return value === "trusted" ? "trusted" : "declarative";
+}
+
 export function validateManifest(input: unknown): ManifestResult {
   if (!isRecord(input)) return { ok: false, error: "manifest must be a JSON object" };
   const name = typeof input.id === "string" ? input.id : "unknown";
@@ -98,13 +104,17 @@ export function validateManifest(input: unknown): ManifestResult {
   if (input.main !== undefined) {
     if (!isRecord(input.main)) return fail("main must be an object with a server entry");
     for (const key of Object.keys(input.main)) {
-      // `main.browser` was accepted and then refused by every loader; a
-      // manifest may only declare an entry point the host can actually load.
-      if (key !== "server") return fail(`main.${key} is not a known entry point`);
+      if (key !== "server" && key !== "browser") return fail(`main.${key} is not a known entry point`);
     }
     if (input.main.server !== undefined) {
       if (!entryPath(input.main.server)) return fail("main.server must be a ./relative path inside the plugin");
       main.server = input.main.server as string;
+    }
+    if (input.main.browser !== undefined) {
+      if (!isAllowedBrowserEntry(trustInput(input.trust), input.main.browser)) {
+        return fail("main.browser requires trust 'trusted' and a ./relative path inside the plugin");
+      }
+      main.browser = input.main.browser as string;
     }
   }
 
@@ -112,8 +122,11 @@ export function validateManifest(input: unknown): ManifestResult {
   if (typeof trust !== "string" || !(TRUST_TIERS as readonly string[]).includes(trust)) {
     return fail(`trust must be one of ${TRUST_TIERS.join(", ")}`);
   }
-  if (trust === "declarative" && main.server !== undefined) {
+  if (trust === "declarative" && (main.server !== undefined || main.browser !== undefined)) {
     return fail("a declarative plugin cannot declare a code entry point");
+  }
+  if (main.browser !== undefined && trust !== "trusted") {
+    return fail("main.browser requires trust 'trusted'");
   }
 
   const caps = validateCapabilities(input.capabilities ?? []);

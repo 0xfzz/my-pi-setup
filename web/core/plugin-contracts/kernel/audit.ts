@@ -19,6 +19,8 @@ export const AUDIT_KINDS = [
   "quarantine-cleared",
   "veto",
   "safe-mode",
+  "browser-granted",
+  "browser-revoked",
 ] as const;
 
 export type AuditKind = (typeof AUDIT_KINDS)[number];
