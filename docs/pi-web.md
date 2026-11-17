@@ -957,6 +957,14 @@ file from readable text to newline-delimited JSON for log tooling, and
 collector). Credential-looking keys and common token patterns in free text are
 replaced with `[REDACTED]` before either destination sees them.
 
+The file is not meant to be read raw: it is not rotated and about 99% of it is
+request/response pairs. `npm run web-log` prints a bounded digest instead
+(failures grouped by cause with repeat counts, failed and slow routes, restarts,
+per-process summary) and reads both the JSON and the pretty format. `--since 30m`,
+`--pid`, `--around`, `--req` and `--grep` zoom in on one failure. The
+`read-web-log` skill (`.agents/skills/read-web-log`) tells agents to use it
+rather than `cat`/`tail`; the logic lives in `lib/web-log-*.ts`.
+
 Browser `console.warn`/`console.error`, uncaught errors and unhandled promise
 rejections are batched to `POST /api/client/log` with their stacks. Browser log
 requests deliberately use the native `fetch` captured before auth wraps it, so

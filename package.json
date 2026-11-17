@@ -57,6 +57,7 @@
     "test:changed": "node scripts/test.mjs changed",
     "test:profile": "node scripts/test.mjs all --test-reporter=spec",
     "typecheck": "tsc --noEmit",
+    "web-log": "node --experimental-strip-types --no-warnings scripts/web-log-digest.mjs",
     "build:subagent-graph": "node scripts/build-subagent-graph.mjs",
     "build:nowrite": "node scripts/build-nowrite.mjs",
     "build:wasm": "cargo build --manifest-path crates/ascii-anim-engine/Cargo.toml --target wasm32-unknown-unknown --release && cp crates/ascii-anim-engine/target/wasm32-unknown-unknown/release/ascii_anim_engine.wasm lib/ascii_anim_engine.wasm",
