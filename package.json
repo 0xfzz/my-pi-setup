@@ -43,6 +43,7 @@
       "./extensions/example-override.ts",
       "./extensions/mcp-manager.ts",
       "./extensions/web.ts",
+      "./extensions/bridge.ts",
       "./vendor/antigravity/index.ts",
       "./vendor/antigravity/features/google-search.ts",
       "./vendor/antigravity/features/generate-image.ts"

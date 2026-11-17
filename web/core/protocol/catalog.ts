@@ -71,6 +71,7 @@ export const MESSAGE_CATALOG = [
   { name: "ui.plugin.action-requested", kind: "event", legacy: ["ui.plugin.action-requested", "web-plugin:action-request"], capability: publish, description: "A plugin asked the browser for an action." },
   { name: "ui.notify", kind: "event", legacy: ["ui.notify"], capability: publish, description: "Transient notification." },
   { name: "models.changed", kind: "event", legacy: ["web-plugin:models-changed"], capability: "events.subscribe:models", description: "The model catalogue changed." },
+  { name: "tool.execution.changed", kind: "event", legacy: [], capability: "events.subscribe:tools", description: "A tool call started, updated or finished in another extension." },
   { name: "session.attach.attached", kind: "event", legacy: ["bridge_attached", "web_commands", "web_models", "web_tree"], capability: "session.read", description: "Session attach snapshot: commands, models and tree." },
   { name: "ui.header.changed", kind: "event", legacy: [], capability: publish, description: "setHeader surfaced through the bridge." },
   { name: "ui.footer.changed", kind: "event", legacy: [], capability: publish, description: "setFooter surfaced through the bridge." },

@@ -12,6 +12,7 @@ import { routerEditorPlugin, routerPlugin } from "./router/descriptor.ts";
 import { subagentCheckpointsPlugin } from "./subagent-checkpoints/descriptor.ts";
 import { subagentGraphPlugin } from "./subagent-graph/descriptor.ts";
 import { todoPlugin } from "./todo/descriptor.ts";
+import { webBridgePlugin } from "./web-bridge/descriptor.ts";
 import type { WebPluginDescriptor } from "../core/plugin-contracts/descriptor.ts";
 
 export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [
@@ -30,6 +31,7 @@ export const WEB_PLUGINS: readonly WebPluginDescriptor[] = [
   routerPlugin,
   routerEditorPlugin,
   exampleOverridePlugin,
+  webBridgePlugin,
 ];
 
 export const WEB_PLUGIN_OPT_OUT: Record<string, string> = {

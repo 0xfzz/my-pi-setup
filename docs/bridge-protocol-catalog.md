@@ -56,6 +56,7 @@ Protocol `pi-web-bridge` v1. Every legacy wire name maps to one catalog message;
 | `ui.plugin.action-requested` | `ui.publish` | A plugin asked the browser for an action. |
 | `ui.notify` | `ui.publish` | Transient notification. |
 | `models.changed` | `events.subscribe:models` | The model catalogue changed. |
+| `tool.execution.changed` | `events.subscribe:tools` | A tool call started, updated or finished in another extension. |
 | `session.attach.attached` | `session.read` | Session attach snapshot: commands, models and tree. |
 | `ui.header.changed` | `ui.publish` | setHeader surfaced through the bridge. |
 | `ui.footer.changed` | `ui.publish` | setFooter surfaced through the bridge. |

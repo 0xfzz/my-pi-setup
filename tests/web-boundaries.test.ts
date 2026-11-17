@@ -222,7 +222,7 @@ const ZONES: readonly ZoneRules[] = [
     // vocabulary (web/core/plugin-contracts) plus lib/vendor — never the
     // client, server, wire or descriptor source.
     dir: "extensions",
-    runtimeAllow: ["extensions/", "lib/", "vendor/", "web/core/plugin-contracts/", "web/core/auth/", "@earendil-works/", "node:"],
+    runtimeAllow: ["extensions/", "lib/", "vendor/", "web/core/protocol/", "web/core/plugin-contracts/", "web/core/auth/", "@earendil-works/", "node:"],
     typeOnlyAllow: ["lib/", "vendor/", "web/core/plugin-contracts/"],
     why: "extensions own behavior; the web is reached only through the bridge vocabulary and lib/vendor contracts",
   },
