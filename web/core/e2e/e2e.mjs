@@ -220,13 +220,22 @@ async function assertMobilePanelLauncher(page, viewport) {
 
 async function assertSessionLoading(page) {
   const requests = [];
-  const route = request => { requests.push(request); };
+  let requestArrived;
+  const firstRequest = new Promise(resolve => { requestArrived = resolve; });
+  const route = request => { requests.push(request); requestArrived(); };
   const pattern = "**/api/agent/__test_session__/history*";
   await page.route(pattern, route);
   const loading = page.getByRole("status", { name: "Loading conversation…", exact: true });
   try {
     await selectFixtureSession(page);
     await loading.waitFor({ timeout: 5_000 });
+    // The page read starts after the SSE subscribe, so the spinner can be
+    // visible before the request exists. Hold that request before checking
+    // the spinner or releasing it.
+    await Promise.race([
+      firstRequest,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("history request never arrived")), 5_000)),
+    ]);
     assert.equal(await page.getByRole("heading", { name: "What are we working on?" }).count(), 0,
       "an unread conversation must not be presented as empty");
   } finally {
@@ -1541,13 +1550,14 @@ async function run() {
       const longRow = page.locator(`.app-session-item[data-id="${longId}"]`);
       await longRow.waitFor({ state: "visible", timeout: 15_000 });
       await longRow.click();
-      // The newest user message (249) is in the window; the head (1..50)
-      // rolled off. Bounded: 200 rendered entries.
+      // The newest user message (249) is in the first cursor page; the head
+      // is reachable through "Load older messages", not loaded up front.
       await page.locator(".msg-user", { hasText: "entry 249" }).first().waitFor({
         state: "visible",
         timeout: 15_000,
       });
-      assert.equal(await page.locator(".msg-user, .msg-assistant").count(), 200);
+      assert.equal(await page.locator(".msg-user, .msg-assistant").count(), 50);
+      assert.equal(await page.locator(".app-history-pager-button").count(), 1, "older pages are available on demand");
       assert.equal(await page.locator(".msg-user", { hasText: "entry 50" }).count(), 0);
     } finally {
       await rm(longFile, { force: true });

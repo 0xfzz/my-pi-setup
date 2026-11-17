@@ -170,6 +170,8 @@ interface OptimisticUserMessage {
 const SELECTED_SESSION_KEY = "pi-web-minimal:selected-session";
 /** One page of the transcript; older turns load on demand through a cursor. */
 const HISTORY_PAGE_LIMIT = 50;
+/** A session with no transcript file is an empty conversation, not a failed read. */
+const EMPTY_HISTORY_PAGE: HistoryPageResponse = {};
 /** How long the reloading banner stays before a missing completion signal expires it. */
 const RELOAD_INDICATOR_TIMEOUT_MS = 20_000;
 
@@ -532,6 +534,8 @@ export function usePiSession() {
     const timeout = setTimeout(() => controller.abort(), HISTORY_FETCH_TIMEOUT_MS);
     void fetch(`/api/agent/${encodeURIComponent(id)}/history?${query}`, { signal: controller.signal })
       .then((res) => {
+        // A fixture or a session with no transcript file has no older pages.
+        if (res.status === 404) return EMPTY_HISTORY_PAGE;
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json() as Promise<HistoryPageResponse>;
       })
@@ -709,6 +713,9 @@ export function usePiSession() {
       const timeout = setTimeout(() => controller.abort(), HISTORY_FETCH_TIMEOUT_MS);
       void fetch(`/api/agent/${encodeURIComponent(selectedId)}/history?${query}`, { signal: controller.signal })
         .then((res) => {
+          // A session without a transcript file is an empty conversation,
+          // not a read failure worth retrying forever.
+          if (res.status === 404) return EMPTY_HISTORY_PAGE;
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.json() as Promise<HistoryPageResponse>;
         })
