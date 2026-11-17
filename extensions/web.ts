@@ -20,36 +20,14 @@
  * That is what keeps the web UI and the CLI in sync, in realtime, both ways.
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { createLocalBashOperations, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
-import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, appendFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { createLocalBashOperations, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { appendFileSync } from "node:fs";
 import { join } from "node:path";
-// pi's own share/bug primitives — deep imports, since the package "exports"
-// map only opens the main entry. These are pi's code, not reimplementations.
-import { exportSessionToJsonl, serializeSessionBranch } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/session-export.js";
-import {
-  bugReportArchiveFileName,
-  collectBugReportDiagnostics,
-  collectBugReportMetadata,
-  writeBugReportArchive,
-} from "../node_modules/@earendil-works/pi-coding-agent/dist/core/bug-report.js";
-import { uploadBugReport } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/bug-report-upload.js";
-import { readCrashLog } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/crash-log.js";
-import { getRadiusGatewayUrl, RADIUS_PROVIDER_ID } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/radius.js";
-import { getShareViewerUrl } from "../node_modules/@earendil-works/pi-coding-agent/dist/config.js";
-import { getAuthCredential } from "../node_modules/@earendil-works/pi-coding-agent/dist/cli/auth-command.js";
-import { WEB_PLUGIN_ACTION_REQUEST_EVENT, validateActionValues, type ActionRequestPayload } from "../web/core/plugin-contracts/actions.ts";
-import { WEB_PLUGIN_VIEW_EVENT, type DialogWebView, type WebView } from "../web/core/plugin-contracts/view.ts";
-import { publishWebView } from "../web/core/plugin-contracts/publisher.ts";
-import { buildWebTree, type PiTreeNodeLike } from "../lib/web-tree.ts";
-import { findModelRef, uniqueModelRefs, type ModelRef } from "../lib/model-ref.ts";
-import { sseFrameData, takeSseFrames } from "../lib/web-sse.ts";
-import { WEB_MODELS_CHANGED_EVENT, WEB_PLUGIN_UI_SYNC_EVENT, WEB_UI_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
+import { WEB_PLUGIN_VIEW_EVENT } from "../web/core/plugin-contracts/view.ts";
+import { uniqueModelRefs, type ModelRef } from "../lib/model-ref.ts";
+import { WEB_MODELS_CHANGED_EVENT, WEB_UI_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
 import {
   WEB_PLUGIN_COMMANDS_EVENT,
-  WEB_PLUGIN_WEB_COMMAND_EVENT,
   announcedCommandList,
   type WebCommandDescriptor,
 } from "../web/core/plugin-contracts/web-commands.ts";
@@ -60,6 +38,8 @@ import { WebAuthConfigCache, loadWebAuthConfig, removeWebPassword, webAuthConfig
 import { MIN_PASSWORD_LENGTH, passwordProblem } from "../web/core/auth/password.ts";
 import { providerKeyInput } from "../lib/provider/provider-key-input.ts";
 import { slimBridgeEvent } from "../lib/bridge-event-slim.ts";
+import { createBridgeDispatch } from "./web/dispatch.ts";
+import { createWebCommands } from "./web/commands.ts";
 
 export interface WebExtensionOptions {
   deps?: Partial<WebUiDeps>;
@@ -170,17 +150,6 @@ interface BridgeBody {
   getReader(): BridgeBodyReader;
 }
 
-/**
- * The form answers a bridge command carries, bounded the way the action route
- * bounds them. `undefined` means "no answer": the payload must not gain an
- * empty `values` object, which an extension would read as a submitted form.
- */
-function actionValuesOf(raw: unknown): Record<string, string> | undefined {
-  const validated = validateActionValues(raw);
-  if (!validated.ok || validated.values === undefined) return undefined;
-  return Object.keys(validated.values).length > 0 ? validated.values : undefined;
-}
-
 /** Context-derived usage, for the web's session state. */
 function contextUsageOf(ctx: ExtensionContext): { contextUsage: { percent: number; contextWindow: number; tokens: number } | null } {
   const usage = ctx.getContextUsage?.();
@@ -239,9 +208,6 @@ function allModelRefs(ctx: ExtensionContext): ModelRef[] {
 function pickableModelRefs(ctx: ExtensionContext): ModelRef[] {
   return uniqueModelRefs([...modelRefs(ctx), ...allModelRefs(ctx)]);
 }
-
-/** pi's thinking levels, in cycle order. */
-const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 /** Push the current model/thinking to the web client (SSE `session_state`). */
 async function postBridgeState(sessionId: string, state: Record<string, unknown>): Promise<void> {
@@ -658,197 +624,6 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
     }
   };
 
-  const consumeBridgeCommands = async (
-    sessionId: string,
-    body: BridgeBody,
-    signal: AbortSignal,
-  ): Promise<void> => {
-    const reader = body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    try {
-      while (!signal.aborted) {
-        const { done, value } = await reader.read();
-        if (done) return;
-        buffer += decoder.decode(value, { stream: true });
-        const { frames, remainder } = takeSseFrames(buffer);
-        buffer = remainder;
-        for (const frame of frames) handleBridgeFrame(sessionId, frame);
-      }
-    } finally {
-      try {
-        await reader.cancel();
-      } catch {
-        // The stream is already gone.
-      }
-    }
-  };
-
-  const handleBridgeFrame = (sessionId: string, frame: string): void => {
-    const data = sseFrameData(frame);
-    if (data === "") return; // heartbeat comment
-    let parsed: {
-      type?: unknown;
-      command?: {
-        type?: unknown;
-        message?: unknown;
-        requestId?: unknown;
-        pluginId?: unknown;
-        actionId?: unknown;
-        confirm?: unknown;
-        values?: unknown;
-        images?: unknown;
-        provider?: unknown;
-        id?: unknown;
-        level?: unknown;
-        name?: unknown;
-        args?: unknown;
-      };
-    };
-    try {
-      parsed = JSON.parse(data) as typeof parsed;
-    } catch {
-      return;
-    }
-    if (parsed.type !== "bridge_command" || parsed.command === undefined) return;
-    const command = parsed.command;
-    if (command.type === "prompt" && typeof command.message === "string") {
-      // A prompt typed in the browser runs on THIS session — the TUI sees
-      // the same turn it would see if the user had typed it locally.
-      // expandPromptTemplates dispatches "/command …" like the TUI's prompt
-      // path; steer queues it when a run is already streaming. Image
-      // attachments ride along as content blocks.
-      try {
-        const content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>
-          = [{ type: "text", text: command.message }];
-        for (const image of Array.isArray(command.images) ? command.images : []) {
-          if (typeof image?.data === "string" && typeof image?.mimeType === "string") {
-            content.push({ type: "image", data: image.data, mimeType: image.mimeType });
-          }
-        }
-        pi.sendUserMessage(content, {
-          deliverAs: "steer",
-          expandPromptTemplates: true,
-        });
-      } catch (error) {
-        ctxNotify(`web bridge: prompt failed: ${String(error)}`);
-      }
-      return;
-    }
-    if (command.type === "abort") {
-      try {
-        lastCtxForCommands?.abort();
-      } catch {
-        // Already idle.
-      }
-      return;
-    }
-    if (
-      command.type === "set_model"
-      && typeof command.provider === "string"
-      && typeof command.id === "string"
-    ) {
-      const ctx = lastCtxForCommands;
-      if (ctx === null) return;
-      const ref = findModelRef(pickableModelRefs(ctx), `${command.provider}/${command.id}`);
-      if (ref === undefined) {
-        ctxNotify(`model not found: ${command.provider}/${command.id}`);
-        return;
-      }
-      void applyModelRef(ctx, ref).then(ctxNotify);
-      return;
-    }
-    if (command.type === "set_thinking" && typeof command.level === "string") {
-      const level = command.level as (typeof THINKING_LEVELS)[number];
-      if (!THINKING_LEVELS.includes(level)) {
-        ctxNotify(`unknown thinking level: ${command.level}`);
-        return;
-      }
-      try {
-        pi.setThinkingLevel(level);
-        ctxNotify(`thinking level: ${level}`);
-        if (lastCtxForCommands !== null) postSessionState(lastCtxForCommands);
-      } catch (error) {
-        ctxNotify(`set thinking failed: ${String(error)}`);
-      }
-      return;
-    }
-    if (
-      command.type === "web_command"
-      && typeof command.name === "string"
-    ) {
-      // The web core's own command channel. Runner-dispatched commands go
-      // through pi's own command runner (a fresh, valid command context —
-      // session control methods only exist there); direct ones run on the
-      // captured session context. A command another extension registered
-      // (web/core/plugin-contracts/web-commands.ts) is always direct.
-      const args = typeof command.args === "string" ? command.args : "";
-      const entry = webCoreCommand(command.name);
-      if (entry === undefined) {
-        // Not one of ours: hand it back to whichever extension announced it.
-        // The contributor runs it with the context it captured itself.
-        if (!contributedCommands.has(command.name)) {
-          ctxNotify(`unknown web command: ${command.name}`);
-          return;
-        }
-        pi.events?.emit(WEB_PLUGIN_WEB_COMMAND_EVENT, { name: command.name, args });
-        return;
-      }
-      if (entry.dispatch === "runner") {
-        // pi.sendUserMessage returns void (fire-and-forget); its errors
-        // surface through the runner's own error reporting.
-        pi.sendUserMessage(`/web-${command.name}${args.trim() !== "" ? ` ${args.trim()}` : ""}`, {
-          expandPromptTemplates: true,
-        });
-        return;
-      }
-      const ctx = lastCtxForCommands as WebCommandContext | null;
-      if (ctx === null) {
-        ctxNotify(`web command ${command.name}: no session context yet`);
-        return;
-      }
-      void Promise.resolve(entry.handler(args, ctx)).catch((error: unknown) => {
-        ctxNotify(`web command ${command.name} failed: ${String(error)}`);
-      });
-      return;
-    }
-    if (
-      command.type === "action" &&
-      typeof command.pluginId === "string" &&
-      typeof command.actionId === "string"
-    ) {
-      // Plugin actions from the web reach the TUI-side extensions exactly
-      // like in-process ones. An instant action's typed dialog answer
-      // (confirm) and its form answers (values) travel with it: a dialog row
-      // carries its target in `values` (`{ providerId }`, `{ modelId }`, a
-      // form's fields), so dropping them left the extension with a click it
-      // could not attribute and no view to publish.
-      const values = actionValuesOf(command.values);
-      pi.events?.emit(WEB_PLUGIN_ACTION_REQUEST_EVENT, {
-        requestId: typeof command.requestId === "string" ? command.requestId : "",
-        sessionId,
-        pluginId: command.pluginId,
-        actionId: command.actionId,
-        ...(typeof command.confirm === "string" && command.confirm !== "" ? { confirm: command.confirm } : {}),
-        ...(values !== undefined ? { values } : {}),
-      });
-      return;
-    }
-    if (command.type === "ui_sync") {
-      // The web attached after this session already published its views:
-      // re-emit the current UI values (publisher remembers the last value per
-      // plugin and re-publishes them on this event).
-      pi.events?.emit(WEB_PLUGIN_UI_SYNC_EVENT, {});
-      // The state snapshot is a value too: the server caches it for the
-      // browser's first render, and a consumer attaching late must see the
-      // current reading rather than whatever was cached when the bridge
-      // opened.
-      if (bridgeSessionId !== null && lastCtxForCommands !== null) {
-        void postBridgeState(bridgeSessionId, bridgeStateOf(lastCtxForCommands));
-      }
-      return;
-    }
-  };
 
   // Commands arrive outside handler contexts, so the bridge keeps the last
   // session context for abort() and notifications.
@@ -860,6 +635,20 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
       // A notice that cannot be shown is not worth failing the bridge.
     }
   };
+
+  const { consumeBridgeCommands } = createBridgeDispatch({
+    pi,
+    notify: ctxNotify,
+    getLastCtx: () => lastCtxForCommands,
+    getBridgeSessionId: () => bridgeSessionId,
+    getWebCoreCommand: (name) => webCoreCommand(name),
+    contributedCommands,
+    pickableModelRefs,
+    applyModelRef,
+    postSessionState,
+    postBridgeState,
+    bridgeStateOf,
+  });
 
   // Forward the session stream to the web while the bridge is attached.
   // Deltas go across the bridge without the cumulative message (see lib/bridge-event-slim.ts).
@@ -1037,464 +826,12 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   //
   //  direct — runs on the plain extension context (compact, setSessionName,
   //  shutdown all exist there); the bridge channel executes it directly.
-  type WebCommandContext = ExtensionContext & {
-    waitForIdle(): Promise<void>;
-    newSession(): Promise<{ cancelled: boolean }>;
-    fork(entryId: string, options: { position: string }): Promise<{ cancelled: boolean }>;
-    navigateTree(targetId: string): Promise<{ cancelled: boolean }>;
-    switchSession(sessionPath: string): Promise<void>;
-    reload(): Promise<void>;
-  };
-  const WEB_CORE_COMMANDS: Array<{
-    name: string;
-    description: string;
-    /** "runner" dispatches through pi's command runner; "direct" runs on the captured ctx. */
-    dispatch: "runner" | "direct";
-    handler: (args: string, ctx: WebCommandContext) => void | Promise<void>;
-  }> = [
-    {
-      name: "compact",
-      dispatch: "direct",
-      description: "Compact the session context (web core)",
-      handler: (args, ctx) => {
-        const instructions = args.trim();
-        ctx.compact(instructions !== "" ? { customInstructions: instructions } : undefined);
-      },
-    },
-    {
-      name: "name",
-      dispatch: "direct",
-      description: "Set the session display name (web core)",
-      handler: (args) => {
-        const name = args.trim();
-        if (name === "") {
-          ctxNotify("usage: /name <new-name>");
-          return;
-        }
-        pi.setSessionName(name);
-        ctxNotify(`session name: ${name}`);
-      },
-    },
-    {
-      name: "new",
-      dispatch: "runner",
-      description: "Start a new session (web core)",
-      handler: async (_args, ctx) => {
-        const result = await ctx.newSession();
-        if (result.cancelled) ctxNotify("new session cancelled");
-      },
-    },
-    {
-      name: "clone",
-      dispatch: "runner",
-      description: "Duplicate the current session at the current position (web core)",
-      handler: async (_args, ctx) => {
-        const leafId = ctx.sessionManager?.getLeafId?.();
-        if (leafId === undefined || leafId === null) {
-          ctxNotify("nothing to clone yet");
-          return;
-        }
-        try {
-          const result = await ctx.fork(leafId, { position: "at" });
-          if (result.cancelled) ctxNotify("clone cancelled");
-          else ctxNotify("cloned to new session");
-        } catch (error) {
-          ctxNotify(`clone failed: ${String(error)}`);
-        }
-      },
-    },
-    {
-      name: "reload",
-      dispatch: "runner",
-      description: "Reload keybindings, extensions, skills, prompts and themes (web core)",
-      handler: async (_args, ctx) => {
-        try {
-          // The TUI's reload refuses to run mid-turn or mid-compaction (it
-          // just warns and returns). The web dispatches a one-shot command, so
-          // instead of silently no-op'ing, wait for the session to settle first.
-          await ctx.waitForIdle();
-          await ctx.reload();
-          ctxNotify("reloaded");
-        } catch (error) {
-          ctxNotify(`reload failed: ${String(error)}`);
-        }
-      },
-    },
-    {
-      // pi's /fork: pick a previous user message, branch there. The picker
-      // is the web dialog pipeline (pi's extension dialog surface): both
-      // frontends render it, either can answer, and the pick resolves
-      // through ctx.fork — pi's own branching API.
-      name: "fork",
-      dispatch: "runner",
-      description: "Fork from a previous user message (web core)",
-      handler: (_args, ctx) => {
-        const entries = ctx.sessionManager?.getEntries?.() ?? [];
-        const userMessages = entries.flatMap((entry) => {
-          if (entry.type !== "message" || entry.message.role !== "user") return [];
-          return [{
-            id: entry.id,
-            message: entry.message as { role: string; content: unknown },
-          }];
-        });
-        if (userMessages.length === 0) {
-          ctxNotify("no user messages to fork from yet");
-          return;
-        }
-        const actions = userMessages.slice(-50).reverse().map((entry) => {
-          const content = entry.message.content;
-          const text =
-            typeof content === "string"
-              ? content
-              : Array.isArray(content)
-                ? content
-                    .filter(
-                      (block): block is { type?: string; text?: string } =>
-                        typeof block === "object" && block !== null,
-                    )
-                    .map((block) => (block.type === "text" && typeof block.text === "string" ? block.text : ""))
-                    .join(" ")
-                    .trim()
-                : "";
-          return { id: `fork@${entry.id}`, label: `${text.slice(0, 60) || "(empty)"} · ${entry.id.slice(0, 8)}` };
-        });
-        publishWebView(pi, WEB_CORE_PLUGIN_ID, pickerDialog("Fork from which message?", actions.map((a) => a.label), actions));
-      },
-    },
-    {
-      // pi's /tree: navigate the session's branch structure. Bare: pi's own
-      // tree (getTree) projected the way its TUI selector shapes it — the
-      // web renders its picker from that data. With an entry id (the pick):
-      // pi's navigateTree moves there.
-      name: "tree",
-      dispatch: "runner",
-      description: "Navigate the session tree (web core)",
-      handler: async (args, ctx) => {
-        const targetId = args.trim();
-        if (targetId !== "") {
-          try {
-            const result = await ctx.navigateTree(targetId);
-            if (result.cancelled) ctxNotify("tree navigation cancelled");
-            else ctxNotify(`navigated to ${targetId.slice(0, 8)}`);
-          } catch (error) {
-            ctxNotify(`tree navigation failed: ${String(error)}`);
-          }
-          return;
-        }
-        const manager = ctx.sessionManager;
-        const tree = manager?.getTree?.() ?? [];
-        if (tree.length === 0) {
-          ctxNotify("the session tree is empty");
-          return;
-        }
-        const leafId = manager?.getLeafId?.() ?? null;
-        const nodes = buildWebTree(tree as unknown as readonly PiTreeNodeLike[], leafId);
-        bridgePoster?.post({ type: "web_tree", nodes });
-      },
-    },
-    {
-      // pi's /import: resume a session from a JSONL file. The path as the
-      // command's argument (the web composer's palette offers the hint);
-      // the takeover through pi's switchSession.
-      name: "import",
-      dispatch: "runner",
-      description: "Import and resume a session from a JSONL file (web core)",
-      handler: async (args, ctx) => {
-        const path = args.trim();
-        if (path === "") {
-          ctxNotify("usage: /import /path/to/session.jsonl");
-          return;
-        }
-        try {
-          await ctx.switchSession(path);
-          ctxNotify(`resumed ${path}`);
-        } catch (error) {
-          ctxNotify(`import failed: ${String(error)}`);
-        }
-      },
-    },
-    {
-      // pi's /quit: the graceful shutdown pi itself exposes on the context.
-      name: "quit",
-      dispatch: "direct",
-      description: "Gracefully shut down this pi session (web core)",
-      handler: async (_args, ctx) => {
-        ctxNotify("shutting down");
-        ctx.shutdown();
-      },
-    },
-    {
-      // pi's /share: export the session branch (pi's exportSessionToJsonl)
-      // and hand the URL to Radius or a GitHub gist. The result is a web
-      // dialog carrying the share URL — no terminal loader.
-      name: "share",
-      dispatch: "direct",
-      description: "Share the session via Radius or a GitHub gist (web core)",
-      handler: async (_args, ctx) => {
-        await runShare(ctx);
-      },
-    },
-    {
-      // pi's /bug: build pi's own bug-report bundle (metadata + diagnostics
-      // + session branch) and upload it or write a zip, then report the
-      // result. args is JSON: {description?, delivery? "upload"|"zip"}.
-      name: "bug",
-      dispatch: "direct",
-      description: "Report a bug to the Pi developers (web core)",
-      handler: async (args, ctx) => {
-        await runBug(args, ctx);
-      },
-    },
-  ];
-  const webCoreCommand = (name: string): (typeof WEB_CORE_COMMANDS)[number] | undefined =>
-    WEB_CORE_COMMANDS.find((command) => command.name === name);
-
-  // The web dialog pipeline's dialog for the core pickers: entries as
-  // actions, answered from either frontend through the plugin action
-  // pipeline — pi's extension dialog surface, no bespoke protocol.
-  const WEB_CORE_PLUGIN_ID = "web-core";
-  const pickerDialog = (title: string, labels: string[], actions: Array<{ id: string; label: string }>): WebView => {
-    // The dialog contract caps actions at 8: the newest 7 entries are
-    // pickable (a cancel action takes the last slot); the rest are listed
-    // as lines for context.
-    const view: DialogWebView = {
-      type: "dialog",
-      title,
-      lines: labels.length > 7 ? labels.slice(7, 20) : [],
-      actions: [
-        ...actions.slice(0, 7).map((action) => ({
-          id: action.id,
-          label: action.label.slice(0, 60),
-        })),
-        { id: "web-core-cancel", label: "Cancel" },
-      ],
-      open: true,
-    };
-    return view;
-  };
-
-  // A simple result dialog (no picker): lines + a Close action. Used by
-  // /share and /bug to hand a URL or report id back to the web frontend.
-  const resultDialog = (title: string, lines: string[]): WebView => ({
-    type: "dialog",
-    title,
-    lines,
-    actions: [{ id: "web-core-close", label: "Close" }],
-    open: true,
+  const { WEB_CORE_COMMANDS, webCoreCommand } = createWebCommands({
+    pi,
+    notify: ctxNotify,
+    post: (event) => { bridgePoster?.post(event); },
   });
 
-  // The Radus/share trailing entry: the session's system prompt and tool
-  // schemas, so the viewer renders tool calls. Built from the extension's
-  // own surfaces (ctx.getSystemPrompt + pi.getAllTools) — pi's own data.
-  const shareTrailingEntries = (ctx: WebCommandContext): ((parentId: string | null, timestamp: string) => readonly object[]) => {
-    const tools = pi
-      .getAllTools()
-      .map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters }));
-    const systemPrompt = ctx.getSystemPrompt();
-    return (parentId, timestamp) => [{
-      type: "custom",
-      customType: "pi.share",
-      id: randomUUID().slice(0, 8),
-      parentId,
-      timestamp,
-      data: { systemPrompt, tools },
-    }];
-  };
-
-  const tryShareViaRadius = async (jsonlFile: string, ctx: WebCommandContext): Promise<string | null> => {
-    try {
-      const auth = await ctx.modelRegistry.getProviderAuth(RADIUS_PROVIDER_ID);
-      const token = getAuthCredential(auth);
-      if (!token) return null;
-      const body = readFileSync(jsonlFile);
-      const url = new URL("/v1/artifacts", getRadiusGatewayUrl());
-      url.searchParams.set("visibility", "organization");
-      url.searchParams.set("title", "Pi session");
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/x-ndjson",
-          "Content-Length": String(body.byteLength),
-        },
-        body,
-      });
-      const json = (await response.json().catch(() => null)) as { artifact?: { canonical_url?: string } } | null;
-      if (!response.ok || !json?.artifact?.canonical_url) return null;
-      return json.artifact.canonical_url;
-    } catch {
-      return null;
-    }
-  };
-
-  const shareViaGist = (jsonlFile: string): Promise<string | null> =>
-    new Promise((resolve) => {
-      const proc = spawn("gh", ["gist", "create", "--public=false", jsonlFile]);
-      let stdout = "";
-      proc.stdout?.on("data", (data: Buffer) => {
-        stdout += data.toString();
-      });
-      proc.on("error", () => resolve(null));
-      proc.on("close", (code) => resolve(code === 0 ? stdout.trim() : null));
-    });
-
-  const runShare = async (ctx: WebCommandContext): Promise<void> => {
-    const tmpDir = mkdtempSync(join(tmpdir(), "pi-share-"));
-    const jsonlFile = join(tmpDir, "session.jsonl");
-    try {
-      const exportJsonl = exportSessionToJsonl as unknown as (
-        sm: unknown,
-        outputPath: string,
-        trailing: (parentId: string | null, timestamp: string) => readonly object[],
-      ) => string;
-      exportJsonl(ctx.sessionManager, jsonlFile, shareTrailingEntries(ctx));
-      const destination = pi.getSettings().sessionShareDestination ?? "auto";
-      if (destination !== "gist") {
-        const radiusUrl = await tryShareViaRadius(jsonlFile, ctx);
-        if (radiusUrl !== null) {
-          publishWebView(pi, WEB_CORE_PLUGIN_ID, resultDialog("Share complete", [`Share URL: ${radiusUrl}`]));
-          return;
-        }
-        if (destination === "radius") {
-          publishWebView(pi, WEB_CORE_PLUGIN_ID, resultDialog("Share failed", ["Radius authentication is not configured. Run /login radius first."]));
-          return;
-        }
-      }
-      const gistUrl = await shareViaGist(jsonlFile);
-      if (gistUrl === null || gistUrl === "") {
-        publishWebView(pi, WEB_CORE_PLUGIN_ID, resultDialog("Share failed", ["GitHub CLI (gh) is not installed or not logged in. Run 'gh auth login' first."]));
-        return;
-      }
-      const gistId = gistUrl.split("/").pop();
-      const previewUrl = gistId !== undefined && gistId !== "" ? getShareViewerUrl(gistId) : gistUrl;
-      publishWebView(pi, WEB_CORE_PLUGIN_ID, resultDialog("Share complete", [`Share URL: ${previewUrl}`, `Gist: ${gistUrl}`]));
-    } catch (error) {
-      publishWebView(pi, WEB_CORE_PLUGIN_ID, resultDialog("Share failed", [error instanceof Error ? error.message : String(error)]));
-    } finally {
-      try {
-        rmSync(tmpDir, { recursive: true, force: true });
-      } catch {
-        // tmp cleanup is best-effort
-      }
-    }
-  };
-
-  const runBug = async (args: string, ctx: WebCommandContext): Promise<void> => {
-    let parsed: unknown = {};
-    try {
-      parsed = JSON.parse(args);
-    } catch {
-      // Plain text: "--zip <description>" chooses a local zip, otherwise
-      // the description is the rest of the line and delivery is upload.
-      const trimmed = args.trim();
-      if (trimmed.startsWith("--zip")) parsed = { delivery: "zip", description: trimmed.slice(4).trim() };
-      else parsed = { description: trimmed };
-    }
-    const request = (typeof parsed === "object" && parsed !== null ? parsed : {}) as {
-      description?: unknown;
-      delivery?: unknown;
-    };
-    const description = typeof request.description === "string" && request.description.trim() !== "" ? request.description.trim() : undefined;
-    const delivery = request.delivery === "zip" ? "zip" : "upload";
-    try {
-      const settings = SettingsManager.create(ctx.cwd, getAgentDir());
-      const collectMetadata = collectBugReportMetadata as unknown as (
-        options: Record<string, unknown>,
-      ) => { id: string };
-      const sessionManager = ctx.sessionManager as unknown as {
-        getEntries(): Array<{ type: string }>;
-      } & { getSessionId?: () => string };
-      const metadata = collectMetadata({
-        hint: description,
-        sessionId: sessionManager.getSessionId?.() ?? "session",
-        cwd: ctx.cwd,
-        includeSession: true,
-        includeSummary: false,
-        messageCount: sessionManager.getEntries().filter((entry) => entry.type === "message").length,
-        model: ctx.model,
-        modelRuntime: {
-          getProvider: (id: string) => ctx.modelRegistry.getProvider(id),
-          getProviderAuthStatus: (id: string) => ctx.modelRegistry.getProviderAuthStatus(id),
-          isUsingOAuth: (id: string) => {
-            const model = ctx.modelRegistry.getAll().find((candidate) => candidate.provider === id);
-            return model !== undefined ? ctx.modelRegistry.isUsingOAuth(model) : false;
-          },
-          getRegisteredProviderIds: () => ctx.modelRegistry.getRegisteredProviderIds(),
-        },
-        thinkingLevel: ctx.thinkingLevel ?? "off",
-        extensions: [],
-        extensionErrors: [],
-        globalSettings: settings.getGlobalSettings(),
-        projectSettings: settings.getProjectSettings(),
-      });
-      const diagnostics = collectBugReportDiagnostics(ctx.sessionManager as never, readCrashLog());
-      const sessionJsonl = (serializeSessionBranch as unknown as (
-        sm: unknown,
-        trailing?: (parentId: string | null, timestamp: string) => readonly object[],
-      ) => string)(ctx.sessionManager, shareTrailingEntries(ctx));
-      const bundle = { metadata, diagnostics, sessionJsonl };
-      if (delivery === "upload") {
-        const result = await uploadBugReport(bundle as never, { signal: AbortSignal.timeout(30_000) });
-        publishWebView(pi, WEB_CORE_PLUGIN_ID, resultDialog("Bug report uploaded", [`Report ID: ${result.id}`]));
-      } else {
-        const outPath = join(process.cwd(), bugReportArchiveFileName((metadata as { id: string }).id));
-        await writeBugReportArchive(bundle as never, outPath);
-        publishWebView(pi, WEB_CORE_PLUGIN_ID, resultDialog("Bug report exported", [`Saved to: ${outPath}`]));
-      }
-    } catch (error) {
-      publishWebView(pi, WEB_CORE_PLUGIN_ID, resultDialog("Bug report failed", [error instanceof Error ? error.message : String(error)]));
-    }
-  };
-
-  // A picker's answer: the action id encodes <kind>@<entryId>. Dispatch
-  // through pi's own command runner (the hidden web-core-fork/tree
-  // commands) so the handler runs with a fresh, valid command context —
-  // never a captured one that may have gone stale across session switches.
-  pi.events?.on(WEB_PLUGIN_ACTION_REQUEST_EVENT, (data: unknown) => {
-    const request = data as Partial<ActionRequestPayload> | undefined;
-    if (request?.pluginId !== WEB_CORE_PLUGIN_ID) return;
-    const actionId = typeof request.actionId === "string" ? request.actionId : "";
-    if (actionId === "web-core-cancel" || actionId === "web-core-close") {
-      void publishWebView(pi, WEB_CORE_PLUGIN_ID, { type: "dialog", open: false });
-    } else if (actionId.startsWith("fork@")) {
-      const entryId = actionId.slice("fork@".length);
-      void publishWebView(pi, WEB_CORE_PLUGIN_ID, { type: "dialog", open: false });
-      pi.sendUserMessage(`/web-core-fork ${entryId}`, { expandPromptTemplates: true });
-    } else if (actionId.startsWith("tree@")) {
-      const targetId = actionId.slice("tree@".length);
-      void publishWebView(pi, WEB_CORE_PLUGIN_ID, { type: "dialog", open: false });
-      pi.sendUserMessage(`/web-tree ${targetId}`, { expandPromptTemplates: true });
-    }
-  });
-
-  // /model and /thinking are fully web-ported: the composer intercepts them
-  // client-side (bare opens the picker, args POST to the model/thinking
-  // routes), and the bridge's set_model/set_thinking commands apply them —
-  // so no pi command registration and no dialog-request round trip.
-
-  // The runner-dispatched web core commands: real pi commands under
-  // prefixed names. pi's TUI built-ins keep their own names; these are the
-  // web's dispatch targets and also work typed directly in the TUI. The
-  // hidden web-core-fork/tree pair resolves picker actions (never listed).
-  for (const command of WEB_CORE_COMMANDS) {
-    if (command.dispatch !== "runner") continue;
-    pi.registerCommand(`web-${command.name}`, {
-      description: command.description,
-      handler: async (args: string, ctx: ExtensionContext) => {
-        await command.handler(args, ctx as WebCommandContext);
-      },
-    });
-  }
-  pi.registerCommand("web-core-fork", {
-    description: "Resolve a web fork picker action (internal).",
-    handler: async (args: string, ctx: ExtensionContext) => {
-      const entryId = args.trim();
-      if (entryId === "") return;
-      const result = await (ctx as WebCommandContext).fork(entryId, { position: "before" });
-      if (result.cancelled) ctxNotify("fork cancelled");
-      else ctxNotify("forked to a new session");
-    },
-  });
 
 
   const authPath = (): string => options.authConfigPath ?? webAuthConfigPath();
