@@ -45,9 +45,11 @@ export function ArtifactPreview({ title, detail, onBack }: ArtifactPreviewProps)
   return (
     <div className="artifacts-preview" data-testid="artifacts-preview">
       <div className="artifacts-toolbar artifacts-preview-header">
-        <button type="button" className="artifacts-icon-btn" aria-label="Back to catalog" onClick={onBack}>
-          <ArrowLeft size={15} aria-hidden="true" />
-        </button>
+        <div className="artifact-actions">
+          <button type="button" className="artifacts-icon-btn" aria-label="Back to catalog" onClick={onBack}>
+            <ArrowLeft size={15} aria-hidden="true" />
+          </button>
+        </div>
         <span className="artifacts-preview-title" title={title}>{title}</span>
         {meta !== undefined ? (
           <span className="artifacts-preview-kind">{meta.type} · v{meta.version}</span>
@@ -56,14 +58,16 @@ export function ArtifactPreview({ title, detail, onBack }: ArtifactPreviewProps)
 
       <div className="artifacts-preview-meta">
         {meta?.id ? (
-          <button
-            type="button"
-            className="artifacts-action artifacts-preview-id"
-            title={`Copy artifact id: ${meta.id}`}
-            onClick={() => void copy(meta.id)}
-          >
-            #{meta.id}
-          </button>
+          <div className="artifact-actions">
+            <button
+              type="button"
+              className="artifacts-action artifacts-preview-id"
+              title={`Copy artifact id: ${meta.id}`}
+              onClick={() => void copy(meta.id)}
+            >
+              #{meta.id}
+            </button>
+          </div>
         ) : null}
         <span className="artifacts-preview-stat">{(meta?.size ?? "") || formatBytes(content)}</span>
         {meta?.author ? <span className="artifacts-preview-stat">by {meta.author}</span> : null}
@@ -71,11 +75,18 @@ export function ArtifactPreview({ title, detail, onBack }: ArtifactPreviewProps)
           <span className="artifacts-preview-stat"><Clock size={12} aria-hidden="true" /> {meta.updatedAt}</span>
         ) : null}
         {meta?.tags.length ? (
-          <span className="artifacts-preview-tags">{meta.tags.map((tag) => `#${tag}`).join(" ")}</span>
+          <span
+            className="artifacts-preview-tags artifact-tags"
+            style={{ whiteSpace: "normal", overflow: "visible", textOverflow: "clip", overflowWrap: "anywhere" }}
+          >
+            {meta.tags.map((tag) => `#${tag}`).join(" ")}
+          </span>
         ) : null}
-        <button type="button" className="artifacts-action" onClick={() => void copy(content)} disabled={content === ""}>
-          <Copy size={13} aria-hidden="true" /> {copied ? "Copied" : "Copy content"}
-        </button>
+        <div className="artifact-actions">
+          <button type="button" className="artifacts-action" onClick={() => void copy(content)} disabled={content === ""}>
+            <Copy size={13} aria-hidden="true" /> {copied ? "Copied" : "Copy content"}
+          </button>
+        </div>
       </div>
 
       <div className="artifacts-preview-body">
@@ -87,7 +98,7 @@ export function ArtifactPreview({ title, detail, onBack }: ArtifactPreviewProps)
           </Suspense>
         ) : (
           <div className="artifacts-markdown">
-            <div className="artifacts-markdown-toggle">
+            <div className="artifacts-markdown-toggle artifact-actions">
               <button
                 type="button"
                 className={`artifacts-action${mode === "rendered" ? " is-active" : ""}`}

@@ -103,7 +103,12 @@ export function FilePreview({ sessionId, file, onBack }: FilePreviewProps) {
         <span className="files-preview-path" title={file.path}>{file.path}</span>
         <span className="files-preview-stat"><Clock size={12} aria-hidden="true" /> {formatMtime(mtime)}</span>
         <span className="files-preview-stat">{formatBytes(size)}</span>
-        <button type="button" className="files-action" onClick={() => void copyPath()}>
+        <button
+          type="button"
+          className="files-action"
+          aria-label={`Copy path: ${file.path}`}
+          onClick={() => void copyPath()}
+        >
           <Copy size={13} aria-hidden="true" /> {copied ? "Copied" : "Copy path"}
         </button>
         <a className="files-action" href={downloadUrl(sessionId, file.path, true)}>

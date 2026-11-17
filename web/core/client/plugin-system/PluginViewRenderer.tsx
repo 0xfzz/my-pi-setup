@@ -126,7 +126,7 @@ function ListItemRow({ item }: { item: string | RichItem }) {
     <li className={`plugin-list-item plugin-list-item-rich${open ? " is-open" : ""}`}>
       <button
         type="button"
-        className="plugin-list-item-toggle"
+        className="plugin-list-item-toggle plugin-toggle"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
         title={open ? "Collapse" : "Expand"}
@@ -216,7 +216,7 @@ function GraphNodeRow({ row }: { row: GraphTreeRow }) {
       {detail !== undefined ? (
         <button
           type="button"
-          className="plugin-graph-node-toggle"
+          className="plugin-graph-node-toggle plugin-toggle"
           aria-expanded={open}
           onClick={() => setOpen((value) => !value)}
         >
@@ -255,8 +255,8 @@ export function PluginViewRenderer({
             <tbody>
               {view.rows.map((row, index) => (
                 <tr key={index} className="plugin-kv-row">
-                  <td className="plugin-kv-label">{row.label}</td>
-                  <td className="plugin-kv-value">{row.value}</td>
+                  <td className="plugin-kv-label plugin-kv-label-stack">{row.label}</td>
+                  <td className="plugin-kv-value plugin-kv-value-stack">{row.value}</td>
                 </tr>
               ))}
             </tbody>
@@ -293,7 +293,11 @@ export function PluginViewRenderer({
       );
     case "dialog":
       // Dialogs never render inline; the DialogLayer renders them modally.
-      return null;
+      return (
+        <div className="plugin-empty-state" role="status" data-testid="plugin-dialog-placeholder">
+          <p>Respond to the dialog to continue.</p>
+        </div>
+      );
     default:
       return (
         <div className="plugin-unknown-view">

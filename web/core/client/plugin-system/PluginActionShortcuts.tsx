@@ -85,7 +85,7 @@ export function PluginActionShortcuts({ plugins, sessionId }: PluginActionShortc
   if (!feedback) return null;
   return (
     <div
-      className={`plugin-action-toast${feedback.error ? " has-error" : ""}`}
+      className={`plugin-action-toast plugin-shortcut-toast${feedback.error ? " has-error" : ""}`}
       role="status"
       aria-live="polite"
     >

@@ -2531,3 +2531,75 @@
     overscroll-behavior: contain;
   }
 }
+
+/* Phase 4 component hooks: wrap long values instead of clipping them on a
+ * 320px panel, and keep confirmations/toolbars reachable by thumb. */
+.files-search-pending {
+  padding: 10px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.files-action,
+.artifact-actions button,
+.mcp-delete-confirm button {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.artifacts-row-name,
+.artifacts-row-meta,
+.artifacts-preview-tags {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+
+.artifacts-row-meta {
+  flex-shrink: 1;
+}
+
+.mcp-form-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  flex-wrap: wrap;
+  background: var(--bg-panel);
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+
+.mcp-delete-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+}
+
+.plugin-manager-warning {
+  flex-wrap: wrap;
+}
+
+.plugin-manager-summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.plugin-kv-label-stack,
+.plugin-kv-value-stack {
+  display: block;
+  width: auto;
+  padding: 2px 0;
+  white-space: normal;
+}
+
+.plugin-shortcut-toast {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  overflow: visible;
+}

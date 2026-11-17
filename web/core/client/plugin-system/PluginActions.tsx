@@ -112,7 +112,7 @@ export function PluginActions({ pluginId, sessionId, actions }: PluginActionsPro
                   // An instant action: one click, no typed string.
                   <button
                     type="button"
-                    className="plugin-action-button plugin-action-instant"
+                    className="plugin-action-button plugin-action-instant plugin-toggle"
                     onClick={() => {
                       void handleActionSubmit(action);
                     }}
@@ -136,7 +136,7 @@ export function PluginActions({ pluginId, sessionId, actions }: PluginActionsPro
                     />
                     <button
                       type="button"
-                      className="plugin-action-button"
+                      className="plugin-action-button plugin-toggle"
                       onClick={() => {
                         void handleActionSubmit(action);
                       }}

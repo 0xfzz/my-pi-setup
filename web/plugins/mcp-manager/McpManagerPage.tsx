@@ -136,6 +136,10 @@ function settleOutcome(
   }
 }
 
+function removalScope(entry: PiMcpServerEntry, state: PiMcpConfigState): "global" | "project" {
+  return entry.source === state.globalConfigPath ? "global" : "project";
+}
+
 function McpConfigHeader({ state }: { state: PiMcpConfigState }) {
   return (
     <div className="mcp-header">
@@ -162,6 +166,7 @@ interface ServerCardProps {
 }
 
 function ServerCard({ entry, state, busy, onApply, onEdit, onRemoveOverride }: ServerCardProps) {
+  const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const scopeLabel = entry.scope === "extension" ? "extension" : entry.scope === "project" ? "project" : "user";
 
   return (
@@ -181,7 +186,7 @@ function ServerCard({ entry, state, busy, onApply, onEdit, onRemoveOverride }: S
       {entry.override !== undefined ? (
         <p className="mcp-server-desc">project override in <code>{entry.override}</code></p>
       ) : null}
-      <div className="mcp-server-controls">
+      <div className="mcp-server-controls mcp-card-actions">
         <label className="mcp-toggle">
           <input
             type="checkbox"
@@ -220,14 +225,8 @@ function ServerCard({ entry, state, busy, onApply, onEdit, onRemoveOverride }: S
           type="button"
           className="mcp-small-button mcp-small-button-danger"
           disabled={busy}
-          onClick={() => {
-            if (!window.confirm(`Remove ${entry.name} from ${entry.source}?`)) return;
-            void onApply({
-              action: "remove",
-              scope: entry.source === state.globalConfigPath ? "global" : "project",
-              name: entry.name,
-            });
-          }}
+          aria-expanded={confirmingRemoval}
+          onClick={() => setConfirmingRemoval(true)}
         >
           <Trash size={12} /> Remove
         </button>
@@ -237,6 +236,27 @@ function ServerCard({ entry, state, busy, onApply, onEdit, onRemoveOverride }: S
           </button>
         ) : null}
       </div>
+      {confirmingRemoval ? (
+        <div className="mcp-delete-confirm" role="group" aria-label={`Confirm removal of ${entry.name}`}>
+          <span>Remove {entry.name} from {entry.source}?</span>
+          <div className="mcp-card-actions">
+            <button
+              type="button"
+              className="mcp-small-button mcp-small-button-danger"
+              disabled={busy}
+              onClick={() => {
+                setConfirmingRemoval(false);
+                void onApply({ action: "remove", scope: removalScope(entry, state), name: entry.name });
+              }}
+            >
+              Confirm remove
+            </button>
+            <button type="button" className="mcp-small-button" onClick={() => setConfirmingRemoval(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
     </li>
   );
 }
@@ -267,7 +287,7 @@ function ServerForm({ form, busy, projectAvailable, onChange, onClose, onSave }:
       <h3 className="mcp-form-title">{form.originalName === null ? "Add server" : `Edit ${form.originalName}`}</h3>
       <div className="mcp-form-grid">
         <label>Name
-          <input value={form.name} onChange={(event) => set({ name: event.target.value })} autoFocus />
+          <input value={form.name} onChange={(event) => set({ name: event.target.value })} />
         </label>
         <label>Kind
           <select

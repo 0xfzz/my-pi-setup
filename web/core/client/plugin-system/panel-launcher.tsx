@@ -84,7 +84,7 @@ export function PanelLauncher({
             <button
               key={entry.id}
               type="button"
-              className={`app-plugin-panel-button${active ? " is-active" : ""}${available ? "" : " is-unavailable"}`}
+              className={`app-plugin-panel-button plugin-launcher-action${active ? " is-active" : ""}${available ? "" : " is-unavailable"}`}
               data-panel-id={entry.id}
               aria-label={entry.title}
               aria-pressed={active}
@@ -100,7 +100,7 @@ export function PanelLauncher({
         <DropdownMenu.Trigger asChild>
           <button
             type="button"
-            className="app-plugin-panel-button app-plugin-panel-more"
+            className="app-plugin-panel-button app-plugin-panel-more plugin-launcher-action"
             aria-label="More panels"
             aria-haspopup="menu"
             title="More panels"

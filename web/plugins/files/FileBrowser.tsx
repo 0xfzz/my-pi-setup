@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from "react";
 import {
-  ArrowCounterClockwise, File, FileAudio, FileCode, FileCsv, FileDoc, FileImage, FilePdf,
+  ArrowCounterClockwise, Copy, File, FileAudio, FileCode, FileCsv, FileDoc, FileImage, FilePdf,
   FilePpt, FileText, FileVideo, FileXls, Folder, MagnifyingGlass, X,
 } from "@phosphor-icons/react";
 import type { FileKind } from "../../core/shared/file-kind.ts";
@@ -29,6 +29,14 @@ function fileIcon(fileKind: FileKind | undefined) {
     case "markdown":
     case "text": return <FileText size={15} aria-hidden="true" />;
     default: return <FileCode size={15} aria-hidden="true" />;
+  }
+}
+
+async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // Clipboard can be denied; the directory path and file names stay visible.
   }
 }
 
@@ -130,6 +138,16 @@ export function FileBrowser({ sessionId, onOpenFile }: FileBrowserProps) {
         </div>
         <button
           type="button"
+          className="files-action"
+          title={`Copy current directory path: ${path || "/"}`}
+          aria-label={`Copy current directory path: ${path || "/"}`}
+          onClick={() => void copyText(path || "/")}
+        >
+          <Copy size={14} aria-hidden="true" />
+          <span className="sr-only">Copy path</span>
+        </button>
+        <button
+          type="button"
           className="files-icon-btn"
           title="Refresh"
           aria-label="Refresh"
@@ -162,7 +180,7 @@ export function FileBrowser({ sessionId, onOpenFile }: FileBrowserProps) {
           {searching ? (
             <button
               type="button"
-              className="files-search-clear"
+              className="files-search-clear files-clear-search"
               aria-label="Clear search"
               onClick={() => setQuery("")}
             >
@@ -186,6 +204,10 @@ export function FileBrowser({ sessionId, onOpenFile }: FileBrowserProps) {
             <button
               key={match.path}
               type="button"
+              role="option"
+              aria-selected={false}
+              aria-label={`Open ${match.path}`}
+              title={match.path}
               className="files-row"
               onClick={() => onOpenFile({ path: match.path, name: match.name, fileKind: classifyFile(match.name) })}
             >
@@ -193,16 +215,18 @@ export function FileBrowser({ sessionId, onOpenFile }: FileBrowserProps) {
               <span className="files-row-name">{match.path}</span>
             </button>
           ))}
-          {matches.length === 0 ? (
-            <div className="files-empty">No matching files.</div>
+          {searchPending ? (
+            <div className="files-search-pending" role="status"><LoadingSpinner label="Searching files…" /></div>
+          ) : matches.length === 0 ? (
+            <div className="files-empty" role="presentation">No matching files.</div>
           ) : null}
           {searchTruncated ? (
-            <div className="files-truncated">Search limited to the first results.</div>
+            <div className="files-truncated" role="presentation">Search limited to the first results.</div>
           ) : null}
         </div>
       ) : (
         <div className="files-list" role="listbox" aria-label="Files">
-          {loading ? <div className="files-empty"><LoadingSpinner label="Loading files…" /></div> : null}
+          {loading ? <div className="files-empty" role="presentation"><LoadingSpinner label="Loading files…" /></div> : null}
           {error !== null ? (
             <div className="files-empty files-error" role="alert">{error}</div>
           ) : null}
@@ -214,6 +238,10 @@ export function FileBrowser({ sessionId, onOpenFile }: FileBrowserProps) {
                     <button
                       key={entry.path}
                       type="button"
+                      role="option"
+                      aria-selected={false}
+                      aria-label={`Open directory ${entry.path}`}
+                      title={entry.path}
                       className="files-row"
                       onClick={() => setPath(entry.path)}
                     >
@@ -227,6 +255,10 @@ export function FileBrowser({ sessionId, onOpenFile }: FileBrowserProps) {
                     <button
                       key={entry.path}
                       type="button"
+                      role="option"
+                      aria-selected={false}
+                      aria-label={`Open file ${entry.path}`}
+                      title={entry.path}
                       className="files-row"
                       onClick={() => openFile(entry)}
                     >
@@ -236,7 +268,14 @@ export function FileBrowser({ sessionId, onOpenFile }: FileBrowserProps) {
                   );
                 }
                 return (
-                  <div key={entry.path} className="files-row files-row-disabled" title="Unsupported entry">
+                  <div
+                    key={entry.path}
+                    className="files-row files-row-disabled"
+                    role="option"
+                    aria-disabled="true"
+                    aria-selected={false}
+                    title={entry.path}
+                  >
                     <span className="files-row-icon"><File size={15} aria-hidden="true" /></span>
                     <span className="files-row-name">{entry.name}</span>
                     <span className="files-row-hint">unsupported</span>
@@ -244,10 +283,10 @@ export function FileBrowser({ sessionId, onOpenFile }: FileBrowserProps) {
                 );
               })}
               {listing.entries.length === 0 ? (
-                <div className="files-empty">This folder is empty.</div>
+                <div className="files-empty" role="presentation">This folder is empty.</div>
               ) : null}
               {listing.truncated ? (
-                <div className="files-truncated">
+                <div className="files-truncated" role="presentation">
                   Showing the first {listing.entries.length} of {listing.total} entries.
                 </div>
               ) : null}

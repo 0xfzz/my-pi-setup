@@ -2,8 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowsOut, Minus, Plus, X } from "@phosphor-icons/react";
 import type { GraphNode, GraphWebView } from "../../core/plugin-contracts/view.ts";
 import type { HostPanelProps } from "../../core/client/plugin-system/panel-registry.tsx";
+import { isCompactViewport } from "../../core/shared/responsive.ts";
 import { routingLayout, type RoutingLayout, type RoutingNode } from "./routing-layout.ts";
 import { useRoutingViewport } from "./use-routing-viewport.ts";
+
+function detectCompactRouter(): boolean {
+  const orientation = window.innerWidth > window.innerHeight ? "landscape" : "portrait";
+  return isCompactViewport(window.innerWidth, window.innerHeight, orientation);
+}
 
 function NodeLabel({ node }: { node: RoutingNode }) {
   const separator = node.label.indexOf("/");
@@ -23,15 +29,20 @@ function RoutingEdges({ graph }: { graph: RoutingLayout }) {
   </svg>;
 }
 
-function RoutingCanvas({ graph, selected, onSelect }: { graph: RoutingLayout; selected?: GraphNode; onSelect: (node: GraphNode) => void }) {
+function RoutingCanvas({ graph, selected, onSelect, compact }: {
+  graph: RoutingLayout;
+  selected?: GraphNode;
+  onSelect: (node: GraphNode) => void;
+  compact: boolean;
+}) {
   const { canvas, viewport, fit, zoom, gestures } = useRoutingViewport(graph);
   return <>
     <div className="router-canvas" ref={canvas} {...gestures} aria-label="Interactive routing graph">
     <div className="router-canvas-toolbar" role="toolbar" aria-label="Routing graph controls">
-      <button type="button" aria-label="Zoom out" onClick={() => zoom(0.8)}><Minus size={15} /></button>
+      <button type="button" className="router-tool" aria-label="Zoom out" onClick={() => zoom(0.8)}><Minus size={15} /></button>
       <output aria-label="Graph zoom">{Math.round(viewport.scale * 100)}%</output>
-      <button type="button" aria-label="Zoom in" onClick={() => zoom(1.25)}><Plus size={15} /></button>
-      <button type="button" aria-label="Fit routing graph" onClick={fit}><ArrowsOut size={15} /></button>
+      <button type="button" className="router-tool" aria-label="Zoom in" onClick={() => zoom(1.25)}><Plus size={15} /></button>
+      <button type="button" className="router-tool" aria-label="Fit routing graph" onClick={fit}><ArrowsOut size={15} /></button>
     </div>
       <div className="router-stage" data-testid="routing-stage" style={{ width: graph.width, height: graph.height, transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})` }}>
         <RoutingEdges graph={graph} />
@@ -41,29 +52,36 @@ function RoutingCanvas({ graph, selected, onSelect }: { graph: RoutingLayout; se
           aria-label={`Highlight ${node.label}`} aria-pressed={selected?.id === node.id} data-node-id={node.id} data-status={node.status ?? "neutral"}
           title={`${node.label}${node.detail ? `\n${node.detail}` : ""}`} onClick={() => onSelect(node)}><NodeLabel node={node} /></button>)}
       </div>
-      <span className="router-gesture-hint">Drag to pan · scroll to zoom</span>
+      <span className="router-gesture-hint router-hint">
+        {compact ? "Drag to pan · pinch or use buttons to zoom" : "Drag to pan · scroll to zoom"}
+      </span>
     </div>
   </>;
 }
 
-function RoutingDiagram({ view, running }: { view: GraphWebView; running: boolean }) {
-  const graph = useMemo(() => routingLayout(view, { running }), [view, running]);
+function RoutingDiagram({ view, running, compact }: { view: GraphWebView; running: boolean; compact: boolean }) {
+  const graph = useMemo(() => routingLayout(view, { running, compact }), [view, running, compact]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const active = graph.nodes.find(node => node.role === "target" && node.status === "active");
   const selected = graph.nodes.find(node => node.id === selectedId);
   return <>
     <span className="sr-only" role="status" aria-live="polite">{active ? `Current target: ${active.label}` : "Waiting for a routing decision"}</span>
-    <RoutingCanvas graph={graph} selected={selected} onSelect={node => setSelectedId(node.id)} />
-
+    <RoutingCanvas graph={graph} selected={selected} onSelect={node => setSelectedId(node.id)} compact={compact} />
   </>;
 }
 
 export function RouterPanel({ open, onClose, sessionId, view, running }: HostPanelProps) {
+  const [compact, setCompact] = useState(detectCompactRouter);
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented) onClose(); };
+    const onResize = (): void => setCompact(detectCompactRouter());
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("resize", onResize);
+    };
   }, [open, onClose]);
   if (!open) return null;
   const routeIdentity = view?.type === "graph" ? view.nodes.find(node => node.id === "route")?.label : "none";
@@ -74,7 +92,7 @@ export function RouterPanel({ open, onClose, sessionId, view, running }: HostPan
         <button type="button" className="app-side-panel-action-btn" onClick={onClose} aria-label="Close panel"><X size={16} /></button>
       </div>
       <div className="app-side-panel-body router-panel-body">
-        {view?.type === "graph" ? <RoutingDiagram key={`${sessionId}/${routeIdentity}`} view={view} running={running} /> : <p>Select a route model to visualize its decisions.</p>}
+        {view?.type === "graph" ? <RoutingDiagram key={`${sessionId}/${routeIdentity}`} view={view} running={running} compact={compact} /> : <p>Select a route model to visualize its decisions.</p>}
       </div>
     </aside>
   </>;

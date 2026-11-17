@@ -34,11 +34,11 @@ export function PluginSidePanel({
     plugin.id === activePluginId && views?.[plugin.id] != null,
   );
 
-  // Auto-close on Esc
+  // Auto-close on Esc, never swallowing an Escape a nested overlay handled.
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !e.defaultPrevented) onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

@@ -105,12 +105,12 @@ function PluginManagerHeader({
         {report.plugins.length} installed · {report.plugins.filter((row) => row.state === "active").length} active
       </p>
       {safeModeBanner(report).visible ? (
-        <p className="plugin-manager-warning" role="status">
+        <p className="plugin-manager-warning" role="status" style={{ flexWrap: "wrap" }}>
           <WarningCircle size={14} aria-hidden="true" /> Safe mode: only <code>core.*</code> plugins start
           automatically, so every other plugin's actions are refused.
           <button
             type="button"
-            className="plugin-manager-refresh"
+            className="plugin-manager-refresh plugin-manager-action"
             disabled={busy !== null}
             onClick={onLeaveSafeMode}
           >
@@ -128,7 +128,7 @@ function PluginManagerHeader({
           Shadowed: {report.shadowed.map((entry) => `${entry.id} (${entry.source} → ${entry.shadowedBy})`).join(", ")}
         </p>
       ) : null}
-      <button type="button" className="plugin-manager-refresh" onClick={onRefresh}>
+      <button type="button" className="plugin-manager-refresh plugin-manager-action" onClick={onRefresh}>
         <ArrowsClockwise size={13} aria-hidden="true" /> Refresh
       </button>
     </div>
@@ -175,7 +175,7 @@ function PluginRow({
           renderAction={(capability) => (
             <button
               type="button"
-              className="plugin-manager-grant"
+              className="plugin-manager-grant plugin-manager-action"
               disabled={capabilityBusy("grant", capability)}
               onClick={() => onAction("grant", capability)}
               title={`Grant ${capability}`}
@@ -241,7 +241,7 @@ function AuditTail({ entries }: { entries: PluginManagerReport["audit"] }) {
   if (entries.length === 0) return null;
   return (
     <details className="plugin-manager-audit">
-      <summary>Audit log (last {entries.length})</summary>
+      <summary className="plugin-manager-summary">Audit log (last {entries.length})</summary>
       <ul>
         {[...entries].reverse().map((entry) => (
           <li key={entry.seq}>

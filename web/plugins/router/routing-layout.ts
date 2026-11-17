@@ -21,6 +21,8 @@ interface RoutingEdge {
 export interface RoutingOptions {
   /** The session is mid-turn; a resting graph highlights but never animates. */
   running: boolean;
+  /** Compact phones use a vertical graph so fitting never shrinks labels below legibility. */
+  compact?: boolean;
 }
 
 export interface RoutingLayout {
@@ -39,8 +41,13 @@ const TARGET_HEIGHT = 48;
 const TARGET_GAP = 72;
 const HUB_HEIGHT = 78;
 
+const COMPACT_WIDTH = 240;
+const COMPACT_HUB_HEIGHT = 56;
+const COMPACT_TARGET_HEIGHT = 48;
+const COMPACT_TARGET_GAP = 10;
+
 /** Left-hand hub, smooth fan-out, right-hand model pills. Positions stay stable on live updates. */
-export function routingLayout(view: GraphWebView, options: RoutingOptions = { running: false }): RoutingLayout {
+function fanRoutingLayout(view: GraphWebView, options: RoutingOptions): RoutingLayout {
   const root = view.nodes.find(node => node.id === "route") ?? view.nodes[0];
   const targets = view.nodes.filter(node => node.id.startsWith("target:"));
   const height = Math.max(420, PADDING * 2 + (targets.length - 1) * TARGET_GAP + TARGET_HEIGHT);
@@ -55,6 +62,39 @@ export function routingLayout(view: GraphWebView, options: RoutingOptions = { ru
     path: `M ${hub.x + hub.width} ${height / 2} C 164 ${height / 2}, 160 ${node.y + TARGET_HEIGHT / 2}, ${node.x - 8} ${node.y + TARGET_HEIGHT / 2}`,
   }));
   return { nodes: [hub, ...pills], edges, width: WIDTH, height };
+}
+
+/** Phone-sized graph: the hub sits above stacked model pills, so fit scale stays near 1. */
+function compactRoutingLayout(view: GraphWebView, running: boolean): RoutingLayout {
+  const root = view.nodes.find(node => node.id === "route") ?? view.nodes[0];
+  const targets = view.nodes.filter(node => node.id.startsWith("target:"));
+  const height = Math.max(
+    300,
+    PADDING * 2 + COMPACT_HUB_HEIGHT + targets.length * COMPACT_TARGET_HEIGHT
+      + Math.max(0, targets.length - 1) * COMPACT_TARGET_GAP + COMPACT_TARGET_GAP * 2,
+  );
+  if (!root) return { nodes: [], edges: [], width: COMPACT_WIDTH, height };
+  const hub: RoutingNode = {
+    ...root, role: "input", x: PADDING, y: PADDING,
+    width: COMPACT_WIDTH - PADDING * 2, height: COMPACT_HUB_HEIGHT,
+  };
+  const pills: RoutingNode[] = targets.map((node, index) => ({
+    ...node, role: "target", x: PADDING + 24,
+    y: PADDING + COMPACT_HUB_HEIGHT + COMPACT_TARGET_GAP * 2
+      + index * (COMPACT_TARGET_HEIGHT + COMPACT_TARGET_GAP),
+    width: COMPACT_WIDTH - PADDING * 2 - 48, height: COMPACT_TARGET_HEIGHT,
+  }));
+  const edges = pills.map(node => ({
+    from: hub.id, to: node.id, active: node.status === "active", flowing: running && node.status === "active",
+    path: `M ${hub.x + hub.width / 2} ${hub.y + hub.height} C ${hub.x + hub.width / 2} ${node.y - 20}, ${node.x + node.width / 2} ${node.y - 20}, ${node.x + node.width / 2} ${node.y}`,
+  }));
+  return { nodes: [hub, ...pills], edges, width: COMPACT_WIDTH, height };
+}
+
+export function routingLayout(view: GraphWebView, options: RoutingOptions = { running: false }): RoutingLayout {
+  return options.compact
+    ? compactRoutingLayout(view, options.running)
+    : fanRoutingLayout(view, options);
 }
 
 export function fitRoutingViewport(size: Size, graph: Size): RoutingViewport {

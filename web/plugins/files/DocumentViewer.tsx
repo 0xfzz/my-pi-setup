@@ -6,6 +6,7 @@
 // out of the critical bundle. Shadow-DOM style isolation is the default, so
 // the panel's CSS can neither break the viewer nor the other way round.
 
+import type { CSSProperties } from "react";
 import FileViewer, { useFileViewerState } from "@file-viewer/react";
 import { setDefaultFileViewerAssetBaseUrl, type FileViewerOptions } from "@file-viewer/core";
 import officePreset from "@file-viewer/preset-office";
@@ -26,6 +27,16 @@ const DOCUMENT_OPTIONS: FileViewerOptions = {
   toolbar: { position: "bottom-right" },
 };
 
+// The viewer's floating toolbar lives in its shadow DOM; these inherited
+// custom properties are the supported way to give its controls thumb-sized
+// hit areas without editing vendor CSS.
+const VIEWER_STYLE = {
+  "--file-viewer-floating-button-min-width": "44px",
+  "--file-viewer-floating-button-height": "44px",
+  "--file-viewer-floating-icon-button-size": "44px",
+  "--file-viewer-floating-search-input-height": "44px",
+} as CSSProperties;
+
 interface DocumentViewerProps {
   sessionId: string;
   file: FileRef;
@@ -43,7 +54,8 @@ export function DocumentViewer({ sessionId, file }: DocumentViewerProps) {
         </div>
       ) : null}
       <FileViewer
-        className="files-document-view"
+        className="files-document-view file-viewer-toolbar"
+        style={VIEWER_STYLE}
         onStateChange={onStateChange}
         url={downloadUrl(sessionId, file.path, false)}
         filename={file.name}

@@ -27,7 +27,7 @@ export function PluginPage({ plugin, view, sessionId, plugins }: PluginPageProps
   return (
     <div className="app-shell">
       <header className="app-header">
-        <a href="/" className="plugin-nav-home-link" title="Back to pi web">
+        <a href="/" className="plugin-nav-home-link plugin-page-nav-link" title="Back to pi web">
           <ArrowLeft size={13} /> pi web
         </a>
         <span className="app-title">{plugin.title}</span>
@@ -47,7 +47,7 @@ export function PluginPage({ plugin, view, sessionId, plugins }: PluginPageProps
             <a
               key={p.id}
               href={pageHref(p)}
-              className={`plugin-nav-link${p.id === plugin.id ? " active" : ""}`}
+              className={`plugin-nav-link plugin-page-nav-link${p.id === plugin.id ? " active" : ""}`}
               aria-current={p.id === plugin.id ? "page" : undefined}
             >
               {p.title}

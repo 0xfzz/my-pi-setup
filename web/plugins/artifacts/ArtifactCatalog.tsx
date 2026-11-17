@@ -31,13 +31,19 @@ export function ArtifactCatalog({ items, onSelect }: { items: ArtifactRow[]; onS
           <button
             key={item.title + index}
             type="button"
-            className="artifacts-row"
+            role="option"
+            aria-selected={false}
+            aria-label={`Open artifact ${item.title}`}
+            title={item.title}
+            className="artifacts-row artifact-row"
             onClick={() => onSelect(index)}
           >
             <span className="artifacts-row-icon"><Icon size={15} aria-hidden="true" /></span>
             <span className="artifacts-row-name">{item.title}</span>
             {meta !== null ? (
-              <span className="artifacts-row-meta">{meta.type} · v{meta.version} · {meta.size || "—"}</span>
+              <span className="artifacts-row-meta">
+                {meta.type} · v{meta.version} · {meta.size || "—"}
+              </span>
             ) : null}
           </button>
         );
