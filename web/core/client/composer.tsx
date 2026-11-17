@@ -592,7 +592,7 @@ export function Composer({
           type="button"
           variant="ghost"
           size="icon"
-          className="shrink-0"
+          className="app-stop-button shrink-0"
           onClick={onAbort}
           title="Interrupt the running turn (like Escape in the TUI)"
           aria-label="Stop generating"
@@ -603,7 +603,7 @@ export function Composer({
         <Button
           type="button"
           size="icon"
-          className="shrink-0 rounded-full"
+          className="app-send-button shrink-0 rounded-full"
           onClick={send}
           disabled={disabled || (text.trim() === "" && images.length === 0)}
           title="Send message"

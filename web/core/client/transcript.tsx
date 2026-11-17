@@ -203,6 +203,7 @@ function BashBlockView({ block }: { block: BashBlock }) {
       <button
         type="button"
         className="msg-bash-toggle"
+        aria-label={running ? "Bash command running, toggle output" : "Bash command, toggle output"}
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
         title={open ? "Collapse output" : "Expand output"}
@@ -287,6 +288,7 @@ function ToolCallRow({
         <button
           type="button"
           className="msg-toolcall-toggle"
+          aria-label={`${block.toolName} tool call, toggle details`}
           aria-expanded={open}
           onClick={() => setOpen((value) => !value)}
           title={open ? "Collapse tool call" : "Expand tool call"}
@@ -641,7 +643,7 @@ export function Transcript({
 
   return (
     <ToolResultLoadContext.Provider value={onLoadToolResult ?? null}>
-      <main className="app-transcript" aria-live="polite" aria-busy={loading} ref={scrollRef} onScroll={handleScroll}>
+      <main className="app-transcript" aria-busy={loading} ref={scrollRef} onScroll={handleScroll}>
         <div className="app-transcript-inner" ref={innerRef}>
           {hasOlder ? (
             <div className="app-history-pager">
@@ -683,7 +685,7 @@ export function Transcript({
             </div>
           ))}
           {streaming.isStreaming && streaming.streamingMessage !== null ? (
-            <div className="msg msg-assistant msg-streaming">
+            <div className="msg msg-assistant msg-streaming" aria-live="polite" aria-atomic="false">
               <AssistantBlocks
                 blocks={streaming.streamingMessage.content}
                 toolStatus={toolStatus}
@@ -693,7 +695,7 @@ export function Transcript({
             </div>
           ) : null}
           {showWorking ? (
-            <div className="msg-working">
+            <div className="msg-working" role="status" aria-live="polite">
               <ComponentOverrideHost
                 target="ui.working-indicator.v1"
                 plugins={plugins ?? []}

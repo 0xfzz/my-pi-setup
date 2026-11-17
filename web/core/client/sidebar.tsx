@@ -3,7 +3,7 @@
 // the state dot (pulsing while a turn runs), and how long ago it was active.
 
 import { useEffect, useState, type ReactNode } from "react";
-import { MagnifyingGlass, Moon, Plus, Sun, Terminal } from "@phosphor-icons/react";
+import { MagnifyingGlass, Moon, Plus, Sun, Terminal, X } from "@phosphor-icons/react";
 import type { SessionSummary } from "./use-session.ts";
 import { visibleSessions } from "./session-search.ts";
 import { useAuth } from "./auth-gate.tsx";
@@ -45,6 +45,8 @@ export interface SessionSidebarProps {
   selectedRunning?: boolean;
   /** Plugin content mounted at the `session.sidebar` anchor, under the list. */
   anchorSlot?: ReactNode;
+  /** Shown only for the compact overlay drawer; the toggle stays behind it. */
+  onClose?: () => void;
 }
 
 export function SessionSidebar({
@@ -56,6 +58,7 @@ export function SessionSidebar({
   onSearch,
   selectedRunning,
   anchorSlot,
+  onClose,
 }: SessionSidebarProps) {
   // The theme is on <html> before first paint; the glyph only mirrors it.
   const [theme, setTheme] = useState<Theme>(() =>
@@ -94,6 +97,11 @@ export function SessionSidebar({
       <div className="app-sidebar-head">
         <span className="app-title">pi</span>
         <span className="app-subtitle">workspace</span>
+        {onClose !== undefined ? (
+          <button type="button" className="app-sidebar-close" aria-label="Close session list" onClick={onClose}>
+            <X size={16} aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
       <button
         type="button"

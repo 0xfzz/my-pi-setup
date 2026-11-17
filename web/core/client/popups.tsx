@@ -5,7 +5,9 @@
 // through the same publishWebUi events the TUI uses; nothing here is
 // web-plugin-specific, which is what makes it a core surface to extend on.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { X } from "@phosphor-icons/react";
+import { useModalFocus } from "./dialogs.tsx";
 import type { UiPromptLike } from "./use-session.ts";
 import type { CustomPanelLike, WebNotificationLike, WidgetModelLike } from "./plugin-system/contract.ts";
 
@@ -76,19 +78,60 @@ export function EditorWidgets({
   );
 }
 
+function popupSignature(id: string, panel: CustomPanelLike): string {
+  return `${id}\u0000${(panel.lines ?? []).join("\n")}`;
+}
+
+function CustomPopup({
+  id,
+  panel,
+  onDismiss,
+}: {
+  id: string;
+  panel: CustomPanelLike;
+  onDismiss: (signature: string) => void;
+}) {
+  const titleId = `app-custom-popup-title-${id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  return (
+    <div
+      className="app-custom-popup app-popup-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      tabIndex={-1}
+    >
+      <div className="app-custom-popup-head">
+        <span id={titleId} className="app-custom-popup-title">{panel.method}</span>
+        <button type="button" className="app-dialog-close app-popup-close" aria-label="Close popup" onClick={() => onDismiss(popupSignature(id, panel))}>
+          <X size={14} aria-hidden="true" />
+        </button>
+      </div>
+      {(panel.lines ?? []).length === 0 ? (
+        <div className="app-custom-popup-empty">No details.</div>
+      ) : (
+        <pre className="app-custom-popup-lines">{(panel.lines ?? []).join("\n")}</pre>
+      )}
+    </div>
+  );
+}
+
 /** Custom popups: centered panels of lines, one per open custom id. */
 export function CustomPopups({ custom }: { custom: Record<string, CustomPanelLike> }) {
-  const entries = Object.entries(custom).filter(([, panel]) => panel.lines !== null);
+  const [dismissed, setDismissed] = useState<readonly string[]>([]);
+  const entries = Object.entries(custom).filter(([id, panel]) =>
+    panel.lines !== null && !dismissed.includes(popupSignature(id, panel)));
+  const backdropRef = useRef<HTMLDivElement>(null);
+  useModalFocus(backdropRef, { enabled: entries.length > 0 });
   if (entries.length === 0) return null;
   return (
-    <div className="app-custom-popups">
+    <div ref={backdropRef} data-modal-root tabIndex={-1} className="app-custom-popups">
       {entries.map(([id, panel]) => (
-        <div key={id} className="app-custom-popup" role="dialog" aria-label={panel.method}>
-          <div className="app-custom-popup-head">
-            <span className="app-custom-popup-title">{panel.method}</span>
-          </div>
-          <pre className="app-custom-popup-lines">{(panel.lines ?? []).join("\n")}</pre>
-        </div>
+        <CustomPopup
+          key={id}
+          id={id}
+          panel={panel}
+          onDismiss={(signature) => setDismissed((previous) => [...previous, signature])}
+        />
       ))}
     </div>
   );
@@ -98,7 +141,7 @@ export function CustomPopups({ custom }: { custom: Record<string, CustomPanelLik
 export function UiPromptBanner({ prompt }: { prompt: UiPromptLike | null }) {
   if (prompt === null) return null;
   return (
-    <div className="app-tui-prompt-banner" role="status">
+    <div className="app-tui-prompt-banner" role="status" aria-live="polite">
       pi is waiting on a {prompt.kind} dialog{prompt.title !== undefined ? ` — “${prompt.title}”` : ""} in the
       terminal. Answer it there.
     </div>

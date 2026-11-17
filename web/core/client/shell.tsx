@@ -563,6 +563,7 @@ export function AppShell() {
       }}
       onSearch={session.searchSessions}
       anchorSlot={<AnchorHost anchor="session.sidebar" {...anchorHostProps} />}
+      {...(compact ? { onClose: () => setSidebarOpen(false) } : {})}
     />
   );
 
