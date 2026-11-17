@@ -268,17 +268,22 @@ export interface SourceWatcher {
  */
 export function watchSources(options: { roots: readonly string[]; debounceMs: number; onChange: () => void }): SourceWatcher {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const watchers = options.roots.filter((root) => existsSync(root)).map((root) =>
-    watch(root, { recursive: true }, (_event, filename) => {
-      const name = filename?.toString() ?? "";
-      if (name && (SKIPPED_DIRS.has(name.split(sep)[0] ?? "") || TEST_FILE.test(name))) return;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        timer = undefined;
-        options.onChange();
-      }, options.debounceMs);
-    }),
-  );
+  const onEvent = (_event: string, filename: string | Buffer | null): void => {
+    const name = filename?.toString() ?? "";
+    if (name && (SKIPPED_DIRS.has(name.split(sep)[0] ?? "") || TEST_FILE.test(name))) return;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = undefined;
+      options.onChange();
+    }, options.debounceMs);
+  };
+  // Recursive watches cover nested source trees where the platform supports
+  // them; the plain root watch keeps direct saves visible on Linux, where a
+  // recursive watch can be inert. The debounce collapses their overlap.
+  const watchers = options.roots.filter((root) => existsSync(root)).flatMap((root) => [
+    watch(root, { recursive: true }, onEvent),
+    watch(root, onEvent),
+  ]);
   return {
     close() {
       if (timer) clearTimeout(timer);
