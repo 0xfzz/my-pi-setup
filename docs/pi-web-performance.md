@@ -50,6 +50,25 @@ Recorded baseline (node v22.23.2, this host, median of three runs):
 | `http-asset` | request | 1.08 ms | 1.40 ms | 2.20 ms |
 | `http-shell` | request | 1.04 ms | 1.34 ms | 2.43 ms |
 
+Current acceptance run (same host after the fixes, one run):
+
+| Scenario | p95 | Ceiling | Result |
+| --- | ---: | ---: | --- |
+| `jwt-verify` | 0.019 ms | 0.030 ms | PASS |
+| `sse-coalesce` | 0.012 ms | 0.015 ms | PASS |
+| `ui-snapshot` | 0.132 ms | 0.300 ms | PASS |
+| `history-tail` | 1.518 ms | 3.000 ms | PASS |
+| `http-api` | 1.078 ms | 2.000 ms | PASS |
+| `http-asset` | 1.302 ms | 2.000 ms | PASS |
+| `http-shell` | 1.285 ms | 2.000 ms | PASS |
+| `client-stream-delta` | 0.002 ms | 0.010 ms | PASS |
+| `markdown-split` | 0.086 ms | 0.150 ms | PASS |
+
+Unchanged-but-measured scenarios (`stream-tracker`) keep a loose ceiling because
+the synthetic delta path was already fast; the code-level quadratic accumulation
+is still on the backlog. Every fixed defect has a ceiling below its recorded
+baseline, so a regression fails the command.
+
 ## What the audit found
 
 Ranked by how directly the defect taxes a token or a request. Items marked
@@ -68,9 +87,11 @@ list until a change and a measurement land together.
    `EventChannel.sendEncoded()` now hand the admitted bytes to the formatter
    directly, including deduped plugin frames. The `sse-coalesce` ceiling is
    0.015 ms (baseline p95 ~0.021 ms, now ~0.012 ms).
-3. **Quadratic in-flight text/arguments** — `web/core/server/stream-tracker.ts:59,86`
-   copies the whole text prefix per delta and `JSON.parse`s the whole argument
-   prefix; the browser twin is `web/core/client/streaming.ts:181,197`.
+3. **Quadratic in-flight text/arguments** — *backlog.*
+   `web/core/server/stream-tracker.ts:59,86` copies the whole text prefix per
+   delta and `JSON.parse`s the whole argument prefix; the browser twin is
+   `web/core/client/streaming.ts:181,197`. The synthetic benchmark does not yet
+   make this expensive enough to justify a riskier chunked representation.
 4. **Global UI snapshot** — *fixed.* `web/core/plugin-contracts/ui-state-store.ts`
    used to invalidate one cached snapshot for any session and deep-clone all
    128 sessions for every frame. Frozen session snapshots are now cached by
@@ -93,16 +114,17 @@ list until a change and a measurement land together.
    in an `onSend` hook even for non-HTML payloads. The root boundary is now
    resolved once per app and the build id is read only for HTML shell payloads.
    The loopback HTTP scenarios have a 2 ms p95 ceiling.
-8. **Response tracking for short requests** — `web/core/server/auth.ts:473`
-   tracks every authenticated response with a close listener, although only
-   long-lived SSE responses need revocation.
-9. **Browser render cascades** — `web/core/client/use-session.ts:286` bumps a
-   hook-wide state once per frame; `AppShell` consumes the whole hook and
-   rebuilds all plugin slots, while `web/core/client/transcript.tsx:535`
-   rebuilds every row wrapper on each render.
-10. **Markdown rescan** — `web/core/client/plugin-system/markdown.tsx:120`
+8. **Response tracking for short requests** — *backlog.*
+   `web/core/server/auth.ts:473` tracks every authenticated response with a
+   close listener, although only long-lived SSE responses need revocation.
+9. **Browser render cascades** — *backlog.*
+   `web/core/client/use-session.ts:286` bumps a hook-wide state once per frame;
+   `AppShell` consumes the whole hook and rebuilds all plugin slots, while
+   `web/core/client/transcript.tsx:535` rebuilds every row wrapper on each
+   render. Needs a browser Profiler harness before changing render boundaries.
+10. **Markdown rescan** — *backlog.* `web/core/client/plugin-system/markdown.tsx:120`
     splits the full answer per frame; only the open chunk actually changes.
-11. **Resolver hot hook** — `web/core/server/plugin-module-loader.ts:52-59`
+11. **Resolver hot hook** — *backlog.* `web/core/server/plugin-module-loader.ts:52-59`
     sorts every generation key and recomputes `pathToFileURL` on every module
     resolution once the hook is installed.
 
