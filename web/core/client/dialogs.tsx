@@ -7,6 +7,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, X } from "@phosphor-icons/react";
+import { shouldFocusPickerSearch } from "./picker-focus.ts";
 import { MarkdownBody } from "./plugin-system/markdown.tsx";
 import { actionFailureMessage, NO_RESPONSE_MESSAGE, postPluginAction } from "./plugin-system/actionClient.ts";
 import type { DialogField, DialogWebView } from "./plugin-system/contract.ts";
@@ -201,6 +202,7 @@ export function TreeSelectorDialog({
   }, [nodes, query]);
 
   useEffect(() => {
+    if (!shouldFocusPickerSearch(window.matchMedia("(pointer: coarse)").matches)) return;
     inputRef.current?.focus();
   }, []);
 
@@ -299,6 +301,11 @@ export function TreeSelectorDialog({
         type="text"
         placeholder="Filter the tree…"
         value={query}
+        autoComplete="off"
+        autoCapitalize="off"
+        autoCorrect="off"
+        spellCheck={false}
+        enterKeyHint="search"
         onChange={(event) => setQuery(event.target.value)}
       />
       <div className="app-tree-list" ref={listRef}>
@@ -419,6 +426,7 @@ export function ModelPickerDialog({
   }, [shown, query, current]);
 
   useEffect(() => {
+    if (!shouldFocusPickerSearch(window.matchMedia("(pointer: coarse)").matches)) return;
     inputRef.current?.focus();
   }, []);
 
@@ -459,6 +467,11 @@ export function ModelPickerDialog({
       type="text"
       value={query}
       placeholder="Search models (provider/id)…"
+      autoComplete="off"
+      autoCapitalize="off"
+      autoCorrect="off"
+      spellCheck={false}
+      enterKeyHint="search"
       onChange={(event) => setQuery(event.target.value)}
       onKeyDown={onKeyDown}
       aria-label="Search models"

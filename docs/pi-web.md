@@ -922,7 +922,11 @@ composer grows with multiline drafts up to a viewport-relative height cap.
 Touch inputs use 16px text to avoid iOS focus zoom without disabling pinch
 zoom. The app follows `visualViewport` resize and pan events so the composer
 stays above the software keyboard, and restores its height when the keyboard
-closes. Pinch zoom does not trigger a layout resize.
+closes. Dialogs use that same frame, so a phone bottom sheet and its scrollable
+list stay above the keyboard instead of disappearing behind it. Picker search
+fields do not claim focus on touch devices — that would open the keyboard
+before the list is visible — and disable browser autocomplete suggestions.
+Pinch zoom does not trigger a layout resize.
 
 The Files plugin opens full-screen on phones. Its header's expand/restore
 button also lets desktop users maximize either the explorer or a file

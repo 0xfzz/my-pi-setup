@@ -1290,7 +1290,12 @@ button.msg-compaction-label:hover {
 /* New-session dialog: project directory picker. */
 .app-dialog-backdrop {
   position: fixed;
-  inset: 0;
+  /* Follow the visual viewport: on a phone the keyboard shrinks that frame,
+     so a sheet anchored to the layout viewport would sit behind it. */
+  top: var(--app-viewport-top, 0px);
+  left: 0;
+  right: 0;
+  height: var(--app-viewport-height, 100dvh);
   background: var(--scrim);
   display: flex;
   align-items: center;
