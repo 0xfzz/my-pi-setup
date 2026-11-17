@@ -269,7 +269,8 @@ function jwtScenario(): Scenario {
   return {
     name: "jwt-verify",
     unit: "verify",
-    budgetP95Ms: 2,
+    // Cached codecs: ~0.023 ms here; the uncached baseline was ~0.031 ms.
+    budgetP95Ms: 0.03,
     iterations: 3_000,
     run() {
       const result = verifyJwt(TOKEN, { key: KEY, kid: KID, use: "access", now: NOW_MS, leewaySeconds: 30 });

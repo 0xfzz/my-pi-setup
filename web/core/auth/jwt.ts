@@ -25,6 +25,13 @@ export const JWT_AUDIENCE = "pi-web";
 const TOKEN_ALGORITHM = "HS256";
 const TOKEN_TYPE = "JWT";
 const MAX_TOKEN_LENGTH = 4096;
+// Codec construction dominates token verification. The library binds its clock
+// at construction, so a cached verifier is built with a fixed clock and all
+// library time checks off; this module applies the injected clock below.
+const CLOCK_INDEPENDENT_TIMESTAMP = 1;
+const MAX_CACHED_CODECS = 8;
+const verifiers = new Map<string, (token: string) => unknown>();
+const signers = new Map<string, (claims: JwtClaims) => string>();
 
 export type TokenUse = "access" | "refresh";
 
@@ -50,14 +57,28 @@ export function deriveKey(secret: Buffer, purpose: TokenUse): Buffer {
   return Buffer.from(hkdfSync("sha256", secret, Buffer.alloc(0), `pi-web ${purpose} token v1`, 32));
 }
 
+function cacheKey(kid: string, key: Buffer): string {
+  return `${kid}\0${key.toString("base64")}`;
+}
+
+function remember<T>(cache: Map<string, T>, id: string, codec: T): T {
+  if (cache.size >= MAX_CACHED_CODECS) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  cache.set(id, codec);
+  return codec;
+}
+
 export function signJwt(claims: JwtClaims, key: Buffer, kid: string): string {
-  const signer = createSigner({
+  const id = cacheKey(kid, key);
+  const signer = signers.get(id) ?? remember(signers, id, createSigner({
     key,
     algorithm: TOKEN_ALGORITHM,
     // `iat` is taken from the claims (fast-jwt prefers an existing `payload.iat`),
     // so the injected clock, not the wall clock, decides the timestamp.
     header: { alg: TOKEN_ALGORITHM, typ: TOKEN_TYPE, kid },
-  });
+  }));
   return signer(claims);
 }
 
@@ -101,21 +122,21 @@ export function verifyJwt(token: string, options: VerifyOptions): JwtResult {
 
   let decoded: DecodedToken;
   try {
-    const verifier = createVerifier({
+    const id = cacheKey(options.kid, options.key);
+    const verifier = verifiers.get(id) ?? remember(verifiers, id, createVerifier({
       key: options.key,
       algorithms: [TOKEN_ALGORITHM],
       checkTyp: TOKEN_TYPE,
       complete: true,
-      // One verifier per call: the library binds the clock at construction and
-      // the injected clock changes per call. The cache would also let a stale
-      // clock decision through, so it stays off.
+      // No token cache: expiry is decided below against the injected clock,
+      // not a cached decision from a previous call.
       cache: false,
       // Expiry and not-before are validated below against the injected clock
       // and leeway, so the library must not apply its own time policy.
       ignoreExpiration: true,
       ignoreNotBefore: true,
-      clockTimestamp: options.now,
-    });
+      clockTimestamp: CLOCK_INDEPENDENT_TIMESTAMP,
+    }));
     decoded = verifier(token) as DecodedToken;
   } catch (error) {
     return { ok: false, reason: jwtFailureOf(error) };

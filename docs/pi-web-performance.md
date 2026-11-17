@@ -75,9 +75,11 @@ list until a change and a measurement land together.
    `web/core/server/sessions.ts:1156` reads the entire session file on every
    stamp change (the format tolerates 37 MB files); `:1035` resolves a session
    by enumerating every project directory, and `:716` stats every candidate.
-6. **Per-request JWT codec** — `web/core/auth/jwt.ts:53,104` constructs a
-   fast-jwt signer/verifier on every call; every authenticated request pays
-   codec setup before the constant-time signature check.
+6. **Per-request JWT codec** — *fixed.* `web/core/auth/jwt.ts:53,104` used to
+   construct a fast-jwt signer/verifier on every call; the codecs are now cached
+   by key and kid with a clock-independent verifier, while expiry stays in this
+   module. The `jwt-verify` ceiling is 0.03 ms (baseline p95 ~0.031 ms, now
+   ~0.023 ms).
 7. **Repeated static setup** — `web/core/server/client-static.ts:15` calls
    `realpath(root)` for every asset, and `:31-40` reads and parses
    `build.json` in an `onSend` hook even for non-HTML payloads.
