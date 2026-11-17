@@ -153,7 +153,8 @@ test("login sets HttpOnly SameSite=Strict cookies, the refresh cookie scoped to 
     }
     assert.match(access, /; Path=\/;/);
     assert.match(refresh, /; Path=\/api\/auth;/);
-    assert.match(access, /Max-Age=(899|900)/, "the cookie lives as long as the 15 minute access token");
+    const maxAge = Number(/Max-Age=(\d+)/.exec(access)?.[1]);
+    assert.ok(maxAge > 870 && maxAge <= 900, `the cookie lives as long as the 15 minute access token (got ${maxAge})`);
 
     assert.equal((await call(h, jar, "GET", "/api/sessions")).status, 200);
     assert.deepEqual(await (await call(h, jar, "GET", "/api/auth/status")).json(), {

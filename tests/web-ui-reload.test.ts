@@ -160,13 +160,20 @@ test("source roots name only the build inputs and our runtime directories", () =
   assert.equal(roots.some((r) => r.includes("node_modules") || r.endsWith("/web")), false);
 });
 
-test("the watcher fires once after a quiet period, and ignores node_modules churn", async () => {
+test("the watcher fires once after a quiet period, and ignores node_modules churn", async (t) => {
   const root = await tree();
+  let watcher: ReturnType<typeof watchSources> | undefined;
   try {
     await mkdir(join(root, "app"), { recursive: true });
     await mkdir(join(root, "app", "node_modules"), { recursive: true });
     let fired = 0;
-    const watcher = watchSources({ roots: [join(root, "app")], debounceMs: 80, onChange: () => { fired++; } });
+    try {
+      watcher = watchSources({ roots: [join(root, "app")], debounceMs: 80, onChange: () => { fired++; } });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOSPC") throw error;
+      t.skip("System inotify watch limit reached (ENOSPC)");
+      return;
+    }
     try {
       await writeFile(join(root, "app", "node_modules", "dep.js"), "noise");
       await new Promise((resolve) => setTimeout(resolve, 300));
