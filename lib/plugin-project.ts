@@ -1,5 +1,5 @@
 /** Pure plugin-project scaffold and import-boundary rules (PL1, PL3, PL7). */
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, resolve, sep } from "node:path";
 
 export interface ProjectFile {
   readonly path: string;
@@ -85,12 +85,6 @@ export interface ImportViolation {
   readonly file: string;
   readonly line: number;
   readonly specifier: string;
-}
-
-/** Resolve a relative specifier against the project root, then check the boundary. */
-export function resolveProjectImport(root: string, from: string, specifier: string): string {
-  if (!specifier.startsWith(".")) return specifier;
-  return relative(root, resolve(root, from, "..", specifier)).split(sep).join("/");
 }
 
 /** AC10: name every import of web/core internals, including relative escapes. */
