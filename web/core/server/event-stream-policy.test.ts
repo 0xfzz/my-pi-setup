@@ -14,6 +14,7 @@ function channelFixture() {
     get closed() { return closed; },
     bufferedBytes: 0,
     send: frame => { if (!closed) frames.push(frame); },
+    sendEncoded: encoded => { if (!closed) frames.push(JSON.parse(encoded)); },
     checkPressure: () => {},
     onClose: callback => { if (closed) callback(); else callbacks.add(callback); },
     close: () => {

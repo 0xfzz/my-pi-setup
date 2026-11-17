@@ -74,15 +74,23 @@ export function attachAgentEventStream(
     channel.close();
   };
 
+  const reservedBytes = (): number => pendingToolUpdates.bytes + startupEvents.bytes;
   const send = (data: unknown, options?: { droppable?: boolean }): void => {
     if (closed) return;
-    channel.send(data, { ...options, reservedBytes: pendingToolUpdates.bytes + startupEvents.bytes });
+    channel.send(data, { ...options, reservedBytes: reservedBytes() });
+    if (channel.closed) cleanup();
+  };
+  // Coalesced and deduped frames already carry their JSON: hand it to the wire
+  // directly instead of parsing it back and stringifying it a second time.
+  const sendEncoded = (encoded: string, options?: { droppable?: boolean }): void => {
+    if (closed) return;
+    channel.sendEncoded(encoded, { ...options, reservedBytes: reservedBytes() });
     if (channel.closed) cleanup();
   };
 
   const flushToolUpdates = (): void => {
     toolUpdateTimer = null;
-    for (const update of pendingToolUpdates.consume()) send(update, { droppable: true });
+    for (const { encoded } of pendingToolUpdates.consumeEncoded()) sendEncoded(encoded, { droppable: true });
   };
 
   const sendClientEvent = (clientEvent: AgentEventLike): void => {
@@ -182,7 +190,7 @@ export function attachAgentEventStream(
           message: snapshot.message ?? { role: "assistant", content: [] },
         });
       }
-      for (const event of startupEvents.consume()) forwardEvent(event);
+      for (const { encoded } of startupEvents.consumeEncoded()) forwardEvent(JSON.parse(encoded) as AgentEventLike);
       if (closed) return;
 
       // Plugin surfaces ride the same stream: one snapshot after connect,
@@ -212,7 +220,7 @@ export function attachAgentEventStream(
         const json = JSON.stringify(frame);
         if (json === lastPluginStateJson) return;
         lastPluginStateJson = json;
-        send(frame);
+        sendEncoded(json);
       };
       sendPluginState();
       if (closed) return;
@@ -238,7 +246,7 @@ export function attachAgentEventStream(
         const json = JSON.stringify(frame);
         if (json === lastSessionStateJson) return;
         lastSessionStateJson = json;
-        send(frame, { droppable: true });
+        sendEncoded(json, { droppable: true });
       }, 1000);
     } catch (error) {
       if (closed) return;

@@ -61,10 +61,12 @@ list until a change and a measurement land together.
    plugin view through `bridge.ts:184-192` and `publisher.ts:62-72`, bumps the
    global UI store revision and rebuilds every subscriber's plugin frame.
    Subscribers, not sessions, determine the cost.
-2. **SSE encode → parse → encode** — `lib/sse-pressure.ts:40,66` encodes into
-   `BoundedSseEvents`, parses it back on `consume()`, and
-   `web/core/http/sse.ts:103` serializes it again. Every coalesced tool update
-   and pre-`connected` event pays three JSON operations.
+2. **SSE encode → parse → encode** — *fixed.* `lib/sse-pressure.ts` used to
+   encode into `BoundedSseEvents`, parse it back on `consume()`, and
+   `web/core/http/sse.ts` serialized it again. `consumeEncoded()` and
+   `EventChannel.sendEncoded()` now hand the admitted bytes to the formatter
+   directly, including deduped plugin frames. The `sse-coalesce` ceiling is
+   0.015 ms (baseline p95 ~0.021 ms, now ~0.012 ms).
 3. **Quadratic in-flight text/arguments** — `web/core/server/stream-tracker.ts:59,86`
    copies the whole text prefix per delta and `JSON.parse`s the whole argument
    prefix; the browser twin is `web/core/client/streaming.ts:181,197`.

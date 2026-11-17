@@ -30,6 +30,19 @@ test("staged SSE events bound UTF-8 bytes, coalesce by key and release accountin
   assert.equal(events.bytes, 0);
 });
 
+test("staged events can be handed to the wire as immutable encoded frames", () => {
+  const events = new BoundedSseEvents();
+  const frame = { type: "tool_execution_update", partialResult: "small" };
+  assert.equal(events.put("a", frame, 100), true);
+  const admittedBytes = events.bytes;
+  frame.partialResult = "large".repeat(1_000);
+  assert.deepEqual([...events.consumeEncoded()], [
+    { key: "a", encoded: JSON.stringify({ type: "tool_execution_update", partialResult: "small" }) },
+  ]);
+  assert.equal(events.bytes, 0);
+  assert.ok(admittedBytes > 0);
+});
+
 test("staged events cannot grow by producer mutation after byte admission", () => {
   const events = new BoundedSseEvents();
   const frame = { text: "small" };

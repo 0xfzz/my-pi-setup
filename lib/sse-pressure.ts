@@ -61,10 +61,14 @@ export class BoundedSseEvents {
   }
 
   *consume(): IterableIterator<unknown> {
+    for (const { encoded } of this.consumeEncoded()) yield JSON.parse(encoded);
+  }
+
+  /** Hand the already-admitted bytes straight to the wire; no parse round-trip. */
+  *consumeEncoded(): IterableIterator<{ key: unknown; encoded: string }> {
     for (const [key, entry] of this.#events) {
       this.delete(key);
-      const event: unknown = JSON.parse(entry.encoded);
-      yield event;
+      yield { key, encoded: entry.encoded };
     }
   }
 }

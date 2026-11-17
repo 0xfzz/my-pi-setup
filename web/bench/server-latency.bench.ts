@@ -132,7 +132,8 @@ function sseEncodeScenario(): Scenario {
   return {
     name: "sse-coalesce",
     unit: "frame",
-    budgetP95Ms: 2,
+    // Encoded fast path: ~0.012 ms here; encode/parse/encode was ~0.021 ms.
+    budgetP95Ms: 0.015,
     iterations: 3_000,
     setup() {
       buffer = new BoundedSseEvents();
@@ -143,7 +144,7 @@ function sseEncodeScenario(): Scenario {
       key += 1;
       const event = { type: "tool_execution_update", toolCallId: `call-${key}`, partialResult: "x".repeat(2_048) };
       buffer.put(key, event, MAIN_SSE_LIMITS.closeAboveBytes);
-      for (const frame of buffer.consume()) encodedBytes += Buffer.byteLength(JSON.stringify(frame));
+      for (const { encoded } of buffer.consumeEncoded()) encodedBytes += Buffer.byteLength(encoded) + 8;
     },
     teardown() {
       assert.ok(encodedBytes > 0);
@@ -303,7 +304,7 @@ async function main(): Promise<void> {
     const passed = result.p95 <= scenario.budgetP95Ms;
     if (!passed) failed = true;
     console.log(
-      `${scenario.name.padEnd(21)} ${scenario.unit.padEnd(17)} ${result.p50.toFixed(4).padStart(8)} ${result.p95.toFixed(4).padStart(10)} ${result.p99.toFixed(4).padStart(10)} ${scenario.budgetP95Ms.toFixed(2).padStart(8)} ${passed ? "PASS" : "FAIL"}`,
+      `${scenario.name.padEnd(21)} ${scenario.unit.padEnd(17)} ${result.p50.toFixed(4).padStart(8)} ${result.p95.toFixed(4).padStart(10)} ${result.p99.toFixed(4).padStart(10)} ${scenario.budgetP95Ms.toFixed(4).padStart(8)} ${passed ? "PASS" : "FAIL"}`,
     );
   }
   if (failed) process.exitCode = 1;

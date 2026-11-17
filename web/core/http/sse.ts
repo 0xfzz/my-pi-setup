@@ -27,6 +27,8 @@ export interface EventChannel {
   readonly closed: boolean;
   readonly bufferedBytes: number;
   send(data: unknown, options?: SendOptions): void;
+  /** Send an already-encoded JSON payload without serializing it again. */
+  sendEncoded(encoded: string, options?: SendOptions): void;
   checkPressure(): void;
   onClose(callback: () => void): void;
   close(): void;
@@ -107,6 +109,15 @@ class BufferedEventChannel implements EventChannel {
     try {
       const encoded = JSON.stringify(data);
       if (encoded === undefined) throw new TypeError("SSE data is not JSON serializable");
+      this.sendEncoded(encoded, options);
+    } catch {
+      this.#abort();
+    }
+  }
+
+  sendEncoded(encoded: string, options?: SendOptions): void {
+    if (this.closed) return;
+    try {
       const retry = options?.retry;
       const frameBytes = encodedSseBytes(encoded, retry);
       const admission = this.#admission(frameBytes, options);

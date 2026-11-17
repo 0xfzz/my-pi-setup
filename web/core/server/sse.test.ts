@@ -58,6 +58,16 @@ test("SSE flushes headers before data and carries security/cache headers", { tim
   });
 });
 
+test("pre-encoded frames use the same admission and wire framing", { timeout: 5_000 }, async () => {
+  await withChannel(async ({ channel, response }) => {
+    const encoded = JSON.stringify({ type: "encoded", text: "世界" });
+    channel.sendEncoded(encoded);
+    assert.ok(channel.bufferedBytes >= Buffer.byteLength(encoded) + 8);
+    const reader = response.body!.getReader();
+    assert.equal(await nextText(reader, "\n\n"), `data: ${encoded}\n\n`);
+  });
+});
+
 test("manual SSE routes accept missing, wildcard, EventSource and non-SSE Accept headers", { timeout: 5_000 }, async () => {
   const app = await createWebApp();
   app.get("/stream", { sse: SSE_ROUTE_OPTIONS }, async (_request, reply) => {
