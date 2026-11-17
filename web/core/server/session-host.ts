@@ -69,7 +69,6 @@ function removeOwnerPid(path: string): void {
 export async function startSessionHost(options: {
   sessionId: string;
   cwd: string;
-  sessionFile?: string;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   timeoutMs?: number;
@@ -98,7 +97,6 @@ export async function startSessionHost(options: {
     cwd: options.cwd,
     serverUrl: serverUrl(),
     extensionPath: extensionPath(),
-    ...(options.sessionFile !== undefined ? { sessionFile: options.sessionFile } : {}),
   };
   const tmp = mkdtempSync(join(tmpdir(), "pi-web-session-host-"));
   const fifo = join(tmp, "stdin");

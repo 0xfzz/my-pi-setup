@@ -1475,7 +1475,6 @@ export async function ensureSession(
     await startSessionHost({
       sessionId: id,
       cwd,
-      sessionFile: file,
       isAttached: () => getSession(id)?.core.bridgeOf !== undefined,
     });
     const core = getSession(id)?.core;

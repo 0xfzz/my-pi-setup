@@ -36,11 +36,13 @@ test("a new session host gets an exact id and explicit extension path", () => {
   ]);
 });
 
-test("a resumed session host opens the session file", () => {
-  assert.deepEqual(sessionHostArgs({ ...request, sessionFile: "/sessions/abc.jsonl" }), [
-    "--mode", "rpc", "--session-id", "session-123", "--session", "/sessions/abc.jsonl",
+test("a resumed session host uses the exact id without the conflicting --session flag", () => {
+  const resumed = { ...request, sessionFile: "/sessions/abc.jsonl" };
+  assert.deepEqual(sessionHostArgs(resumed), [
+    "--mode", "rpc", "--session-id", "session-123",
     "--extension", "/repo/extensions/web.ts",
   ]);
+  assert.ok(!sessionHostArgs(resumed).includes("--session"), "pi rejects --session-id combined with --session");
 });
 
 test("a session host environment cannot think it is the server or attach twice", () => {

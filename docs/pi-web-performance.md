@@ -150,6 +150,16 @@ list until a change and a measurement land together.
     per-call pi deep imports (`pi-api/mcp.ts`, `pi-api/trust.ts`) need a matching
     benchmark scenario before any contract or import change.
 
+## Browser HAR follow-up
+
+A Firefox HAR against a running server showed a 30 s `startup_error` on a
+resumed session: `web/core/server/event-stream.ts` waited for a detached owner
+that exited immediately with `--session-id cannot be combined with --session`.
+`lib/session-host.ts` passed both flags whenever `sessionFile` was known.
+The host now always resumes by exact session id (pi finds the project file by
+that id), so the conflicting flag is gone and the stream no longer waits for a
+process that cannot start. Regression: `tests/session-host.test.ts`.
+
 ## Already optimized — do not re-fix
 
 - Token deltas render at most once per frame (`web/core/client/frame-coalescer.ts`)

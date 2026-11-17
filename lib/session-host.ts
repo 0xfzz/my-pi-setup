@@ -10,8 +10,6 @@ export interface SessionHostRequest {
   serverUrl: string;
   /** Absolute path to the web extension the owner uses to attach its bridge. */
   extensionPath: string;
-  /** Resume this session file instead of creating a new session. */
-  sessionFile?: string;
 }
 
 /** Directory under the agent dir holding one pid file per hosted session. */
@@ -45,8 +43,9 @@ export function sessionHostPidPath(agentDir: string, sessionId: string): string 
 
 /** The pi CLI invocation for a detached session owner. */
 export function sessionHostArgs(request: SessionHostRequest): string[] {
+  // `--session-id` finds and resumes the exact project session by id; pi
+  // rejects it together with `--session`, so never pass both.
   const args = ["--mode", "rpc", "--session-id", request.sessionId];
-  if (request.sessionFile !== undefined) args.push("--session", request.sessionFile);
   // Explicit loading works even when the owner has a minimal agent directory.
   // extensions/web.ts claims a marker so a second discovered copy will not
   // open a duplicate bridge.
