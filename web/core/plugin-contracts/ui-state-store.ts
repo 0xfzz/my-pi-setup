@@ -146,6 +146,52 @@ function componentKey(event: WebUiEvent): string {
   }
 }
 
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/**
+ * A UI-sync replay re-emits the producer's last values. Applying them again
+ * would bump the revision and broadcast a full snapshot to every browser,
+ * so events whose state is already present are acknowledged as no-ops.
+ */
+function redundantUiUpdate(session: WebUiSessionState, event: WebUiEvent): boolean {
+  switch (event.type) {
+    case "ui.working.changed":
+      return sameValue(session.working, { ...session.working, ...event.payload });
+    case "ui.status.changed":
+      return sameValue(session.statuses[event.payload.key] ?? null, event.payload.text);
+    case "ui.widget.changed": {
+      const current = session.widgets[event.payload.key];
+      return event.payload.lines === null
+        ? current === undefined
+        : sameValue(current, { lines: event.payload.lines, placement: event.payload.placement });
+    }
+    case "ui.custom.changed": {
+      const current = session.custom[event.payload.id];
+      return event.payload.lines === null
+        ? current === undefined
+        : sameValue(current, { method: event.payload.method, lines: event.payload.lines });
+    }
+    case "ui.title.changed":
+      return session.title === event.payload.text;
+    case "ui.editor.changed":
+      return session.editor === event.payload.text;
+    case "ui.view.changed":
+      return sameValue(session.views[event.payload.pluginId], event.payload.view);
+    case "ui.layout.changed":
+      return sameValue(session.layouts[`${event.payload.pluginId}/${event.payload.contributionId}`], event.payload.placement);
+    case "ui.session.lifecycle":
+      return session.running === event.payload.running
+        && session.closed === (event.payload.closed ?? false)
+        && (event.payload.project === undefined || session.project === event.payload.project);
+    // Notifications and action relays carry an occurrence, not just state.
+    case "ui.notify":
+    case "ui.plugin.action-requested":
+      return false;
+  }
+}
+
 function nextNotifications(current: WebNotification[], event: WebUiEvent): WebNotification[] {
   if (event.type !== "ui.notify") return current;
   const last = current[current.length - 1];
@@ -232,6 +278,11 @@ export class WebUiStore {
     }
     const refusal = this.admissionFailure(event, streamParts(event));
     if (refusal !== undefined) return this.reject(event.sessionId, event.sourceKey, refusal);
+    const session = this.state.sessions[event.sessionId];
+    if (session !== undefined && redundantUiUpdate(session, event)) {
+      this.advanceSequences(event);
+      return true;
+    }
     this.commit(event);
     return true;
   }
@@ -294,11 +345,16 @@ export class WebUiStore {
     return !Object.hasOwn(bag, key) && Object.keys(bag).length >= COMPONENT_KEY_CAPACITY;
   }
 
-  /** Apply an admitted event: state, journal, then one coalesced notification. */
-  private commit(event: WebUiEvent): void {
+  /** Remember the sequence of an admitted event, even when it changed nothing. */
+  private advanceSequences(event: WebUiEvent): void {
     for (const part of streamParts(event)) {
       this.lastSequence.set(this.streamKey(event, part), event.sequence);
     }
+  }
+
+  /** Apply an admitted event: state, journal, then one coalesced notification. */
+  private commit(event: WebUiEvent): void {
+    this.advanceSequences(event);
     this.state.revision++;
     this.cachedSnapshot = null;
     const session = this.state.sessions[event.sessionId] ?? freshSession();

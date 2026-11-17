@@ -242,9 +242,9 @@ export function attachAgentEventStream(
 
       // Plugin surfaces ride the same stream: one snapshot after connect,
       // then every store revision pushes the session's views and working
-      // model. Frames are deduplicated so other sessions' revisions cost
-      // nothing on the wire.
-      let lastPluginStateJson = "";
+      // model. Dedupe on the session's content, not the global revision: a
+      // change in another session must not resend this one's whole snapshot.
+      let lastPluginStateSignature = "";
       const sendPluginState = (): void => {
         const snapshot = webUiStore.snapshot();
         const sessionState = snapshot.sessions[sessionId];
@@ -253,9 +253,7 @@ export function attachAgentEventStream(
         // widgets, custom popups and transient notifications, all driven by
         // the same ui.* events extensions publish. Typed by the shared wire
         // contract, so the client reads it without per-field casts.
-        const frame: PluginStateFrame = {
-          type: "plugin_state",
-          revision: snapshot.revision,
+        const content = {
           views,
           working: sessionState?.working ?? null,
           running: sessionState?.running ?? false,
@@ -264,10 +262,11 @@ export function attachAgentEventStream(
           custom: sessionState?.custom ?? {},
           notifications: sessionState?.notifications ?? [],
         };
-        const json = JSON.stringify(frame);
-        if (json === lastPluginStateJson) return;
-        lastPluginStateJson = json;
-        sendEncoded(json);
+        const signature = JSON.stringify(content);
+        if (signature === lastPluginStateSignature) return;
+        lastPluginStateSignature = signature;
+        const frame: PluginStateFrame = { type: "plugin_state", revision: snapshot.revision, ...content };
+        sendEncoded(JSON.stringify(frame));
       };
       sendPluginState();
       if (closed) return;

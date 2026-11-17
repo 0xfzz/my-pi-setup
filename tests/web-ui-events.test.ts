@@ -44,6 +44,25 @@ test("UI store: working message, visibility, frames, interval and resets survive
   assert.throws(() => { store.snapshot().sessions["session-a"].working.message = "mutated"; });
 });
 
+test("UI store: replaying an unchanged value does not broadcast another snapshot", async () => {
+  const store = new WebUiStore();
+  store.publish("session-a", "ui.working.changed", { message: "Ratiocinating..." });
+  await Promise.resolve();
+  const before = store.snapshot().revision;
+  let notifications = 0;
+  store.subscribe(() => { notifications++; });
+
+  assert.equal(store.publish("session-a", "ui.working.changed", { message: "Ratiocinating..." }), true);
+  assert.equal(store.snapshot().revision, before);
+  await Promise.resolve();
+  assert.equal(notifications, 0);
+
+  store.publish("session-a", "ui.working.changed", { message: "Lucubrating..." });
+  await Promise.resolve();
+  assert.equal(store.snapshot().revision, before + 1);
+  assert.equal(notifications, 1);
+});
+
 test("UI store: ui.notify toasts are bounded and consecutive duplicates refresh", () => {
   const store = new WebUiStore();
   assert.equal(store.publish("session-a", "ui.notify", { message: "saved", level: "info" }), true);
