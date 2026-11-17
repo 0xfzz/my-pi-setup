@@ -115,6 +115,21 @@ function union(a: readonly string[], b: readonly string[] | null): readonly stri
 
 const ZONES: readonly ZoneRules[] = [
   {
+    // The protocol is pure: a schema, its validators and its catalog. It may
+    // reuse the pure UI text/vocabulary helpers, but never a host, pi or
+    // browser runtime — a binding imports it, never the reverse.
+    dir: "web/core/protocol",
+    runtimeAllow: [
+      "web/core/protocol/",
+      "web/core/plugin-contracts/ui-event-models.ts",
+      "web/core/plugin-contracts/ui-contracts.ts",
+      "web/core/plugin-contracts/view.ts",
+      "web/core/plugin-contracts/actions.ts",
+    ],
+    typeOnlyAllow: null,
+    why: "the protocol is transport-neutral and pure; it reuses only the pure UI vocabulary",
+  },
+  {
     // The browser bundle: interface only. React, the wire/plugin contracts
     // and the plugin UI are its world; pi behavior never enters it.
     dir: "web/core/client",

@@ -30,6 +30,8 @@ test("parseCapability enforces each kind's argument rule", () => {
   assert.equal(parseCapability("").ok, false);
   assert.equal(parseCapability(42).ok, false);
   assert.equal(parseCapability("fs.read:../../etc").ok, false, "path-like arguments are rejected by the grammar");
+  assert.deepEqual(cap("protocol.invoke:settings.write"), { kind: "protocol.invoke", arg: "settings.write" });
+  assert.equal(parseCapability("protocol.invoke").ok, false, "a protocol call must name its message");
 });
 
 test("validateCapabilities dedupes, preserves order and rejects the whole list on one bad entry", () => {
@@ -83,6 +85,7 @@ test("an outside plugin gets the interface capabilities and must ask for the res
   assert.deepEqual(granted.map(formatCapability), ["routes", "storage", "session.read"]);
   assert.deepEqual(pending.map(formatCapability), ["exec", "fs.read:/tmp", "hooks.veto:file.before-read"]);
   assert.equal(isGranted(granted, cap("exec")), false);
+  assert.equal(isGranted(granted, cap("protocol.invoke:settings.write")), false, "invoking a protocol message needs a grant");
 });
 
 test("a plugin in the host's own tree is trusted with what it asks for", () => {

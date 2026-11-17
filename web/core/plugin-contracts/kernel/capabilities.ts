@@ -34,6 +34,9 @@ export const CAPABILITY_KINDS = {
   "fs.read": { argument: "required" },
   net: { argument: "required" },
   exec: { argument: "none" },
+  // Generic gate for plugin-originated protocol messages with no domain
+  // capability. Sensitive by default, so an outside plugin must ask for it.
+  "protocol.invoke": { argument: "required" },
 } as const satisfies Record<string, { argument: CapabilityArgument }>;
 
 export type CapabilityKind = keyof typeof CAPABILITY_KINDS;

@@ -1,10 +1,10 @@
 # Technical implementation plan & spec: Pi Web Bridge Protocol
 
-> **Execution disclaimer.** This document is a **derived implementation plan**, not the source of truth. The source of truth is [PRD: Pi Web Bridge Protocol](./pi-web-bridge-protocol.md). For scope, requirements, acceptance criteria and decisions, the PRD wins. If execution reveals a conflict, stop, update the PRD first, then update this plan. Do not start a phase whose decision gate in §9 is still unresolved.
+> **Execution disclaimer.** This document is a **derived implementation plan**, not the source of truth. The source of truth is [PRD: Pi Web Bridge Protocol](./pi-web-bridge-protocol.md). For scope, requirements, acceptance criteria and decisions, the PRD wins. If execution reveals a conflict, stop, update the PRD first, then update this plan. Decision gates in §9 were resolved by the owner on 2026-11-17; §9 records the binding answers.
 
 | Field | Value |
 | --- | --- |
-| **Status** | Derived plan, awaiting decision gates |
+| **Status** | Active implementation plan — all gates resolved (§9) |
 | **Owner** | Faiz |
 | **Source of truth** | [docs/prds/pi-web-bridge-protocol.md](./pi-web-bridge-protocol.md) |
 | **Builds on** | [web-plugin-architecture](../web-plugin-architecture.md), [pi-web](../pi-web.md), [pi-web-plugin-platform](./pi-web-plugin-platform.md) |
@@ -255,11 +255,11 @@ Each package is its own commit with `npm run tidy` green. Old routes stay as ali
 
 ## 9. Decision gates
 
-Defaults below are the PRD's recommendations. They are **assumptions, not decisions made here**.
+Resolved by the owner on 2026-11-17; these are the binding answers, not assumptions.
 
-| Decision | Needed before | Assumption if unresolved |
+| Decision | Needed before | Binding answer |
 | --- | --- | --- |
-| D1 browser code allowed | Phase 4 | None — phase blocked until D1 is decided |
+| D1 browser code allowed | Phase 4 | Yes — `trusted` only, with hash-bound operator confirmation |
 | D2 plugin project locations | Phase 5 | Anywhere trusted; first-party exemplars stay in repo |
 | D3 sandboxed tier | Not in scope | Out of scope |
 | D4 naming ("session attach") | Phase 0 | Rename docs, keep path alias |
@@ -267,6 +267,14 @@ Defaults below are the PRD's recommendations. They are **assumptions, not decisi
 | D6 UI framework | Phase 4 | Host-provided React plus `mount(el, ctx)` escape hatch |
 | D7 one bridge extension | Phase 3 | One first-party extension |
 | D8 meaning of "Pi Web" | Phase 2 | Any frontend; first-party UI is the reference consumer |
+
+### 9.1 Frozen in Phase 0
+
+- Protocol name `pi-web-bridge`, major version `1`; additive changes are new capability names and new catalog rows.
+- Catalog rows in `docs/bridge-protocol-catalog.md` are generated from `web/core/protocol/catalog.ts`; every §2 wire has exactly one row. Legacy names are aliases until Phase 7.
+- Binding names are `in-process`, `session-attach` and `http-sse`. Naming follows D4 in docs; `/api/bridge/:id/*` paths are aliases until Phase 7.
+- Plugin browser half is `main.browser: ./…`, allowed only with `trust: "trusted"`; the mount contract is `mount(el: HTMLElement, ctx: WebPluginContext): () => void`. Kernel/manifest adoption lands in Phase 4; the frozen shape lives in the protocol package.
+- `protocol.invoke:<message-name>` is a sensitive capability (operator grant required outside the host tree); domain capabilities take precedence where declared.
 
 ## 10. Delivery rules and rollback
 

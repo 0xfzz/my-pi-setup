@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | Draft, for review |
+| **Status** | Accepted 2026-11-17 — all decision gates resolved (see §13) |
 | **Owner** | Faiz |
 | **Source** | Migrated from the workspace artifact `pi-web-bridge-protocol-prd` v1 |
 | **Derived plan** | [Technical implementation plan & spec](./pi-web-bridge-protocol-implementation-plan.md) |
@@ -270,16 +270,18 @@ Each is checked by a test or a scripted run.
 
 ## 13. Decisions needed
 
-| # | Question | Recommendation |
+All eight gates were decided by the owner on 2026-11-17. The **Decision** column is now binding; the plan's assumptions are superseded by it.
+
+| # | Question | Decision |
 | --- | --- | --- |
-| **D1** | Allow plugin browser code at all? | Yes, `trusted` only. The plugin layer as drawn is impossible without it. The platform PRD already lifted the rule on paper but never built the loader. |
-| **D2** | Where do plugin projects live? | Anywhere: a folder under `~/.pi/agent/web-plugins`, a project root, or a pi package (`pi.webPlugins`). A separate repo per plugin is allowed. First-party ones can stay in this repo as exemplars as long as they obey the same import rule. |
-| **D3** | Sandboxed tier (iframe or worker) for untrusted plugins? | Out of scope here. Add later. |
-| **D4** | Rename today's "session bridge"? | Yes. Call the TUI attach channel **session attach**, and treat it as one transport binding of the Bridge Protocol. |
-| **D5** | Transport: keep HTTP plus SSE, or add a new one? | Keep. Formalize the contract and version it. A new transport is a later binding. |
-| **D6** | UI framework for plugin projects | React from the host (singleton, small bundles, version coupling) or any framework behind a mount function. Recommend host-provided React plus a framework-neutral `mount(el, ctx)` escape hatch. |
-| **D7** | Is the bridge extension one extension or a generic mechanism others can host? | One first-party extension. Keep the mechanism small. |
-| **D8** | Does "Pi Web" in the core-level diagram mean the default UI, or any frontend? | Any frontend. The first-party UI is just the reference consumer. |
+| **D1** | Allow plugin browser code at all? | **Yes, `trusted` only.** The plugin layer as drawn is impossible without it. The platform PRD already lifted the rule on paper but never built the loader. |
+| **D2** | Where do plugin projects live? | **Anywhere trusted:** `~/.pi/agent/web-plugins`, a project root, or a pi package (`pi.webPlugins`); a separate repo is allowed. First-party ones stay in this repo as exemplars under the same import rule. |
+| **D3** | Sandboxed tier (iframe or worker) for untrusted plugins? | **Out of scope.** Add later. |
+| **D4** | Rename today's "session bridge"? | **Yes.** The TUI attach channel is **session attach**, one transport binding of the Bridge Protocol; `/api/bridge/:id/*` keeps a path alias until Phase 7. |
+| **D5** | Transport: keep HTTP plus SSE, or add a new one? | **Keep HTTP+SSE.** Formalize and version the contract; a new transport is a later binding. |
+| **D6** | UI framework for plugin projects | **Host-provided React plus a framework-neutral `mount(el, ctx)` escape hatch.** |
+| **D7** | Is the bridge extension one extension or a generic mechanism others can host? | **One first-party extension.** Keep the mechanism small. |
+| **D8** | Does "Pi Web" mean the default UI, or any frontend? | **Any frontend.** The first-party UI is the reference consumer. |
 
 ## 14. Definition of done
 
