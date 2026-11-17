@@ -254,9 +254,9 @@ async function httpScenarios(): Promise<Scenario[]> {
     await rm(directory, { recursive: true, force: true });
   };
   const paths = [
-    { name: "http-api", path: "/api/ping", budgetP95Ms: 20 },
-    { name: "http-asset", path: "/app.js", budgetP95Ms: 20 },
-    { name: "http-shell", path: "/", budgetP95Ms: 20 },
+    { name: "http-api", path: "/api/ping", budgetP95Ms: 2 },
+    { name: "http-asset", path: "/app.js", budgetP95Ms: 2 },
+    { name: "http-shell", path: "/", budgetP95Ms: 2 },
   ];
   return paths.map(({ name, path, budgetP95Ms }) => ({
     name,

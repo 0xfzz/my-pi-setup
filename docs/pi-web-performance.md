@@ -88,9 +88,11 @@ list until a change and a measurement land together.
    by key and kid with a clock-independent verifier, while expiry stays in this
    module. The `jwt-verify` ceiling is 0.03 ms (baseline p95 ~0.031 ms, now
    ~0.023 ms).
-7. **Repeated static setup** — `web/core/server/client-static.ts:15` calls
-   `realpath(root)` for every asset, and `:31-40` reads and parses
-   `build.json` in an `onSend` hook even for non-HTML payloads.
+7. **Repeated static setup** — *fixed.* `web/core/server/client-static.ts`
+   used to call `realpath(root)` for every asset and read/parse `build.json`
+   in an `onSend` hook even for non-HTML payloads. The root boundary is now
+   resolved once per app and the build id is read only for HTML shell payloads.
+   The loopback HTTP scenarios have a 2 ms p95 ceiling.
 8. **Response tracking for short requests** — `web/core/server/auth.ts:473`
    tracks every authenticated response with a close listener, although only
    long-lived SSE responses need revocation.

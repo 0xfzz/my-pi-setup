@@ -10,14 +10,22 @@ import { assetPathname, BUILT_ASSET_OPTIONS, isStaticMiss } from "../../../lib/b
 
 // onFile must reject to veto the selected build output. This host owns I/O;
 // the shared policy module remains pure and independent of either server.
-async function assertStaticContainment(root: string, file: string): Promise<void> {
-  try {
-    const [boundary, target] = await Promise.all([realpath(root), realpath(file)]);
-    if (target === boundary || target.startsWith(boundary + sep)) return;
-  } catch {
-    // A selected file disappearing during a rebuild is an ordinary miss.
-  }
-  throw Object.assign(new Error("static file unavailable or outside root"), { statusCode: 404 });
+function createContainmentCheck(root: string): (file: string) => Promise<void> {
+  let boundary: string | null | undefined;
+  const rootBoundary = async (): Promise<string | null> => {
+    // An absent root is retried: a rebuild can create it while the app lives.
+    if (boundary === undefined || boundary === null) boundary = await realpath(root).catch(() => null);
+    return boundary;
+  };
+  return async (file: string): Promise<void> => {
+    try {
+      const [base, target] = await Promise.all([rootBoundary(), realpath(file)]);
+      if (base !== null && (target === base || target.startsWith(base + sep))) return;
+    } catch {
+      // A selected file disappearing during a rebuild is an ordinary miss.
+    }
+    throw Object.assign(new Error("static file unavailable or outside root"), { statusCode: 404 });
+  };
 }
 
 function apiPath(path: string): boolean {
@@ -29,9 +37,10 @@ function notFound(reply: FastifyReply): FastifyReply {
 }
 
 async function stampShell(reply: FastifyReply, payload: unknown): Promise<unknown> {
-  const build = servedClientBuild();
-  if (build === null || !(payload instanceof Readable)) return payload;
+  if (!(payload instanceof Readable)) return payload;
   if (!String(reply.getHeader("content-type")).startsWith("text/html")) return payload;
+  const build = servedClientBuild();
+  if (build === null) return payload;
   const chunks: Buffer[] = [];
   for await (const chunk of payload) chunks.push(Buffer.from(chunk));
   const body = Buffer.from(stampBuildId(Buffer.concat(chunks).toString("utf8"), build.buildId));
@@ -49,6 +58,7 @@ async function hasShell(root: string): Promise<boolean> {
 }
 
 export async function registerClientStatic(app: FastifyInstance, root: string): Promise<void> {
+  const assertStaticContainment = createContainmentCheck(root);
   await app.register(async scope => {
     const fallbackAttempted = new WeakSet<FastifyRequest>();
     scope.addHook("onRequest", async (request, reply) => {
@@ -85,7 +95,7 @@ export async function registerClientStatic(app: FastifyInstance, root: string): 
       root,
       index: false, // Only / falls back to index; nested directories are SPA paths.
       allowedPath: (_path, _root, request) => assetPathname(request.url) !== null,
-      onFile: file => assertStaticContainment(root, file),
+      onFile: assertStaticContainment,
       setHeaders: reply => { reply.header("cache-control", "no-cache"); },
     });
   });
