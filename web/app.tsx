@@ -10,6 +10,7 @@ import { getAuth } from "./core/client/auth.ts";
 import { AppShell } from "./core/client/shell.tsx";
 import { RequestLoading } from "./core/client/request-loading.tsx";
 import { initTheme } from "./core/client/theme.ts";
+import { installBrowserLogging } from "./core/client/logging.ts";
 // Side-effect import: registers the Files and Artifacts bespoke panels.
 import "./plugins/panels.tsx";
 // Side-effect import: registers the MCP manager bespoke page.
@@ -17,6 +18,9 @@ import "./plugins/pages.tsx";
 
 // Before the first paint: the theme is on <html> before React renders.
 initTheme();
+// Capture native fetch and console before auth wraps either one. Browser
+// warnings and crashes then reach the server log without a retry loop.
+installBrowserLogging();
 // Wraps window.fetch so a request that finds the access token expired refreshes the
 // session and retries, before any component issues its first request.
 getAuth();

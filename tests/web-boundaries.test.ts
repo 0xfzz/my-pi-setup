@@ -152,9 +152,11 @@ const ZONES: readonly ZoneRules[] = [
   },
   {
     // Mechanisms shared by the two independent HTTP hosts, never either
-    // host's sessions, auth state, producer or browser runtime.
+    // host's sessions, auth state, producer or browser runtime. The narrow
+    // shared/web-log-* exception is the pure log vocabulary both the server
+    // and the browser client need; it imports no runtime or state.
     dir: "web/core/http",
-    runtimeAllow: ["web/core/http/", "lib/", "node:"],
+    runtimeAllow: ["web/core/http/", "lib/", "web/core/shared/web-log-", "node:"],
     typeOnlyAllow: null,
     why: "shared HTTP mechanisms must remain independent of both host runtimes",
   },

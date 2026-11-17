@@ -6,6 +6,7 @@
 // response above 16 MB so the client reconnects and re-snapshots).
 
 import type { EventChannel } from "../http/sse.ts";
+import { getWebLogger } from "../http/logging.ts";
 import { BoundedSseEvents, MAIN_SSE_LIMITS } from "../../../lib/sse-pressure.ts";
 import {
   AGENT_EVENT_HEARTBEAT_MS,
@@ -297,6 +298,7 @@ export function attachAgentEventStream(
       });
     } catch (error) {
       if (closed) return;
+      getWebLogger().error({ err: error, sessionId }, "agent event stream startup failed");
       send({
         type: "startup_error",
         errorMessage: `Failed to start agent: ${error instanceof Error ? error.message : String(error)}`,
@@ -369,7 +371,8 @@ export function attachSessionsEventStream(channel: EventChannel): void {
       announced = true;
       for (const event of buffered.consume()) send(event);
     })
-    .catch(() => {
+    .catch((error: unknown) => {
+      getWebLogger().warn({ err: error }, "session directory snapshot failed");
       if (closed) return;
       send({ type: "sessions_snapshot", bootId: getServerBootId(), buildId: servedClientBuild()?.buildId ?? null, sessions: [] });
       announced = true;

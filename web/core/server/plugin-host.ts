@@ -12,8 +12,29 @@ import type { WebPluginDescriptor } from "../plugin-contracts/descriptor.ts";
 import { createPluginHost, type PluginHost } from "../plugin-contracts/kernel/host.ts";
 import { createPluginUiSink } from "./plugin-ui-sink.ts";
 import { importPluginModule } from "./plugin-module-loader.ts";
+import { tryGetWebLogger } from "../http/logging.ts";
 
 const GLOBAL_HOST_KEY = Symbol.for("pi-web:plugin-host:v1");
+
+/** Boot diagnostics raised before the composition root installs its logger. */
+const pendingLogs: Array<(logger: NonNullable<ReturnType<typeof tryGetWebLogger>>) => void> = [];
+
+function queueOrLog(write: (logger: NonNullable<ReturnType<typeof tryGetWebLogger>>) => void): void {
+  const logger = tryGetWebLogger();
+  if (logger === undefined) pendingLogs.push(write);
+  else write(logger);
+}
+
+function recordPluginWarning(message: string): void {
+  queueOrLog((logger) => logger.warn({ warning: message }, "web plugin host warning"));
+}
+
+/** Called after the server logger exists so startup diagnostics are not lost. */
+export function flushPluginHostWarnings(): void {
+  const logger = tryGetWebLogger();
+  if (logger === undefined) return;
+  for (const write of pendingLogs.splice(0)) write(logger);
+}
 
 /** The first-party plugin tree, which is also a discovery root (Files ships a manifest). */
 const webPluginsDir = fileURLToPath(new URL("../../plugins", import.meta.url));
@@ -100,6 +121,7 @@ export function registerWebPlugins(
     },
     env: process.env,
     loader: loadPluginRuntime,
+    onWarning: recordPluginWarning,
   });
 
   global[GLOBAL_HOST_KEY] = host;
@@ -107,8 +129,18 @@ export function registerWebPlugins(
   // The store is a server singleton; the kernel only knows the sink interface.
   host.ui.attach(createPluginUiSink());
 
-  host.ready.catch((error: unknown) => {
-    console.error("[pi-web-minimal] web plugin host failed to boot:", error);
+  void host.ready.then((report) => {
+    if (report.safeMode) {
+      queueOrLog((logger) => logger.warn({ reason: report.safeModeReason ?? null }, "web plugin host entered safe mode"));
+    }
+    for (const [pluginId, error] of Object.entries(report.failed)) {
+      queueOrLog((logger) => logger.error({ pluginId, error }, "web plugin failed to start"));
+    }
+    for (const pluginId of report.crashed) {
+      queueOrLog((logger) => logger.error({ pluginId }, "web plugin crashed during boot"));
+    }
+  }, (error: unknown) => {
+    queueOrLog((logger) => logger.error({ err: error }, "web plugin host failed to boot"));
   });
 
   return host;

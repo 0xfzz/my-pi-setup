@@ -1,0 +1,23 @@
+/** Credential-bearing keys that must never reach a pi-web log destination. */
+export const WEB_LOG_REDACT_PATHS = [
+  "password",
+  "passwd",
+  "secret",
+  "token",
+  "authorization",
+  "cookie",
+  "apiKey",
+  "apikey",
+  "*.password",
+  "*.passwd",
+  "*.secret",
+  "*.token",
+  "*.authorization",
+  "*.cookie",
+  "*.apiKey",
+  "*.apikey",
+  "req.headers.authorization",
+  "req.headers.cookie",
+  "headers.authorization",
+  "headers.cookie",
+];

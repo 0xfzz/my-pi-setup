@@ -23,6 +23,7 @@ import { open, readdir, stat, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, join } from "node:path";
 import { getPluginHost } from "./plugin-host.ts";
+import { getWebLogger } from "../http/logging.ts";
 import type { PluginHost } from "../plugin-contracts/kernel/host.ts";
 import type { WebPluginDescriptor } from "../plugin-contracts/descriptor.ts";
 import { attachSessionPlugins } from "./plugin-sessions.ts";
@@ -1415,6 +1416,11 @@ export type CommandResult =
 
 const validateSessionCommand = compileHttpSchema<SessionCommand>(SESSION_COMMAND_SCHEMA);
 
+function failedSessionCommand(sessionId: string, operation: string, error: unknown): CommandResult {
+  getWebLogger().error({ err: error, sessionId, operation }, "session command failed");
+  return { status: "error", error: error instanceof Error ? error.message : String(error) };
+}
+
 /** Schema owns structure; this adapter keeps image-only and command normalization policy. */
 export function parseSessionCommand(body: unknown): SessionCommand | { error: string } {
   if (!validateSessionCommand(body)) {
@@ -1478,19 +1484,13 @@ export async function sendCommand(id: string, command: SessionCommand): Promise<
       return core
         .prompt(message, images)
         .then((): CommandResult => ({ status: "ok", data: { accepted: true } }))
-        .catch((error: unknown): CommandResult => ({
-          status: "error",
-          error: error instanceof Error ? error.message : String(error),
-        }));
+        .catch((error: unknown): CommandResult => failedSessionCommand(id, "prompt", error));
     }
     case "abort": {
       return core
         .abort()
         .then(() => ({ status: "ok", data: { aborted: true } }) as const)
-        .catch((error: unknown) => ({
-          status: "error",
-          error: error instanceof Error ? error.message : String(error),
-        }));
+        .catch((error: unknown) => failedSessionCommand(id, "abort", error));
     }
     case "get_state": {
       return Promise.resolve({ status: "ok", data: core.getState() });
@@ -1507,19 +1507,13 @@ export async function sendCommand(id: string, command: SessionCommand): Promise<
         return core
           .compact(command.args)
           .then(() => ({ status: "ok", data: { accepted: true } }) as const)
-          .catch((error: unknown) => ({
-            status: "error",
-            error: error instanceof Error ? error.message : String(error),
-          }));
+          .catch((error: unknown) => failedSessionCommand(id, "compact", error));
       }
       if (core.webCommand !== undefined) {
         return core
           .webCommand(command.name, command.args ?? "")
           .then(() => ({ status: "ok", data: { accepted: true } }) as const)
-          .catch((error: unknown) => ({
-            status: "error",
-            error: error instanceof Error ? error.message : String(error),
-          }));
+          .catch((error: unknown) => failedSessionCommand(id, `web_command:${command.name}`, error));
       }
       // The runner-registered form: the extension registers the session
       // control commands under web-<name> (all modes), so the prompt path
@@ -1527,10 +1521,7 @@ export async function sendCommand(id: string, command: SessionCommand): Promise<
       return core
         .prompt(`/web-${command.name}${command.args !== undefined && command.args !== "" ? ` ${command.args}` : ""}`)
         .then(() => ({ status: "ok", data: { accepted: true } }) as const)
-        .catch((error: unknown) => ({
-          status: "error",
-          error: error instanceof Error ? error.message : String(error),
-        }));
+        .catch((error: unknown) => failedSessionCommand(id, `web_command:${command.name}`, error));
     }
   }
 }

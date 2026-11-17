@@ -39,6 +39,8 @@ export interface PluginHostOptions<D extends DescriptorLike> {
   countStarts?: boolean;
   loader?: PluginLoader;
   now?: () => number;
+  /** Receives every non-fatal host warning, including ones raised after boot. */
+  onWarning?: (message: string) => void;
 }
 
 export interface PluginHost<D extends DescriptorLike> {
@@ -118,19 +120,23 @@ function manifestDescriptor<D extends DescriptorLike>(
 
 export function createPluginHost<D extends DescriptorLike>(options: PluginHostOptions<D>): PluginHost<D> {
   const warnings: string[] = [];
+  const warn = (message: string): void => {
+    warnings.push(message);
+    options.onWarning?.(message);
+  };
   const loaded = loadState(options.statePath);
-  if (loaded.warning) warnings.push(loaded.warning);
+  if (loaded.warning) warn(loaded.warning);
 
   // Cross-plugin checks no single descriptor can make: duplicate ids, duplicate
   // page paths, duplicate action ids, two plugins claiming one exclusive
   // replacement. A broken registry is a warning at boot, not a crash.
-  warnings.push(...validateRegistry(options.descriptors));
+  for (const warning of validateRegistry(options.descriptors)) warn(warning);
 
   const discovered = discoverPlugins({
     ...options.roots,
     inline: compatCandidates(options.descriptors, options.descriptorDir),
   });
-  warnings.push(...discovered.diagnostics);
+  for (const warning of discovered.diagnostics) warn(warning);
 
   const audit = new AuditLog({ clock: options.now });
   const hooks = new HookBus();
@@ -145,7 +151,7 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
   // before any plugin runs, and every mutation is written back (coalesced).
   const storagePath = options.storagePath ?? `${options.statePath}.storage.json`;
   const persistedStorage = loadStorageSnapshot(storagePath);
-  if (persistedStorage.warning) warnings.push(persistedStorage.warning);
+  if (persistedStorage.warning) warn(persistedStorage.warning);
   if (persistedStorage.snapshot) storage.restore(persistedStorage.snapshot);
 
   // Children outlive the process that started them. The pidfile is how the next
@@ -155,7 +161,7 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
   const pidFile = options.pidFile ?? `${options.statePath}.children.json`;
   const processes = createProcessRegistry({
     pidFile,
-    onWarning: (message) => warnings.push(message),
+    onWarning: warn,
     ...(options.now !== undefined ? { now: options.now } : {}),
   });
 
@@ -169,7 +175,7 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     try {
       saveStorageSnapshot(storagePath, storage.snapshot());
     } catch (error) {
-      warnings.push(`could not write ${storagePath}: ${String(error)}`);
+      warn(`could not write ${storagePath}: ${String(error)}`);
     }
   }
 
@@ -197,7 +203,7 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
       try {
         saveState(options.statePath, state);
       } catch (error) {
-        warnings.push(`could not write ${options.statePath}: ${String(error)}`);
+        warn(`could not write ${options.statePath}: ${String(error)}`);
       }
     },
   });
@@ -228,12 +234,12 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
    */
   async function boot(): Promise<BootReport> {
     const reaped = await reapOrphans(pidFile);
-    if (reaped.warning !== undefined) warnings.push(reaped.warning);
+    if (reaped.warning !== undefined) warn(reaped.warning);
     if (reaped.reaped.length > 0) {
       audit.append("lifecycle", "kernel", `reaped ${reaped.reaped.length} orphaned child process(es) from a previous run`);
     }
     if (reaped.skipped.length > 0) {
-      warnings.push(`${reaped.skipped.length} recorded child process(es) are alive but not provably ours; left running`);
+      warn(`${reaped.skipped.length} recorded child process(es) are alive but not provably ours; left running`);
     }
     return manager.start();
   }

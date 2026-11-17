@@ -937,6 +937,33 @@ in-app full-screen layout, not the browser Fullscreen API, so it works on
 mobile Safari too. File search uses 16px text and phone file controls have
 44px touch targets.
 
+## Logging
+
+The web server uses Pino for all diagnostics. The terminal shows colorized,
+human-readable lines when attached to a TTY; the same records are appended to
+`~/.pi/agent/logs/pi-web.log` (or `$PI_CODING_AGENT_DIR/logs/pi-web.log`) by
+default. Request IDs, request errors, startup and shutdown, plugin boot
+failures, process warnings, uncaught exceptions and unhandled rejections share
+that stream. Crash records include the error's stack trace.
+
+`PI_WEB_LOG_LEVEL` selects `fatal`, `error`, `warn`, `info` (the default),
+`debug` or `trace`. `PI_WEB_LOG_FILE` overrides the file path; set it to `off`
+to keep logs only on the terminal. `PI_WEB_LOG_FILE_FORMAT=json` switches the
+file from readable text to newline-delimited JSON for log tooling, and
+`PI_WEB_LOG_PRETTY=off` forces plain terminal output (useful behind a log
+collector). Credential-looking keys and common token patterns in free text are
+replaced with `[REDACTED]` before either destination sees them.
+
+Browser `console.warn`/`console.error`, uncaught errors and unhandled promise
+rejections are batched to `POST /api/client/log` with their stacks. Browser log
+requests deliberately use the native `fetch` captured before auth wraps it, so
+a failed log delivery cannot recurse through the auth retry loop. The endpoint
+is authenticated, bounds message and stack lengths, caps batches at 20 entries
+and writes them into the same log with `source=browser`. Handled failures from
+fetch, response-body reads, session commands, plugin boot and routes, SSE setup,
+pi_api dispatch and detached session hosts also reach the same stream; expected
+validation responses stay user-facing without being reported as crashes.
+
 Loading feedback starts before each fetch: the host shows a non-blocking
 “Loading… Please wait.” status above dialogs and full-screen plugins. It
 counts concurrent requests (and JSON/text/blob body reads), only disappearing

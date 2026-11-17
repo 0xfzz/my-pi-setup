@@ -10,6 +10,7 @@
 // configured build root. There is no production catch-all dispatcher.
 
 import Fastify, { type FastifyInstance, type FastifyLoggerOptions, type FastifyRequest, type FastifyReply } from "fastify";
+import type { LoggerOptions as PinoLoggerOptions } from "pino";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import { fastifySSE } from "@fastify/sse";
@@ -40,7 +41,7 @@ export interface WebAppOptions {
    * Framework request diagnostics (M14). Production passes the shared
    * redacted logger; the default keeps factories quiet for tests.
    */
-  logger?: FastifyLoggerOptions;
+  logger?: FastifyLoggerOptions & PinoLoggerOptions;
 }
 
 /**

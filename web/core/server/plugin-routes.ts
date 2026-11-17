@@ -149,6 +149,13 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
         return;
       }
       if (!outcome.ok) {
+        request.log.error({
+          err: new Error(outcome.message),
+          reason: outcome.reason,
+          pluginId: target.pluginId,
+          sessionId,
+          path: target.path,
+        }, "plugin route failed");
         sendJson(reply, 502, {
           error: outcome.message,
           code: outcome.reason === "timeout" ? "plugin_route_timeout" : "plugin_route_failed",

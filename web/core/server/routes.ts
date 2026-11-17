@@ -8,7 +8,7 @@
 //
 // `asJson` is the one shared response policy (JSON, `cache-control: no-store`).
 
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { SSERouteOptions } from "@fastify/sse";
 import { openEventChannel, SSE_ROUTE_OPTIONS, type EventChannel } from "../http/sse.ts";
 import { registerLenientJsonParser, parsedJsonBody as bodyOf } from "../http/json-body.ts";
@@ -16,7 +16,8 @@ import { registerMethodFallback } from "../http/method-fallback.ts";
 import { SESSION_COMMAND_SCHEMA } from "../../../lib/session-command-schema.ts";
 import { PI_API_BODY_SCHEMA } from "../../../lib/pi-api-schema.ts";
 import { decodeHistoryCursor } from "../../../lib/history-cursor.ts";
-import { coreRequestSchema, MODEL_BODY_SCHEMA, THINKING_BODY_SCHEMA, ACTION_BODY_SCHEMA, PERMISSIVE_BODY_SCHEMA } from "./request-schemas.ts";
+import { CLIENT_LOG_BODY_SCHEMA, coreRequestSchema, MODEL_BODY_SCHEMA, THINKING_BODY_SCHEMA, ACTION_BODY_SCHEMA, PERMISSIVE_BODY_SCHEMA } from "./request-schemas.ts";
+import { parseBrowserLogEntries, type BrowserLogEntry } from "../shared/web-log-browser.ts";
 import { randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { existsSync, statSync } from "node:fs";
@@ -234,6 +235,36 @@ async function handlePluginAction(request: FastifyRequest, reply: FastifyReply):
   asJson(reply, 200, { ok: true, requestId, relayed });
 }
 
+function writeBrowserLogEntry(logger: FastifyBaseLogger, entry: BrowserLogEntry): void {
+  const fields = {
+    source: "browser",
+    browserTs: entry.ts,
+    ...(entry.stack === undefined ? {} : { err: { type: "BrowserError", message: entry.message, stack: entry.stack } }),
+  };
+  switch (entry.level) {
+    case "fatal": logger.fatal(fields, entry.message); break;
+    case "error": logger.error(fields, entry.message); break;
+    case "warn": logger.warn(fields, entry.message); break;
+    case "info": logger.info(fields, entry.message); break;
+    case "debug": logger.debug(fields, entry.message); break;
+    case "trace": logger.trace(fields, entry.message); break;
+  }
+}
+
+function handleClientLog(request: FastifyRequest, reply: FastifyReply): void {
+  if (request.validationError !== undefined) {
+    asJson(reply, 400, { error: "Invalid JSON body" });
+    return;
+  }
+  const entries = parseBrowserLogEntries(bodyOf(request));
+  if (entries === undefined) {
+    asJson(reply, 400, { error: "Invalid log entries" });
+    return;
+  }
+  for (const entry of entries) writeBrowserLogEntry(request.log, entry);
+  asJson(reply, 200, { ok: true });
+}
+
 function handlePluginManagerReport(_request: FastifyRequest, reply: FastifyReply): void {
   const report = pluginManagerReport();
   if (report === null) {
@@ -309,6 +340,7 @@ async function handleBridgeEvents(request: FastifyRequest, reply: FastifyReply):
     for (const event of events) bridge.postEvent(event);
     asJson(reply, 200, { ok: true });
   } catch (error) {
+    request.log.warn({ err: error, sessionId }, "bridge event rejected");
     asJson(reply, 400, { error: error instanceof Error ? error.message : String(error) });
   }
 }
@@ -344,7 +376,8 @@ async function handleDirectories(request: FastifyRequest, reply: FastifyReply): 
   let dir: string;
   try {
     dir = resolve(requested === "" ? process.cwd() : requested);
-  } catch {
+  } catch (error) {
+    request.log.warn({ err: error, path: requested }, "invalid directory path");
     asJson(reply, 400, { error: "invalid path" });
     return;
   }
@@ -356,6 +389,7 @@ async function handleDirectories(request: FastifyRequest, reply: FastifyReply): 
   try {
     dirents = await readdir(dir, { withFileTypes: true });
   } catch (error) {
+    request.log.warn({ err: error, dir }, "directory listing failed");
     asJson(reply, 400, { error: error instanceof Error ? error.message : String(error) });
     return;
   }
@@ -396,8 +430,10 @@ async function handleSessionDelete(request: FastifyRequest, reply: FastifyReply)
 }
 
 async function handleAgentNew(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  let requestedCwd: unknown;
   try {
     const body = bodyOf(request) as { cwd?: unknown };
+    requestedCwd = body.cwd;
     const cwd = typeof body.cwd === "string" && body.cwd.trim() !== ""
       ? resolve(body.cwd)
       : process.cwd();
@@ -408,6 +444,7 @@ async function handleAgentNew(request: FastifyRequest, reply: FastifyReply): Pro
     const core = await startSession({ cwd });
     asJson(reply, 200, { sessionId: core.sessionId, cwd });
   } catch (error) {
+    request.log.error({ err: error, cwd: requestedCwd }, "failed to start session");
     asJson(reply, 500, { error: error instanceof Error ? error.message : String(error) });
   }
 }
@@ -560,8 +597,10 @@ async function handleAgentSetModel(request: FastifyRequest, reply: FastifyReply)
     asJson(reply, 404, { error: "Session not found" });
     return;
   }
+  let requestedModel: { provider: unknown; id: unknown } | undefined;
   try {
     const body = bodyOf(request) as { provider: string; id: string };
+    requestedModel = { provider: body.provider, id: body.id };
     if (request.validationError) {
       asJson(reply, 400, { error: "provider and id are required" });
       return;
@@ -573,6 +612,7 @@ async function handleAgentSetModel(request: FastifyRequest, reply: FastifyReply)
     }
     asJson(reply, 200, { ok: true });
   } catch (error) {
+    request.log.warn({ err: error, sessionId, model: requestedModel }, "session model change failed");
     asJson(reply, 400, { error: error instanceof Error ? error.message : String(error) });
   }
 }
@@ -584,8 +624,10 @@ async function handleAgentSetThinking(request: FastifyRequest, reply: FastifyRep
     asJson(reply, 404, { error: "Session not found" });
     return;
   }
+  let requestedLevel: unknown;
   try {
     const body = bodyOf(request) as { level: string };
+    requestedLevel = body.level;
     if (request.validationError) {
       asJson(reply, 400, { error: "level is required" });
       return;
@@ -597,6 +639,7 @@ async function handleAgentSetThinking(request: FastifyRequest, reply: FastifyRep
     }
     asJson(reply, 200, { ok: true });
   } catch (error) {
+    request.log.warn({ err: error, sessionId, level: requestedLevel }, "session thinking-level change failed");
     asJson(reply, 400, { error: error instanceof Error ? error.message : String(error) });
   }
 }
@@ -614,7 +657,7 @@ async function handleAgentBranch(request: FastifyRequest, reply: FastifyReply): 
   asJson(reply, 200, { branch: await gitBranch(cwd) });
 }
 
-async function handleChangelog(_request: FastifyRequest, reply: FastifyReply): Promise<void> {
+async function handleChangelog(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   // The web port of /changelog: the installed pi package's changelog, rendered
   // client-side. The package exports do not expose the file, so resolve the
   // entry and walk up to the package root.
@@ -634,7 +677,8 @@ async function handleChangelog(_request: FastifyRequest, reply: FastifyReply): P
     if (changelogPath === null) throw new Error("CHANGELOG.md not found next to the package");
     const content = await readFile(changelogPath, "utf8");
     asJson(reply, 200, { markdown: content.slice(0, 512_000) });
-  } catch {
+  } catch (error) {
+    request.log.warn({ err: error }, "changelog could not be read");
     asJson(reply, 404, { error: "changelog not found" });
   }
 }
@@ -668,9 +712,11 @@ async function handleAgent(request: FastifyRequest, reply: FastifyReply): Promis
     } else if (result.status === "not_found") {
       asJson(reply, 404, { error: "Session not found" });
     } else {
+      request.log.error({ err: new Error(result.error), sessionId }, "agent command failed");
       asJson(reply, 500, { error: result.error });
     }
   } catch (error) {
+    request.log.error({ err: error, sessionId }, "agent command threw");
     asJson(reply, 500, { error: error instanceof Error ? error.message : String(error) });
   }
 }
@@ -684,6 +730,7 @@ const CORE_ROUTES: readonly CoreRoute[] = [
   { path: "/api/health", methods: { GET: handleHealth } },
   { path: "/api/reload-state", methods: { GET: handleReloadState } },
   { path: "/api/reload-notice", methods: { POST: handleReloadNotice } },
+  { path: "/api/client/log", methods: { POST: handleClientLog }, body: CLIENT_LOG_BODY_SCHEMA },
   { path: "/api/plugins", methods: { GET: handlePluginsList } },
   { path: "/api/plugin-manager", methods: { GET: handlePluginManagerReport } },
   { path: "/api/plugin-manager/:id/:command", methods: { POST: handlePluginManagerCommand } },

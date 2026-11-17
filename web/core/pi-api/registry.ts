@@ -10,6 +10,11 @@
  */
 import type { PiApiContext, PiApiHandlerResult, PiApiModule } from "./types.ts";
 
+export interface PiApiRegistryOptions {
+  /** Called with the original exception before it becomes a wire error. */
+  onError?: (api: string, error: unknown) => void;
+}
+
 export interface PiApiRegistry {
   register(module: PiApiModule): void;
   dispatch(api: string, params: unknown, ctx: PiApiContext): Promise<PiApiHandlerResult>;
@@ -17,7 +22,7 @@ export interface PiApiRegistry {
   dispose(): Promise<void>;
 }
 
-export function createPiApiRegistry(): PiApiRegistry {
+export function createPiApiRegistry(options: PiApiRegistryOptions = {}): PiApiRegistry {
   const modules = new Map<string, PiApiModule>();
   const initialized = new Set<PiApiModule>();
 
@@ -38,6 +43,7 @@ export function createPiApiRegistry(): PiApiRegistry {
         }
         return { ok: true, result: await module.handle(params, ctx) };
       } catch (error) {
+        options.onError?.(api, error);
         return { ok: false, error: `pi api ${api} failed: ${stringifyError(error)}` };
       }
     },
@@ -46,8 +52,8 @@ export function createPiApiRegistry(): PiApiRegistry {
       for (const module of modules.values()) {
         try {
           await module.dispose?.();
-        } catch {
-          // A failing dispose must not block the rest of teardown.
+        } catch (error) {
+          options.onError?.(`${module.api}.dispose`, error);
         }
         initialized.delete(module);
       }

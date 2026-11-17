@@ -10,8 +10,9 @@ import { registerCoreRoutes } from "./routes.ts";
 import { createAuthHttp, registerAuthRoutes, type AuthGateReply, type AuthGateRequest, type AuthHttp, type AuthHttpOptions } from "./auth.ts";
 import { createWebApp } from "./app.ts";
 import { httpLoggerOptions } from "../http/observability.ts";
+import { createWebLogger, installCrashLogging, setWebLogger, type WebLoggerBundle } from "../http/logging.ts";
 import { registerPluginRoutes } from "./plugin-routes.ts";
-import { getPluginHost } from "./plugin-host.ts";
+import { flushPluginHostWarnings, getPluginHost } from "./plugin-host.ts";
 import { runTeardown, teardownNote } from "./shutdown.ts";
 import { announceBuildChanged } from "./sessions.ts";
 import { beginDrain } from "./drain.ts";
@@ -43,6 +44,8 @@ export interface StartWebServerOptions {
   auth?: WebAuthService;
   /** Cookie, proxy and origin policy for the auth routes. Defaults come from PI_WEB_* env vars. */
   authHttp?: AuthHttpOptions;
+  /** Structured logging bundle. The direct server entry owns one; tests stay quiet by default. */
+  logging?: WebLoggerBundle;
 }
 
 function envNumber(name: string): number | undefined {
@@ -126,8 +129,11 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
   const stopWatchingBuild = watchClientBuild(root, (build) => announceBuildChanged(build.buildId));
 
   return createWebApp({
-    // Framework diagnostics: request ids and redacted structured error logs.
-    logger: httpLoggerOptions(),
+    // Framework diagnostics: request ids and redacted structured logs. The
+    // direct entry passes its file/pretty stream so requests share the file.
+    logger: options.logging
+      ? httpLoggerOptions({ level: options.logging.level, stream: options.logging.stream })
+      : httpLoggerOptions(),
     // The gate runs before parsing; auth endpoints and public paths pass through.
     authorize: (request, reply) => {
       const url = parseRequestUrl(request.url, request.headers.host);
@@ -194,7 +200,7 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
 /** Give the final SSE frame a chance to reach browsers before sockets are force-closed. */
 const DRAIN_FLUSH_MS = 250;
 
-function installExitGuards(handle: WebServerHandle): void {
+function installExitGuards(handle: WebServerHandle, logging: WebLoggerBundle): void {
   let stopping = false;
   const stop = (signal: string): void => {
     if (stopping) return;
@@ -210,7 +216,8 @@ function installExitGuards(handle: WebServerHandle): void {
         { name: "http server", run: () => handle.close() },
         { name: "plugin host", run: async () => host?.shutdown() },
       ]);
-      console.log(`[pi-web-minimal] stopped (${signal})${teardownNote(outcome)}`);
+      logging.logger.info({ signal, outcome: teardownNote(outcome) }, `pi-web-minimal stopped (${signal})`);
+      logging.flush();
       process.exit(0);
     })();
   };
@@ -227,28 +234,40 @@ export async function main(): Promise<void> {
   // matches it with pkill -f "pi-web-minimal" and nothing else. main() only
   // runs when the server is started directly, so test processes keep theirs.
   process.title = "pi-web-minimal";
+  const logging = createWebLogger();
+  setWebLogger(logging.logger);
+  flushPluginHostWarnings();
+  installCrashLogging(logging.logger);
   // A real server owns web sessions in detached pi processes by default, so a
   // reload drops only the bridge. Tests start the server directly and keep the
   // in-process fallback; PI_WEB_SESSION_HOST=0 is the operator opt-out.
   if (process.env.NODE_TEST_CONTEXT === undefined) process.env.PI_WEB_SESSION_HOST ??= "1";
   const auth = defaultAuthService();
-  const handle = await startWebServer({ auth });
-  installExitGuards(handle);
-  console.log(`[pi-web-minimal] listening on http://${handle.host}:${handle.port}`);
+  const handle = await startWebServer({ auth, logging });
+  installExitGuards(handle, logging);
+  const url = `http://${handle.host}:${handle.port}`;
+  logging.logger.info({
+    url,
+    host: handle.host,
+    port: handle.port,
+    level: logging.level,
+    logFile: logging.file ?? null,
+    logFileFormat: logging.fileFormat ?? null,
+  }, `pi-web-minimal listening on ${url}`);
   const mode = auth.mode();
   if (mode === "enabled") {
-    console.log("[pi-web-minimal] password protection: on");
+    logging.logger.info("password protection: on");
   } else if (mode === "invalid") {
-    console.error(`[pi-web-minimal] password protection is configured but unreadable (${auth.invalidReason() ?? "unknown"}); refusing all API requests until /web set-password is run again`);
+    logging.logger.error({ reason: auth.invalidReason() ?? "unknown" }, "password protection is configured but unreadable; refusing API requests until /web set-password is run again");
   } else if (!["127.0.0.1", "::1", "localhost"].includes(handle.host)) {
-    console.warn(`[pi-web-minimal] WARNING: listening on ${handle.host} with no password. Anyone who can reach this port controls your agent. Run /web set-password in pi.`);
+    logging.logger.warn({ host: handle.host }, "listening without a password: anyone who can reach this port controls your agent");
   }
   if (process.env.PI_WEB_TEST_PLUGIN_VIEWS === "1") {
     // Seeding is explicit: the plugin modules carry no import-time side effect,
     // so the server decides when the fixture surfaces exist.
     seedPluginFixtures();
     registerFixtureSession();
-    console.log("[pi-web-minimal] fixture session registered (PI_WEB_TEST_PLUGIN_VIEWS=1)");
+    logging.logger.info("fixture session registered (PI_WEB_TEST_PLUGIN_VIEWS=1)");
   }
 }
 

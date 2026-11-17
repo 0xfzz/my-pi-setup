@@ -12,6 +12,8 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultIsPidAlive } from "../../../lib/web-ui.ts";
+import { getWebLogger } from "../http/logging.ts";
+import { redactLogText } from "../shared/web-log-browser.ts";
 import {
   externalSessionHostEnabled,
   parseSessionHostPid,
@@ -113,7 +115,10 @@ export async function startSessionHost(options: {
   });
   closeFifoFd(stdin);
   child.stderr?.on("data", (chunk: Buffer) => {
-    stderr = (stderr + chunk.toString("utf8")).slice(-2_000);
+    const text = chunk.toString("utf8");
+    stderr = (stderr + text).slice(-2_000);
+    const detail = redactLogText(text).trim();
+    if (detail !== "") getWebLogger().warn({ sessionId: options.sessionId, stderr: detail.slice(0, 2_000) }, "session host stderr");
   });
   child.unref();
   if (child.pid === undefined) {
@@ -131,7 +136,12 @@ export async function startSessionHost(options: {
     if (readOwnerPid(pidPath) === child.pid) removeOwnerPid(pidPath);
     rmSync(tmp, { recursive: true, force: true });
   };
-  child.once("exit", cleanup);
+  child.once("exit", (code, signal) => {
+    if (!cleaned && code !== 0 && signal !== "SIGTERM") {
+      getWebLogger().error({ sessionId: options.sessionId, code, signal, stderr: redactLogText(stderr) }, "session host exited");
+    }
+    cleanup();
+  });
   hosts.set(options.sessionId, { child, cleanup });
 
   try {

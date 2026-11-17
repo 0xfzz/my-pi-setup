@@ -4,8 +4,10 @@
 // messages and the plugin action audit stay where they were.
 import { Writable } from "node:stream";
 import type { FastifyLoggerOptions, FastifyRequest } from "fastify";
+import type { LoggerOptions as PinoLoggerOptions } from "pino";
+import { WEB_LOG_REDACT_PATHS } from "./log-redaction.ts";
 
-/** Structured logs stay quiet: only warnings and errors are emitted. */
+/** Framework request logs default to warnings/errors; the direct server entry raises this. */
 export const HTTP_LOG_LEVEL = "warn";
 
 /**
@@ -29,9 +31,10 @@ export function requestLogFields(request: FastifyRequest): Record<string, unknow
  * while warnings/errors stay structured; the serializer still strips the query
  * so a future level change cannot leak a bootstrap/producer token.
  */
-export function httpLoggerOptions(overrides: Partial<FastifyLoggerOptions> = {}): FastifyLoggerOptions {
+export function httpLoggerOptions(overrides: Partial<FastifyLoggerOptions & PinoLoggerOptions> = {}): FastifyLoggerOptions & PinoLoggerOptions {
   return {
     level: HTTP_LOG_LEVEL,
+    redact: { paths: WEB_LOG_REDACT_PATHS, censor: "[REDACTED]" },
     serializers: { req: requestLogFields },
     ...overrides,
   };

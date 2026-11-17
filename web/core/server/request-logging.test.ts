@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createWebApp } from "./app.ts";
+import { registerCoreRoutes } from "./routes.ts";
 import { httpLoggerOptions, lineLogStream, requestLogFields } from "../http/observability.ts";
 
 function captureLogs(): { lines: string[]; destination: ReturnType<typeof lineLogStream> } {
@@ -33,6 +34,28 @@ test("framework error logs carry a request id and no query/header/body credentia
     assert.match(String(logged.reqId), /^req-\d+$/);
     const raw = lines.join("");
     for (const secret of ["bootstrap-secret", "bridge-secret", "access-secret", "body-secret"]) assert.ok(!raw.includes(secret), secret);
+  } finally {
+    await app.close();
+  }
+});
+
+test("browser log entries reach the shared structured logger with their stack", async () => {
+  const { lines, destination } = captureLogs();
+  const app = await createWebApp({ logger: { ...httpLoggerOptions(), level: "info", stream: destination } });
+  await registerCoreRoutes(app);
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/client/log",
+      payload: { entries: [{ level: "error", message: "browser failed", stack: "Error: browser failed\n  at app.js", ts: 42, source: "browser" }] },
+    });
+    assert.equal(response.statusCode, 200);
+    const forwarded = lines.map(line => JSON.parse(line) as Record<string, unknown>)
+      .find(line => line.source === "browser");
+    assert.equal(forwarded?.msg, "browser failed");
+    assert.equal(forwarded?.browserTs, 42);
+    assert.match(String((forwarded?.err as { stack?: string } | undefined)?.stack), /at app\.js/);
+    assert.equal(forwarded?.level, 50);
   } finally {
     await app.close();
   }

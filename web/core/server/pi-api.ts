@@ -11,13 +11,16 @@
  */
 import { createPiApiRegistry, PI_API_MODULES } from "../pi-api/index.ts";
 import type { PiApiName, PiApiParams, PiApiResult } from "../shared/pi-api.ts";
+import { getWebLogger } from "../http/logging.ts";
 import { parsePiApiBody } from "./pi-api-body.ts";
 
 export type PiApiCall =
   | { ok: true; result: PiApiResult[PiApiName] }
   | { ok: false; error: string };
 
-const registry = createPiApiRegistry();
+const registry = createPiApiRegistry({
+  onError: (api, error) => getWebLogger().error({ err: error, api }, "pi api dispatch failed"),
+});
 for (const module of PI_API_MODULES) registry.register(module);
 
 /** A server-lifetime abort controller: dispatches stop when the server does. */
