@@ -13,7 +13,7 @@
 
 - **What it is** — a code-backed audit of pi-web's request, stream and render hot paths plus a standalone latency benchmark.
 - **Why it exists** — Fastify only stays fast when handlers do not rebuild codecs, reserialize frames, clone whole states or scan whole files per token/request.
-- **How it is enforced** — `web/core/server/latency.bench.ts` reports p50/p95/p99 per operation; each scenario has a p95 ceiling and the command exits non-zero when a ceiling is exceeded.
+- **How it is enforced** — `web/bench/server-latency.bench.ts` and `web/bench/client-latency.bench.ts` report p50/p95/p99 per operation; each scenario has a p95 ceiling and the command exits non-zero when a ceiling is exceeded.
 - **What it refuses** — no benchmark runs inside `npm test` or `npm run test:web`; no assertion that a microbenchmark predicts inference latency.
 - **What it cannot do** — it measures Node-side and loopback costs on the host it runs on; browser paint cost needs a separate browser profile.
 
@@ -42,13 +42,17 @@ Recorded baseline (node v22.23.2, this host, median of three runs):
 | `jwt-verify` | verify | 0.020 ms | 0.031 ms | 0.054 ms |
 | `stream-tracker` | delta | 0.002 ms | 0.002 ms | 0.003 ms |
 | `sse-coalesce` | frame | 0.016 ms | 0.022 ms | 0.031 ms |
-| `ui-snapshot` | publish + snapshot | 0.073 ms | 0.121 ms | 0.144 ms |
+| `ui-snapshot` | publish + snapshot | 1.950 ms | 2.555 ms | 2.969 ms |
 | `history-tail` | read | 1.64 ms | 4.40 ms | 5.25 ms |
 | `client-stream-delta` | delta | 0.002 ms | 0.002 ms | 0.002 ms |
 | `markdown-split` | append | 0.031 ms | 0.059 ms | 0.079 ms |
 | `http-api` | request | 0.75 ms | 1.13 ms | 1.55 ms |
 | `http-asset` | request | 1.08 ms | 1.40 ms | 2.20 ms |
 | `http-shell` | request | 1.04 ms | 1.34 ms | 2.43 ms |
+
+The first `ui-snapshot` trial used an invalid view fixture (`items` instead of
+`rows`), which the store rejected, so those numbers measured empty sessions.
+The baseline above was re-taken with the corrected fixture before any fix.
 
 Current acceptance run (same host after the fixes, one run):
 
@@ -81,6 +85,9 @@ list until a change and a measurement land together.
    bumped the global UI store revision and rebuilt every subscriber's plugin
    frame. A refcounted per-session timer now emits once per session per second
    and asks each attached stream only for its own deduplicated state frame.
+   The client audit proposed removing the periodic replay entirely; the timer
+   was kept because the attach-time sync alone cannot refresh plugin state that
+   changes after a stream connects.
 2. **SSE encode → parse → encode** — *fixed.* `lib/sse-pressure.ts` used to
    encode into `BoundedSseEvents`, parse it back on `consume()`, and
    `web/core/http/sse.ts` serialized it again. `consumeEncoded()` and
@@ -127,6 +134,21 @@ list until a change and a measurement land together.
 11. **Resolver hot hook** — *backlog.* `web/core/server/plugin-module-loader.ts:52-59`
     sorts every generation key and recomputes `pathToFileURL` on every module
     resolution once the hook is installed.
+12. **Tool and bash update copies** — *backlog.* `web/core/client/use-session.ts:855,872,883,894,1101`
+    spreads whole result/status maps, and `:606-640` copies the history array
+    and a message's blocks for every bash delta.
+13. **History-reload cascade** — *backlog.* Five sites bump one global epoch in
+    `web/core/client/use-session.ts`, tearing down the stream and refetching
+    state, models, commands and branch on each resync or compaction event.
+14. **Validation serialization** — *backlog.* `web/core/plugin-contracts/ui-event-models.ts:75-79`
+    and `view.ts` stringify/encode payloads repeatedly only to enforce size caps.
+15. **Unbounded caches and listener copies** — *backlog.* `sessions.ts` keeps
+    `diskNameCache`/`headerCache` without eviction, `bridge.ts:288` copies its
+    listener set per event, and `server/ui-store.ts` persists synchronously.
+16. **Gated, user-driven costs** — *not changed.* The per-entry
+    `message.before-render-model` waterfall (`routes.ts:434-446`) and the
+    per-call pi deep imports (`pi-api/mcp.ts`, `pi-api/trust.ts`) need a matching
+    benchmark scenario before any contract or import change.
 
 ## Already optimized — do not re-fix
 
