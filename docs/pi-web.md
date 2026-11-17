@@ -92,12 +92,17 @@ multiplexes everything:
   projected by `web/core/server/wire.ts` (no turn markers, no system messages,
   slimmed tool payloads, no cumulative partial snapshots).
 - **`plugin_state` frames** — the session's plugin views, working model
-  and running flag, pushed on every store revision and deduplicated, so
-  slots, pages, region overrides and the working indicator update without
-  reloads.
+  and running flag, pushed on every real store revision and deduplicated
+  by session content, so slots, pages, region overrides and the working
+  indicator update without reloads. A UI-sync replay of unchanged values
+  is acknowledged without changing state, so it cannot rebroadcast the
+  whole snapshot.
 Commands `POST /api/agent/:id` (`prompt`, `abort`, `get_state`,
-`web_command`); history loads from `GET /api/agent/:id/history` (parsed
-from the session file); the session list is push-driven over
+`web_command`). The transcript loads one bounded page from
+`GET /api/agent/:id/history?limit=…`; the response carries opaque cursors
+for older pages and for entries appended later. Live prompts and replies
+append from the SSE stream, and a reconnect reads only entries after the
+stored cursor instead of reloading the transcript. The session list is push-driven over
 `GET /api/sessions/events` (one directory EventSource: a full snapshot on
 connect, then running/idle and add/remove transitions — no polling), with
 `GET /api/sessions?q=…` for whole-directory search. The selected session
@@ -305,7 +310,7 @@ the plugin action audit are separate and unchanged.
 | `/api/agent/new` | POST | spawn a pi session (`createAgentSession`) |
 | `/api/agent/:id` | GET / POST | state read / prompt, abort, get_state |
 | `/api/agent/:id/events` | GET | the SSE stream |
-| `/api/agent/:id/history` | GET | transcript entries |
+| `/api/agent/:id/history` | GET | one transcript page (`cursor`, `direction=older|newer`, `limit`) |
 | `/api/agent/:id/commands` | GET | pi's runtime built-ins + the session's live commands |
 | `/api/agent/:id/pi_api` | POST | call a pi built-in api (below) |
 | `/api/agent/:id/tree` | GET | pi's tree, projected for the web picker |
