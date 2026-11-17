@@ -7,9 +7,9 @@
 // reconnects when the new process is healthy.
 
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, closeSync, constants, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultIsPidAlive } from "../../../lib/web-ui.ts";
 import { getWebLogger } from "../http/logging.ts";
@@ -18,6 +18,7 @@ import {
   externalSessionHostEnabled,
   parseSessionHostPid,
   sessionHostArgs,
+  sessionHostCommand,
   sessionHostEnv,
   sessionHostPidPath,
   type SessionHostRequest,
@@ -67,6 +68,35 @@ function removeOwnerPid(path: string): void {
   }
 }
 
+function isExecutableFile(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK);
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function findExecutable(command: string): string | undefined {
+  if (command.includes("/") || command.includes("\\")) {
+    const path = resolve(command);
+    return isExecutableFile(path) ? path : undefined;
+  }
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    const candidate = join(dir === "" ? "." : dir, command);
+    if (isExecutableFile(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+function requireSessionHostCommand(): string {
+  const command = sessionHostCommand({ env: process.env, agentDir: agentDir(), findExecutable });
+  if (command === undefined) {
+    throw new Error(`cannot find a pi executable for a session host; set PI_WEB_PI_BIN or add pi to PATH (looked in ${join(agentDir(), "bin", "pi")})`);
+  }
+  return command;
+}
+
 /** Spawn a detached pi process that owns `sessionId` and bridges it to this server. */
 export async function startSessionHost(options: {
   sessionId: string;
@@ -77,7 +107,8 @@ export async function startSessionHost(options: {
   isAttached: () => boolean;
 }): Promise<void> {
   let stderr = "";
-  const wait = createAttachmentWaiter(options, () => stderr);
+  let spawnError: Error | undefined;
+  const wait = createAttachmentWaiter(options, () => stderr, () => spawnError);
   if (hosts.has(options.sessionId)) {
     await wait(null);
     return;
@@ -100,6 +131,7 @@ export async function startSessionHost(options: {
     serverUrl: serverUrl(),
     extensionPath: extensionPath(),
   };
+  const command = requireSessionHostCommand();
   const tmp = mkdtempSync(join(tmpdir(), "pi-web-session-host-"));
   const fifo = join(tmp, "stdin");
   execFileSync("mkfifo", [fifo], { stdio: "ignore" });
@@ -107,12 +139,15 @@ export async function startSessionHost(options: {
   // an RPC pi does not see EOF when the web server that spawned it restarts.
   const stdin = openSync(fifo, "r+");
 
-  const child = spawn("pi", sessionHostArgs(request), {
+  const child = spawn(command, sessionHostArgs(request), {
     cwd: options.cwd,
     detached: true,
     stdio: [stdin, "ignore", "pipe"],
     env: sessionHostEnv(request),
   });
+  // spawn reports ENOENT asynchronously; without this listener it is an
+  // uncaught exception that takes down the whole web server.
+  child.once("error", (error) => { spawnError = error; });
   closeFifoFd(stdin);
   child.stderr?.on("data", (chunk: Buffer) => {
     const text = chunk.toString("utf8");
@@ -121,12 +156,10 @@ export async function startSessionHost(options: {
     if (detail !== "") getWebLogger().warn({ sessionId: options.sessionId, stderr: detail.slice(0, 2_000) }, "session host stderr");
   });
   child.unref();
-  if (child.pid === undefined) {
-    rmSync(tmp, { recursive: true, force: true });
-    throw new Error(`failed to spawn a session host for ${options.sessionId}`);
+  if (child.pid !== undefined) {
+    mkdirSync(dirname(pidPath), { recursive: true });
+    writeFileSync(pidPath, `${child.pid}\n`);
   }
-  mkdirSync(dirname(pidPath), { recursive: true });
-  writeFileSync(pidPath, `${child.pid}\n`);
 
   let cleaned = false;
   const cleanup = (): void => {
@@ -162,6 +195,7 @@ function createAttachmentWaiter(
     isAttached: () => boolean;
   },
   stderr: () => string,
+  spawnFailure: () => Error | undefined,
 ): (child: ChildProcess | null) => Promise<void> {
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? ((ms: number) => new Promise((done) => setTimeout(done, ms)));
@@ -169,6 +203,10 @@ function createAttachmentWaiter(
   return async (child) => {
     const deadline = now() + timeoutMs;
     while (now() < deadline) {
+      const failure = spawnFailure();
+      if (failure !== undefined) {
+        throw new Error(`failed to spawn a session host for ${options.sessionId}: ${failure.message}`, { cause: failure });
+      }
       if (options.isAttached()) return;
       if (child?.exitCode !== null && child?.exitCode !== undefined) break;
       await sleep(POLL_MS);

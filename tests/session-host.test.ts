@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { externalSessionHostEnabled, isSessionHostProcess, parseSessionHostPid, sessionHostArgs, sessionHostEnv, sessionHostPidPath, type SessionHostRequest } from "../lib/session-host.ts";
+import { externalSessionHostEnabled, isSessionHostProcess, parseSessionHostPid, sessionHostArgs, sessionHostCommand, sessionHostEnv, sessionHostPidPath, type SessionHostRequest } from "../lib/session-host.ts";
 
 const request: SessionHostRequest = {
   sessionId: "session-123",
@@ -43,6 +43,38 @@ test("a resumed session host uses the exact id without the conflicting --session
     "--extension", "/repo/extensions/web.ts",
   ]);
   assert.ok(!sessionHostArgs(resumed).includes("--session"), "pi rejects --session-id combined with --session");
+});
+
+test("a session host uses the managed pi launcher when PATH lacks it", () => {
+  const command = sessionHostCommand({
+    env: { PATH: "/usr/bin" },
+    agentDir: "/agent",
+    findExecutable: (candidate) => candidate === "/agent/bin/pi" ? candidate : undefined,
+  });
+  assert.equal(command, "/agent/bin/pi");
+});
+
+test("an explicit pi binary override wins but never silently falls back", () => {
+  const findExecutable = (candidate: string) => candidate === "/custom/pi" ? candidate : undefined;
+  assert.equal(sessionHostCommand({
+    env: { PI_WEB_PI_BIN: "/custom/pi", PATH: "/usr/bin" },
+    agentDir: "/agent",
+    findExecutable,
+  }), "/custom/pi");
+  assert.equal(sessionHostCommand({
+    env: { PI_WEB_PI_BIN: "/missing/pi", PATH: "/usr/bin" },
+    agentDir: "/agent",
+    findExecutable,
+  }), undefined);
+});
+
+test("a session host falls back to pi on PATH without a managed launcher", () => {
+  const command = sessionHostCommand({
+    env: { PATH: "/usr/bin" },
+    agentDir: "/agent",
+    findExecutable: (candidate) => candidate === "pi" ? "/usr/bin/pi" : undefined,
+  });
+  assert.equal(command, "/usr/bin/pi");
 });
 
 test("a session host environment cannot think it is the server or attach twice", () => {

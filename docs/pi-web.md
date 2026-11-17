@@ -187,10 +187,13 @@ holds the AgentSession, and the HTTP process only bridges to it. A server
 reload drops the bridge, not the session; the owner reattaches when the new
 process is healthy. `PI_WEB_SESSION_HOST=0` selects the older in-process runner
 (it is also the fallback on Windows, where the FIFO-backed RPC stdin is not
-available). A persistent pid file under the agent dir lets a replacement
-server wait for an existing owner instead of starting a second one on the same
-session file, and an owner retires itself if the web stays gone for two
-minutes.
+available). The owner's pi executable is resolved from `<agent-dir>/bin/pi`
+first, since a detached server need not have the managed launcher on its PATH;
+`PI_WEB_PI_BIN` overrides it for custom installs. A spawn failure fails the
+request without taking the web server down. A persistent pid file under the
+agent dir lets a replacement server wait for an existing owner instead of
+starting a second one on the same session file, and an owner retires itself if
+the web stays gone for two minutes.
 
 ### Reloading without killing sessions
 

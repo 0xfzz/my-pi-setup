@@ -41,6 +41,26 @@ export function sessionHostPidPath(agentDir: string, sessionId: string): string 
   return join(agentDir, SESSION_HOST_PID_DIR, `${sessionId}.pid`);
 }
 
+/** Resolve a command to an executable path, or undefined when it is unavailable. */
+type ExecutableFinder = (command: string) => string | undefined;
+
+interface SessionHostCommandOptions {
+  env: NodeJS.ProcessEnv;
+  agentDir: string;
+  findExecutable: ExecutableFinder;
+}
+
+/**
+ * A detached web server need not have the managed pi launcher on its PATH.
+ * Prefer the launcher in the agent dir; an explicit override is authoritative.
+ */
+export function sessionHostCommand(options: SessionHostCommandOptions): string | undefined {
+  const override = options.env.PI_WEB_PI_BIN?.trim();
+  if (override !== undefined && override !== "") return options.findExecutable(override);
+  const managed = join(options.agentDir, "bin", "pi");
+  return options.findExecutable(managed) ?? options.findExecutable("pi");
+}
+
 /** The pi CLI invocation for a detached session owner. */
 export function sessionHostArgs(request: SessionHostRequest): string[] {
   // `--session-id` finds and resumes the exact project session by id; pi
