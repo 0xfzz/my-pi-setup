@@ -3,12 +3,14 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, utimes, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { decodeHistoryCursor, encodeHistoryCursor } from "../../../lib/history-cursor.ts";
 import {
   clearSessionsForTests,
   listDiskSessions,
   parseSessionCommand,
   historyFromText,
   readHistory,
+  readHistoryPage,
   tailStartOffset,
   registerSession,
   resolveSessionFile,
@@ -662,4 +664,107 @@ test("tailStartOffset starts at the line that begins the newest N entry lines, s
   assert.equal(tailStartOffset(buffer, 2), startOf('{"type":"compaction","n":2}'));
   assert.equal(tailStartOffset(buffer, 3), startOf('{"type":"message","n":1}'));
   assert.equal(tailStartOffset(buffer, 4), 0, "fewer entry lines than asked: the whole text");
+});
+
+function pagedSessionLines(count: number): { lines: string[]; offsets: number[]; text: string } {
+  const lines = [
+    JSON.stringify({ type: "session", id: "paged", cwd: "/tmp/x", timestamp: "2026-11-17T00:00:00Z" }),
+    ...Array.from({ length: count }, (_, index) => JSON.stringify({
+      type: "message",
+      message: { role: index % 2 === 0 ? "user" : "assistant", content: `entry ${index + 1}` },
+    })),
+  ];
+  const offsets: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    offsets.push(offset);
+    offset += Buffer.byteLength(line, "utf8") + 1;
+  }
+  return { lines, offsets, text: lines.join("\n") };
+}
+
+function entryTexts(page: { entries: Array<{ blocks: Array<{ kind: string; text?: string }> }> }): string[] {
+  return page.entries.map((entry) => entry.blocks.find((block) => block.kind === "text")?.text ?? "");
+}
+
+test("readHistoryPage loads the newest page and points older cursors at line starts", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-history-page-"));
+  try {
+    const file = join(dir, "paged.jsonl");
+    const { offsets, text } = pagedSessionLines(5);
+    await writeFile(file, text);
+
+    const newest = await readHistoryPage(file, { limit: 2 });
+    assert.deepEqual(entryTexts(newest), ["entry 4", "entry 5"]);
+    assert.equal(decodeHistoryCursor(newest.olderCursor), offsets[4]);
+    assert.equal(decodeHistoryCursor(newest.newerCursor), Buffer.byteLength(text));
+    assert.equal(newest.hasOlder, true);
+
+    const older = await readHistoryPage(file, {
+      limit: 2,
+      before: decodeHistoryCursor(newest.olderCursor),
+    });
+    assert.deepEqual(entryTexts(older), ["entry 2", "entry 3"]);
+    assert.equal(decodeHistoryCursor(older.olderCursor), offsets[2]);
+    assert.equal(older.hasOlder, true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("readHistoryPage reads only entries appended after a newer cursor", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-history-append-"));
+  try {
+    const file = join(dir, "append.jsonl");
+    const { lines, text } = pagedSessionLines(2);
+    await writeFile(file, text);
+    const snapshot = await readHistoryPage(file, { limit: 10 });
+    const appended = [
+      JSON.stringify({ type: "message", message: { role: "user", content: "new one" } }),
+      JSON.stringify({ type: "message", message: { role: "assistant", content: "new two" } }),
+    ];
+    await writeFile(file, [...lines, ...appended].join("\n"));
+
+    const page = await readHistoryPage(file, {
+      limit: 10,
+      after: decodeHistoryCursor(snapshot.newerCursor),
+    });
+    assert.deepEqual(entryTexts(page), ["new one", "new two"]);
+    assert.equal(decodeHistoryCursor(page.newerCursor), Buffer.byteLength([...lines, ...appended].join("\n")));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("readHistoryPage joins a tool result whose call is inside the page", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-history-page-tool-"));
+  try {
+    const file = join(dir, "tool.jsonl");
+    await writeFile(file, [
+      JSON.stringify({ type: "session", id: "tool" }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", content: [{ type: "toolCall", id: "t1", name: "bash", arguments: {} }] },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "toolResult", toolCallId: "t1", content: "done", isError: false },
+      }),
+      JSON.stringify({ type: "message", message: { role: "user", content: "thanks" } }),
+    ].join("\n"));
+
+    const page = await readHistoryPage(file, { limit: 2 });
+    assert.deepEqual(page.toolResults.t1, { text: "done", isError: false });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("readHistoryPage refuses an unusable cursor by returning an empty page at zero", async () => {
+  const page = await readHistoryPage("/no/such/file.jsonl", {
+    limit: 10,
+    before: decodeHistoryCursor(encodeHistoryCursor(0)),
+  });
+  assert.deepEqual(page.entries, []);
+  assert.equal(decodeHistoryCursor(page.olderCursor), 0);
 });

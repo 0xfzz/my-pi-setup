@@ -13,6 +13,7 @@ import {
   type AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { buildWebTree, type WebTreeNode } from "../../../lib/web-tree.ts";
+import { encodeHistoryCursor } from "../../../lib/history-cursor.ts";
 import type { ServerReloadState } from "../../../lib/web-ui-reload.ts";
 import { createStreamTracker, type StreamSnapshot } from "./stream-tracker.ts";
 import { compileHttpSchema } from "../http/schema.ts";
@@ -151,6 +152,23 @@ export interface ToolResultEntry {
 export interface SessionHistory {
   entries: HistoryEntry[];
   toolResults: Record<string, ToolResultEntry>;
+}
+
+/** One bounded transcript page, with opaque cursors for the next reads. */
+export interface HistoryPage extends SessionHistory {
+  /** Pass as `before` to read the preceding page. */
+  olderCursor: string;
+  /** Pass as `after` to read entries appended since this page. */
+  newerCursor: string;
+  hasOlder: boolean;
+}
+
+export interface HistoryPageOptions {
+  limit: number;
+  /** Absolute byte offset of the entry the page must end before. */
+  before?: number;
+  /** Absolute byte offset to read appended entries from. */
+  after?: number;
 }
 
 const liveSessions = new Map<string, SessionHandle>();
@@ -1155,104 +1173,104 @@ export function tailStartOffset(buffer: Buffer, needed: number): number {
 
 /** A session's transcript can be tens of megabytes; a reply needs its tail. */
 const HISTORY_TAIL_WINDOW_BYTES = 1024 * 1024;
+/** A reconnect gap is bounded: a page never scans the whole forward file. */
+const HISTORY_FORWARD_WINDOW_BYTES = 4 * 1024 * 1024;
 
-async function readTail(handle: Awaited<ReturnType<typeof open>>, size: number, window: number): Promise<Buffer> {
-  const length = Math.min(window, size);
-  if (length === 0) return Buffer.alloc(0);
-  const buffer = Buffer.allocUnsafe(length);
-  const { bytesRead } = await handle.read(buffer, 0, length, size - length);
-  return bytesRead === length ? buffer : buffer.subarray(0, bytesRead);
+interface FileRegion {
+  bytes: Buffer;
+  /** Absolute byte offset of `bytes[0]` in the session file. */
+  start: number;
 }
 
-/** Drop a partial first line when the window starts in the middle of the file. */
-function alignTail(bytes: Buffer, size: number, window: number): Buffer {
-  if (window >= size) return bytes;
-  const newline = bytes.indexOf(0x0a);
-  return newline < 0 ? bytes : bytes.subarray(newline + 1);
+interface HistoryLine {
+  text: string;
+  offset: number;
 }
 
-export async function readHistory(sessionFile: string, limit = 200): Promise<SessionHistory> {
-  let handle: Awaited<ReturnType<typeof open>>;
-  try {
-    handle = await open(sessionFile, "r");
-  } catch {
-    return { entries: [], toolResults: {} };
+interface LocatedHistory extends SessionHistory {
+  firstEntryOffset?: number;
+  skippedEntryCount: number;
+}
+
+async function readFileRegion(
+  handle: Awaited<ReturnType<typeof open>>,
+  start: number,
+  end: number,
+  maxBytes: number,
+): Promise<FileRegion> {
+  const length = Math.min(maxBytes, Math.max(0, end - start));
+  if (length === 0) return { bytes: Buffer.alloc(0), start };
+  const bytes = Buffer.allocUnsafe(length);
+  const { bytesRead } = await handle.read(bytes, 0, length, start);
+  return { bytes: bytes.subarray(0, bytesRead), start };
+}
+
+/** Drop a partial first line when a backwards window starts mid-line. */
+function alignRegionStart(region: FileRegion): FileRegion {
+  const newline = region.bytes.indexOf(0x0a);
+  if (newline < 0) return { bytes: Buffer.alloc(0), start: region.start + region.bytes.length };
+  return { bytes: region.bytes.subarray(newline + 1), start: region.start + newline + 1 };
+}
+
+/** Split a region into lines while preserving each line's absolute offset. */
+function linesOf(region: FileRegion): HistoryLine[] {
+  const lines: HistoryLine[] = [];
+  let start = 0;
+  for (let i = 0; i < region.bytes.length; i++) {
+    if (region.bytes[i] !== 0x0a) continue;
+    lines.push({ text: region.bytes.subarray(start, i).toString("utf-8"), offset: region.start + start });
+    start = i + 1;
   }
-  try {
-    const { size } = await handle.stat();
-    let window = HISTORY_TAIL_WINDOW_BYTES;
-    let needed = limit;
-    for (;;) {
-      const bytes = alignTail(await readTail(handle, size, window), size, window);
-      const start = tailStartOffset(bytes, needed);
-      const history = historyFromText(bytes.subarray(start).toString("utf-8"), limit);
-      // A full window is the file's exact tail. A short parse from an
-      // over-counted line scan widens the search; a short parse at the window
-      // boundary means the wanted entries are earlier in the file.
-      if (history.entries.length >= limit || window >= size) return history;
-      if (start === 0) {
-        window *= 2;
-        needed = limit;
-      } else {
-        needed *= 2;
-      }
-    }
-  } finally {
-    await handle.close();
+  if (start < region.bytes.length) {
+    lines.push({ text: region.bytes.subarray(start).toString("utf-8"), offset: region.start + start });
   }
+  return lines;
 }
 
-/** The visible window of a session's text (see readHistory). Pure: the caller reads the file. */
-export function historyFromText(text: string, limit: number): SessionHistory {
-  // A rolling window over the file in order: the newest `limit` entries
-  // survive, the rest roll off. Tool results attach to their calls, which
-  // appear earlier in the file than the results, so results are collected
-  // while the call is still inside the window.
+/** The rolling visible window, with the byte offset of its oldest entry. */
+function historyFromLines(lines: readonly HistoryLine[], limit: number): LocatedHistory {
   const window: HistoryEntry[] = [];
+  const offsets: number[] = [];
   const windowToolCallIds = new Set<string>();
   const toolResults: Record<string, ToolResultEntry> = {};
-  const pushEntry = (entry: HistoryEntry): void => {
+  let entryCount = 0;
+  const pushEntry = (entry: HistoryEntry, offset: number): void => {
     window.push(entry);
+    offsets.push(offset);
+    entryCount++;
     for (const block of entry.blocks) {
       if (block.kind === "toolCall") windowToolCallIds.add(block.toolCallId);
     }
     if (window.length > limit) {
       const rolledOff = window.shift();
+      offsets.shift();
       for (const block of rolledOff?.blocks ?? []) {
         if (block.kind === "toolCall") {
           windowToolCallIds.delete(block.toolCallId);
-          // Its result leaves with it — the map stays exactly the results
-          // of the visible conversation.
           delete toolResults[block.toolCallId];
         }
       }
     }
   };
   const collectToolResult = (toolCallId: string, result: ToolResultEntry): void => {
-    // Only results whose calls are (still) in the window — the window and
-    // the map stay bounded to the visible conversation.
     if (windowToolCallIds.has(toolCallId)) toolResults[toolCallId] = result;
   };
-  for (const line of text.split("\n")) {
-    if (!line) continue;
+  for (const { text, offset } of lines) {
+    if (text === "") continue;
     let parsed: Record<string, unknown>;
     try {
-      parsed = JSON.parse(line) as Record<string, unknown>;
+      parsed = JSON.parse(text) as Record<string, unknown>;
     } catch {
       continue;
     }
     if (parsed.type === "compaction") {
-      // A compaction boundary: pi replaced the context up to this point with
-      // a summary. The TUI draws it as a transcript row, so the web does too
-      // — without it the conversation appears to jump, and the browser has no
-      // way to say why the earlier turns vanished.
       const tokensBefore = typeof parsed.tokensBefore === "number" ? parsed.tokensBefore : undefined;
       pushEntry({
         role: "compaction",
         blocks: [],
         summary: typeof parsed.summary === "string" ? parsed.summary : "",
         ...(tokensBefore !== undefined ? { tokensBefore } : {}),
-      });
+      }, offset);
       continue;
     }
     if (parsed.type !== "message") continue;
@@ -1263,10 +1281,10 @@ export function historyFromText(text: string, limit: number): SessionHistory {
     if (role === "toolResult") {
       const toolCallId = messageRecord.toolCallId;
       if (typeof toolCallId === "string" && toolCallId !== "") {
-        const { text, images } = contentToResult(messageRecord.content);
+        const { text: resultText, images } = contentToResult(messageRecord.content);
         const diff = detailsDiff(messageRecord.details);
         collectToolResult(toolCallId, {
-          text,
+          text: resultText,
           isError: messageRecord.isError === true,
           ...(diff !== undefined ? { diff } : {}),
           ...(images.length > 0 ? { images } : {}),
@@ -1275,8 +1293,6 @@ export function historyFromText(text: string, limit: number): SessionHistory {
       continue;
     }
     if (role === "bashExecution") {
-      // `!` commands the user ran in the TUI: shown in the transcript as a
-      // user-side bash row (command, output, exit code).
       const blocks: HistoryBlock[] = [{
         kind: "bash",
         command: typeof messageRecord.command === "string" ? messageRecord.command : "",
@@ -1285,7 +1301,7 @@ export function historyFromText(text: string, limit: number): SessionHistory {
         ...(messageRecord.cancelled === true ? { cancelled: true } : {}),
         ...(messageRecord.truncated === true ? { truncated: true } : {}),
       }];
-      pushEntry({ role: "user", blocks });
+      pushEntry({ role: "user", blocks }, offset);
       continue;
     }
     if (role !== "user" && role !== "assistant") continue;
@@ -1300,14 +1316,85 @@ export function historyFromText(text: string, limit: number): SessionHistory {
           : "provider error";
       }
     }
-    // An aborted or failed reply carries its status as visible content even
-    // when no text block survived (pi persists an errored message with an
-    // empty body) — dropping it would lose the error on reload.
     if (blocks.length > 0 || entry.aborted === true || entry.error !== undefined) {
-      pushEntry(entry);
+      pushEntry(entry, offset);
     }
   }
-  return { entries: window, toolResults };
+  return {
+    entries: window,
+    toolResults,
+    firstEntryOffset: offsets[0],
+    skippedEntryCount: entryCount - window.length,
+  };
+}
+
+/** The visible window of a session's text (see readHistoryPage). Pure: the caller reads the file. */
+export function historyFromText(text: string, limit: number): SessionHistory {
+  const lines = text.split("\n").map((line, index) => ({ text: line, offset: index }));
+  const history = historyFromLines(lines, limit);
+  return { entries: history.entries, toolResults: history.toolResults };
+}
+
+export async function readHistory(sessionFile: string, limit = 200): Promise<SessionHistory> {
+  const page = await readHistoryPage(sessionFile, { limit });
+  return { entries: page.entries, toolResults: page.toolResults };
+}
+
+/** Read one bounded page, addressed by byte-offset cursors instead of a full tail. */
+export async function readHistoryPage(sessionFile: string, options: HistoryPageOptions): Promise<HistoryPage> {
+  const { limit, after, before } = options;
+  const empty = (): HistoryPage => ({
+    entries: [],
+    toolResults: {},
+    olderCursor: encodeHistoryCursor(after ?? before ?? 0),
+    newerCursor: encodeHistoryCursor(after ?? before ?? 0),
+    hasOlder: false,
+  });
+  let handle: Awaited<ReturnType<typeof open>>;
+  try {
+    handle = await open(sessionFile, "r");
+  } catch {
+    return empty();
+  }
+  try {
+    const { size } = await handle.stat();
+
+    if (after !== undefined) {
+      if (after >= size) return empty();
+      const region = await readFileRegion(handle, after, size, HISTORY_FORWARD_WINDOW_BYTES);
+      const history = historyFromLines(linesOf(region), limit);
+      return {
+        entries: history.entries,
+        toolResults: history.toolResults,
+        olderCursor: encodeHistoryCursor(after),
+        newerCursor: encodeHistoryCursor(size),
+        hasOlder: false,
+      };
+    }
+
+    const end = before === undefined ? size : Math.min(before, size);
+    if (end <= 0) return empty();
+    let window = HISTORY_TAIL_WINDOW_BYTES;
+    for (;;) {
+      const regionStart = Math.max(0, end - window);
+      let region = await readFileRegion(handle, regionStart, end, window);
+      if (regionStart > 0) region = alignRegionStart(region);
+      const history = historyFromLines(linesOf(region), limit);
+      if (history.entries.length >= limit || regionStart === 0) {
+        const pageStart = history.firstEntryOffset ?? region.start;
+        return {
+          entries: history.entries,
+          toolResults: history.toolResults,
+          olderCursor: encodeHistoryCursor(pageStart),
+          newerCursor: encodeHistoryCursor(size),
+          hasOlder: history.skippedEntryCount > 0 || region.start > 0,
+        };
+      }
+      window *= 2;
+    }
+  } finally {
+    await handle.close();
+  }
 }
 
 export interface PromptImage {

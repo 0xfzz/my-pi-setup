@@ -15,6 +15,7 @@ import { registerLenientJsonParser, parsedJsonBody as bodyOf } from "../http/jso
 import { registerMethodFallback } from "../http/method-fallback.ts";
 import { SESSION_COMMAND_SCHEMA } from "../../../lib/session-command-schema.ts";
 import { PI_API_BODY_SCHEMA } from "../../../lib/pi-api-schema.ts";
+import { decodeHistoryCursor } from "../../../lib/history-cursor.ts";
 import { coreRequestSchema, MODEL_BODY_SCHEMA, THINKING_BODY_SCHEMA, ACTION_BODY_SCHEMA, PERMISSIVE_BODY_SCHEMA } from "./request-schemas.ts";
 import { randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
@@ -35,6 +36,7 @@ import {
   listAllSessions,
   parseSessionCommand,
   readHistory,
+  readHistoryPage,
   reloadStateOf,
   resolveSessionFile,
   sendCommand,
@@ -419,6 +421,34 @@ function handleAgentEvents(request: FastifyRequest, reply: FastifyReply): void {
 /** Parsed histories, reused while a session file is unchanged (see history-cache.ts). */
 const readHistoryCached = createHistoryCache({ load: (file) => readHistory(file), stamp: fileStamp });
 
+/** The web loads a small newest page first and walks older history on demand. */
+const HISTORY_PAGE_LIMIT = 50;
+const HISTORY_MAX_LIMIT = 200;
+
+interface HistoryQuery {
+  limit: number;
+  before?: number;
+  after?: number;
+}
+
+/** Translate the HTTP cursor into the file-offset options the reader understands. */
+function historyQueryOf(request: FastifyRequest): HistoryQuery | { error: string } {
+  const query = queryOf(request);
+  const rawLimit = query.get("limit");
+  const limit = rawLimit === null ? HISTORY_PAGE_LIMIT : Number(rawLimit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > HISTORY_MAX_LIMIT) {
+    return { error: `limit must be between 1 and ${HISTORY_MAX_LIMIT}` };
+  }
+  const rawCursor = query.get("cursor");
+  if (rawCursor === null) return { limit };
+  const offset = decodeHistoryCursor(rawCursor);
+  if (offset === undefined) return { error: "invalid history cursor" };
+  const direction = query.get("direction") ?? "older";
+  if (direction === "newer") return { limit, after: offset };
+  if (direction === "older") return { limit, before: offset };
+  return { error: "direction must be older or newer" };
+}
+
 async function historyFileFor(sessionId: string): Promise<string | null> {
   const live = getSession(sessionId);
   return live?.sessionFile || (await resolveSessionFile(sessionId)) || null;
@@ -431,7 +461,12 @@ async function handleAgentHistory(request: FastifyRequest, reply: FastifyReply):
     asJson(reply, 404, { error: "Session not found" });
     return;
   }
-  const history = await readHistoryCached(file);
+  const parsedQuery = historyQueryOf(request);
+  if ("error" in parsedQuery) {
+    asJson(reply, 400, { error: parsedQuery.error });
+    return;
+  }
+  const history = await readHistoryPage(file, parsedQuery);
   const host = getPluginHost();
   let entries = history.entries;
   if (host !== null && host.hooks.handlersFor("message.before-render-model").length > 0) {
@@ -446,7 +481,14 @@ async function handleAgentHistory(request: FastifyRequest, reply: FastifyReply):
     }
     entries = transformed;
   }
-  asJson(reply, 200, { sessionId, entries, toolResults: toWireToolResults(history.toolResults) });
+  asJson(reply, 200, {
+    sessionId,
+    entries,
+    toolResults: toWireToolResults(history.toolResults),
+    olderCursor: history.olderCursor,
+    newerCursor: history.newerCursor,
+    hasOlder: history.hasOlder,
+  });
 }
 
 /** One tool result in full, for an expanded tool call whose images the history left out. */
@@ -656,7 +698,7 @@ const CORE_ROUTES: readonly CoreRoute[] = [
   { path: "/api/sessions/:id", methods: { DELETE: handleSessionDelete } },
   { path: "/api/agent/new", methods: { POST: handleAgentNew } },
   { path: "/api/agent/:id/events", methods: { GET: handleAgentEvents }, sse: SSE_ROUTE_OPTIONS },
-  { path: "/api/agent/:id/history", methods: { GET: handleAgentHistory } },
+  { path: "/api/agent/:id/history", methods: { GET: handleAgentHistory }, query: ["cursor", "direction", "limit"] },
   { path: "/api/agent/:id/tool-results/:toolCallId", methods: { GET: handleAgentToolResult } },
   { path: "/api/agent/:id/commands", methods: { GET: handleAgentCommands } },
   { path: "/api/agent/:id/tree", methods: { GET: handleAgentTree } },

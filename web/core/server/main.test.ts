@@ -308,6 +308,40 @@ test("agent routes return 404 for unknown sessions", async () => {
   });
 });
 
+test("the history route serves cursor pages and refuses invalid cursors", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-history-route-"));
+  try {
+    const file = join(dir, "session.jsonl");
+    await writeFile(file, [
+      JSON.stringify({ type: "session", id: "cursor-session" }),
+      ...[1, 2, 3, 4].map((n) => JSON.stringify({ type: "message", message: { role: "user", content: `entry ${n}` } })),
+    ].join("\n"));
+    registerSession(fakeCore("cursor-session"), process.cwd(), file);
+
+    await withServer(async (baseUrl) => {
+      const url = `${baseUrl}/api/agent/cursor-session/history`;
+      const newest = await fetch(`${url}?limit=2`);
+      assert.equal(newest.status, 200);
+      const page = await newest.json() as { entries: unknown[]; olderCursor?: string; newerCursor?: string; hasOlder?: boolean };
+      assert.equal(page.entries.length, 2);
+      assert.match(page.olderCursor ?? "", /^[A-Za-z0-9_-]+$/);
+      assert.match(page.newerCursor ?? "", /^[A-Za-z0-9_-]+$/);
+      assert.equal(page.hasOlder, true);
+
+      const older = await fetch(`${url}?limit=2&cursor=${encodeURIComponent(page.olderCursor ?? "")}&direction=older`);
+      assert.equal(older.status, 200);
+      const previous = await older.json() as { entries: unknown[]; hasOlder?: boolean };
+      assert.equal(previous.entries.length, 2);
+      assert.equal(previous.hasOlder, false);
+
+      const invalid = await fetch(`${url}?cursor=nope`);
+      assert.equal(invalid.status, 400);
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("the served shell carries the build id, and health reports the same one", async () => {
   // A temporary dist with a build record: the id the server reports must be the
   // one stamped into the HTML, or every page would reload on a loop.
