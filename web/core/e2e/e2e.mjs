@@ -221,7 +221,7 @@ async function assertMobilePanelLauncher(page, viewport) {
 async function assertSessionLoading(page) {
   const requests = [];
   const route = request => { requests.push(request); };
-  const pattern = "**/api/agent/__test_session__/history";
+  const pattern = "**/api/agent/__test_session__/history*";
   await page.route(pattern, route);
   const loading = page.getByRole("status", { name: "Loading conversation…", exact: true });
   try {

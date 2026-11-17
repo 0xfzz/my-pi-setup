@@ -4,7 +4,7 @@
 // The transcript stays pinned to the bottom while the user is there, and a
 // jump-to-latest button appears whenever they scroll up.
 
-import { createContext, memo, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { createContext, memo, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ArrowDown, CaretDown, CaretRight, Stop, Warning } from "@phosphor-icons/react";
 import type { AssistantBlock, BashBlock, ImageBlock, ToolCallBlock } from "./streaming.ts";
 import type { HistoryEntryLike, ToolCallStatus, ToolResultLike } from "./use-session.ts";
@@ -417,6 +417,9 @@ export interface TranscriptUserMessage {
 export interface TranscriptProps {
   history: HistoryEntryLike[];
   loading?: boolean;
+  hasOlder?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => void;
   /** Fetch one tool result in full (see ToolResultLoadContext). */
   onLoadToolResult?: (toolCallId: string) => void;
   userMessages: TranscriptUserMessage[];
@@ -508,6 +511,9 @@ const CompactionMarker = memo(function CompactionMarker({
 export function Transcript({
   history,
   loading = false,
+  hasOlder = false,
+  loadingOlder = false,
+  onLoadOlder,
   onLoadToolResult,
   userMessages,
   streaming,
@@ -527,6 +533,20 @@ export function Transcript({
   const sentCountRef = useRef(userMessages.length);
   const [showJump, setShowJump] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
+  const olderAnchorRef = useRef<number | null>(null);
+
+  const loadOlder = (): void => {
+    const scroller = scrollRef.current;
+    olderAnchorRef.current = scroller === null ? null : scroller.scrollHeight - scroller.scrollTop;
+    onLoadOlder?.();
+  };
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current;
+    const anchor = olderAnchorRef.current;
+    if (scroller === null || anchor === null) return;
+    scroller.scrollTop = scroller.scrollHeight - anchor;
+    olderAnchorRef.current = null;
+  }, [history.length]);
 
   // While the history is loading, this transcript shows its own spinner; claim
   // that so the generic request card does not add a second one.
@@ -623,6 +643,13 @@ export function Transcript({
     <ToolResultLoadContext.Provider value={onLoadToolResult ?? null}>
       <main className="app-transcript" aria-live="polite" aria-busy={loading} ref={scrollRef} onScroll={handleScroll}>
         <div className="app-transcript-inner" ref={innerRef}>
+          {hasOlder ? (
+            <div className="app-history-pager">
+              <button type="button" className="app-history-pager-button" onClick={loadOlder} disabled={loadingOlder}>
+                {loadingOlder ? "Loading older messages…" : "Load older messages"}
+              </button>
+            </div>
+          ) : null}
           {loading ? <div className="app-content-loading"><LoadingSpinner label="Loading conversation…" /></div> : null}
           {!loading && items.length === 0 && !streaming.isStreaming && !showWorking ? (
             <div className="app-empty">

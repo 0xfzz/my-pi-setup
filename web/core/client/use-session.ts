@@ -4,6 +4,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getAuth } from "./auth.ts";
+import {
+  mergeHistoryEntries,
+  type HistoryEntryLike,
+  type HistoryPageResponse,
+  type ToolResultLike,
+} from "./history-pages.ts";
 import { createFrameCoalescer, type FrameCoalescer } from "./frame-coalescer.ts";
 import {
   INITIAL_STREAMING_STATE,
@@ -32,6 +38,7 @@ import { isCompactionReason, type CompactionReason } from "./compaction.ts";
 import { HISTORY_FETCH_TIMEOUT_MS, historyRetryDelayMs } from "./history-retry.ts";
 
 export type { CustomPanelLike, WebNotificationLike, WidgetModelLike };
+export type { HistoryEntryLike, ToolResultLike } from "./history-pages.ts";
 
 export interface UiPromptLike {
   kind: string;
@@ -66,19 +73,6 @@ export interface SessionSummary {
   name?: string;
 }
 
-export interface HistoryEntryLike {
-  role: "user" | "assistant" | "compaction";
-  blocks: AssistantBlock[];
-  /** For a `compaction` entry: the summary that replaced the earlier context. */
-  summary?: string;
-  /** For a `compaction` entry: the token count it replaced. */
-  tokensBefore?: number;
-  /** The assistant reply ended because the run was aborted. */
-  aborted?: boolean;
-  /** The assistant reply ended in a provider error; its message. */
-  error?: string;
-}
-
 export interface ToolCallStatus {
   state: "running" | "done" | "error";
   toolName: string;
@@ -86,17 +80,6 @@ export interface ToolCallStatus {
   input?: string;
   /** Live partial output (bash's accumulated snapshot), replaced by the result at the end. */
   partial?: string;
-}
-
-/** A tool call's result, joined by toolCallId. */
-export interface ToolResultLike {
-  text: string;
-  isError: boolean;
-  /** The edit tool's diff, from the result's `details.diff`. */
-  diff?: string;
-  images?: Array<{ data: string; mimeType: string }>;
-  /** The history carries this result's images only as a flag; see loadToolResult. */
-  hasImages?: boolean;
 }
 
 /** Tool-result message content → plain text (TextContent blocks only). */
@@ -185,6 +168,8 @@ interface OptimisticUserMessage {
 
 /** localStorage key for the selected session: reloads and plugin-page navigation keep the session context. */
 const SELECTED_SESSION_KEY = "pi-web-minimal:selected-session";
+/** One page of the transcript; older turns load on demand through a cursor. */
+const HISTORY_PAGE_LIMIT = 50;
 /** How long the reloading banner stays before a missing completion signal expires it. */
 const RELOAD_INDICATOR_TIMEOUT_MS = 20_000;
 
@@ -211,6 +196,8 @@ export function usePiSession() {
   }, []);
   const [history, setHistory] = useState<HistoryEntryLike[]>([]);
   const [historyLoading, setHistoryLoading] = useState(selectedId !== null);
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [userMessages, setUserMessages] = useState<OptimisticUserMessage[]>([]);
   const [streaming, setStreaming] = useState<StreamingState>(INITIAL_STREAMING_STATE);
   const [toolStatus, setToolStatus] = useState<Record<string, ToolCallStatus>>({});
@@ -251,11 +238,12 @@ export function usePiSession() {
   const [compacting, setCompacting] = useState<CompactionReason | null>(null);
   /** The selected session's git branch, or null when its directory has none. */
   const [workspaceBranch, setWorkspaceBranch] = useState<string | null>(null);
-  // Bumped when the TUI-side bridge reconnects after a gap: the effect
-  // re-runs, reloading history in case events were missed while it was away.
-  const [historyEpoch, setHistoryEpoch] = useState(0);
 
   const streamingRef = useRef<StreamingState>(INITIAL_STREAMING_STATE);
+  // Cursors live outside React state: the SSE handler reads the latest page
+  // position without re-subscribing the event stream on every append.
+  const historyCursorRef = useRef<{ older: string | null; newer: string | null }>({ older: null, newer: null });
+  const loadingOlderRef = useRef(false);
   // Latest selection, read by async callbacks (fetchModels) that must not
   // apply a response belonging to a session the user already left.
   const selectedIdRef = useRef<string | null>(selectedId);
@@ -532,11 +520,46 @@ export function usePiSession() {
     }
   }, []);
 
+  /** Fetch the preceding transcript page without disturbing the live stream. */
+  const loadOlder = useCallback((): void => {
+    const id = selectedIdRef.current;
+    const cursor = historyCursorRef.current.older;
+    if (id === null || cursor === null || loadingOlderRef.current) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    const query = new URLSearchParams({ limit: String(HISTORY_PAGE_LIMIT), cursor, direction: "older" });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), HISTORY_FETCH_TIMEOUT_MS);
+    void fetch(`/api/agent/${encodeURIComponent(id)}/history?${query}`, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json() as Promise<HistoryPageResponse>;
+      })
+      .then((page) => {
+        setHistory((prev) => mergeHistoryEntries(prev, page.entries ?? [], "prepend"));
+        setToolResults((prev) => ({ ...page.toolResults, ...prev }));
+        historyCursorRef.current.older = page.hasOlder === true ? (page.olderCursor ?? null) : null;
+        setHasOlder(page.hasOlder === true);
+      })
+      .catch(() => {
+        // The button stays available; a transient read failure is not destructive.
+      })
+      .finally(() => {
+        clearTimeout(timeout);
+        loadingOlderRef.current = false;
+        setLoadingOlder(false);
+      });
+  }, []);
+
   // Open the event stream (and load history) whenever the selection changes.
   useEffect(() => {
     setUserMessages([]);
     setHistory([]);
     setHistoryLoading(selectedId !== null);
+    setHasOlder(false);
+    setLoadingOlder(false);
+    loadingOlderRef.current = false;
+    historyCursorRef.current = { older: null, newer: null };
     setToolStatus({});
     setSessionState(null);
     setPluginViews({});
@@ -584,9 +607,10 @@ export function usePiSession() {
     // selector are correct without opening the picker first.
     void fetchModels(selectedId);
 
-    // The history fetch and the event stream race: an assistant reply that
-    // ends while history is still loading must survive the load. Appends are
-    // buffered until the load resolves (or fails), then merged in order.
+    // The initial page and the event stream race: an assistant reply that
+    // ends while history is loading is buffered until the page lands. After
+    // that the SSE events append directly, and a reconnect fetches only the
+    // entries written since the page's cursor.
     let historyApplied = false;
     const pendingAppends: HistoryEntryLike[] = [];
     // Whether the entry appended for the current run already carries the
@@ -595,10 +619,7 @@ export function usePiSession() {
     // A `!` command opened by user_bash and not yet finalized by
     // bash_execution_end; late-attaching streams only see the end event.
     let bashOpen = false;
-    // The first `connected` frames the initial snapshot; later ones are
-    // reconnects that may have missed events and reload the history.
     let everConnected = false;
-    // The pending retry of a history read, cancelled when this stream closes.
     let historyRetry: ReturnType<typeof setTimeout> | undefined;
 
     const appendEntry = (entry: HistoryEntryLike): void => {
@@ -644,62 +665,90 @@ export function usePiSession() {
       });
     };
 
-    /** Structural entry equality — the dedupe key for the overlap window. */
-    const sameEntry = (a: HistoryEntryLike, b: HistoryEntryLike): boolean =>
-      a.role === b.role
-      && a.aborted === b.aborted
-      && a.error === b.error
-      && JSON.stringify(a.blocks) === JSON.stringify(b.blocks);
-
-    const applyHistory = (
-      entries: HistoryEntryLike[],
-      diskToolResults: Record<string, ToolResultLike>,
-    ): void => {
+    type PagePlacement = "initial" | "prepend" | "append";
+    const applyPage = (page: HistoryPageResponse, placement: PagePlacement): void => {
       if (closed) return;
-      historyApplied = true;
-      setHistoryLoading(false);
-      // The overlap window: an entry completing between this stream's
-      // subscribe and the history file's read is BOTH a buffered live
-      // append AND the history tail. The covered entries are the leading
-      // run of pendingAppends matching the trailing run of the loaded
-      // entries, in order — drop that run so the entry renders once.
-      let drop = 0;
-      const maxK = Math.min(pendingAppends.length, entries.length);
-      for (let k = maxK; k > 0; k--) {
-        const tail = entries.slice(entries.length - k);
-        if (pendingAppends.slice(0, k).every((pending, i) => sameEntry(pending, tail[i] ?? pending))) {
-          drop = k;
-          break;
-        }
+      const entries = page.entries ?? [];
+      if (placement === "initial") {
+        historyApplied = true;
+        setHistoryLoading(false);
+        setHistory(mergeHistoryEntries(entries, pendingAppends, "append"));
+        setHasOlder(page.hasOlder === true);
+      } else {
+        setHistory((prev) => mergeHistoryEntries(prev, entries, placement === "prepend" ? "prepend" : "append"));
       }
-      setHistory([...entries, ...pendingAppends.slice(drop)]);
       // Results captured live win over the disk snapshot.
-      setToolResults((prev) => ({ ...diskToolResults, ...prev }));
+      setToolResults((prev) => ({ ...page.toolResults, ...prev }));
+      if (placement === "initial" && page.newerCursor !== undefined) {
+        historyCursorRef.current.newer = page.newerCursor;
+      }
+      if (placement === "initial" && page.olderCursor !== undefined) {
+        historyCursorRef.current.older = page.hasOlder === true ? page.olderCursor : null;
+      }
+      if (placement === "append" && page.newerCursor !== undefined) {
+        historyCursorRef.current.newer = page.newerCursor;
+      }
     };
 
-    // Subscribe-before-snapshot: the history fetch fires once the stream
-    // is `connected` (below), so the file read covers everything before
-    // the subscribe and the buffered appends cover everything after — no
-    // gap between them where a completed reply would be invisible to both.
-    // A stalled or failed read is bounded and retried (see history-retry.ts):
-    // until it lands, every live reply is buffered behind it, so a read that
-    // hangs would leave the whole conversation invisible.
-    const fetchHistoryOnce = (attempt = 0): void => {
-      if (closed || historyApplied) return;
+    // Subscribe-before-snapshot: the page read fires once the stream is
+    // `connected`, so its cursor covers everything before the subscribe and
+    // buffered SSE appends cover everything after — no invisible gap.
+    const fetchPage = (options: {
+      placement: PagePlacement;
+      cursor?: string;
+      direction?: "older" | "newer";
+      attempt?: number;
+    }): void => {
+      if (closed || (options.placement === "initial" && historyApplied)) return;
+      const query = new URLSearchParams({ limit: String(HISTORY_PAGE_LIMIT) });
+      if (options.cursor !== undefined) {
+        query.set("cursor", options.cursor);
+        query.set("direction", options.direction ?? "older");
+      }
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), HISTORY_FETCH_TIMEOUT_MS);
-      void fetch(`/api/agent/${encodeURIComponent(selectedId)}/history`, { signal: controller.signal })
-        .then((res) => res.json() as Promise<{ entries?: HistoryEntryLike[]; toolResults?: Record<string, ToolResultLike> }>)
-        .then((body) => {
+      void fetch(`/api/agent/${encodeURIComponent(selectedId)}/history?${query}`, { signal: controller.signal })
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.json() as Promise<HistoryPageResponse>;
+        })
+        .then((page) => {
           clearTimeout(timeout);
-          applyHistory(body.entries ?? [], body.toolResults ?? {});
+          applyPage(page, options.placement);
         })
         .catch(() => {
           clearTimeout(timeout);
-          if (closed || historyApplied) return;
-          historyRetry = setTimeout(() => fetchHistoryOnce(attempt + 1), historyRetryDelayMs(attempt));
+          if (closed) return;
+          if (options.placement !== "initial") return;
+          historyRetry = setTimeout(
+            () => fetchPage({ ...options, attempt: (options.attempt ?? 0) + 1 }),
+            historyRetryDelayMs(options.attempt ?? 0),
+          );
         });
     };
+
+    /** A tree switch replaces the branch; keep the stream, replace the page. */
+    const reloadHistory = (): void => {
+      clearTimeout(historyRetry);
+      historyApplied = false;
+      pendingAppends.length = 0;
+      historyCursorRef.current = { older: null, newer: null };
+      setHistoryLoading(true);
+      setHasOlder(false);
+      fetchPage({ placement: "initial" });
+    };
+
+    /** Reconnect and bridge-gap recovery read only what landed after the cursor. */
+    const resyncHistory = (): void => {
+      if (!historyApplied) return;
+      const cursor = historyCursorRef.current.newer;
+      if (cursor === null) {
+        reloadHistory();
+        return;
+      }
+      fetchPage({ placement: "append", cursor, direction: "newer" });
+    };
+
     // The initial state read (model, thinking, context): the model chip
     // renders from it before any session_state push arrives.
     void fetchState(selectedId);
@@ -717,16 +766,14 @@ export function usePiSession() {
         case "connected":
           setConnection("connected");
           applyStream(data.isStreaming ? { type: "run_start" } : { type: "run_end" });
-          // First connect: the stream is live, so NOW the history can be
-          // read without a loss window. A reconnect (everConnected) may
-          // have missed events — a server drop, or the session switching
-          // owners (a TUI bridge over this in-process copy) — so the epoch
-          // re-runs this whole effect: fresh stream, fresh history.
+          // First connect: the stream is live, so NOW the history page can
+          // be read without a loss window. A reconnect may have missed events,
+          // so read only the entries appended after the stored cursor.
           if (!everConnected) {
             everConnected = true;
-            fetchHistoryOnce();
+            fetchPage({ placement: "initial" });
           } else {
-            setHistoryEpoch((epoch) => epoch + 1);
+            resyncHistory();
           }
           break;
         case "startup_error":
@@ -735,7 +782,9 @@ export function usePiSession() {
           // No live stream — the file still renders (best effort).
           if (!everConnected) {
             everConnected = true;
-            fetchHistoryOnce();
+            fetchPage({ placement: "initial" });
+          } else {
+            resyncHistory();
           }
           break;
         case "agent_start":
@@ -773,7 +822,7 @@ export function usePiSession() {
           // event carries no summary, and reading it back from the session
           // file keeps one source of truth for the marker — a custom
           // compactor's row renders exactly like pi's own.
-          setHistoryEpoch((epoch) => epoch + 1);
+          resyncHistory();
           break;
         case "agent_end":
           applyStream({ type: "run_end" });
@@ -943,17 +992,16 @@ export function usePiSession() {
           // the TUI redraws its transcript. Optimistic messages come back
           // with the reload.
           setUserMessages([]);
-          setHistoryEpoch((epoch) => epoch + 1);
+          reloadHistory();
           void fetchState(selectedId);
           break;
         }
         case "bridge_resync":
-          // The TUI-side bridge re-attached after a drop; reload the history
-          // in case events were missed while it was away. Optimistic user
-          // messages come back with the reloaded history.
+          // The TUI-side bridge re-attached after a drop; read only the
+          // entries appended since this stream's last history cursor.
           setReloading(false);
           setUserMessages([]);
-          setHistoryEpoch((epoch) => epoch + 1);
+          resyncHistory();
           break;
         case "session_state": {
           // The TUI-side model/thinking/context state, pushed at attach, at
@@ -1069,7 +1117,7 @@ export function usePiSession() {
         void getAuth()
           .recoverStream()
           .then((recovered) => {
-            if (recovered && !closed) setHistoryEpoch((epoch) => epoch + 1);
+            if (recovered && !closed) resyncHistory();
           });
       }
     };
@@ -1080,7 +1128,7 @@ export function usePiSession() {
       source.close();
       setConnection("idle");
     };
-  }, [selectedId, historyEpoch, applyStream, fetchState, fetchModels]);
+  }, [selectedId, applyStream, fetchState, fetchModels]);
 
   /** Result keys (session + tool call) already requested, so an expansion fetches once. */
   const requestedToolResults = useRef(new Set<string>());
@@ -1250,6 +1298,9 @@ export function usePiSession() {
     sessions,
     sessionsLoading,
     historyLoading,
+    hasOlder,
+    loadingOlder,
+    loadOlder,
     loadToolResult,
     selectedId,
     setSelectedId,

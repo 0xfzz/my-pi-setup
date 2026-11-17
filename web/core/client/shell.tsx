@@ -636,6 +636,9 @@ export function AppShell() {
             key={session.selectedId ?? "none"}
             history={session.history}
             loading={session.historyLoading}
+            hasOlder={session.hasOlder}
+            loadingOlder={session.loadingOlder}
+            onLoadOlder={session.loadOlder}
             onLoadToolResult={session.loadToolResult}
             userMessages={session.userMessages}
             streaming={session.streaming}

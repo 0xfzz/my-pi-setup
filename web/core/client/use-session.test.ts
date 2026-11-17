@@ -63,8 +63,8 @@ test("use-session picks up a compaction an extension appended", () => {
   assert.match(source, /case "compaction_applied":/, "the appended-compaction signal is handled");
   assert.match(
     source,
-    /case "compaction_applied":[\s\S]{0,700}setHistoryEpoch\(\(epoch\) => epoch \+ 1\)/,
-    "it re-reads the transcript rather than trusting the event's payload",
+    /case "compaction_applied":[\s\S]{0,700}resyncHistory\(\)/,
+    "it re-reads only the new transcript page rather than trusting the event's payload",
   );
 });
 

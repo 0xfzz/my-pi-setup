@@ -116,6 +116,33 @@ body {
   padding: 24px 16px;
 }
 
+.app-history-pager {
+  display: flex;
+  justify-content: center;
+  padding: 12px 16px 4px;
+}
+
+.app-history-pager-button {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--fg-muted);
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.app-history-pager-button:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+
+.app-history-pager-button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
 .app-shell {
   display: flex;
   flex-direction: column;
