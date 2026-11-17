@@ -71,9 +71,11 @@ list until a change and a measurement land together.
 3. **Quadratic in-flight text/arguments** — `web/core/server/stream-tracker.ts:59,86`
    copies the whole text prefix per delta and `JSON.parse`s the whole argument
    prefix; the browser twin is `web/core/client/streaming.ts:181,197`.
-4. **Global UI snapshot** — `web/core/plugin-contracts/ui-state-store.ts:302,390`
-   invalidates one cached snapshot for any session and deep-clones all 128
-   sessions for every frame, with notifications fanning out to all listeners.
+4. **Global UI snapshot** — *fixed.* `web/core/plugin-contracts/ui-state-store.ts`
+   used to invalidate one cached snapshot for any session and deep-clone all
+   128 sessions for every frame. Frozen session snapshots are now cached by
+   session revision and reused by unrelated frames. The `ui-snapshot` ceiling
+   is 0.3 ms (baseline p95 ~2.5 ms, now ~0.13 ms).
 5. **Whole-file history reads and directory scans** —
    `web/core/server/sessions.ts:1156` reads the entire session file on every
    stamp change (the format tolerates 37 MB files); `:1035` resolves a session

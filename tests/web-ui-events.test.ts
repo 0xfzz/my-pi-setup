@@ -191,6 +191,31 @@ test("the store caches one frozen snapshot per revision, and invalidates it when
   assert.equal(second.sessions["session-a"]?.working.message, "Working");
 });
 
+test("a revision in one session reuses frozen snapshots for every other session", () => {
+  const store = new WebUiStore();
+  store.publish("busy", "ui.working.changed", { message: "Working" });
+  store.publish("idle", "ui.working.changed", { message: "Idle" });
+  const before = store.snapshot();
+  store.publish("busy", "ui.status.changed", { key: "step", text: "1" });
+  const after = store.snapshot();
+  assert.notEqual(after, before, "the global snapshot still advances");
+  assert.notEqual(after.sessions.busy, before.sessions.busy, "the changed session is re-cloned");
+  assert.equal(after.sessions.idle, before.sessions.idle, "other sessions keep their frozen identity");
+  assert.equal(JSON.stringify(after.sessions.idle), JSON.stringify(before.sessions.idle));
+  assert.throws(() => { after.sessions.idle.statuses.step = "mutated"; });
+});
+
+test("restored views invalidate that session's cached snapshot", () => {
+  const store = new WebUiStore();
+  store.publish("s1", "ui.working.changed", { message: "Working" });
+  const before = store.snapshot();
+  store.restoreViews({ s1: { modes: { type: "status", tone: "accent", text: "restored" } } });
+  const after = store.snapshot();
+  assert.equal(after.revision, before.revision + 1);
+  assert.notEqual(after.sessions.s1, before.sessions.s1);
+  assert.deepEqual(after.sessions.s1.views.modes, { type: "status", tone: "accent", text: "restored" });
+});
+
 test("a closed session is evicted from the snapshot, and a session that returns is added back fresh", () => {
   const store = new WebUiStore();
   store.publish("gone", "ui.working.changed", { message: "Working" });

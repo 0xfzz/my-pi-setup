@@ -160,7 +160,8 @@ function uiSnapshotScenario(): Scenario {
   return {
     name: "ui-snapshot",
     unit: "publish+snapshot",
-    budgetP95Ms: 2,
+    // Per-session frozen snapshots: ~0.13 ms here; global clone was ~2.5 ms.
+    budgetP95Ms: 0.3,
     iterations: 500,
     setup() {
       store = new WebUiStore();
@@ -169,7 +170,7 @@ function uiSnapshotScenario(): Scenario {
       for (let session = 0; session < 32; session += 1) {
         store.publish(`session-${session}`, "ui.view.changed", {
           pluginId: "todo",
-          view: { type: "kv", title: "todo", items: Array.from({ length: 20 }, () => ["k", "v"]) },
+          view: { type: "kv", title: "todo", rows: Array.from({ length: 50 }, () => ({ label: "k", value: "v" })) },
         }, `setup-${session}`);
       }
     },

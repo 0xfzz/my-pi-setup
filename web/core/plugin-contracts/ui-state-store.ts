@@ -174,6 +174,7 @@ export class WebUiStore {
   private scheduled = false;
   private readonly listeners = new Set<(revision: number) => void>();
   private cachedSnapshot: WebUiSnapshot | null = null;
+  private readonly sessionSnapshots = new Map<string, { revision: number; value: WebUiSessionState }>();
   private readonly retentionMs: number;
   private readonly maxEvents: number;
 
@@ -385,10 +386,40 @@ export class WebUiStore {
     this.state.metrics.coalesced++;
   }
 
-  /** One immutable snapshot per revision; every browser frame on a tick shares it. */
+  /**
+   * One immutable snapshot per revision; every browser frame on a tick shares
+   * it. Sessions are cloned and frozen separately, keyed by their revision,
+   * so a busy session does not re-clone every other session's views.
+   */
   snapshot(): WebUiSnapshot {
-    if (this.cachedSnapshot === null) this.cachedSnapshot = deepFreeze(structuredClone(this.state));
+    if (this.cachedSnapshot === null) this.cachedSnapshot = this.buildSnapshot();
     return this.cachedSnapshot;
+  }
+
+  private buildSnapshot(): WebUiSnapshot {
+    const sessions: Record<string, WebUiSessionState> = {};
+    for (const [id, session] of Object.entries(this.state.sessions)) {
+      const cached = this.sessionSnapshots.get(id);
+      const frozen = cached?.revision === session.revision
+        ? cached.value
+        : deepFreeze(structuredClone(session));
+      if (frozen !== cached?.value) this.sessionSnapshots.set(id, { revision: session.revision, value: frozen });
+      sessions[id] = frozen;
+    }
+    for (const id of this.sessionSnapshots.keys()) {
+      if (!Object.hasOwn(this.state.sessions, id)) this.sessionSnapshots.delete(id);
+    }
+    Object.freeze(sessions);
+    const diagnostics = deepFreeze(structuredClone(this.state.diagnostics));
+    const metrics = deepFreeze({ ...this.state.metrics });
+    return Object.freeze({
+      version: this.state.version,
+      epoch: this.state.epoch,
+      revision: this.state.revision,
+      sessions,
+      diagnostics,
+      metrics,
+    });
   }
 
   /**
@@ -411,15 +442,17 @@ export class WebUiStore {
   /** Recover the durable view values a previous process wrote down. */
   restoreViews(viewsBySession: Record<string, Record<string, WebView>>): void {
     if (!viewsBySession || typeof viewsBySession !== "object") return;
+    const revision = this.state.revision + 1;
     for (const [sessionId, views] of Object.entries(viewsBySession)) {
       if (!views || typeof views !== "object") continue;
       const session = this.state.sessions[sessionId] ?? freshSession();
       for (const [pluginId, view] of Object.entries(views)) {
         if (view && typeof view === "object" && view.type !== "dialog") session.views[pluginId] = view;
       }
+      session.revision = revision;
       this.state.sessions[sessionId] = session;
     }
-    this.state.revision++;
+    this.state.revision = revision;
     this.cachedSnapshot = null;
     this.notify();
   }
@@ -457,6 +490,7 @@ export class WebUiStore {
     this.journal = [];
     this.lastSequence.clear();
     this.rates.clear();
+    this.sessionSnapshots.clear();
     this.cachedSnapshot = null;
     this.notify();
   }
