@@ -70,8 +70,13 @@ Current acceptance run (same host after the fixes, one run):
 
 Unchanged-but-measured scenarios (`stream-tracker`) keep a loose ceiling because
 the synthetic delta path was already fast; the code-level quadratic accumulation
-is still on the backlog. Every fixed defect has a ceiling below its recorded
-baseline, so a regression fails the command.
+is still on the backlog. The in-process hot-loop ceilings (`jwt-verify`,
+`sse-coalesce`, `ui-snapshot`, `history-tail`) sit below their recorded baselines,
+so a regression there fails the command. The three loopback HTTP scenarios keep
+a 2 ms operational ceiling instead: socket and event-loop noise on a shared host
+moves their p95 more than the few microseconds the fixes save, so their
+improvement is judged from the recorded before/after numbers, not from a ceiling
+below baseline.
 
 ## What the audit found
 
