@@ -143,6 +143,7 @@ diff record, not documentation.
 | [UI](docs/ui.md) | The shared popup frame, list, markdown viewer, ask popup, keys and responsive rules. |
 | [Web plugin catalog](docs/web-plugin-catalog.md) | Every extension point a web plugin can use, with stability, version, and protection. Generated. |
 | [Bridge protocol catalog](docs/bridge-protocol-catalog.md) | Every bridge message, its kind, required capability and legacy wire name. Generated. |
+| [Bridge protocol parity](docs/bridge-protocol-parity.md) | Baseline feature-to-adapter-to-test coverage matrix. Generated. |
 | [Web plugin architecture](docs/web-plugin-architecture.md) | The boundary rule — web = interface, pi extension = behavior — the contracts, the lifecycle, and the enforced import graph. |
 | [Providers](docs/providers.md) | A walkable editor for providers and their models in the TUI, plus dialog commands, including compatibility flags. |
 | [Accounts](docs/accounts.md) | Pooling several accounts per provider and routing each request, with `/router` (a TUI popup, or the web's Router page beside Models and Provider) as an editor for the routes, their routing method, when they re-decide, and which side still holds the prompt cache. |

@@ -2,36 +2,21 @@
 // selected session id; the server resolves the working directory and pi's own
 // config surface does the read and the write.
 
-import type { PiMcpConfigState, PiMcpWriteParams } from "../../../core/shared/pi-api.ts";
-import { postJson, type ApiFailure, type ApiResult } from "../../../core/client/plugin-system/api-client.ts";
+import type { PiApiName, PiMcpConfigState, PiMcpWriteParams } from "../../../core/shared/pi-api.ts";
+import { protocolClient } from "../../../core/client/protocol-client.ts";
+import type { ApiFailure, ApiResult } from "../../../core/client/plugin-system/api-client.ts";
 
 export type McpFailure = ApiFailure;
 export type McpResult<T> = ApiResult<T>;
-
-/** The envelope `POST /api/agent/:id/pi_api` answers with. */
-interface PiApiEnvelope {
-  ok?: unknown;
-  result?: unknown;
-  error?: unknown;
-}
 
 /**
  * Run one pi_api call. The facade answers `{ok, result|error}` inside a 200, so
  * its own verdict — not the HTTP status — decides success.
  */
 async function callPiApi(sessionId: string, api: string, params: unknown): Promise<McpResult<unknown>> {
-  const url = `/api/agent/${encodeURIComponent(sessionId)}/pi_api`;
-  const outcome = await postJson<PiApiEnvelope>(url, { api, params });
-  if (!outcome.ok) return outcome;
-  if (outcome.data.ok !== true) {
-    return {
-      ok: false,
-      code: "pi_api",
-      message: typeof outcome.data.error === "string" ? outcome.data.error : `pi api ${api} failed`,
-      status: 200,
-    };
-  }
-  return { ok: true, data: outcome.data.result };
+  const outcome = await protocolClient(sessionId).piApi(api as PiApiName, params as never);
+  if (outcome.ok) return { ok: true, data: outcome.value };
+  return { ok: false, code: outcome.error.code, message: outcome.error.message, status: 200 };
 }
 
 /** Unwrap a pi_api outcome into the state it must carry, or a failure. */

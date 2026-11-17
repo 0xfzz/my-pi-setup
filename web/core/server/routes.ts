@@ -46,6 +46,9 @@ import {
 import { createHistoryCache, fileStamp } from "./history-cache.ts";
 import { toWireToolResults } from "./tool-result-wire.ts";
 import { handlePiApiRequest } from "./pi-api.ts";
+import { createInProcessBinding } from "../protocol/bindings/in-process.ts";
+import { parseEnvelope } from "../protocol/envelope.ts";
+import { BRIDGE_PROTOCOL_VERSION, HELLO, type Hello } from "../protocol/version.ts";
 import { gitBranch } from "./git-branch.ts";
 import { piBuiltinCommands } from "../pi-api/index.ts";
 import { annotateBuiltinCommands } from "../shared/commands.ts";
@@ -366,6 +369,62 @@ async function handlePiApi(request: FastifyRequest, reply: FastifyReply): Promis
   const body = bodyOf(request);
   const outcome = await handlePiApiRequest(handle.cwd, body);
   asJson(reply, outcome.status, outcome.body);
+}
+
+/**
+ * The protocol binding's HTTP+SSE entry. One route for every catalog message:
+ * the client sends an envelope, the binding validates it and dispatches to the
+ * same adapters the in-process sessions use. Legacy routes stay as aliases.
+ */
+async function handleProtocol(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const sessionId = paramOf(request, "id");
+  const handle = getSession(sessionId);
+  if (handle === undefined) {
+    asJson(reply, 404, { ok: false, error: { code: "SESSION_NOT_FOUND", message: `session ${sessionId} not found`, retryable: false } });
+    return;
+  }
+  const parsed = parseEnvelope(bodyOf(request));
+  if (!parsed.ok) {
+    asJson(reply, 400, { ok: false, error: parsed.error });
+    return;
+  }
+  const envelope = parsed.envelope;
+  if (envelope.name === HELLO) {
+    const hello = envelope.payload as Hello;
+    if (hello.version !== BRIDGE_PROTOCOL_VERSION) {
+      asJson(reply, 200, { ok: false, error: { code: "VERSION_MISMATCH", message: `peer speaks protocol v${hello.version}`, retryable: false } });
+      return;
+    }
+    asJson(reply, 200, { ok: true, value: {
+      version: BRIDGE_PROTOCOL_VERSION,
+      capabilities: hello.capabilities,
+      bindings: ["http-sse"],
+      sessionId,
+      cursor: "0",
+    } });
+    return;
+  }
+  const binding = createInProcessBinding({
+    name: "http-sse",
+    sessionId,
+    cwd: handle.cwd,
+    grantedCapabilities: [],
+    session: {
+      prompt: (text) => handle.core.prompt(text),
+      abort: () => handle.core.abort(),
+      setModel: (provider, id) => handle.core.setModel?.(provider, id) ?? false,
+      setThinkingLevel: (level) => handle.core.setThinkingLevel?.(level) ?? false,
+      webCommand: (name, args) => handle.core.webCommand?.(name, args),
+    },
+  });
+  await binding.hello({
+    version: BRIDGE_PROTOCOL_VERSION,
+    bindings: ["http-sse"],
+    clientId: envelope.source.id,
+    capabilities: [],
+  });
+  const outcome = await binding.invoke(envelope);
+  asJson(reply, outcome.ok ? 200 : 400, outcome);
 }
 
 async function handleDirectories(request: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -739,6 +798,7 @@ const CORE_ROUTES: readonly CoreRoute[] = [
   { path: "/api/bridge/:id/events", methods: { POST: handleBridgeEvents } },
   { path: "/api/bridge/:id/detach", methods: { POST: handleBridgeDetach } },
   { path: "/api/agent/:id/pi_api", methods: { POST: handlePiApi }, body: PI_API_BODY_SCHEMA },
+  { path: "/api/agent/:id/protocol", methods: { POST: handleProtocol }, body: PERMISSIVE_BODY_SCHEMA },
   { path: "/api/directories", methods: { GET: handleDirectories }, query: ["path"] },
   { path: "/api/sessions/events", methods: { GET: handleSessionsEvents }, sse: SSE_ROUTE_OPTIONS },
   { path: "/api/sessions", methods: { GET: handleSessionsList }, query: ["q"] },

@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { filterCommands, type WebCommand } from "../shared/commands.ts";
 import { activeMentionToken } from "../shared/mentions.ts";
 import type { PiAutocompleteItem, PiAutocompleteSuggestions } from "../shared/pi-api.ts";
+import { piApiFetch } from "./protocol-client.ts";
 import { contextUsageDisplay, type ContextUsage } from "./context-usage.ts";
 
 export interface PendingImage {
@@ -235,11 +236,7 @@ export function Composer({
     const line = text;
     const col = caretCol;
     const timer = setTimeout(() => {
-      void fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ api: "autocomplete.suggestions", params: { line, cursorCol: col } }),
-      })
+      void piApiFetch(sessionId, "autocomplete.suggestions", { line, cursorCol: col })
         .then((res) => (res.ok ? (res.json() as Promise<{ ok?: boolean; result?: PiAutocompleteSuggestions | null }>) : { ok: false }))
         .then((body) => {
           setMentionResult(body.ok === true ? body.result ?? null : null);

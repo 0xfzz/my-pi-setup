@@ -11,7 +11,8 @@ import { shouldFocusPickerSearch } from "./picker-focus.ts";
 import { MarkdownBody } from "./plugin-system/markdown.tsx";
 import { actionFailureMessage, NO_RESPONSE_MESSAGE, postPluginAction } from "./plugin-system/actionClient.ts";
 import type { DialogField, DialogWebView } from "./plugin-system/contract.ts";
-import type { PiAuthLoginState, PiSettingEntry, PiTrustState } from "../shared/pi-api.ts";
+import type { PiApiName, PiAuthLoginState, PiSettingEntry, PiTrustState } from "../shared/pi-api.ts";
+import { piApiFetch } from "./protocol-client.ts";
 
 export interface ModelRefLike {
   provider: string;
@@ -745,11 +746,7 @@ export function SettingsDialog({
       setError("no session selected");
       return;
     }
-    fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ api: "settings.read", params: {} }),
-    })
+    piApiFetch(sessionId, "settings.read", {})
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as { ok?: boolean; result?: { settings?: PiSettingEntry[] } };
         if (!res.ok || body.ok !== true || body.result?.settings === undefined) {
@@ -775,11 +772,7 @@ export function SettingsDialog({
     const previous = entries;
     // Optimistic: flip the displayed value now, revert on failure.
     setEntries((prev) => prev?.map((entry) => (entry.key === key ? { ...entry, value } : entry)) ?? prev);
-    fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ api: "settings.write", params: { key, value } }),
-    })
+    piApiFetch(sessionId, "settings.write", { key, value })
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; result?: { key?: string; value?: PiSettingEntry["value"] } };
         if (!res.ok || body.ok !== true) {
@@ -932,11 +925,7 @@ export function ScopedModelsDialog({
       setError("no session selected");
       return;
     }
-    fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ api: "settings.models.read", params: {} }),
-    })
+    piApiFetch(sessionId, "settings.models.read", {})
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as { ok?: boolean; result?: { enabled?: string[] | null } };
         if (!res.ok || body.ok !== true) throw new Error("scoped models unavailable");
@@ -969,11 +958,7 @@ export function ScopedModelsDialog({
     // All available models selected → clear scoping (pi's unscoped default).
     const allSelected = enabled === null || models.every((m) => isSelected(m));
     const patterns = allSelected ? null : (enabled ?? models.map((m) => `${m.provider}/${m.id}`));
-    fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ api: "settings.models.write", params: { patterns } }),
-    })
+    piApiFetch(sessionId, "settings.models.write", { patterns })
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; result?: { enabled?: string[] | null } };
         if (!res.ok || body.ok !== true) throw new Error(body.error ?? "save rejected");
@@ -1049,11 +1034,7 @@ export function TrustDialog({
       setError("no session selected");
       return;
     }
-    fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ api: "trust.read", params: {} }),
-    })
+    piApiFetch(sessionId, "trust.read", {})
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as { ok?: boolean; result?: PiTrustState };
         if (!res.ok || body.ok !== true || body.result === undefined) throw new Error("trust unavailable");
@@ -1067,11 +1048,7 @@ export function TrustDialog({
     setSaving(true);
     setError(null);
     setSaved(null);
-    fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ api: "trust.write", params: { label } }),
-    })
+    piApiFetch(sessionId, "trust.write", { label })
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; result?: { savedDecision?: PiTrustState["savedDecision"] } };
         if (!res.ok || body.ok !== true) throw new Error(body.error ?? "trust write rejected");
@@ -1151,11 +1128,10 @@ export function LoginDialog({
 
   const api = (body: unknown): Promise<{ ok?: boolean; error?: string; result?: unknown }> => {
     if (sessionId === null) return Promise.resolve({ ok: false, error: "no session selected" });
-    return fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }).then((res) => res.json().catch(() => ({})));
+    const request = body as { api: PiApiName; params: unknown };
+    return piApiFetch(sessionId, request.api, request.params as never).then((res) =>
+      res.json().catch(() => ({})) as Promise<{ ok?: boolean; error?: string; result?: unknown }>,
+    );
   };
 
   useEffect(() => {
@@ -1362,11 +1338,7 @@ export function LogoutDialog({
 
   const load = (): void => {
     if (sessionId === null) return;
-    fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ api: "auth.read", params: {} }),
-    })
+    piApiFetch(sessionId, "auth.read", {})
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as { ok?: boolean; result?: { credentials?: Array<{ providerId: string; type: "oauth" | "api_key" }> } };
         if (!res.ok || body.ok !== true) throw new Error("credentials unavailable");
@@ -1381,11 +1353,7 @@ export function LogoutDialog({
     if (sessionId === null) return;
     setBusy(providerId);
     setError(null);
-    fetch(`/api/agent/${encodeURIComponent(sessionId)}/pi_api`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ api: "auth.logout", params: { providerId } }),
-    })
+    piApiFetch(sessionId, "auth.logout", { providerId })
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
         if (!res.ok || body.ok !== true) throw new Error(body.error ?? "logout rejected");

@@ -181,6 +181,7 @@ const ZONES: readonly ZoneRules[] = [
     runtimeAllow: [
       "web/core/client/",
       "web/core/shared/",
+      "web/core/protocol/",
       "web/core/plugin-contracts/view.ts",
       "web/core/plugin-contracts/descriptor.ts",
       "web/core/plugin-contracts/actions.ts",
@@ -202,7 +203,7 @@ const ZONES: readonly ZoneRules[] = [
     // the plugin descriptors; it serves the BUILT client and never imports
     // its source.
     dir: "web/core/server",
-    runtimeAllow: ["web/core/server/", "web/core/http/", "web/core/shared/", "web/core/plugin-contracts/", "web/core/pi-api/", "web/core/auth/", "lib/", "@earendil-works/", "node:"],
+    runtimeAllow: ["web/core/server/", "web/core/http/", "web/core/shared/", "web/core/protocol/", "web/core/adapters/", "web/core/plugin-contracts/", "web/core/pi-api/", "web/core/auth/", "lib/", "@earendil-works/", "node:"],
     typeOnlyAllow: null,
     why: "the server hosts sessions, serves plugin descriptors and the built client; importing client source couples build to runtime",
   },
@@ -231,7 +232,7 @@ const ZONES: readonly ZoneRules[] = [
     // contracts and shared lib constants — no pi runtime, no arbitrary web
     // app internals.
     dir: "web/plugins",
-    runtimeAllow: ["web/plugins/", "web/core/client/plugin-system/", "web/core/shared/", "lib/"],
+    runtimeAllow: ["web/plugins/", "web/core/client/plugin-system/", "web/core/client/protocol-client.ts", "web/core/shared/", "web/core/protocol/", "lib/"],
     typeOnlyAllow: ["lib/", "web/core/plugin-contracts/"],
     skip: ["web/plugins/subagent-graph", "web/plugins/files/server"],
     why: "plugin descriptors are declarative and plugin UI reuses core renderers; they never import pi behavior",
@@ -343,4 +344,24 @@ test("the web↔extension boundary holds on the import graph", () => {
     [],
     "boundary violations found; the rule: web = interface, extensions = behavior (docs/web-plugin-architecture.md)",
   );
+});
+
+/**
+ * AC1: a client or plugin may reach pi only through the protocol binding.
+ * Imports are covered above; this catches the other side door — a literal
+ * pi_api route pasted into a component or plugin page.
+ */
+const PI_API_ROUTE = /\/api\/agent\/[^"'`\s]*\/pi_api/;
+
+test("the client and plugins never call the pi_api route directly", () => {
+  const offenders: string[] = [];
+  for (const dir of ["web/core/client", "web/plugins"]) {
+    for (const file of sourceFiles(join(process.cwd(), dir), ["web/plugins/subagent-graph"])) {
+      const text = readFileSync(file, "utf8");
+      for (const [index, line] of text.split("\n").entries()) {
+        if (PI_API_ROUTE.test(line)) offenders.push(`${relative(process.cwd(), file)}:${index + 1}`);
+      }
+    }
+  }
+  assert.deepEqual(offenders, [], `pi_api routes belong in web/core/client/protocol-client.ts:\n  ${offenders.join("\n  ")}`);
 });
