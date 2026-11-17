@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | proposed — ready for implementation planning |
+| **Status** | implemented — browser-verified; physical-device validation outstanding |
 | **Owner** | Faiz |
 | **Scope** | `web/core/client/**`, `web/plugins/**`, `web/core/server/client-static.ts`; the running pi-web app at `http://127.0.0.1:30142/` |
 | **Goal** | Make every screen, panel, dialog, page and viewer usable with one thumb on a 320–430 px phone, in portrait and short landscape, with a soft keyboard open |
@@ -270,3 +270,16 @@ Manual runbook: open chat → session drawer → new session sheet → model/thi
 - `web/plugins/files/*`, `web/plugins/artifacts/*`, `web/plugins/mcp-manager/McpManagerPage.tsx`, `web/plugins/plugin-manager/PluginManagerPage.tsx`, `web/plugins/router/*`.
 - `web/core/server/client-static.ts:74-87` — extensionless SPA fallback; root cause of X1.
 - Accepted review artifacts: `report-css-layout-audit-2`, `report-plugin-ui-audit-2` (and their remediation plans `plan-css-layout-audit`, `plan-plugin-ui-audit`).
+
+## 9. Implementation result
+
+Phases 0–4 landed in `fe310e7`, `3313d0a`, `9d64104`, `1de0a93` and `f2d196f`. `npm run tidy` passes with 529 tests. Browser verification against the running app at `http://127.0.0.1:30142` is recorded in the `mobile-ux-implementation-verification` checklist:
+
+- 390×844: no document horizontal overflow; session toggle, attach, send and More panels each measure 44×44 px.
+- 320×568: no document horizontal overflow; the session drawer close control is visible at 44×44 px.
+- 844×390: short landscape uses the overlay layout, keeps the transcript visible and has no horizontal overflow.
+- Settings: visible 44×44 px close control; dialog and body each have `scrollWidth === clientWidth`.
+- `/plugins/core.plugin-manager`: renders the plugin manager instead of a JSON 404.
+- MCP Add server form: Save/Cancel are 44 px high and end at y=781, above the bottom navigation starting at y=801.
+
+Physical-device checks for iOS safe areas and Android keyboard behaviour remain outstanding, as stated in §7.
