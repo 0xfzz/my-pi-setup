@@ -4,6 +4,8 @@ import { attachAgentEventStream, type EventStreamSession } from "./event-stream.
 import type { EventChannel } from "../http/sse.ts";
 import { attachBridge, getBridge } from "./bridge.ts";
 import { clearSessionsForTests, getSession } from "./sessions.ts";
+import { clearPluginSessionState, registerSessionBusForTests } from "./plugin-sessions.ts";
+import { WEB_PLUGIN_UI_SYNC_EVENT } from "../plugin-contracts/ui-event-models.ts";
 
 // A producer port, not a fake HTTP response. Socket/framing tests live in sse.test.ts.
 function channelFixture() {
@@ -173,6 +175,32 @@ test("a closed attach channel cannot leave a closed bridge registered or its hea
     assert.equal(getSession("closed-attach"), undefined);
   } finally {
     clearSessionsForTests();
+  }
+});
+
+test("eight streams on one session share a single per-second UI replay", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  let syncs = 0;
+  registerSessionBusForTests("policy-shared", {
+    on: () => () => {},
+    emit: channel => { if (channel === WEB_PLUGIN_UI_SYNC_EVENT) syncs += 1; },
+  });
+  const channels = Array.from({ length: 8 }, () => channelFixture());
+  const { session } = sessionFixture();
+  session.isStreaming = () => true;
+  try {
+    for (const { channel } of channels) {
+      attachAgentEventStream(channel, { sessionId: "policy-shared", sessionPromise: Promise.resolve(session) });
+      await Promise.resolve();
+    }
+    t.mock.timers.tick(5_000);
+    assert.equal(syncs, 5, "subscribers must not multiply the replay");
+    for (const { channel } of channels) channel.close();
+    t.mock.timers.tick(5_000);
+    assert.equal(syncs, 5, "the last stream releases the shared timer");
+  } finally {
+    for (const { channel } of channels) channel.close();
+    clearPluginSessionState();
   }
 });
 

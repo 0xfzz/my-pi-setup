@@ -56,11 +56,12 @@ Ranked by how directly the defect taxes a token or a request. Items marked
 *fixed* have a benchmark-backed change in git history; the rest stay on the
 list until a change and a measurement land together.
 
-1. **Per-stream UI sync timer** — `web/core/server/event-stream.ts:228` starts
-   one 1 s timer per browser stream, and each tick replays every remembered
-   plugin view through `bridge.ts:184-192` and `publisher.ts:62-72`, bumps the
-   global UI store revision and rebuilds every subscriber's plugin frame.
-   Subscribers, not sessions, determine the cost.
+1. **Per-stream UI sync timer** — *fixed.* `web/core/server/event-stream.ts`
+   used to start one 1 s timer per browser stream; each tick replayed every
+   remembered plugin view through `bridge.ts:184-192` and `publisher.ts:62-72`,
+   bumped the global UI store revision and rebuilt every subscriber's plugin
+   frame. A refcounted per-session timer now emits once per session per second
+   and asks each attached stream only for its own deduplicated state frame.
 2. **SSE encode → parse → encode** — *fixed.* `lib/sse-pressure.ts` used to
    encode into `BoundedSseEvents`, parse it back on `consume()`, and
    `web/core/http/sse.ts` serialized it again. `consumeEncoded()` and

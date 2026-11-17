@@ -29,6 +29,52 @@ import { servedClientBuild } from "./client-build.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT } from "../plugin-contracts/ui-event-models.ts";
 
 const TOOL_UPDATE_COALESCE_MS = 150;
+const SESSION_UI_SYNC_MS = 1_000;
+
+interface SessionSyncTarget {
+  isStreaming(): boolean;
+  refresh(): void;
+}
+interface SessionSync {
+  timer: ReturnType<typeof setInterval>;
+  targets: Set<SessionSyncTarget>;
+}
+const sessionSyncs = new Map<string, SessionSync>();
+
+/**
+ * One UI replay per session per second, whatever the number of browser tabs.
+ * The timer follows the streams that need it and disappears with the last one.
+ */
+function joinSessionSync(sessionId: string, target: SessionSyncTarget): () => void {
+  let sync = sessionSyncs.get(sessionId);
+  if (sync === undefined) {
+    const targets = new Set<SessionSyncTarget>();
+    const timer = setInterval(() => {
+      let streaming = false;
+      for (const entry of targets) {
+        if (entry.isStreaming()) {
+          streaming = true;
+          break;
+        }
+      }
+      if (!streaming) return;
+      sessionBus(sessionId)?.emit?.(WEB_PLUGIN_UI_SYNC_EVENT, {});
+      for (const entry of targets) {
+        if (entry.isStreaming()) entry.refresh();
+      }
+    }, SESSION_UI_SYNC_MS);
+    sync = { timer, targets };
+    sessionSyncs.set(sessionId, sync);
+  }
+  const owned = sync;
+  owned.targets.add(target);
+  return () => {
+    owned.targets.delete(target);
+    if (owned.targets.size > 0) return;
+    clearInterval(owned.timer);
+    if (sessionSyncs.get(sessionId) === owned) sessionSyncs.delete(sessionId);
+  };
+}
 
 function isAgentEvent(event: unknown): event is AgentEventLike {
   return typeof event === "object" && event !== null && !Array.isArray(event)
@@ -53,7 +99,7 @@ export function attachAgentEventStream(
   let unsubscribeUi: (() => void) | null = null;
   let unsubscribeReplaced: (() => void) | null = null;
   let toolUpdateTimer: ReturnType<typeof setTimeout> | null = null;
-  let syncInterval: ReturnType<typeof setInterval> | null = null;
+  let releaseSessionSync: (() => void) | null = null;
   const pendingToolUpdates = new BoundedSseEvents();
   const startupEvents = new BoundedSseEvents();
 
@@ -62,7 +108,8 @@ export function attachAgentEventStream(
     closed = true;
     if (heartbeat !== null) clearInterval(heartbeat);
     if (toolUpdateTimer !== null) clearTimeout(toolUpdateTimer);
-    if (syncInterval !== null) clearInterval(syncInterval);
+    releaseSessionSync?.();
+    releaseSessionSync = null;
     pendingToolUpdates.clear();
     startupEvents.clear();
     unsubscribe?.();
@@ -227,27 +274,28 @@ export function attachAgentEventStream(
       unsubscribeUi = webUiStore.subscribe(() => {
         sendPluginState();
       });
+      if (closed) return;
 
       // While a turn runs, keep the live context-window figure and the
-      // declarative plugin views fresh. The session state frame carries
-      // contextUsage/model/thinking to the client; the ui-sync asks every
-      // publisher to re-emit its current view (todo, artifacts, …).
+      // declarative plugin views fresh. The shared timer emits one ui-sync
+      // per session; each stream deduplicates its own session_state frame.
       let lastSessionStateJson = "";
-      syncInterval = setInterval(() => {
-        if (closed || !session.isStreaming()) return;
-        sessionBus(sessionId)?.emit?.(WEB_PLUGIN_UI_SYNC_EVENT, {});
-        const state = session.getState();
-        const frame = {
-          type: "session_state" as const,
-          model: state.model,
-          thinkingLevel: state.thinkingLevel,
-          contextUsage: state.contextUsage ?? null,
-        };
-        const json = JSON.stringify(frame);
-        if (json === lastSessionStateJson) return;
-        lastSessionStateJson = json;
-        sendEncoded(json, { droppable: true });
-      }, 1000);
+      releaseSessionSync = joinSessionSync(sessionId, {
+        isStreaming: () => !closed && session.isStreaming(),
+        refresh: () => {
+          const state = session.getState();
+          const frame = {
+            type: "session_state" as const,
+            model: state.model,
+            thinkingLevel: state.thinkingLevel,
+            contextUsage: state.contextUsage ?? null,
+          };
+          const json = JSON.stringify(frame);
+          if (json === lastSessionStateJson) return;
+          lastSessionStateJson = json;
+          sendEncoded(json, { droppable: true });
+        },
+      });
     } catch (error) {
       if (closed) return;
       send({
