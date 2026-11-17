@@ -33,6 +33,14 @@ import { PluginActionShortcuts } from "./plugin-system/PluginActionShortcuts.tsx
 import { PluginPage, parsePluginRoute } from "./plugin-system/PluginLayout.tsx";
 import { PluginViewRenderer } from "./plugin-system/PluginViewRenderer.tsx";
 import { resolveRegionOverrides, type RegionOverride } from "../shared/regions.ts";
+import { isCompactViewport, type ViewportOrientation } from "../shared/responsive.ts";
+
+function currentViewportIsCompact(): boolean {
+  const orientation: ViewportOrientation = window.matchMedia("(orientation: landscape)").matches
+    ? "landscape"
+    : "portrait";
+  return isCompactViewport(window.innerWidth, window.innerHeight, orientation);
+}
 
 function useRoute(): string {
   const [path, setPath] = useState(() => window.location.pathname);
@@ -64,10 +72,11 @@ export function AppShell() {
   const session = usePiSession();
   const route = useRoute();
   const [newSessionOpen, setNewSessionOpen] = useState(false);
-  // Narrow screens: the sidebar starts collapsed and opens as an overlay.
-  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 720);
-  // Wide screens use resizable panels; narrow fall back to overlay/drawers.
-  const [wide, setWide] = useState(() => window.innerWidth > 720);
+  // Compact viewports (narrow or short landscape) use overlay panels; wide
+  // screens keep the resizable desktop layout.
+  const [compact, setCompact] = useState(currentViewportIsCompact);
+  const wide = !compact;
+  const [sidebarOpen, setSidebarOpen] = useState(() => !currentViewportIsCompact());
   // Right-hand plugin panel (Artifacts, Delegated work / monitor, etc.)
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
   const [activeSidePlugin, setActiveSidePlugin] = useState<string | null>(null);
@@ -125,21 +134,25 @@ export function AppShell() {
     }
   }, [modelPickerOpen, scopedModelsOpen, session.selectedId, session.fetchModels]);
 
-  // Crossing from wide to narrow closes the sidebar instead of leaving an
+  // Crossing from wide to compact closes the sidebar instead of leaving an
   // overlay + scrim stranded over the shrunken layout.
   useEffect(() => {
-    let wasWide = window.innerWidth > 720;
+    let wasCompact = currentViewportIsCompact();
     const onResize = (): void => {
-      const wideNow = window.innerWidth > 720;
-      setWide(wideNow);
-      if (wasWide && !wideNow) {
+      const compactNow = currentViewportIsCompact();
+      setCompact(compactNow);
+      if (!wasCompact && compactNow) {
         setSidebarOpen(false);
         setSidePanelOpen(false);
       }
-      wasWide = wideNow;
+      wasCompact = compactNow;
     };
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
   }, []);
 
   const headerStatus = session.connection === "connected"
@@ -541,12 +554,12 @@ export function AppShell() {
       selectedId={session.selectedId}
       onSelect={(id) => {
         session.setSelectedId(id);
-        if (window.innerWidth <= 720) setSidebarOpen(false);
+        if (compact) setSidebarOpen(false);
       }}
       selectedRunning={session.streaming.isStreaming || session.uiRunning}
       onNewSession={() => {
         setNewSessionOpen(true);
-        if (window.innerWidth <= 720) setSidebarOpen(false);
+        if (compact) setSidebarOpen(false);
       }}
       onSearch={session.searchSessions}
       anchorSlot={<AnchorHost anchor="session.sidebar" {...anchorHostProps} />}

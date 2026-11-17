@@ -532,9 +532,9 @@ a:focus-visible {
   .app-sidebar-wrap {
     display: block;
     position: fixed;
-    top: 0;
+    top: var(--app-viewport-top, 0px);
     left: 0;
-    bottom: 0;
+    height: var(--app-viewport-height, 100dvh);
     z-index: 60;
     transform: translateX(-100%);
     transition: transform 160ms ease-out;
@@ -548,7 +548,10 @@ a:focus-visible {
 
   .app-sidebar-scrim {
     position: fixed;
-    inset: 0;
+    top: var(--app-viewport-top, 0px);
+    left: 0;
+    right: 0;
+    height: var(--app-viewport-height, 100dvh);
     background: var(--scrim);
     z-index: 55;
     display: block;
@@ -1320,6 +1323,8 @@ button.msg-compaction-label:hover {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .app-dialog-head {
@@ -1957,9 +1962,9 @@ button.msg-compaction-label:hover {
 /* Toasts: transient notifications, bottom-right. */
 .app-toasts {
   position: fixed;
-  right: 18px;
-  bottom: 18px;
-  z-index: 40;
+  right: max(18px, env(safe-area-inset-right));
+  bottom: calc(100dvh - var(--app-viewport-top, 0px) - var(--app-viewport-height, 100dvh) + max(18px, env(safe-area-inset-bottom)));
+  z-index: 70;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -2042,7 +2047,11 @@ button.msg-compaction-label:hover {
 /* Custom popups: centered stacked panels. */
 .app-custom-popups {
   position: fixed;
-  inset: 0;
+  top: var(--app-viewport-top, 0px);
+  left: 0;
+  right: 0;
+  height: var(--app-viewport-height, 100dvh);
+  padding-inline: max(12px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2581,12 +2590,12 @@ button.msg-compaction-label:hover {
   .app-dialog,
   .app-dialog.wide,
   .app-dialog-wide {
-    width: 100vw;
-    max-width: 100vw;
+    width: 100%;
+    max-width: 100%;
     max-height: calc(var(--app-viewport-height, 100dvh) * 0.92);
     border-radius: 14px 14px 0 0;
     border-width: 1px 0 0;
-    padding: 14px 14px max(14px, env(safe-area-inset-bottom));
+    padding: 14px max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
     box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.45);
   }
 
@@ -3229,4 +3238,97 @@ button.msg-compaction-label:hover {
 .app-resize-handle:active,
 .app-resize-handle:focus-visible {
   background: var(--accent);
+}
+
+/* Mobile UX hardening: every rule below is an additive override so desktop
+ * layout stays byte-for-byte unchanged when the viewport is large. */
+@media (max-width: 720px), (max-height: 500px) and (orientation: landscape) {
+  .app-header {
+    min-height: 44px;
+    padding: 5px 10px;
+  }
+
+  .app-header-caption,
+  .app-composer-meta,
+  .app-composer-workspace,
+  .app-composer-hint,
+  .app-workspace-line {
+    display: none;
+  }
+
+  .app-transcript {
+    padding: 8px 12px;
+  }
+
+  .app-composer {
+    padding: 6px 12px 8px;
+    gap: 4px;
+  }
+
+  .markdown-body pre,
+  .app-widget-lines,
+  .app-custom-popup-lines {
+    max-height: min(320px, 40dvh);
+    overscroll-behavior: contain;
+  }
+
+  .app-sidebar-wrap,
+  .app-sidebar-scrim {
+    bottom: auto;
+  }
+}
+
+@media (pointer: coarse), (max-width: 720px), (max-height: 500px) and (orientation: landscape) {
+  .app-sidebar-toggle,
+  .app-attach-button,
+  .app-composer-row button,
+  .app-history-pager-button,
+  .app-theme-toggle,
+  .app-session-item,
+  .app-dialog-entry,
+  .app-dialog-item,
+  .app-plugin-dialog-item,
+  .app-tree-row,
+  .app-dialog-close,
+  .app-dialog-head-action,
+  .app-dialog-action,
+  .app-toast {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .app-model-chip {
+    min-height: 44px;
+  }
+
+  .app-dialog-entries {
+    min-height: 0;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .app-dialog-hint,
+  .app-dialog-field-help,
+  .app-session-meta,
+  .app-status-chip,
+  .app-composer-hint {
+    font-size: 12px;
+  }
+
+  input:not([type="hidden"]):not([type="file"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+:root[data-viewport-short="true"] .app-dialog-entries {
+  min-height: 0;
+  max-height: none;
+}
+
+.app-tui-prompt-banner,
+.app-reloading-banner {
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
 }

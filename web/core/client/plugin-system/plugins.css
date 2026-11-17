@@ -816,8 +816,9 @@
   outline-offset: 0;
 }
 
-/* On narrow screens (phones/tablets <= 720px) */
-@media (max-width: 720px) {
+/* On compact screens (phones/tablets and short landscape) panels overlay the
+ * chat instead of competing with it for height. */
+@media (max-width: 720px), (max-height: 500px) and (orientation: landscape) {
   .app-header-status,
   .app-header .app-status-chips {
     display: none;
@@ -830,9 +831,10 @@
 
   .app-side-panel {
     position: fixed;
-    top: 0;
+    top: var(--app-viewport-top, 0px);
     right: 0;
-    bottom: 0;
+    bottom: auto;
+    height: var(--app-viewport-height, 100dvh);
     z-index: 60;
     width: min(380px, 88vw);
     box-shadow: -12px 0 32px rgba(0, 0, 0, 0.4);
@@ -840,10 +842,23 @@
 
   .app-side-panel-scrim {
     position: fixed;
-    inset: 0;
+    top: var(--app-viewport-top, 0px);
+    left: 0;
+    right: 0;
+    height: var(--app-viewport-height, 100dvh);
     background: var(--scrim);
     z-index: 55;
     display: block;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-side-panel {
+    width: 100%;
+  }
+
+  .app-side-panel.files-panel:not(.is-fullscreen) {
+    width: min(380px, calc(100% - 72px));
   }
 }
 
@@ -2476,4 +2491,43 @@
 
 .msg-working .web-ui-anchor {
   margin-top: 4px;
+}
+
+/* Mobile UX hardening: compact plugin chrome gets thumb-sized targets and
+ * inputs large enough to avoid iOS focus zoom. */
+@media (pointer: coarse), (max-width: 720px), (max-height: 500px) and (orientation: landscape) {
+  .app-plugin-panel-button,
+  .app-side-panel-action-btn,
+  .plugin-page-nav-link,
+  .plugin-launcher-action,
+  .mcp-card-actions button,
+  .mcp-form-actions button,
+  .plugin-manager-action,
+  .plugin-manager-summary,
+  .plugin-toggle,
+  .artifact-actions button,
+  .files-icon-btn,
+  .files-clear-search {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .artifact-row,
+  .files-row,
+  .plugin-kv-row {
+    min-height: 44px;
+  }
+
+  input:not([type="hidden"]):not([type="file"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+
+  .app-plugin-panel-nav,
+  .app-side-panel-body,
+  .files-list,
+  .file-viewer-toolbar {
+    overscroll-behavior: contain;
+  }
 }

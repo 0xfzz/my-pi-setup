@@ -6,11 +6,12 @@ export function useVisualViewport(): void {
   useEffect(() => {
     const viewport = window.visualViewport;
     if (viewport === null) return;
-    const style = document.documentElement.style;
+    const root = document.documentElement;
     const sync = (): void => {
       if (Math.abs(viewport.scale - 1) > 0.01) return;
-      style.setProperty("--app-viewport-height", `${viewport.height}px`);
-      style.setProperty("--app-viewport-top", `${viewport.offsetTop}px`);
+      root.style.setProperty("--app-viewport-height", `${viewport.height}px`);
+      root.style.setProperty("--app-viewport-top", `${viewport.offsetTop}px`);
+      root.dataset.viewportShort = viewport.height <= 300 ? "true" : "false";
     };
     sync();
     viewport.addEventListener("resize", sync);
@@ -20,8 +21,9 @@ export function useVisualViewport(): void {
       viewport.removeEventListener("resize", sync);
       viewport.removeEventListener("scroll", sync);
       window.removeEventListener("resize", sync);
-      style.removeProperty("--app-viewport-height");
-      style.removeProperty("--app-viewport-top");
+      root.style.removeProperty("--app-viewport-height");
+      root.style.removeProperty("--app-viewport-top");
+      delete root.dataset.viewportShort;
     };
   }, []);
 }
