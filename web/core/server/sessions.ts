@@ -18,7 +18,7 @@ import { createStreamTracker, type StreamSnapshot } from "./stream-tracker.ts";
 import { compileHttpSchema } from "../http/schema.ts";
 import { SESSION_COMMAND_SCHEMA, sessionCommandSchemaError } from "../../../lib/session-command-schema.ts";
 import { createReadStream, existsSync } from "node:fs";
-import { open, readFile, readdir, stat, unlink } from "node:fs/promises";
+import { open, readdir, stat, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, join } from "node:path";
 import { getPluginHost } from "./plugin-host.ts";
@@ -1153,22 +1153,52 @@ export function tailStartOffset(buffer: Buffer, needed: number): number {
   return 0;
 }
 
+/** A session's transcript can be tens of megabytes; a reply needs its tail. */
+const HISTORY_TAIL_WINDOW_BYTES = 1024 * 1024;
+
+async function readTail(handle: Awaited<ReturnType<typeof open>>, size: number, window: number): Promise<Buffer> {
+  const length = Math.min(window, size);
+  if (length === 0) return Buffer.alloc(0);
+  const buffer = Buffer.allocUnsafe(length);
+  const { bytesRead } = await handle.read(buffer, 0, length, size - length);
+  return bytesRead === length ? buffer : buffer.subarray(0, bytesRead);
+}
+
+/** Drop a partial first line when the window starts in the middle of the file. */
+function alignTail(bytes: Buffer, size: number, window: number): Buffer {
+  if (window >= size) return bytes;
+  const newline = bytes.indexOf(0x0a);
+  return newline < 0 ? bytes : bytes.subarray(newline + 1);
+}
+
 export async function readHistory(sessionFile: string, limit = 200): Promise<SessionHistory> {
-  let bytes: Buffer;
+  let handle: Awaited<ReturnType<typeof open>>;
   try {
-    bytes = await readFile(sessionFile);
+    handle = await open(sessionFile, "r");
   } catch {
     return { entries: [], toolResults: {} };
   }
-  let needed = limit;
-  for (;;) {
-    const start = tailStartOffset(bytes, needed);
-    const history = historyFromText(bytes.subarray(start).toString("utf-8"), limit);
-    // The parse decides: an over-counted scan leaves a short window, and the
-    // region widens. A full window is the file's exact tail, because a tool
-    // result is written after its call and so falls inside the region too.
-    if (start === 0 || history.entries.length >= limit) return history;
-    needed *= 2;
+  try {
+    const { size } = await handle.stat();
+    let window = HISTORY_TAIL_WINDOW_BYTES;
+    let needed = limit;
+    for (;;) {
+      const bytes = alignTail(await readTail(handle, size, window), size, window);
+      const start = tailStartOffset(bytes, needed);
+      const history = historyFromText(bytes.subarray(start).toString("utf-8"), limit);
+      // A full window is the file's exact tail. A short parse from an
+      // over-counted line scan widens the search; a short parse at the window
+      // boundary means the wanted entries are earlier in the file.
+      if (history.entries.length >= limit || window >= size) return history;
+      if (start === 0) {
+        window *= 2;
+        needed = limit;
+      } else {
+        needed *= 2;
+      }
+    }
+  } finally {
+    await handle.close();
   }
 }
 

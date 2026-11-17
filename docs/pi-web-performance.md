@@ -76,10 +76,13 @@ list until a change and a measurement land together.
    128 sessions for every frame. Frozen session snapshots are now cached by
    session revision and reused by unrelated frames. The `ui-snapshot` ceiling
    is 0.3 ms (baseline p95 ~2.5 ms, now ~0.13 ms).
-5. **Whole-file history reads and directory scans** —
-   `web/core/server/sessions.ts:1156` reads the entire session file on every
-   stamp change (the format tolerates 37 MB files); `:1035` resolves a session
-   by enumerating every project directory, and `:716` stats every candidate.
+5. **Whole-file history reads and directory scans** — *history read fixed.*
+   `web/core/server/sessions.ts` used to read the entire session file on every
+   stamp change (the format tolerates 37 MB files); it now reads a bounded tail
+   window and widens it only when the visible history is still short. The
+   `history-tail` ceiling is 3 ms (baseline p95 ~4 ms, now ~1.5 ms). Session
+   lookups that enumerate every project directory and stat every candidate are
+   still outstanding.
 6. **Per-request JWT codec** — *fixed.* `web/core/auth/jwt.ts:53,104` used to
    construct a fast-jwt signer/verifier on every call; the codecs are now cached
    by key and kid with a clock-independent verifier, while expiry stays in this

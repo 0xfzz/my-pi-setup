@@ -193,7 +193,8 @@ async function historyScenario(): Promise<Scenario> {
   return {
     name: "history-tail",
     unit: "read",
-    budgetP95Ms: 20,
+    // Bounded tail reads: ~1.5 ms here; whole-file reads were ~4 ms.
+    budgetP95Ms: 3,
     iterations: 30,
     async setup() {
       directory = await mkdtemp(join(tmpdir(), "pi-web-bench-history-"));
