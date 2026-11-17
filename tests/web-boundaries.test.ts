@@ -119,6 +119,7 @@ const ZONES: readonly ZoneRules[] = [
     // reuse the pure UI text/vocabulary helpers, but never a host, pi or
     // browser runtime — a binding imports it, never the reverse.
     dir: "web/core/protocol",
+    skip: ["web/core/protocol/testing", "web/core/protocol/bindings"],
     runtimeAllow: [
       "web/core/protocol/",
       "web/core/plugin-contracts/ui-event-models.ts",
@@ -128,6 +129,46 @@ const ZONES: readonly ZoneRules[] = [
     ],
     typeOnlyAllow: null,
     why: "the protocol is transport-neutral and pure; it reuses only the pure UI vocabulary",
+  },
+  {
+    // The conformance suite is test infrastructure, not protocol runtime:
+    // it may use node:test helpers to report failures across bindings.
+    dir: "web/core/protocol/testing",
+    runtimeAllow: ["web/core/protocol/", "node:"],
+    typeOnlyAllow: null,
+    why: "conformance cases are test-only and may use node assertions",
+  },
+  {
+    // Bindings own transport and adapter wiring; message schemas stay pure.
+    dir: "web/core/protocol/bindings",
+    runtimeAllow: [
+      "web/core/protocol/",
+      "web/core/adapters/",
+      "web/core/plugin-contracts/",
+      "web/core/server/bridge.ts",
+      "node:",
+    ],
+    typeOnlyAllow: null,
+    why: "bindings translate transport to envelopes and call adapters; never the browser client",
+  },
+  {
+    // Pi-side adapters call pi built-ins through the protocol. They may reach
+    // the existing pi_api host and pure contracts, never the browser client.
+    dir: "web/core/adapters",
+    runtimeAllow: [
+      "web/core/adapters/",
+      "web/core/protocol/",
+      "web/core/pi-api/",
+      "web/core/server/pi-api.ts",
+      "web/core/server/pi-api-body.ts",
+      "web/core/server/bridge.ts",
+      "web/core/shared/",
+      "web/core/plugin-contracts/",
+      "@earendil-works/",
+      "node:",
+    ],
+    typeOnlyAllow: null,
+    why: "adapters call pi built-ins behind the protocol; the client and plugins stay out",
   },
   {
     // The browser bundle: interface only. React, the wire/plugin contracts

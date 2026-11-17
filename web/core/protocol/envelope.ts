@@ -6,7 +6,7 @@ import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
 import { webUiText } from "../plugin-contracts/ui-event-models.ts";
-import { MESSAGE_NAMES } from "./catalog.ts";
+import { MESSAGE_NAMES, type MessageName } from "./catalog.ts";
 import { bridgeError, BridgeErrorSchema, type BridgeError } from "./errors.ts";
 import { BRIDGE_PROTOCOL } from "./version.ts";
 
@@ -15,19 +15,22 @@ export const ENVELOPE_MAX_DEPTH = 8;
 export const UNSAFE_KEYS: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
 
 const SOURCE_TYPES = ["core", "extension", "plugin", "browser", "host"] as const;
+type EndpointType = (typeof SOURCE_TYPES)[number];
+
+const EndpointTypeSchema = Type.Unsafe<EndpointType>({ type: "string", enum: [...SOURCE_TYPES] });
 
 const EndpointSchema = Type.Object({
-  type: Type.Union(SOURCE_TYPES.map((type) => Type.Literal(type))),
+  type: EndpointTypeSchema,
   id: Type.String({ minLength: 1, maxLength: 160 }),
 }, { additionalProperties: false });
 
 export const BridgeEnvelopeSchema = Type.Object({
   protocol: Type.Literal(BRIDGE_PROTOCOL),
   version: Type.Integer({ minimum: 1 }),
-  kind: Type.Union([
-    Type.Literal("command"), Type.Literal("query"), Type.Literal("event"), Type.Literal("capability"),
-  ]),
-  name: Type.Union(MESSAGE_NAMES.map((name) => Type.Literal(name))),
+  kind: Type.Unsafe<"command" | "query" | "event" | "capability">({
+    type: "string", enum: ["command", "query", "event", "capability"],
+  }),
+  name: Type.Unsafe<MessageName>({ type: "string", enum: [...MESSAGE_NAMES] }),
   messageId: Type.String({ minLength: 1, maxLength: 160 }),
   sessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 160 })),
   source: EndpointSchema,

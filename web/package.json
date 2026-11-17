@@ -16,7 +16,7 @@
     "start": "tsx server.ts",
     "dev": "npm run build && npm run start",
     "check": "tsc --noEmit",
-    "test": "npm run build && node --experimental-strip-types --test 'core/server/**/*.test.ts' 'core/client/**/*.test.ts' 'core/shared/**/*.test.ts' 'core/protocol/**/*.test.ts' 'plugins/**/*.test.ts'",
+    "test": "npm run build && node --experimental-strip-types --test 'core/server/**/*.test.ts' 'core/client/**/*.test.ts' 'core/shared/**/*.test.ts' 'core/protocol/**/*.test.ts' 'core/adapters/**/*.test.ts' 'plugins/**/*.test.ts'",
     "test:e2e": "node core/e2e/e2e.mjs && node core/e2e/files-viewers.e2e.mjs",
     "bench": "node --experimental-strip-types bench/server-latency.bench.ts && node --experimental-strip-types bench/client-latency.bench.ts"
   },

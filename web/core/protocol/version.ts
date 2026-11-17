@@ -12,10 +12,13 @@ export const HELLO = "bridge.hello";
 export const HELLO_ACK = "bridge.hello-ack";
 
 export const BINDING_NAMES = ["in-process", "session-attach", "http-sse"] as const;
+export type BindingName = (typeof BINDING_NAMES)[number];
+
+const BindingNameSchema = Type.Unsafe<BindingName>({ type: "string", enum: [...BINDING_NAMES] });
 
 export const HelloSchema = Type.Object({
   version: Type.Integer({ minimum: 1 }),
-  bindings: Type.Array(Type.Union(BINDING_NAMES.map((name) => Type.Literal(name))), { minItems: 1 }),
+  bindings: Type.Array(BindingNameSchema, { minItems: 1 }),
   clientId: Type.String({ minLength: 1, maxLength: 160 }),
   capabilities: Type.Array(Type.String(), { maxItems: 128 }),
 }, { additionalProperties: false });
@@ -25,7 +28,7 @@ export type Hello = Static<typeof HelloSchema>;
 export const HelloAckSchema = Type.Object({
   version: Type.Integer({ minimum: 1 }),
   capabilities: Type.Array(Type.String(), { maxItems: 128 }),
-  bindings: Type.Array(Type.Union(BINDING_NAMES.map((name) => Type.Literal(name))), { minItems: 1 }),
+  bindings: Type.Array(BindingNameSchema, { minItems: 1 }),
   sessionId: Type.String(),
   cursor: Type.String(),
 }, { additionalProperties: false });
