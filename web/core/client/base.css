@@ -217,6 +217,21 @@ a:focus-visible {
   padding: 12px 20px;
 }
 
+.app-sidebar-close {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
 .app-theme-toggle {
   margin-left: auto;
   border: none;
@@ -3331,4 +3346,118 @@ button.msg-compaction-label:hover {
 .app-reloading-banner {
   padding-left: max(16px, env(safe-area-inset-left));
   padding-right: max(16px, env(safe-area-inset-right));
+}
+
+/* Dialog hardening: one sheet scroll owner, stacked settings, and readable
+ * recent-project paths on touch screens. */
+.app-dialog-scroll {
+  min-height: 0;
+}
+
+.app-dialog-scroll .app-dialog-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-raised);
+}
+
+.app-dialog-scroll .app-dialog-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: var(--bg-raised);
+}
+
+.app-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+
+.app-settings-row:hover {
+  background: var(--bg-input);
+}
+
+.app-settings-label {
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.app-settings-description {
+  color: var(--fg-faint);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.app-settings-control {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.app-dialog-recent-item {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.app-dialog-recent-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-dialog-recent-path {
+  color: var(--fg-faint);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 480px), (pointer: coarse) {
+  .app-settings-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .app-settings-control {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .app-settings-control .app-setting-options {
+    justify-content: flex-start;
+  }
+}
+
+.auth-screen {
+  padding-right: max(16px, env(safe-area-inset-right));
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+
+.auth-input {
+  font-size: 16px;
+}
+
+.auth-submit {
+  min-height: 44px;
+}
+
+/* Screen-reader-only text without clipping the touch targets around it. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

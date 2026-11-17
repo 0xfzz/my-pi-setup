@@ -6,11 +6,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUp, Folder, X } from "@phosphor-icons/react";
 import type { SessionSummary } from "./use-session.ts";
 import { LoadingSpinner } from "./plugin-system/LoadingSpinner.tsx";
+import { useModalFocus } from "./dialogs.tsx";
 
 interface DirectoryListing {
   path: string;
   parent: string | null;
   entries: Array<{ name: string; path: string }>;
+}
+
+function recentPathParts(cwd: string): { name: string; parent: string } {
+  const parts = cwd.split("/").filter(Boolean);
+  return {
+    name: parts.at(-1) ?? cwd,
+    parent: parts.length > 1 ? `/${parts.slice(0, -1).join("/")}` : "/",
+  };
 }
 
 export interface NewSessionDialogProps {
@@ -28,6 +37,9 @@ export function NewSessionDialog({ open, sessions, onClose, onStart }: NewSessio
   const [starting, setStarting] = useState(false);
   const [loading, setLoading] = useState(false);
   const directoryRequest = useRef<AbortController | null>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useModalFocus(backdropRef, { onClose, initialFocusRef: closeRef, enabled: open });
 
   // Recent projects: unique cwds, most recently active first.
   const recent = [...new Map(
@@ -88,17 +100,26 @@ export function NewSessionDialog({ open, sessions, onClose, onStart }: NewSessio
   };
 
   return (
-    <div className="app-dialog-backdrop" onClick={onClose} role="presentation">
+    <div
+      ref={backdropRef}
+      data-modal-root
+      tabIndex={-1}
+      className="app-dialog-backdrop"
+      onClick={onClose}
+      role="presentation"
+    >
       <div
         className="app-dialog"
         role="dialog"
         aria-modal="true"
         aria-label="Start a new session"
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
+        <div className="app-dialog-body app-dialog-scroll">
         <div className="app-dialog-head">
           <span className="app-dialog-title">New session</span>
-          <button type="button" className="app-dialog-close" onClick={onClose} aria-label="Close">
+          <button ref={closeRef} type="button" className="app-dialog-close" onClick={onClose} aria-label="Close dialog">
             <X size={14} />
           </button>
         </div>
@@ -107,17 +128,21 @@ export function NewSessionDialog({ open, sessions, onClose, onStart }: NewSessio
           <div className="app-dialog-section">
             <div className="app-dialog-label">Recent projects</div>
             <div className="app-dialog-recent">
-              {recent.map((cwd) => (
-                <button
-                  key={cwd}
-                  type="button"
-                  className="app-dialog-recent-item"
-                  onClick={() => void load(cwd)}
-                  title={cwd}
-                >
-                  {cwd.split("/").filter(Boolean).pop() ?? cwd}
-                </button>
-              ))}
+              {recent.map((cwd) => {
+                const { name, parent } = recentPathParts(cwd);
+                return (
+                  <button
+                    key={cwd}
+                    type="button"
+                    className="app-dialog-recent-item"
+                    onClick={() => void load(cwd)}
+                    title={cwd}
+                  >
+                    <span className="app-dialog-recent-name">{name}</span>
+                    <span className="app-dialog-recent-path">{parent}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         ) : null}
@@ -138,11 +163,16 @@ export function NewSessionDialog({ open, sessions, onClose, onStart }: NewSessio
             />
             <button
               type="button"
-              className="app-dialog-browse"
-              onClick={() => void load(pathInput)}
+              className={`app-dialog-browse${listing !== null ? " app-dialog-expanded" : ""}`}
+              onClick={() => {
+                if (listing !== null && listing.path === pathInput.trim()) setListing(null);
+                else void load(pathInput);
+              }}
               title="Browse this directory"
+              aria-expanded={listing !== null}
+              aria-controls="new-session-directory-browser"
             >
-              browse
+              {listing !== null ? "Hide directories" : "Browse directories"}
             </button>
           </div>
           {error ? <div className="app-dialog-error" role="alert">{error}</div> : null}
@@ -150,7 +180,7 @@ export function NewSessionDialog({ open, sessions, onClose, onStart }: NewSessio
 
         {loading ? <div className="app-dialog-empty"><LoadingSpinner label="Loading directories…" /></div> : null}
         {listing !== null ? (
-          <div className="app-dialog-browser" aria-busy={loading}>
+          <div id="new-session-directory-browser" className="app-dialog-browser" aria-busy={loading}>
             <div className="app-dialog-browser-head">
               <button
                 type="button"
@@ -194,6 +224,7 @@ export function NewSessionDialog({ open, sessions, onClose, onStart }: NewSessio
           >
             {starting ? "Starting…" : "Start session"}
           </button>
+        </div>
         </div>
       </div>
     </div>

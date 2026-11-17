@@ -5,7 +5,7 @@
 // dispatch through the plugin action pipeline, which is what makes the web
 // UI itself extensible.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Check, X } from "@phosphor-icons/react";
 import { shouldFocusPickerSearch } from "./picker-focus.ts";
 import { MarkdownBody } from "./plugin-system/markdown.tsx";
@@ -19,6 +19,105 @@ export interface ModelRefLike {
 }
 
 export const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(", ");
+
+function focusableIn(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+    .filter((element) => element.getClientRects().length > 0 && element.getAttribute("aria-hidden") !== "true");
+}
+
+function isTopmostModal(container: HTMLElement): boolean {
+  const roots = document.querySelectorAll("[data-modal-root]");
+  return roots.length === 0 || roots[roots.length - 1] === container;
+}
+
+function hideBackground(container: HTMLElement): () => void {
+  const parent = container.parentElement;
+  if (parent === null) return () => undefined;
+  // Other modal roots stay interactive for their own focus trap; only the
+  // app behind the topmost modal is hidden.
+  const siblings = Array.from(parent.children).filter((element) =>
+    element !== container && !element.hasAttribute("data-modal-root"));
+  const previous = siblings.map((element) => ({
+    element,
+    inert: element.hasAttribute("inert"),
+    hidden: element.getAttribute("aria-hidden"),
+  }));
+  for (const element of siblings) {
+    element.setAttribute("inert", "");
+    element.setAttribute("aria-hidden", "true");
+  }
+  return () => {
+    for (const entry of previous) {
+      if (!entry.inert) entry.element.removeAttribute("inert");
+      if (entry.hidden === null) entry.element.removeAttribute("aria-hidden");
+      else entry.element.setAttribute("aria-hidden", entry.hidden);
+    }
+  };
+}
+
+/** Trap focus in one modal, hide the app behind it, and restore the opener. */
+export function useModalFocus(
+  containerRef: RefObject<HTMLElement | null>,
+  options: {
+    onClose?: () => void;
+    initialFocusRef?: RefObject<HTMLElement | null>;
+    enabled?: boolean;
+  },
+): void {
+  const { onClose, initialFocusRef, enabled = true } = options;
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!enabled || container === null) return;
+    const restoreBackground = hideBackground(container);
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    (initialFocusRef?.current ?? focusableIn(container)[0] ?? container).focus();
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || !isTopmostModal(container)) return;
+      if (event.key === "Escape") {
+        if (onCloseRef.current === undefined) return;
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = focusableIn(container);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        container.focus();
+        return;
+      }
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      if (!container.contains(document.activeElement)) {
+        event.preventDefault();
+        first.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      restoreBackground();
+      if (opener !== null && opener.isConnected) opener.focus();
+    };
+  }, [containerRef, initialFocusRef, enabled]);
+}
 
 /** A header action: one extra button beside the dialog's title. */
 export interface DialogHeadAction {
@@ -61,25 +160,28 @@ export function SidebarDialog({
   footer?: React.ReactNode;
   children: React.ReactNode;
 }) {
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useModalFocus(backdropRef, { onClose, initialFocusRef: closeRef });
 
   return (
-    <div className="app-dialog-backdrop" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) onClose();
-    }}>
-      <div className="app-dialog wide" role="dialog" aria-modal="true" aria-label={title}>
+    <div
+      ref={backdropRef}
+      data-modal-root
+      tabIndex={-1}
+      className="app-dialog-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="app-dialog wide" role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}>
         <div className="app-dialog-head">
           <span className="app-dialog-title">{title}</span>
           {/* Every other dialog in the app closes from this X. The pane holds a
               wizard whose only home is this frame, so it needs the same visible
               way out — Escape and the backdrop are not discoverable. */}
           <button
+            ref={closeRef}
             type="button"
             className="app-dialog-close"
             aria-label="Close dialog"
@@ -131,19 +233,21 @@ function DialogFrame({
   /** A secondary action next to the title (e.g. the model picker's add). */
   headAction?: DialogHeadAction;
 }) {
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useModalFocus(backdropRef, { onClose, initialFocusRef: closeRef });
 
   return (
-    <div className="app-dialog-backdrop" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) onClose();
-    }}>
-      <div className={`app-dialog${wide === true ? " app-dialog-wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
+    <div
+      ref={backdropRef}
+      data-modal-root
+      tabIndex={-1}
+      className="app-dialog-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className={`app-dialog${wide === true ? " app-dialog-wide" : ""}`} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}>
         <div className="app-dialog-head">
           <span className="app-dialog-title">{title}</span>
           {headAction !== undefined ? (
@@ -156,6 +260,15 @@ function DialogFrame({
               {headAction.label}
             </button>
           ) : null}
+          <button
+            ref={closeRef}
+            type="button"
+            className="app-dialog-close"
+            aria-label="Close dialog"
+            onClick={onClose}
+          >
+            <X size={14} />
+          </button>
         </div>
         <div className="app-dialog-body">{children}</div>
         {footer !== undefined ? <div className="app-dialog-foot">{footer}</div> : null}
@@ -290,8 +403,8 @@ export function TreeSelectorDialog({
       footer={
         <span className="app-dialog-hint">
           {results.length > 0
-            ? `${results.length}/${nodes.length} · enter navigate · esc close · type to filter`
-            : "esc close"}
+            ? `${results.length}/${nodes.length} · enter navigate · type to filter`
+            : "enter navigate"}
         </span>
       }
     >
@@ -533,7 +646,7 @@ export function ModelPickerDialog({
         : {})}
       footer={
         <span className="app-dialog-hint">
-          {busy === true ? "applying…" : "↑↓ move · enter select · esc close"}
+          {busy === true ? "applying…" : "↑↓ move · enter select"}
         </span>
       }
     >
@@ -586,7 +699,7 @@ export function ThinkingPickerDialog({
     <DialogFrame
       title="Thinking level"
       onClose={onClose}
-      footer={<span className="app-dialog-hint">↑↓ move · enter select · esc close</span>}
+      footer={<span className="app-dialog-hint">↑↓ move · enter select</span>}
     >
       <div className="app-dialog-list" role="listbox" aria-label="Thinking levels">
         {THINKING_LEVELS.map((level, position) => (
@@ -686,7 +799,7 @@ export function SettingsDialog({
 
   if (error !== null && entries === null) {
     return (
-      <DialogFrame title="Settings" onClose={onClose} footer={<span className="app-dialog-hint">esc close</span>}>
+      <DialogFrame title="Settings" onClose={onClose} footer={<span className="app-dialog-hint">Select a setting to change it</span>}>
         <div className="app-dialog-error" role="alert">{error}</div>
       </DialogFrame>
     );
@@ -697,7 +810,7 @@ export function SettingsDialog({
       title="Settings"
       onClose={onClose}
       wide
-      footer={<span className="app-dialog-hint">{entries === null ? "reading…" : `${results.length}/${entries.length} · changes save immediately · esc close`}</span>}
+      footer={<span className="app-dialog-hint">{entries === null ? "reading…" : `${results.length}/${entries.length} · changes save immediately`}</span>}
     >
       {error !== null ? <div className="app-dialog-error" role="alert">{error}</div> : null}
       <input
@@ -736,12 +849,10 @@ function SettingRow({
   };
 
   return (
-    <div className="app-setting-row">
-      <div className="app-setting-meta">
-        <span className="app-setting-label">{entry.label}</span>
-        {entry.description !== undefined ? <span className="app-setting-desc">{entry.description}</span> : null}
-      </div>
-      <div className="app-setting-control">
+    <div className="app-settings-row">
+      <span className="app-settings-label">{entry.label}</span>
+      {entry.description !== undefined ? <span className="app-settings-description">{entry.description}</span> : null}
+      <div className="app-settings-control">
         {entry.kind === "toggle" ? (
           <button
             type="button"
@@ -975,7 +1086,7 @@ export function TrustDialog({
     <DialogFrame
       title="Project trust"
       onClose={onClose}
-      footer={<span className="app-dialog-hint">saved decisions apply on the next session start · esc close</span>}
+      footer={<span className="app-dialog-hint">saved decisions apply on the next session start</span>}
     >
       {error !== null ? <div className="app-dialog-error" role="alert">{error}</div> : null}
       {state === null ? (
@@ -1130,7 +1241,7 @@ export function LoginDialog({
       title="Login"
       onClose={onClose}
       wide
-      footer={<span className="app-dialog-hint">esc close · login runs against pi's own credential store</span>}
+      footer={<span className="app-dialog-hint">login runs against pi's own credential store</span>}
     >
       {error !== null ? <div className="app-dialog-error" role="alert">{error}</div> : null}
       {phase === "pick" ? (
@@ -1330,7 +1441,7 @@ export function InfoDialog({
   onClose: () => void;
 }) {
   return (
-    <DialogFrame title={title} onClose={onClose} wide footer={<span className="app-dialog-hint">esc close</span>}>
+    <DialogFrame title={title} onClose={onClose} wide footer={<span className="app-dialog-hint">Select a result to continue</span>}>
       {markdown !== undefined ? (
         <div className="app-dialog-markdown">
           <MarkdownBody text={markdown} />
@@ -1379,6 +1490,13 @@ export function PluginDialog({
     initialFieldValues(view.fields)
   );
   const publishedId = viewDialogId(view.id) ?? dialogId;
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const dismissRef = useRef<HTMLButtonElement>(null);
+  useModalFocus(backdropRef, {
+    onClose: onDismiss === undefined ? undefined : () => onDismiss(dialogId, view),
+    initialFocusRef: dismissRef,
+    enabled: embedded !== true,
+  });
 
   // The publisher answers a click by publishing a new view. Remember the view
   // that was on screen when the click left, so a reply that never arrives can
@@ -1484,6 +1602,7 @@ export function PluginDialog({
         <div className="app-dialog-head-actions">{actionButtons("header")}</div>
         {embedded !== true && onDismiss !== undefined ? (
           <button
+            ref={dismissRef}
             type="button"
             className="app-dialog-close"
             aria-label="Dismiss dialog"
@@ -1574,8 +1693,8 @@ export function PluginDialog({
     return <div className="app-dialog-pane-body">{content}</div>;
   }
   return (
-    <div className="app-dialog-backdrop">
-      <div className="app-dialog" role="dialog" aria-modal="true" aria-label={view.title ?? dialogId}>
+    <div ref={backdropRef} data-modal-root tabIndex={-1} className="app-dialog-backdrop">
+      <div className="app-dialog" role="dialog" aria-modal="true" aria-label={view.title ?? dialogId} tabIndex={-1}>
         {content}
       </div>
     </div>

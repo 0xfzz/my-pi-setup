@@ -37,10 +37,6 @@ function LoginScreen({ notice, onSignedIn }: { notice: string | null; onSignedIn
   const [wait, setWait] = useCountdown(0);
   const input = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    input.current?.focus();
-  }, []);
-
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     if (busy || wait > 0 || password === "") return;
