@@ -24,7 +24,9 @@ function filesOf(dir, base = dir) {
   return out;
 }
 
-const violations = checkPluginProject(project, filesOf(project));
+const relativeProject = relative(rootDir, project).split("\\").join("/");
+const allowLegacy = relativeProject.startsWith("web/plugins/");
+const violations = checkPluginProject(project, filesOf(project), { allowLegacy });
 if (violations.length > 0) {
   for (const item of violations) console.error(`${item.file}:${item.line}: forbidden import "${item.specifier}"`);
   process.exit(1);

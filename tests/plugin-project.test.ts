@@ -45,6 +45,23 @@ test("scaffold declares the bridge SDK and its imports pass the boundary check",
   assert.deepEqual(violations.map((violation) => violation.specifier), ["../../core/client/shell.tsx"]);
 });
 
+test("external projects reject legacy web/core protocol imports", () => {
+  const violations = checkPluginProject("/tmp/acme", [{
+    path: "browser.ts",
+    content: 'import { MESSAGE_NAMES } from "../../../web/core/protocol/catalog.ts";\n',
+  }]);
+  assert.equal(violations.length, 1);
+  assert.match(violations[0]?.specifier ?? "", /protocol\/catalog\.ts/);
+});
+
+test("first-party packages can opt into legacy core imports", () => {
+  const violations = checkPluginProject("/repo/web/plugins/acme", [{
+    path: "browser.ts",
+    content: 'import { MESSAGE_NAMES } from "../../../web/core/protocol/catalog.ts";\n',
+  }], { allowLegacy: true });
+  assert.deepEqual(violations, []);
+});
+
 test("check names an import of web/core internals", () => {
   const violations = checkPluginProject("/repo/web/plugins/acme", [{
     path: "browser.ts",

@@ -21,8 +21,8 @@ function camel(id: string): string {
   return id.replace(/(^|[.-])([a-z])/g, (_match, _sep: string, letter: string) => letter.toUpperCase());
 }
 
-/** Public protocol surface a plugin project may import from this repo. */
-export const PUBLIC_PROTOCOL_PATHS: readonly string[] = [
+/** Deprecated core paths still used by unmigrated first-party plugins. */
+export const LEGACY_PUBLIC_PROTOCOL_PATHS: readonly string[] = [
   "web/core/protocol/",
   "web/core/client/protocol-client.ts",
   "web/core/client/plugin-system/panel-registry.tsx",
@@ -33,6 +33,14 @@ export const PUBLIC_PROTOCOL_PATHS: readonly string[] = [
   "web/core/plugin-contracts/actions.ts",
   "web/core/plugin-contracts/ui-contracts.ts",
 ];
+
+/** New projects depend only on the installable bridge SDK. */
+export const PUBLIC_PROTOCOL_PATHS: readonly string[] = [];
+
+export interface CheckProjectOptions {
+  /** Allow the legacy core paths for an unmigrated first-party package. */
+  readonly allowLegacy?: boolean;
+}
 
 export interface ScaffoldOptions {
   /** Absolute path to the checker when scaffolding outside this repository. */
@@ -117,8 +125,15 @@ function isBridgeSdkImport(specifier: string): boolean {
 }
 
 /** AC10: name every import of web/core internals, including relative escapes. */
-export function checkPluginProject(root: string, files: readonly ProjectFile[]): readonly ImportViolation[] {
+export function checkPluginProject(
+  root: string,
+  files: readonly ProjectFile[],
+  options: CheckProjectOptions = {},
+): readonly ImportViolation[] {
   const violations: ImportViolation[] = [];
+  const allowed = options.allowLegacy === true
+    ? [...PUBLIC_PROTOCOL_PATHS, ...LEGACY_PUBLIC_PROTOCOL_PATHS]
+    : PUBLIC_PROTOCOL_PATHS;
   for (const file of files) {
     for (const [index, line] of file.content.split("\n").entries()) {
       for (const match of line.matchAll(/(?:import|export)[^;]*?from\s*["']([^"']+)["']|import\(\s*["']([^"']+)["']/g)) {
@@ -130,7 +145,7 @@ export function checkPluginProject(root: string, files: readonly ProjectFile[]):
           ? specifier.replace(/^(?:\.\.\/)+/, "web/")
           : absolute.slice(coreAt + 1);
         if (!target.startsWith("web/core/")) continue;
-        if (PUBLIC_PROTOCOL_PATHS.some((prefix) => target.startsWith(prefix))) continue;
+        if (allowed.some((prefix) => target.startsWith(prefix))) continue;
         violations.push({ file: file.path, line: index + 1, specifier });
       }
     }

@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
@@ -16,6 +16,7 @@ import { chromium } from "playwright";
 const PORT = 31_000 + Math.floor(Math.random() * 4_000);
 const BASE = `http://127.0.0.1:${PORT}`;
 const WEB = new URL("../..", import.meta.url).pathname;
+const FIXTURE_PLUGIN = join(WEB, "plugins", "fixture-e2e");
 const step = (name) => console.log(`[browser-runtime-e2e] ${name}`);
 
 let server;
@@ -67,15 +68,45 @@ async function confirmFixture(page) {
   const dialog = page.locator(".browser-grant-dialog[data-plugin-id='fixture.e2e']");
   await dialog.waitFor({ state: "visible", timeout: 10_000 });
   const text = await dialog.locator(".browser-grant-details").innerText();
-  for (const part of ["fixture.e2e", "0.1.0", "./browser/index.ts", "sha256:", "ui.replace"]) {
+  for (const part of ["fixture.e2e", "0.1.0", "./dist/browser.js", "sha256:", "ui.replace"]) {
     assert.ok(text.includes(part), `confirmation shows ${part}`);
   }
   await dialog.getByRole("button", { name: "Allow browser code" }).click();
   await dialog.waitFor({ state: "hidden", timeout: 5_000 });
 }
 
+async function enablePlugin(id) {
+  const response = await fetch(`${BASE}/api/plugin-manager/${id}/enable`, { method: "POST" });
+  assert.equal(response.ok, true, `enable ${id} before mounting its browser half`);
+}
+
 async function runtimeState(page) {
   return page.evaluate(() => globalThis.piBrowserRuntime?.state() ?? null);
+}
+
+async function externalFixtureRoot(dir) {
+  execFileSync("npm", ["run", "build"], { cwd: FIXTURE_PLUGIN, stdio: "inherit" });
+  const root = join(dir, "external-package");
+  await mkdir(root, { recursive: true });
+  await writeFile(join(root, "package.json"), `${JSON.stringify({
+    name: "external-browser-fixture-package",
+    private: true,
+    type: "module",
+    pi: { webPlugins: ["fixture.e2e"] },
+  }, null, 2)}\n`);
+  await cp(FIXTURE_PLUGIN, join(root, "fixture.e2e"), { recursive: true });
+  await writeFile(join(root, "fixture.e2e", "pi-web-plugin.json"), `${JSON.stringify({
+    id: "fixture.e2e",
+    name: "Browser Runtime Fixture",
+    version: "0.1.0",
+    engines: { piWeb: "^1.0.0", sdk: "^1.0.0" },
+    trust: "trusted",
+    main: { browser: "./dist/browser.js" },
+    capabilities: ["ui.replace:chat.composer", "ui.route", "commands", "keys", "ui.theme"],
+    activation: ["onStartup"],
+    contributes: { title: "Browser Runtime Fixture" },
+  }, null, 2)}\n`);
+  return root;
 }
 
 async function run() {
@@ -85,7 +116,10 @@ async function run() {
   const dir = await mkdtemp(join(tmpdir(), "pi-web-browser-runtime-e2e-"));
   let browser;
   try {
-    await startServer(dir);
+    step("0: install the fixture plugin from an external discovery root");
+    const externalRoot = await externalFixtureRoot(dir);
+    await startServer(dir, { PI_WEB_PLUGIN_ROOTS: externalRoot });
+    await enablePlugin("fixture.e2e");
     browser = await chromium.launch();
     const context = await browser.newContext();
     await context.addInitScript(() => {
@@ -101,7 +135,7 @@ async function run() {
     const page = await context.newPage();
 
     step("1: trusted half requires an explicit hash-bound grant");
-    await page.goto(`${BASE}/?fixture=1`);
+    await page.goto(BASE);
     await page.waitForSelector(".app-shell", { timeout: 20_000 });
     await confirmFixture(page);
     await page.locator(".fixture-composer").waitFor({ state: "visible", timeout: 10_000 });
@@ -110,6 +144,10 @@ async function run() {
 
     step("1b: the web-bridge half renders all five ctx.ui surfaces as host views");
     await page.locator(".web-bridge-views[data-plugin-id='web-bridge']").waitFor({ state: "attached", timeout: 10_000 });
+    // Bridged envelopes arrive on the selected session's event stream.
+    await page.click('.app-session-item[data-id="__test_session__"]');
+    await page.waitForFunction(() =>
+      window.__piEventSources.some((source) => source.url.includes("/api/agent/__test_session__/events")), undefined, { timeout: 10_000 });
     await page.evaluate(() => {
       const surfaces = {
         "ui.header.changed": { text: "A bridged header" },
@@ -119,14 +157,21 @@ async function run() {
         "ui.widget.changed": { key: "w", lines: ["A bridged widget"] },
       };
       for (const [index, [name, payload]] of Object.entries(surfaces).entries()) {
-        const envelope = {
+        const bridged = {
           protocol: "pi-web-bridge", version: 1, kind: "event", name,
           messageId: `e2e-bridge-${index}`,
           source: { type: "extension", id: "fixture.ext" },
           timestamp: 0, payload,
         };
+        const frame = {
+          protocol: "pi-web-bridge", version: 1, kind: "event", name: "session.events",
+          messageId: `e2e-session-${index}`,
+          source: { type: "core", id: "server" },
+          timestamp: 0,
+          payload: { type: "protocol_envelope", envelope: bridged },
+        };
         for (const source of window.__piEventSources) {
-          source.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(envelope) }));
+          source.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(frame) }));
         }
       }
     });
@@ -147,11 +192,11 @@ async function run() {
       "themes:fixture-dark", "tokens:accent", "protocol.hooks:ui.status.changed"]) {
       assert.ok(keys.includes(expected), `${expected} registered`);
     }
-    await page.goto(`${BASE}/plugins/fixture-e2e?fixture=1`);
+    await page.goto(`${BASE}/plugins/fixture-e2e`);
     await page.locator(".fixture-page").waitFor({ state: "visible", timeout: 10_000 });
 
     step("3: a render throw restores the built-in in the same frame and counts failures");
-    await page.goto(`${BASE}/?fixture=1&fixtureThrow=1`);
+    await page.goto(`${BASE}/?fixtureThrow=1`);
     // The grant from step 1 is hash-bound to the same module source, so the
     // throw is a runtime failure, not a new code version needing consent.
     if (await page.locator(".browser-grant-dialog[data-plugin-id='fixture.e2e']").count() > 0) {
@@ -170,10 +215,10 @@ async function run() {
 
     step("4: safe mode blocks non-core halves; the manager can re-enable them");
     await stopServer();
-    await startServer(join(dir, "safe"), { PI_WEB_SAFE_MODE: "1" });
+    await startServer(join(dir, "safe"), { PI_WEB_PLUGIN_ROOTS: externalRoot, PI_WEB_SAFE_MODE: "1" });
     const safeContext = await browser.newContext();
     const safePage = await safeContext.newPage();
-    await safePage.goto(`${BASE}/?fixture=1`);
+    await safePage.goto(BASE);
     await safePage.waitForSelector(".app-shell", { timeout: 20_000 });
     await safePage.waitForTimeout(1_500);
     assert.equal(await safePage.locator(".browser-grant-dialog[data-plugin-id='fixture.e2e']").count(), 0);
@@ -184,6 +229,7 @@ async function run() {
       return response.ok;
     });
     assert.equal(enabled, true, "leave-safe-mode action succeeds");
+    await enablePlugin("fixture.e2e");
     // The manager broadcasts a registry change, which reloads the tab; the
     // fresh runtime then rescans with safe mode off. Nudge it without awaiting
     // a promise that a reload could destroy mid-flight.

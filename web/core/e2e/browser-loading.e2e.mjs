@@ -78,11 +78,16 @@ async function confirmGrant(page) {
   const dialog = page.locator(`.browser-grant-dialog[data-plugin-id='${PLUGIN_ID}']`);
   await dialog.waitFor({ state: "visible", timeout: 10_000 });
   const text = await dialog.locator(".browser-grant-details").innerText();
-  for (const part of [PLUGIN_ID, "./dist/browser.js", "sha256:", "ui.panel"]) {
+  for (const part of [PLUGIN_ID, "./dist/browser.js", "sha256:", "ui.publish"]) {
     assert.ok(text.includes(part), `confirmation shows ${part}: ${text}`);
   }
   await dialog.getByRole("button", { name: "Allow browser code" }).click();
   await dialog.waitFor({ state: "hidden", timeout: 5_000 });
+}
+
+async function enablePlugin(id) {
+  const response = await fetch(`${BASE}/api/plugin-manager/${id}/enable`, { method: "POST" });
+  assert.equal(response.ok, true, `enable ${id} before mounting its browser half`);
 }
 
 function runtimeState(page) {
@@ -101,7 +106,7 @@ async function externalPackage(dir, source = MOUNT_SOURCE) {
     engines: { piWeb: "^1.0.0", sdk: "^1.0.0" },
     trust: "trusted",
     main: { browser: "./dist/browser.js" },
-    capabilities: [{ kind: "ui.panel" }],
+    capabilities: ["ui.publish"],
     activation: ["onStartup"],
   }));
   await writeFile(join(pluginDir, "dist", "browser.js"), source);
@@ -118,6 +123,7 @@ async function run() {
     const packageDir = await externalPackage(dir);
     const env = { PI_WEB_PLUGIN_ROOTS: packageDir };
     await startServer(dir, env);
+    await enablePlugin(PLUGIN_ID);
     browser = await chromium.launch();
     const context = await browser.newContext();
     let page = await context.newPage();
@@ -142,16 +148,18 @@ async function run() {
     step("3: a changed asset revokes the grant until reconfirmed");
     await stopServer();
     await writeFile(join(packageDir, PLUGIN_ID, "dist", "browser.js"), `${MOUNT_SOURCE}\n// changed\n`);
-    await startServer(dir, env);
+    await startServer(dir, { ...env, PI_WEB_PLUGIN_STATE: join(dir, "plugins-changed.json") });
+    await enablePlugin(PLUGIN_ID);
     page = await context.newPage();
     await page.goto(BASE);
+    await page.waitForSelector(".app-shell", { timeout: 20_000 });
     await confirmGrant(page);
     await page.locator(".acme-external-half").waitFor({ state: "visible", timeout: 10_000 });
     await page.close();
 
     step("4: safe mode blocks the non-core half");
     await stopServer();
-    await startServer(dir, { ...env, PI_WEB_SAFE_MODE: "1" });
+    await startServer(dir, { ...env, PI_WEB_PLUGIN_STATE: join(dir, "plugins-safe.json"), PI_WEB_SAFE_MODE: "1" });
     page = await context.newPage();
     await page.goto(BASE);
     await page.waitForSelector(".app-shell", { timeout: 20_000 });
@@ -161,7 +169,8 @@ async function run() {
 
     step("5: disabling the plugin unmounts its contribution");
     await stopServer();
-    await startServer(dir, env);
+    await startServer(dir, { ...env, PI_WEB_PLUGIN_STATE: join(dir, "plugins-disable.json") });
+    await enablePlugin(PLUGIN_ID);
     page = await context.newPage();
     await page.goto(BASE);
     await page.locator(".acme-external-half").waitFor({ state: "visible", timeout: 10_000 });
@@ -178,7 +187,8 @@ async function run() {
     step("6: a render throw fails closed and trips the breaker");
     await stopServer();
     await writeFile(join(packageDir, PLUGIN_ID, "dist", "browser.js"), THROW_SOURCE);
-    await startServer(dir, env);
+    await startServer(dir, { ...env, PI_WEB_PLUGIN_STATE: join(dir, "plugins-throw.json") });
+    await enablePlugin(PLUGIN_ID);
     page = await context.newPage();
     await page.goto(BASE);
     await page.waitForSelector(".app-shell", { timeout: 20_000 });

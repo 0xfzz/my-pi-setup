@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createPluginHost } from "../web/core/plugin-contracts/kernel/host.ts";
@@ -18,6 +18,20 @@ function pluginManifest(): Record<string, unknown> {
     bridge: { core: { messages: ["session.list", "session.events"] } },
   };
 }
+
+test("the migrated fixture is absent from client and server composition roots", () => {
+  const roots = [
+    "web/app.tsx",
+    "web/server.ts",
+    "web/plugins/browser-halves.ts",
+    "web/plugins/pages.tsx",
+  ];
+  for (const root of roots) {
+    const text = readFileSync(root, "utf8");
+    assert.equal(text.includes("fixture.e2e"), false, `${root} must not import the migrated plugin id`);
+    assert.equal(text.includes("fixture-e2e/browser"), false, `${root} must not import the migrated module`);
+  }
+});
 
 test("the host exposes declared browser halves and core message slices from discovered manifests", async () => {
   const root = mkdtempSync(join(tmpdir(), "web-plugin-browser-halves-"));
