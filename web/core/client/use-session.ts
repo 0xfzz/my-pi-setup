@@ -36,7 +36,7 @@ import { pluginStateFrameOf } from "../shared/plugin-state.ts";
 import { buildVerdict, ownBuildId } from "./build-identity.ts";
 import { isCompactionReason, type CompactionReason } from "./compaction.ts";
 import { HISTORY_FETCH_TIMEOUT_MS, historyRetryDelayMs } from "./history-retry.ts";
-import { directoryProtocolClient, protocolClient, type ProtocolResult } from "./protocol-client.ts";
+import { directoryProtocolClient, protocolClient, setPluginSession, type ProtocolResult } from "./protocol-client.ts";
 
 export type { CustomPanelLike, WebNotificationLike, WidgetModelLike };
 export type { HistoryEntryLike, ToolResultLike } from "./history-pages.ts";
@@ -579,6 +579,7 @@ export function usePiSession() {
     streamingRef.current = INITIAL_STREAMING_STATE;
     setStreaming(INITIAL_STREAMING_STATE);
 
+    setPluginSession(selectedId);
     if (selectedId === null) {
       setConnection("idle");
       return;

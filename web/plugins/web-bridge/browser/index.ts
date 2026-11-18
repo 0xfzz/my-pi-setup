@@ -5,6 +5,7 @@
  */
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
+import { MESSAGE_CATALOG } from "../../../core/protocol/catalog.ts";
 import type { BridgeEnvelope } from "../../../core/protocol/envelope.ts";
 import { PluginViewRenderer } from "../../../core/client/plugin-system/PluginViewRenderer.tsx";
 import { validateView, type WebView } from "../../../core/plugin-contracts/view.ts";
@@ -12,10 +13,10 @@ import type { WebPluginContext } from "../../../core/client/plugin-system/browse
 import { bridgedSurfaceId, bridgedView } from "../bridge-view.ts";
 import { WEB_BRIDGE_PLUGIN_ID } from "../contract.ts";
 
-const SURFACES: readonly string[] = [
-  "ui.header.changed", "ui.footer.changed", "ui.status.changed", "ui.title.changed", "ui.editor.changed",
-  "ui.widget.changed", "ui.editor-component.changed", "ui.autocomplete-provider.changed", "ui.notify",
-];
+/** Every catalog event except the two core streams is a plugin surface. */
+const SURFACES: readonly string[] = MESSAGE_CATALOG
+  .filter((message) => message.kind === "event" && message.name !== "session.events" && message.name !== "session.directory.events")
+  .map((message) => message.name);
 
 const MAX_VIEWS = 12;
 

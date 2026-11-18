@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { directoryProtocolClient, ProtocolClient } from "../web/core/client/protocol-client.ts";
 import { mergeHistoryEntries, type HistoryEntryLike } from "../web/core/client/history-pages.ts";
 
-type Reply = { ok: true; value: { payload: unknown } } | { ok: false; error: Record<string, unknown> };
+type Reply = { ok: true; value: unknown } | { ok: false; error: Record<string, unknown> };
 
 interface FetchCall {
   url: string;
@@ -33,9 +33,10 @@ function scriptedFetch(reply: (call: FetchCall, index: number) => Reply | Error,
   }) as typeof fetch;
 }
 
+// The HTTP binding returns the raw hello-ack, not an enveloped payload.
 const helloReply: Reply = {
   ok: true,
-  value: { payload: { version: 1, capabilities: [], bindings: ["http-sse"], sessionId: "s1", cursor: "0" } },
+  value: { version: 1, capabilities: [], bindings: ["http-sse"], sessionId: "s1", cursor: "0" },
 };
 
 class FakeEventSource {
@@ -97,7 +98,7 @@ test("a mismatched hello ack is reported as VERSION_MISMATCH, not UNSUPPORTED_BI
   const calls: FetchCall[] = [];
   const fetcher = scriptedFetch((call) => {
     if (call.body.name === "bridge.hello") {
-      return { ok: true, value: { payload: { version: 99, capabilities: [] } } };
+      return { ok: true, value: { version: 99, capabilities: [], bindings: ["http-sse"], cursor: "0" } };
     }
     return { ok: true, value: { payload: {} } };
   }, calls);
@@ -174,14 +175,14 @@ test("subscribe delivers protocol envelopes with their sequence and cursor", () 
     eventSource: FakeEventSource as unknown as typeof EventSource,
   });
   const seen: Array<{ sequence?: number; cursor?: string; payload: unknown }> = [];
-  const unsubscribe = client.subscribe("ui.notify", (received) => {
+  const unsubscribe = client.subscribe("session.events", (received) => {
     seen.push({ sequence: received.sequence, cursor: received.cursor, payload: received.payload });
   });
   const source = FakeEventSource.instances.at(-1);
   assert.ok(source !== undefined);
 
   source.emit({ type: "notify", message: "legacy frames are not protocol frames" });
-  source.emit(envelope("ui.notify", { message: "hello" }, { sequence: 7, cursor: "c7" }));
+  source.emit(envelope("session.events", { message: "hello" }, { sequence: 7, cursor: "c7" }));
 
   assert.deepEqual(seen, [{ sequence: 7, cursor: "c7", payload: { message: "hello" } }]);
   unsubscribe();
@@ -225,18 +226,18 @@ test("multiple subscribers share one EventSource until the last one leaves", () 
   });
   const first: unknown[] = [];
   const second: unknown[] = [];
-  const leaveFirst = client.subscribe("ui.notify", (frame) => first.push(frame.payload));
-  const leaveSecond = client.subscribe("ui.notify", (frame) => second.push(frame.payload));
+  const leaveFirst = client.subscribe("session.events", (frame) => first.push(frame.payload));
+  const leaveSecond = client.subscribe("session.events", (frame) => second.push(frame.payload));
 
   assert.equal(FakeEventSource.instances.length, 1, "one stream serves both subscribers");
   const source = FakeEventSource.instances[0];
-  source.emit(envelope("ui.notify", { message: "shared" }, { sequence: 1, cursor: "c1" }));
+  source.emit(envelope("session.events", { message: "shared" }, { sequence: 1, cursor: "c1" }));
   assert.deepEqual(first, [{ message: "shared" }]);
   assert.deepEqual(second, [{ message: "shared" }]);
 
   leaveFirst();
   assert.equal(source.closed, false);
-  source.emit(envelope("ui.notify", { message: "still live" }, { sequence: 2, cursor: "c2" }));
+  source.emit(envelope("session.events", { message: "still live" }, { sequence: 2, cursor: "c2" }));
   assert.equal(second.length, 2);
   leaveSecond();
   assert.equal(source.closed, true);
@@ -249,8 +250,8 @@ test("directory events use the directory stream, independent of session events",
     fetch: scriptedFetch(() => helloReply, []),
     eventSource: FakeEventSource as unknown as typeof EventSource,
   });
-  const leaveSession = client.subscribe("ui.notify", () => {});
-  const leaveDirectory = client.subscribe("ui.session.lifecycle", () => {});
+  const leaveSession = client.subscribe("session.events", () => {});
+  const leaveDirectory = client.subscribe("session.directory.events", () => {});
 
   assert.equal(FakeEventSource.instances.length, 2);
   assert.match(FakeEventSource.instances[0].url, /\/api\/agent\/s1\/events$/);
@@ -322,6 +323,93 @@ test("client components leave pi routes to the protocol binding", () => {
     const source = sourceOf(file);
     assert.doesNotMatch(source, routeCall, `${file} must not post to a pi route`);
   }
+});
+
+test("plugin event subscriptions share the session stream and receive bridged envelopes", () => {
+  FakeEventSource.instances = [];
+  const calls: FetchCall[] = [];
+  const client = new ProtocolClient({
+    sessionId: "s1",
+    fetch: scriptedFetch(() => helloReply, calls),
+    eventSource: FakeEventSource as unknown as typeof EventSource,
+  });
+  const seen: unknown[] = [];
+  const leaveStatus = client.subscribe("ui.status.changed", (frame) => seen.push(frame.payload));
+  const leaveWidget = client.subscribe("ui.widget.changed", () => undefined);
+
+  assert.equal(FakeEventSource.instances.length, 1, "plugin names must not each open an SSE stream");
+  assert.match(FakeEventSource.instances[0].url, /\/api\/agent\/s1\/events$/);
+  FakeEventSource.instances[0].emit(envelope("session.events", {
+    type: "protocol_envelope",
+    envelope: envelope("ui.status.changed", { text: "Ready" }),
+  }));
+  assert.deepEqual(seen, [{ text: "Ready" }]);
+  leaveStatus();
+  leaveWidget();
+  assert.equal(FakeEventSource.instances[0].closed, true);
+});
+
+test("a terminal startup error closes the session stream instead of reconnecting", () => {
+  FakeEventSource.instances = [];
+  const client = new ProtocolClient({
+    sessionId: "missing",
+    fetch: scriptedFetch(() => helloReply, []),
+    eventSource: FakeEventSource as unknown as typeof EventSource,
+  });
+  const leave = client.subscribe("session.events", () => undefined);
+  const source = FakeEventSource.instances[0];
+  source.emit(envelope("session.events", { type: "startup_error", errorMessage: "Session not found" }));
+  assert.equal(source.closed, true);
+  leave();
+});
+
+test("a failed capability handshake is retried instead of poisoning the client", async () => {
+  const calls: FetchCall[] = [];
+  const client = new ProtocolClient({
+    sessionId: "s1",
+    fetch: scriptedFetch((call, index) => {
+      if (call.body.name === "bridge.hello" && index === 0) {
+        return { ok: false, error: { code: "INTERNAL", message: "transient", retryable: true } };
+      }
+      return helloReply;
+    }, calls),
+    eventSource: FakeEventSource as unknown as typeof EventSource,
+  });
+  const first = await client.query("session.get");
+  assert.equal(first.ok, true, "one transient handshake failure is retried transparently");
+  const second = await client.query("session.get");
+  assert.equal(second.ok, true);
+  assert.equal(calls.filter((call) => call.body.name === "bridge.hello").length, 2);
+  assert.equal(calls.filter((call) => call.body.name === "session.get").length, 2);
+});
+
+test("the shared plugin stream follows selection changes without a sentinel request", () => {
+  FakeEventSource.instances = [];
+  const client = new ProtocolClient({
+    sessionId: "",
+    fetch: scriptedFetch(() => helloReply, []),
+    eventSource: FakeEventSource as unknown as typeof EventSource,
+  });
+  const leave = client.subscribe("ui.status.changed", () => undefined);
+  assert.equal(FakeEventSource.instances.length, 0, "no /api/agent//events before a selection");
+
+  client.setSessionId("s1");
+  assert.equal(FakeEventSource.instances.length, 1);
+  assert.match(FakeEventSource.instances[0].url, /\/api\/agent\/s1\/events$/);
+  client.setSessionId("");
+  assert.equal(FakeEventSource.instances[0].closed, true);
+  client.setSessionId("s2");
+  assert.equal(FakeEventSource.instances.length, 2);
+  assert.match(FakeEventSource.instances[1].url, /\/api\/agent\/s2\/events$/);
+  leave();
+});
+
+test("plugin halves follow the selected session instead of a sentinel client", () => {
+  const app = readFileSync(new URL("../web/app.tsx", import.meta.url), "utf8");
+  assert.match(app, /protocol: pluginProtocolClient/);
+  assert.doesNotMatch(app, /sessionId: ["']browser["']/);
+  const hook = sourceOf("use-session.ts");
+  assert.match(hook, /setPluginSession\(selectedId\)/);
 });
 
 test("the session hook uses named protocol messages for migrated reads and commands", () => {

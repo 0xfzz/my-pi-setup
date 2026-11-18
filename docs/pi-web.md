@@ -336,8 +336,13 @@ envelope or a named `BridgeError`. Session-less directory work (session list,
 search and create) uses `POST /api/protocol` with no `sessionId`; both routes
 share the same handshake, capability and audit rules. Commands and queries
 dispatch to core adapters; sequenced envelopes with a resume cursor stream over
-the existing SSE routes. The old `pi_api` route was a Phase 7 alias and is
-retired. The catalog and parity matrix are
+the existing SSE routes. The `bridge.hello` reply is the raw `bridge.hello-ack`
+object; every other reply is an envelope. Plugin halves share one
+selection-following client: catalog events arrive as `protocol_envelope`
+payloads on the session stream instead of opening one SSE connection per
+subscribed name, and a terminal `startup_error` closes that client's session
+streams instead of reconnecting forever. The old `pi_api` route was a Phase 7
+alias and is retired. The catalog and parity matrix are
 generated in [bridge-protocol-catalog.md](bridge-protocol-catalog.md) and
 [bridge-protocol-parity.md](bridge-protocol-parity.md). A browser half runs only
 after hash-bound operator confirmation; safe mode, protected points and the

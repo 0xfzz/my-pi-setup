@@ -13,7 +13,7 @@ import { initTheme } from "./core/client/theme.ts";
 import { installBrowserLogging } from "./core/client/logging.ts";
 // Plugin-owned browser halves register their own panels; core only provides
 // the registry and context (web/core has no plugin-specific import).
-import { ProtocolClient } from "./core/client/protocol-client.ts";
+import { pluginProtocolClient } from "./core/client/protocol-client.ts";
 import { mountPluginBrowserHalves } from "./plugins/browser-halves.ts";
 // Side-effect import: registers the MCP manager bespoke page.
 import "./plugins/pages.tsx";
@@ -31,7 +31,7 @@ getAuth();
 // checks trust, safe mode, lifecycle, hash-bound grants and point rules, then
 // drives loadBrowserHalf/mountBrowserHalf with a built-in restoring host.
 mountPluginBrowserHalves(document.body, {
-  protocol: new ProtocolClient({ sessionId: "browser" }),
+  protocol: pluginProtocolClient,
   host: {},
   theme: {},
   logger: { info: () => undefined, warn: (message) => console.warn(message) },

@@ -24,6 +24,7 @@ import { createLocalBashOperations, getAgentDir } from "@earendil-works/pi-codin
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { WEB_PLUGIN_VIEW_EVENT } from "../web/core/plugin-contracts/view.ts";
+import { BRIDGE_MESSAGE_EVENT } from "../web/core/protocol/publisher.ts";
 import { uniqueModelRefs, type ModelRef } from "../lib/model-ref.ts";
 import { WEB_MODELS_CHANGED_EVENT, WEB_UI_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
 import {
@@ -790,6 +791,11 @@ export default function webExtension(pi: ExtensionAPI, options: WebExtensionOpti
   });
   // Plugin views and UI events from the TUI-side publishers, so the web's
   // plugin surfaces work for a bridged session exactly like an in-process one.
+  // Bridge envelopes travel as named payloads inside session.events; plugin
+  // browser halves subscribe by name and never open their own SSE stream.
+  pi.events?.on(BRIDGE_MESSAGE_EVENT, (envelope: unknown) => {
+    bridgePoster?.post({ type: "protocol_envelope", envelope });
+  });
   pi.events?.on(WEB_PLUGIN_VIEW_EVENT, (payload: unknown) => {
     bridgePoster?.post({ type: "web_plugin_view", payload });
   });

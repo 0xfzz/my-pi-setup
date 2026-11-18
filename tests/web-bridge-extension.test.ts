@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import bridgeExtension, { BRIDGE_EXTENSION_ID } from "../extensions/bridge.ts";
 import {
   BRIDGE_MESSAGE_EVENT,
@@ -61,6 +62,21 @@ function recordedBridges(bus: FakeBus): BridgeEnvelope[] {
   bus.on(BRIDGE_MESSAGE_EVENT, (data) => envelopes.push(data as BridgeEnvelope));
   return envelopes;
 }
+
+test("the bridge plugin subscribes to every catalog event, not a hand-picked subset", () => {
+  const source = readFileSync(new URL("../web/plugins/web-bridge/browser/index.ts", import.meta.url), "utf8");
+  assert.match(source, /MESSAGE_CATALOG/);
+  assert.doesNotMatch(source, /const SURFACES[\s\S]{0,80}= \[\s*["']ui\./);
+});
+
+test("the session bridge forwards bridged envelopes to plugin browser halves", () => {
+  const source = readFileSync(new URL("../extensions/web.ts", import.meta.url), "utf8");
+  assert.match(source, /BRIDGE_MESSAGE_EVENT/);
+  assert.match(source, /type: ["']protocol_envelope["']/);
+  const client = readFileSync(new URL("../web/core/client/protocol-client.ts", import.meta.url), "utf8");
+  assert.match(client, /wrapper\.type !== ["']protocol_envelope["']/);
+  assert.match(client, /startup_error/);
+});
 
 test("an unchanged extension's ui.status event becomes an attributed protocol envelope", () => {
   const bus = fakeBus();

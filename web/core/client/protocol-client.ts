@@ -8,7 +8,7 @@ import { Value } from "typebox/value";
 import { MESSAGE_CATALOG, lookupMessage } from "../protocol/catalog.ts";
 import { parseEnvelope, type BridgeEnvelope } from "../protocol/envelope.ts";
 import { BRIDGE_ERROR_CODES, bridgeError, type BridgeError, type BridgeErrorCode } from "../protocol/errors.ts";
-import { BRIDGE_PROTOCOL, BRIDGE_PROTOCOL_VERSION, HELLO, HelloAckSchema, HelloSchema } from "../protocol/version.ts";
+import { BRIDGE_PROTOCOL, BRIDGE_PROTOCOL_VERSION, HELLO, HelloAckSchema, HelloSchema, type HelloAck } from "../protocol/version.ts";
 import type { PiApiName, PiApiParams, PiApiResult } from "../shared/pi-api.ts";
 
 export type ProtocolResult<T> = { ok: true; value: T } | { ok: false; error: BridgeError };
@@ -21,14 +21,20 @@ export interface ProtocolClientOptions {
   readonly protocolPath?: (sessionId: string) => string;
 }
 
-interface EventStream {
-  readonly source: EventSource;
-  readonly listeners: Set<{
-    listener: (envelope: BridgeEnvelope) => void;
-    onError?: (source: EventSource) => void;
-  }>;
+type EventListener = (envelope: BridgeEnvelope) => void;
+
+interface StreamListener {
+  readonly listener: EventListener;
+  readonly onError?: (source: EventSource) => void;
 }
 
+interface EventStream {
+  readonly name: string;
+  source: EventSource;
+  readonly listeners: Set<StreamListener>;
+}
+
+const SESSION_EVENTS = "session.events";
 const DIRECTORY_EVENTS = "session.directory.events";
 const DIRECTORY_EVENTS_PATH = "/api/sessions/events";
 
@@ -89,12 +95,14 @@ function asBridgeError(error: unknown): BridgeError {
 
 export class ProtocolClient {
   private sequence = 0;
-  private readonly sessionId: string;
+  private sessionId: string;
   private readonly clientId: string;
   private readonly post: typeof fetch;
   private readonly eventSource: typeof EventSource;
   private readonly protocolPath: (sessionId: string) => string;
   private readonly streams = new Map<string, EventStream>();
+  private readonly bridgedListeners = new Map<string, Set<EventListener>>();
+  private readonly pendingSessionListeners = new Set<StreamListener>();
   private ready: Promise<void> | undefined;
 
   constructor(options: ProtocolClientOptions) {
@@ -105,10 +113,47 @@ export class ProtocolClient {
     this.protocolPath = options.protocolPath ?? PROTOCOL_PATH;
   }
 
-  /** The capability handshake runs once, before any command or query. */
+  /** A failed handshake must never be cached: auth refresh can repair it. */
   private handshake(): Promise<void> {
-    this.ready ??= this.openHandshake();
+    this.ready ??= this.openHandshake().catch((error: unknown) => {
+      this.ready = undefined;
+      throw error;
+    });
     return this.ready;
+  }
+
+  /**
+   * Repoint every session-scoped stream and handshake at a new selection.
+   * Plugin halves share this client, so they follow the browser without
+   * reopening a private stream against a sentinel session id.
+   */
+  setSessionId(sessionId: string): void {
+    if (this.sessionId === sessionId) return;
+    this.sessionId = sessionId;
+    this.ready = undefined;
+    const pending = new Set(this.pendingSessionListeners);
+    this.pendingSessionListeners.clear();
+    const existing = this.streams.get(SESSION_EVENTS);
+    if (existing !== undefined) existing.source.close();
+    const listeners = new Set<StreamListener>([...pending, ...(existing?.listeners ?? [])]);
+    this.streams.delete(SESSION_EVENTS);
+    if (listeners.size === 0) return;
+    if (sessionId === "") {
+      for (const entry of listeners) this.pendingSessionListeners.add(entry);
+      return;
+    }
+    const stream: EventStream = { name: SESSION_EVENTS, source: this.openSource(SESSION_EVENTS), listeners };
+    this.streams.set(SESSION_EVENTS, stream);
+    this.wireSource(stream);
+  }
+
+  /** Session-less streams live for the page; only the session stream moves. */
+  private closeSessionStream(): void {
+    const stream = this.streams.get(SESSION_EVENTS);
+    if (stream === undefined) return;
+    stream.source.close();
+    for (const entry of stream.listeners) this.pendingSessionListeners.add(entry);
+    this.streams.delete(SESSION_EVENTS);
   }
 
   private async openHandshake(): Promise<void> {
@@ -121,13 +166,14 @@ export class ProtocolClient {
     if (!Value.Check(HelloSchema, hello)) {
       throw bridgeError("VALIDATION_FAILED", "the client hello does not match the protocol schema");
     }
-    const outcome = await this.send<{ version: number }>(envelopeFor(
+    // HELLO is the one reply whose value is the raw ack, not an envelope.
+    const outcome = await this.send<HelloAck>(envelopeFor(
       HELLO,
       hello,
       this.sessionId,
       this.clientId,
       0,
-    ));
+    ), undefined, true);
     if (!outcome.ok) throw outcome.error;
     if (outcome.value.version !== BRIDGE_PROTOCOL_VERSION) {
       throw bridgeError("VERSION_MISMATCH", `peer speaks protocol v${outcome.value.version}`);
@@ -137,7 +183,7 @@ export class ProtocolClient {
     }
   }
 
-  private async send<T>(request: BridgeEnvelope, signal?: AbortSignal): Promise<ProtocolResult<T>> {
+  private async send<T>(request: BridgeEnvelope, signal?: AbortSignal, rawAck = false): Promise<ProtocolResult<T>> {
     let response: Response;
     try {
       response = await this.post(this.protocolPath(this.sessionId), {
@@ -160,15 +206,19 @@ export class ProtocolClient {
     if (body.value.error !== undefined) {
       return { ok: false, error: namedError(body.value.error) ?? transportFailure("invalid protocol error") };
     }
-    return { ok: true, value: body.value.payload as T };
+    return { ok: true, value: (rawAck ? body.value : body.value.payload) as T };
   }
 
   /** Send one typed envelope; commands and queries share the same transport. */
   async invoke<T>(name: string, payload: unknown, signal?: AbortSignal): Promise<ProtocolResult<T>> {
-    try {
-      await this.handshake();
-    } catch (error) {
-      return { ok: false, error: asBridgeError(error) };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await this.handshake();
+        break;
+      } catch (error) {
+        const bridgeError = asBridgeError(error);
+        if (attempt === 1 || !bridgeError.retryable) return { ok: false, error: bridgeError };
+      }
     }
     return this.send<T>(envelopeFor(name, payload, this.sessionId, this.clientId, ++this.sequence), signal);
   }
@@ -195,10 +245,26 @@ export class ProtocolClient {
     return this.protocolPath(this.sessionId).replace(/\/protocol$/, "/events");
   }
 
-  private openStream(name: string): EventStream {
-    const source = new this.eventSource(this.eventPath(name));
-    const stream: EventStream = { source, listeners: new Set() };
-    source.onmessage = (event) => {
+  private openSource(name: string): EventSource {
+    return new this.eventSource(this.eventPath(name));
+  }
+
+  /**
+   * Plugin-originated envelopes ride inside the session stream, so one
+   * browser page needs one SSE connection no matter how many names it watches.
+   */
+  private dispatchBridged(envelope: BridgeEnvelope): void {
+    const payload = envelope.payload;
+    if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return;
+    const wrapper = payload as { type?: unknown; envelope?: unknown };
+    if (wrapper.type !== "protocol_envelope") return;
+    const parsed = parseEnvelope(wrapper.envelope);
+    if (!parsed.ok || parsed.envelope.kind !== "event") return;
+    for (const listener of this.bridgedListeners.get(parsed.envelope.name) ?? []) listener(parsed.envelope);
+  }
+
+  private wireSource(stream: EventStream): void {
+    stream.source.onmessage = (event) => {
       let frame: unknown;
       try {
         frame = JSON.parse(event.data);
@@ -206,29 +272,61 @@ export class ProtocolClient {
         return;
       }
       const parsed = parseEnvelope(frame);
-      if (!parsed.ok || parsed.envelope.kind !== "event" || parsed.envelope.name !== name) return;
+      if (!parsed.ok || parsed.envelope.kind !== "event" || parsed.envelope.name !== stream.name) return;
       for (const entry of stream.listeners) entry.listener(parsed.envelope);
+      if (stream.name === SESSION_EVENTS) {
+        this.dispatchBridged(parsed.envelope);
+        const payload = parsed.envelope.payload as { type?: unknown } | null;
+        // A missing or replaced session is terminal for every stream that
+        // belongs to it; EventSource would otherwise reconnect forever.
+        if (payload?.type === "startup_error") this.closeSessionStream();
+      }
     };
-    source.onerror = () => {
-      for (const entry of stream.listeners) entry.onError?.(source);
+    stream.source.onerror = () => {
+      for (const entry of stream.listeners) entry.onError?.(stream.source);
     };
+  }
+
+  private openStream(name: string): EventStream {
+    const stream: EventStream = { name, source: this.openSource(name), listeners: new Set() };
+    this.wireSource(stream);
     return stream;
   }
 
   /** Subscribe to a catalog event; subscribers of one channel share the stream. */
   subscribe(
     name: string,
-    listener: (envelope: BridgeEnvelope) => void,
+    listener: EventListener,
     onError?: (source: EventSource) => void,
   ): () => void {
     const message = lookupMessage(name);
     if (message?.kind !== "event") throw new Error(`${name} is not an event`);
+    if (name !== SESSION_EVENTS && name !== DIRECTORY_EVENTS) {
+      let listeners = this.bridgedListeners.get(name);
+      if (listeners === undefined) {
+        listeners = new Set();
+        this.bridgedListeners.set(name, listeners);
+      }
+      listeners.add(listener);
+      // The session stream is opened on first use, not once per plugin name.
+      const leaveSession = this.subscribe(SESSION_EVENTS, () => undefined);
+      return () => {
+        const current = this.bridgedListeners.get(name);
+        current?.delete(listener);
+        if (current?.size === 0) this.bridgedListeners.delete(name);
+        leaveSession();
+      };
+    }
+    const entry: StreamListener = { listener, onError };
+    if (name === SESSION_EVENTS && this.sessionId === "") {
+      this.pendingSessionListeners.add(entry);
+      return () => this.pendingSessionListeners.delete(entry);
+    }
     let stream = this.streams.get(name);
     if (stream === undefined) {
       stream = this.openStream(name);
       this.streams.set(name, stream);
     }
-    const entry = { listener, onError };
     stream.listeners.add(entry);
     return () => {
       const current = this.streams.get(name);
@@ -244,6 +342,13 @@ export class ProtocolClient {
   snapshot<T>(): Promise<ProtocolResult<T>> {
     return this.query<T>("ui.snapshot");
   }
+}
+
+/** Plugin halves share one client that follows the selected session. */
+export const pluginProtocolClient = new ProtocolClient({ sessionId: "" });
+
+export function setPluginSession(sessionId: string | null): void {
+  pluginProtocolClient.setSessionId(sessionId ?? "");
 }
 
 /** One client per session; components share it instead of opening routes. */
