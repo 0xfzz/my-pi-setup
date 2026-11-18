@@ -200,6 +200,38 @@ The host now always resumes by exact session id (pi finds the project file by
 that id), so the conflicting flag is gone and the stream no longer waits for a
 process that cannot start. Regression: `tests/session-host.test.ts`.
 
+### Cold-start request waterfall (November 2026 HAR)
+
+A second Firefox capture against a Cloudflare-fronted deployment had a 9.3 s
+`onLoad` and ~15.4 s to the last bootstrap request. Its 49 entries carried only
+~740 KB on the wire, so bytes were not the main problem: the median `wait`
+(TTFB) was 366 ms and the p90 was 445 ms. The fixes below remove round trips
+rather than shaving work inside them; the counts are from the capture and the
+current call graph, not a new wall-clock measurement.
+
+| Path | HAR | Now |
+| --- | ---: | ---: |
+| Identical `/api/plugin-manager` reports | 9 | 2 (shell + one discovery scan) |
+| Agent event streams with the same 49 KB replay | 2 | 1 |
+| Boot reads (state, branch, models, commands) | 4 | 1 (`session.boot`) |
+| Host bundle discovery | after `app.js` finishes | preloaded from the shell |
+
+`registerDiscoveredBrowserHalves` used to call `addDefinition` per half, and
+each call triggered a full `scan()` — an O(N²) chain of status reads and
+remounts. Bundles are now prepared in parallel and registered in one batch,
+and the mount wrapper no longer adds a second final scan.
+`ProtocolClient` still allows one client per session, but the session hook
+subscribes through `pluginProtocolClient`, which already follows the selection
+for plugin halves. The shell derives `modulepreload` hints from the host-module
+registry so `runtime.js`, `ui.js`, `typebox-host.js` and their shims start
+downloading while `app.js` is in flight; icon and viewer bundles stay lazy.
+
+Not fixed here: the capture was taken with browser cache disabled, so
+`cf-cache-status: EXPIRED` on static files is partly a harness artifact. The
+deployment still serves assets from fixed filenames through Cloudflare; hashed
+URLs with an immutable cache policy belong in a build/CDN change and need a
+fresh HAR to prove.
+
 ## Browser bundle budgets
 
 The initial page load used to ship three ESM entry bundles that esbuild could
