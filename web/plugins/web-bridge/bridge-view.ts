@@ -4,27 +4,68 @@
  * sanitiser and placement ceilings.
  */
 import type { BridgeEnvelope } from "../../core/protocol/envelope.ts";
-import type { WebView } from "../../core/plugin-contracts/view.ts";
+import { webUiText } from "../../core/plugin-contracts/ui-event-models.ts";
+import {
+  validateView,
+  VIEW_MAX_ROWS,
+  type StatusTone,
+  type WebView,
+} from "../../core/plugin-contracts/view.ts";
 
-const TEXT_FIELDS: Record<string, string> = {
-  "ui.header.changed": "Header",
-  "ui.footer.changed": "Footer",
-  "ui.status.changed": "Status",
-  "ui.title.changed": "Title",
-  "ui.notify": "Notice",
+interface TextSurface {
+  label: string;
+  field: string;
+  tone: StatusTone;
+}
+
+const TEXT_SURFACES: Record<string, TextSurface> = {
+  "ui.header.changed": { label: "Header", field: "text", tone: "accent" },
+  "ui.footer.changed": { label: "Footer", field: "text", tone: "neutral" },
+  "ui.status.changed": { label: "Status", field: "text", tone: "accent" },
+  "ui.title.changed": { label: "Title", field: "text", tone: "accent" },
+  "ui.editor.changed": { label: "Editor", field: "text", tone: "neutral" },
+  "ui.editor-component.changed": { label: "Editor component", field: "component", tone: "neutral" },
+  "ui.autocomplete-provider.changed": { label: "Autocomplete", field: "provider", tone: "neutral" },
+  "ui.notify": { label: "Notice", field: "message", tone: "accent" },
 };
 
+function payloadOf(envelope: BridgeEnvelope): Record<string, unknown> | undefined {
+  return envelope.payload !== null && typeof envelope.payload === "object" && !Array.isArray(envelope.payload)
+    ? envelope.payload as Record<string, unknown>
+    : undefined;
+}
+
+function statusView(prefix: string, tone: StatusTone, text: string): WebView | undefined {
+  const result = validateView({ type: "status", tone, text: `${prefix} ${text}` });
+  return result.ok ? result.view : undefined;
+}
+
+function widgetView(envelope: BridgeEnvelope, payload: Record<string, unknown> | undefined): WebView | undefined {
+  if (!Array.isArray(payload?.lines)) return undefined;
+  const lines = payload.lines
+    .filter((line): line is string => typeof line === "string" && webUiText(line).length > 0)
+    .slice(0, VIEW_MAX_ROWS)
+    .map(webUiText);
+  if (lines.length === 0) return undefined;
+  const key = typeof payload.key === "string" && payload.key !== "" ? payload.key : "widget";
+  const result = validateView({
+    type: "list",
+    title: `Widget · ${envelope.source.id}: ${key}`,
+    items: lines,
+  });
+  return result.ok ? result.view : undefined;
+}
+
 export function bridgedView(envelope: BridgeEnvelope): WebView | undefined {
-  const label = TEXT_FIELDS[envelope.name];
-  if (label === undefined) return undefined;
-  const payload = envelope.payload as Record<string, unknown> | null;
-  const text = payload?.text ?? payload?.message;
-  if (typeof text !== "string" || text.length === 0 || text.length > 20_000) return undefined;
-  return {
-    type: "status",
-    tone: envelope.name === "ui.notify" && payload?.level === "error" ? "danger" : "accent",
-    text: `${label} · ${envelope.source.id}: ${text}`,
-  } as WebView;
+  const payload = payloadOf(envelope);
+  if (envelope.name === "ui.widget.changed") return widgetView(envelope, payload);
+  const surface = TEXT_SURFACES[envelope.name];
+  if (surface === undefined) return undefined;
+  const raw = payload?.[surface.field];
+  const text = typeof raw === "string" ? webUiText(raw) : "";
+  if (text.length === 0) return undefined;
+  const tone = envelope.name === "ui.notify" && payload?.level === "error" ? "danger" : surface.tone;
+  return statusView(`${surface.label} · ${envelope.source.id}:`, tone, text);
 }
 
 export function bridgedSurfaceId(envelope: BridgeEnvelope): string {

@@ -43,34 +43,42 @@ const UI_MESSAGE_NAMES: Record<string, MessageName> = {
   "ui.notify": "ui.notify",
 };
 
-export default function bridgeExtension(pi: ExtensionAPI): void {
+export default function bridgeExtension(pi: ExtensionAPI): () => void {
   const events = (pi as unknown as BridgePublishTarget).events;
+  const unsubscribes: Array<() => void> = [];
+  const listen = (channel: string, handler: (raw: unknown) => void): void => {
+    const off = events?.on?.(channel, handler);
+    if (off !== undefined) unsubscribes.push(off);
+  };
   let sequence = 0;
   const emit = (sourceId: string, name: MessageName, payload: unknown): void => {
     const marked = markedPayload(payload);
     publishBridgeMessage(pi as unknown as BridgePublishTarget, { type: "extension", id: sourceId }, name, marked ?? payload, `${sourceId}:${name}:${++sequence}`);
   };
 
-  events?.on?.(WEB_UI_EVENT, (raw: unknown) => {
+  listen(WEB_UI_EVENT, (raw: unknown) => {
     const event = raw as { sourceKey?: unknown; type?: unknown; payload?: unknown };
     const name = typeof event.type === "string" ? UI_MESSAGE_NAMES[event.type] : undefined;
     if (name === undefined) return;
     emit(typeof event.sourceKey === "string" && event.sourceKey !== "" ? event.sourceKey : BRIDGE_EXTENSION_ID, name, event.payload ?? {});
   });
-  events?.on?.(WEB_PLUGIN_VIEW_EVENT, (raw: unknown) => {
+  listen(WEB_PLUGIN_VIEW_EVENT, (raw: unknown) => {
     const view = raw as { pluginId?: unknown; view?: unknown };
     if (typeof view.pluginId === "string") emit(view.pluginId, "ui.view.changed", view.view ?? {});
   });
-  events?.on?.(WEB_PLUGIN_COMMANDS_EVENT, (raw: unknown) => {
+  listen(WEB_PLUGIN_ACTION_REQUEST_EVENT, (raw: unknown) => {
+    emit(BRIDGE_EXTENSION_ID, "ui.plugin.action-requested", raw ?? {});
+  });
+  listen(WEB_PLUGIN_COMMANDS_EVENT, (raw: unknown) => {
     emit(BRIDGE_EXTENSION_ID, "extension.commands.changed", raw ?? {});
   });
-  events?.on?.(WEB_MODELS_CHANGED_EVENT, () => {
+  listen(WEB_MODELS_CHANGED_EVENT, () => {
     emit(BRIDGE_EXTENSION_ID, "models.changed", {});
   });
-  events?.on?.(WEB_PLUGIN_WEB_COMMAND_EVENT, (raw: unknown) => {
+  listen(WEB_PLUGIN_WEB_COMMAND_EVENT, (raw: unknown) => {
     emit(BRIDGE_EXTENSION_ID, "extension.web-command.dispatch", raw ?? {});
   });
-  events?.on?.(BRIDGE_MESSAGE_EVENT, (raw: unknown) => {
+  listen(BRIDGE_MESSAGE_EVENT, (raw: unknown) => {
     // Opt-in publishers already carry an envelope; re-emit it with this
     // extension's attribution so a consumer can filter one source id.
     const envelope = raw as { source?: { id?: unknown }; name?: unknown; payload?: unknown };
@@ -82,14 +90,18 @@ export default function bridgeExtension(pi: ExtensionAPI): void {
     emit(source, envelope.name as MessageName, payload);
   });
 
-  pi.on("tool_execution_start", (event: unknown) => {
+  unsubscribes.push(pi.on("tool_execution_start", (event: unknown) => {
     emit(BRIDGE_EXTENSION_ID, "tool.execution.changed", { kind: "tool_execution_start", event });
-  });
-  pi.on("tool_execution_update", (event: unknown) => {
+  }));
+  unsubscribes.push(pi.on("tool_execution_update", (event: unknown) => {
     emit(BRIDGE_EXTENSION_ID, "tool.execution.changed", { kind: "tool_execution_update", event });
-  });
-  pi.on("tool_execution_end", (event: unknown) => {
+  }));
+  unsubscribes.push(pi.on("tool_execution_end", (event: unknown) => {
     emit(BRIDGE_EXTENSION_ID, "tool.execution.changed", { kind: "tool_execution_end", event });
-  });
-  void WEB_PLUGIN_ACTION_REQUEST_EVENT;
+  }));
+
+  return () => {
+    for (const off of unsubscribes) off();
+    unsubscribes.length = 0;
+  };
 }
