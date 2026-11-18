@@ -332,11 +332,16 @@ Every non-GET API request to a wrong method gets 405; unknown sessions 404. With
 The web never reimplements pi features. Every web capability crosses one
 versioned seam: `POST /api/agent/:id/protocol` carries a `pi-web-bridge` v1
 envelope (`kind`, `name`, `messageId`, `source`, `payload`) and gets a reply
-envelope or a named `BridgeError`. Commands and queries dispatch to core
-adapters; events stream over the existing SSE routes. The old `pi_api` route
-was a Phase 7 alias and is retired. The catalog and parity matrix are
+envelope or a named `BridgeError`. Session-less directory work (session list,
+search and create) uses `POST /api/protocol` with no `sessionId`; both routes
+share the same handshake, capability and audit rules. Commands and queries
+dispatch to core adapters; sequenced envelopes with a resume cursor stream over
+the existing SSE routes. The old `pi_api` route was a Phase 7 alias and is
+retired. The catalog and parity matrix are
 generated in [bridge-protocol-catalog.md](bridge-protocol-catalog.md) and
-[bridge-protocol-parity.md](bridge-protocol-parity.md).
+[bridge-protocol-parity.md](bridge-protocol-parity.md). A browser half runs only
+after hash-bound operator confirmation; safe mode, protected points and the
+per-contribution breaker are enforced by the browser host in `web/app.tsx`.
 
 The wire vocabulary of the 15 built-in APIs still lives in `web/core/shared/pi-api.ts`
 (names, params, results);

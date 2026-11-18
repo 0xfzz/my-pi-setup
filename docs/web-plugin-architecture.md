@@ -411,15 +411,19 @@ endpoint.
 ## Bridge Protocol (built-ins and extension surfaces)
 
 When the web needs a pi built-in *capability* (not behavior change), it
-sends a versioned envelope through `POST /api/agent/:id/protocol`. Core
-adapters call the facade in `web/core/pi-api/` and pi's own implementation;
-the client never reaches pi directly. `autocomplete.suggestions` and
-`commands.builtin` are queries; `settings.*`, `trust.*`, `auth.*` and
-`mcp.*` are commands or queries in the generated
+sends a versioned envelope through `POST /api/agent/:id/protocol`. Session-less
+directory calls use `POST /api/protocol`; both bindings enforce the same hello,
+capability and audit rules and the host labels the source, so a browser cannot
+claim a core identity. Core adapters call the facade in `web/core/pi-api/` and
+pi's own implementation; the client never reaches pi directly.
+`autocomplete.suggestions` and `commands.builtin` are queries; `settings.*`,
+`trust.*`, `auth.*` and `mcp.*` are commands or queries in the generated
 [catalog](bridge-protocol-catalog.md). Extension surfaces arrive through
 the bridge extension's typed publisher, always with the source extension
 id. Browser halves of trusted plugin projects consume the same protocol
-client; disabling one removes only its contributions.
+client; the browser host checks hash-bound operator grants, safe mode and
+protected points before mounting, restores the built-in on a render failure,
+and disabling one removes only its contributions.
 
 ## The decision test
 
