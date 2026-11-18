@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { startWebServer } from "./main.ts";
+import { parseEnvelope } from "../protocol/envelope.ts";
 import {
   announcePluginsChanged,
   clearSessionsForTests,
@@ -186,6 +187,19 @@ function createFrameReader(reader: ReaderLike) {
   };
 }
 
+function assertDirectoryEnvelope(text: string, payloadType: string): void {
+  const data = text
+    .split("\n\n")
+    .flatMap((block) => block.split("\n"))
+    .filter((line) => line.startsWith("data: "))
+    .map((line) => JSON.parse(line.slice("data: ".length)) as unknown);
+  const frame = data.find((entry) => JSON.stringify(entry).includes(payloadType));
+  const parsed = parseEnvelope(frame);
+  assert.ok(parsed.ok, `directory frame must be an envelope: ${parsed.ok ? "" : parsed.error.message}`);
+  assert.equal(parsed.envelope.name, "session.directory.events");
+  assert.equal((parsed.envelope.payload as { type?: unknown }).type, payloadType);
+}
+
 test("sessions stream sends a snapshot then pushes running transitions", async () => {
   const { core, emit } = directoryCore("dir-stream");
   registerSession(core, "/tmp/project");
@@ -203,6 +217,7 @@ test("sessions stream sends a snapshot then pushes running transitions", async (
     assert.match(snapshot, /"id":"dir-stream"/);
     assert.match(snapshot, /"running":false/);
     assert.match(snapshot, /"bootId":"[^"]+"/, "the snapshot carries this server's boot id");
+    assertDirectoryEnvelope(snapshot, "sessions_snapshot");
 
     // A simulated turn start is pushed as a transition, not discovered by a poll.
     emit({ type: "agent_start" });
@@ -210,6 +225,7 @@ test("sessions stream sends a snapshot then pushes running transitions", async (
       (text) => text.includes("\"type\":\"session_running\"") && text.includes("\"running\":true"),
     );
     assert.match(running, /"id":"dir-stream"/);
+    assertDirectoryEnvelope(running, "session_running");
 
     await reader.cancel();
   } finally {

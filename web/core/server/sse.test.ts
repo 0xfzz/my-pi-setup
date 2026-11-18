@@ -4,7 +4,13 @@ import { get } from "node:http";
 import type { ServerResponse } from "node:http";
 import type { SsePressureLimits } from "../../../lib/sse-pressure.ts";
 import { createWebApp } from "./app.ts";
-import { closeAllEventChannels, openEventChannel, SSE_ROUTE_OPTIONS, type EventChannel } from "../http/sse.ts";
+import {
+  closeAllEventChannels,
+  openEventChannel,
+  setEventChannelFrame,
+  SSE_ROUTE_OPTIONS,
+  type EventChannel,
+} from "../http/sse.ts";
 
 type ChannelFixture = { channel: EventChannel; raw: ServerResponse; response: Response };
 
@@ -165,6 +171,23 @@ test("a restart drain sends a retry hint on every stream and ends it", { timeout
     assert.match(frame, /"type":"code_changes"/);
     assert.match(frame, /There are code changes/);
     assert.match(frame, /\n\n$/);
+  });
+});
+
+test("an orderly restart sends the drain hint through a registered protocol frame", { timeout: 5_000 }, async () => {
+  await withChannel(async ({ channel, response }) => {
+    setEventChannelFrame(channel, (payload) => ({ envelope: payload }));
+    const text = response.text();
+    closeAllEventChannels("There are code changes — reloading…");
+    const frame = await text;
+    assert.match(frame, /retry: 1000/);
+    const data = frame
+      .split("\n")
+      .find((line) => line.startsWith("data: "))
+      ?.slice("data: ".length) ?? "";
+    assert.deepEqual(JSON.parse(data), {
+      envelope: { type: "code_changes", message: "There are code changes — reloading…" },
+    });
   });
 });
 

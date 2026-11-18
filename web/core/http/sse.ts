@@ -16,7 +16,7 @@ export const SSE_ROUTE_OPTIONS = {
   },
 };
 
-interface SendOptions {
+export interface SendOptions {
   droppable?: boolean;
   retry?: number;
   /** Producer prelude/coalescing buffers not yet handed to the formatter. */
@@ -37,13 +37,27 @@ export interface EventChannel {
 /** Live channels, so an orderly restart can give every stream a resume hint. */
 const channels = new Set<EventChannel>();
 
+/** A protocol binding wraps every frame it writes in its own envelope. */
+export type EventChannelFrame = (payload: unknown) => unknown;
+const channelFrames = new WeakMap<EventChannel, EventChannelFrame>();
+
+export function setEventChannelFrame(channel: EventChannel, frame: EventChannelFrame): void {
+  channelFrames.set(channel, frame);
+}
+
+/** Protocol channels send envelopes; unrelated SSE channels keep their wire. */
+export function sendEventChannelFrame(channel: EventChannel, payload: unknown, options?: SendOptions): void {
+  const frame = channelFrames.get(channel);
+  channel.send(frame === undefined ? payload : frame(payload), options);
+}
+
 /**
  * Send a final event to every open stream and end it. The retry field tells
  * EventSource to come back quickly once the replacement process listens.
  */
 export function closeAllEventChannels(message: string): void {
   for (const channel of Array.from(channels)) {
-    channel.send({ type: "code_changes", message }, { retry: 1_000 });
+    sendEventChannelFrame(channel, { type: "code_changes", message }, { retry: 1_000 });
     channel.close();
   }
 }

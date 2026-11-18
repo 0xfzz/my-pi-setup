@@ -5,7 +5,7 @@
 // a client that stops reading (drop rebuildable deltas above 512 KB, end the
 // response above 16 MB so the client reconnects and re-snapshots).
 
-import type { EventChannel } from "../http/sse.ts";
+import { setEventChannelFrame, type EventChannel } from "../http/sse.ts";
 import { getWebLogger } from "../http/logging.ts";
 import { BoundedSseEvents, MAIN_SSE_LIMITS } from "../../../lib/sse-pressure.ts";
 import {
@@ -33,7 +33,13 @@ import { BRIDGE_PROTOCOL, BRIDGE_PROTOCOL_VERSION } from "../protocol/version.ts
 
 export type ProtocolEventName = "session.events" | "session.directory.events";
 
-/** One sequenced envelope per streamed event; the legacy frame stays an alias. */
+/** The wire drops undefined fields; the envelope must carry that same JSON. */
+function jsonPayload(payload: unknown): unknown {
+  const encoded = JSON.stringify(payload);
+  return encoded === undefined ? null : JSON.parse(encoded) as unknown;
+}
+
+/** One sequenced envelope per streamed event. */
 export function protocolEvent(
   name: ProtocolEventName,
   sessionId: string | undefined,
@@ -51,8 +57,26 @@ export function protocolEvent(
     timestamp: 0,
     sequence,
     cursor: String(sequence),
-    payload,
+    payload: jsonPayload(payload),
   };
+}
+
+/**
+ * One stream owns one catalog channel. Binding every frame through this
+ * wrapper keeps the orderly-restart hint on the same envelope sequence.
+ */
+function protocolSender(
+  channel: EventChannel,
+  name: ProtocolEventName,
+  sessionId?: string,
+): (payload: unknown) => BridgeEnvelope {
+  let sequence = 0;
+  const frame = (payload: unknown): BridgeEnvelope => {
+    sequence += 1;
+    return protocolEvent(name, sessionId, payload, sequence);
+  };
+  setEventChannelFrame(channel, frame);
+  return frame;
 }
 
 const TOOL_UPDATE_COALESCE_MS = 150;
@@ -129,11 +153,7 @@ export function attachAgentEventStream(
   let releaseSessionSync: (() => void) | null = null;
   const pendingToolUpdates = new BoundedSseEvents();
   const startupEvents = new BoundedSseEvents();
-  let protocolSequence = 0;
-  const sendProtocolEvent = (payload: unknown): void => {
-    protocolSequence += 1;
-    send(protocolEvent("session.events", sessionId, payload, protocolSequence));
-  };
+  const protocolFrame = protocolSender(channel, "session.events", sessionId);
 
   const cleanup = (): void => {
     if (closed) return;
@@ -166,12 +186,17 @@ export function attachAgentEventStream(
     channel.sendEncoded(encoded, { ...options, reservedBytes: reservedBytes() });
     if (channel.closed) cleanup();
   };
+  const sendFrame = (payload: unknown, options?: { droppable?: boolean }): void => {
+    send(protocolFrame(payload), options);
+  };
+  const sendEncodedFrame = (encoded: string, options?: { droppable?: boolean }): void => {
+    sendEncoded(JSON.stringify(protocolFrame(JSON.parse(encoded) as unknown)), options);
+  };
 
   const flushToolUpdates = (): void => {
     toolUpdateTimer = null;
     for (const { encoded } of pendingToolUpdates.consumeEncoded()) {
-      sendEncoded(encoded, { droppable: true });
-      sendProtocolEvent(JSON.parse(encoded) as unknown);
+      sendEncodedFrame(encoded, { droppable: true });
     }
   };
 
@@ -194,8 +219,7 @@ export function attachAgentEventStream(
     } else if (clientEvent.type === "agent_end") {
       pendingToolUpdates.clear();
     }
-    send(clientEvent, { droppable: isDroppableEvent(clientEvent) });
-    sendProtocolEvent(clientEvent);
+    sendFrame(clientEvent, { droppable: isDroppableEvent(clientEvent) });
   };
 
   const forwardEvent = (event: unknown): void => {
@@ -209,7 +233,7 @@ export function attachAgentEventStream(
       const session = await sessionPromise;
       if (closed) return;
       if (session === null) {
-        send({ type: "startup_error", errorMessage: "Session not found" });
+        sendFrame({ type: "startup_error", errorMessage: "Session not found" });
         cleanup();
         return;
       }
@@ -256,7 +280,7 @@ export function attachAgentEventStream(
       // frozen on the replaced copy.
       unsubscribeReplaced = onSessionReplaced(sessionId, cleanup);
 
-      send({ type: "connected", sessionId, isStreaming: session.isStreaming() });
+      sendFrame({ type: "connected", sessionId, isStreaming: session.isStreaming() });
       if (closed) return;
       announced = true;
       // Mid-turn (re)connect: this stream never saw `message_start`, so
@@ -268,7 +292,7 @@ export function attachAgentEventStream(
       // they extend.
       const snapshot = session.getStreamSnapshot?.();
       if (snapshot?.started === true) {
-        send({
+        sendFrame({
           type: "message_start",
           message: snapshot.message ?? { role: "assistant", content: [] },
         });
@@ -302,7 +326,7 @@ export function attachAgentEventStream(
         if (signature === lastPluginStateSignature) return;
         lastPluginStateSignature = signature;
         const frame: PluginStateFrame = { type: "plugin_state", revision: snapshot.revision, ...content };
-        sendEncoded(JSON.stringify(frame));
+        sendEncodedFrame(JSON.stringify(frame));
       };
       sendPluginState();
       if (closed) return;
@@ -328,13 +352,13 @@ export function attachAgentEventStream(
           const json = JSON.stringify(frame);
           if (json === lastSessionStateJson) return;
           lastSessionStateJson = json;
-          sendEncoded(json, { droppable: true });
+          sendEncodedFrame(json, { droppable: true });
         },
       });
     } catch (error) {
       if (closed) return;
       getWebLogger().error({ err: error, sessionId }, "agent event stream startup failed");
-      send({
+      sendFrame({
         type: "startup_error",
         errorMessage: `Failed to start agent: ${error instanceof Error ? error.message : String(error)}`,
       });
@@ -347,7 +371,7 @@ export function attachAgentEventStream(
   void publishSession();
   if (closed) return;
   heartbeat = setInterval(() => {
-    send({ type: "heartbeat" }, { droppable: true });
+    sendFrame({ type: "heartbeat" }, { droppable: true });
   }, AGENT_EVENT_HEARTBEAT_MS);
 }
 
@@ -367,7 +391,7 @@ export function attachSessionsEventStream(channel: EventChannel): void {
   let heartbeat: ReturnType<typeof setInterval> | null = null;
   let unsubscribe: (() => void) | null = null;
   const buffered = new BoundedSseEvents();
-  let protocolSequence = 0;
+  const protocolFrame = protocolSender(channel, "session.directory.events");
 
   const cleanup = (): void => {
     if (closed) return;
@@ -384,9 +408,8 @@ export function attachSessionsEventStream(channel: EventChannel): void {
     channel.send(data, { ...options, reservedBytes: buffered.bytes });
     if (channel.closed) cleanup();
   };
-  const sendProtocolEvent = (payload: unknown): void => {
-    protocolSequence += 1;
-    send(protocolEvent("session.directory.events", undefined, payload, protocolSequence));
+  const sendFrame = (payload: unknown, options?: { droppable?: boolean }): void => {
+    send(protocolFrame(payload), options);
   };
 
   // Subscribe-before-snapshot: transitions that land while the (async) disk
@@ -400,8 +423,7 @@ export function attachSessionsEventStream(channel: EventChannel): void {
       if (!buffered.put(eventSequence++, event, available)) cleanup();
       return;
     }
-    send(event);
-    sendProtocolEvent(event);
+    sendFrame(event);
   };
   unsubscribe = subscribeSessionDirectory(forward);
 
@@ -409,30 +431,26 @@ export function attachSessionsEventStream(channel: EventChannel): void {
     .then((sessions) => {
       if (closed) return;
       const snapshot = { type: "sessions_snapshot", bootId: getServerBootId(), buildId: servedClientBuild()?.buildId ?? null, sessions };
-      send(snapshot);
-      sendProtocolEvent(snapshot);
+      sendFrame(snapshot);
       announced = true;
       for (const event of buffered.consume()) {
-        send(event);
-        sendProtocolEvent(event);
+        sendFrame(event);
       }
     })
     .catch((error: unknown) => {
       getWebLogger().warn({ err: error }, "session directory snapshot failed");
       if (closed) return;
       const snapshot = { type: "sessions_snapshot", bootId: getServerBootId(), buildId: servedClientBuild()?.buildId ?? null, sessions: [] };
-      send(snapshot);
-      sendProtocolEvent(snapshot);
+      sendFrame(snapshot);
       announced = true;
       for (const event of buffered.consume()) {
-        send(event);
-        sendProtocolEvent(event);
+        sendFrame(event);
       }
     });
 
   channel.onClose(cleanup);
   if (closed) return;
   heartbeat = setInterval(() => {
-    send({ type: "heartbeat" }, { droppable: true });
+    sendFrame({ type: "heartbeat" }, { droppable: true });
   }, AGENT_EVENT_HEARTBEAT_MS);
 }

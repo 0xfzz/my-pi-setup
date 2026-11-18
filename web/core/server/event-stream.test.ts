@@ -6,6 +6,7 @@ import { createStreamTracker } from "./stream-tracker.ts";
 import { attachSessionPlugins, type MinimalEventBus } from "./plugin-sessions.ts";
 import { clearWebPluginStateForTests } from "./plugin-fixtures.ts";
 import { WEB_PLUGIN_VIEW_EVENT } from "../plugin-contracts/view.ts";
+import { parseEnvelope } from "../protocol/envelope.ts";
 
 const state: SessionStateLite = {
   sessionId: "sse-live",
@@ -86,6 +87,34 @@ function createFrameReader(reader: ReaderLike) {
   };
 }
 
+function sseDataFrames(text: string): unknown[] {
+  return text
+    .split("\n\n")
+    .flatMap((block) => block.split("\n"))
+    .filter((line) => line.startsWith("data: "))
+    .map((line) => JSON.parse(line.slice("data: ".length)) as unknown);
+}
+
+function assertSessionEnvelope(frame: unknown, payloadType: string): void {
+  const parsed = parseEnvelope(frame);
+  assert.ok(parsed.ok, `frame must be a protocol envelope: ${JSON.stringify(frame).slice(0, 300)}`);
+  assert.equal(parsed.envelope.name, "session.events");
+  assert.equal((parsed.envelope.payload as { type?: unknown }).type, payloadType);
+}
+
+test("every agent stream frame is a protocol envelope, including startup errors", async () => {
+  const handle = await startWebServer({ port: 0, host: "127.0.0.1" });
+  try {
+    const res = await fetch(`http://127.0.0.1:${handle.port}/api/agent/definitely-not/events`);
+    assert.equal(res.status, 200);
+    const frames = sseDataFrames(await res.text());
+    assert.ok(frames.length > 0, "the stream must explain why it could not start");
+    for (const frame of frames) assertSessionEnvelope(frame, "startup_error");
+  } finally {
+    await handle.close();
+  }
+});
+
 test("events stream sends connected, forwards projected events, closes on shutdown", async () => {
   const { core, emit } = sseLiveCore();
   registerSession(core, "/tmp/project");
@@ -101,6 +130,7 @@ test("events stream sends connected, forwards projected events, closes on shutdo
     const connected = await readUntil((text) => text.includes("\"type\":\"connected\""));
     assert.match(connected, /"sessionId":"sse-live"/);
     assert.match(connected, /"isStreaming":false/);
+    assertSessionEnvelope(sseDataFrames(connected)[0], "connected");
 
     // A raw session event flows through the wire projection to the client.
     emit({
@@ -154,11 +184,16 @@ test("a stream attaching mid-turn replays the in-flight partial after connected"
 
     const connected = await readUntil((text) => text.includes("\"type\":\"connected\""));
     assert.match(connected, /"isStreaming":true/);
+    assertSessionEnvelope(sseDataFrames(connected)[0], "connected");
 
     // The replay: a synthetic message_start carrying the cumulative
     // partial, BEFORE any live delta — the client snapshots it and the
     // deltas that follow append instead of dropping.
     const replayed = await readUntil((text) => text.includes("half a reply"));
+    assertSessionEnvelope(
+      sseDataFrames(replayed).find((frame) => JSON.stringify(frame).includes("half a reply")),
+      "message_start",
+    );
     assert.match(replayed, /"type":"message_start"/);
     assert.match(replayed, /"role":"assistant"/);
     const replayIndex = replayed.indexOf("half a reply");
@@ -186,6 +221,7 @@ test("events stream reports unknown sessions with startup_error and ends", async
     const readUntil = createFrameReader(reader);
     const text = await readUntil((chunk) => chunk.includes("startup_error"));
     assert.match(text, /Session not found/);
+    assertSessionEnvelope(sseDataFrames(text)[0], "startup_error");
     const finished = await reader.read();
     assert.equal(finished.done, true);
   } finally {
@@ -250,9 +286,14 @@ test("events stream carries plugin_state frames for the session's views", async 
     const reader = res.body.getReader();
     const readUntil = createFrameReader(reader);
 
-    await readUntil((text) => text.includes("\"type\":\"connected\""));
+    const connected = await readUntil((text) => text.includes("\"type\":\"connected\""));
+    assertSessionEnvelope(sseDataFrames(connected)[0], "connected");
     // The initial plugin_state snapshot (empty views) rides right behind it.
-    await readUntil((text) => text.includes("\"type\":\"plugin_state\""));
+    const initial = await readUntil((text) => text.includes("\"type\":\"plugin_state\""));
+    assertSessionEnvelope(
+      sseDataFrames(initial).find((frame) => JSON.stringify(frame).includes("plugin_state")),
+      "plugin_state",
+    );
 
     // A view published through the session bus reaches the stream without a reload.
     bus.emit?.(WEB_PLUGIN_VIEW_EVENT, {

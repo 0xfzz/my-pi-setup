@@ -6,6 +6,7 @@ import { attachBridge, getBridge } from "./bridge.ts";
 import { clearSessionsForTests, getSession } from "./sessions.ts";
 import { clearPluginSessionState, registerSessionBusForTests } from "./plugin-sessions.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT } from "../plugin-contracts/ui-event-models.ts";
+import { parseEnvelope } from "../protocol/envelope.ts";
 
 // A producer port, not a fake HTTP response. Socket/framing tests live in sse.test.ts.
 function channelFixture() {
@@ -27,6 +28,13 @@ function channelFixture() {
     },
   };
   return { channel, frames };
+}
+
+function payloadOf(frame: unknown): Record<string, unknown> {
+  const parsed = parseEnvelope(frame);
+  assert.ok(parsed.ok, `frame must be a protocol envelope: ${parsed.ok ? "" : parsed.error.message}`);
+  assert.equal(parsed.envelope.name, "session.events");
+  return parsed.envelope.payload as Record<string, unknown>;
 }
 
 function sessionFixture() {
@@ -57,18 +65,12 @@ test("tool progress keeps only the latest update per call for 150 ms and a termi
   emit({ type: "tool_execution_update", toolCallId: "a", partialResult: "latest" });
   emit({ type: "tool_execution_update", toolCallId: "b", partialResult: "obsolete" });
   emit({ type: "tool_execution_end", toolCallId: "b" });
-  const isProtocolFrame = (frame: unknown): boolean =>
-    typeof frame === "object" && frame !== null && "protocol" in frame;
-  const legacyFrames = (): unknown[] => frames.filter((frame) => !isProtocolFrame(frame));
-  const protocolFrames = (): unknown[] => frames.filter(isProtocolFrame);
-
   t.mock.timers.tick(149);
-  assert.equal(legacyFrames().length, 1);
-  assert.equal(protocolFrames().length, 1);
+  assert.equal(frames.length, 1);
+  assert.deepEqual(payloadOf(frames[0]), { type: "tool_execution_end", toolCallId: "b" });
   t.mock.timers.tick(1);
-  assert.deepEqual(legacyFrames()[1], { type: "tool_execution_update", toolCallId: "a", partialResult: "latest" });
-  assert.equal(legacyFrames().length, 2);
-  assert.equal(protocolFrames().length, 2);
+  assert.equal(frames.length, 2);
+  assert.deepEqual(payloadOf(frames[1]), { type: "tool_execution_update", toolCallId: "a", partialResult: "latest" });
   channel.close();
 });
 
@@ -82,7 +84,7 @@ test("agent heartbeat remains JSON at 30 seconds and cleanup stops timers/unsubs
   t.mock.timers.tick(29_999);
   assert.deepEqual(frames, []);
   t.mock.timers.tick(1);
-  assert.deepEqual(frames, [{ type: "heartbeat" }]);
+  assert.deepEqual(frames.map(payloadOf), [{ type: "heartbeat" }]);
   channel.close();
   channel.close();
   t.mock.timers.tick(60_000);
@@ -140,7 +142,7 @@ test("synchronous subscribe events follow connected instead of preceding their i
   };
   attachAgentEventStream(channel, { sessionId: "policy", sessionPromise: Promise.resolve(session) });
   await Promise.resolve();
-  assert.deepEqual(frames[0], { type: "connected", sessionId: "policy", isStreaming: false });
+  assert.deepEqual(payloadOf(frames[0]), { type: "connected", sessionId: "policy", isStreaming: false });
   assert.match(JSON.stringify(frames[1]), /prelude/);
   channel.close();
 });
