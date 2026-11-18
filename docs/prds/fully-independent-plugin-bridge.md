@@ -2,11 +2,11 @@
 
 > Part of [pi-workflow-extensions](../../README.md). Plan for making plugin projects externally installable, protocol-only consumers with optional extension bridges.
 >
-> **Execution disclaimer.** This is a **proposed implementation plan**, not an approved source of truth. The source of truth for the already-shipped bridge is [PRD: Pi Web Bridge Protocol](./pi-web-bridge-protocol.md); the completed work is recorded in [its implementation plan](./pi-web-bridge-protocol-implementation-plan.md). This document defines the next increment. If execution reveals a conflict, update this document before code. No phase with an open decision gate in §8 may begin.
+> **Execution disclaimer.** The source of truth for the already-shipped bridge is [PRD: Pi Web Bridge Protocol](./pi-web-bridge-protocol.md); the completed work is recorded in [its implementation plan](./pi-web-bridge-protocol-implementation-plan.md). This document governs the next increment. All decision gates in §8 are resolved; if execution reveals a conflict, update this document before code.
 
 | Field | Value |
 | --- | --- |
-| **Status** | Proposed — not implemented |
+| **Status** | In progress — Phase 0 decisions resolved |
 | **Owner** | Faiz |
 | **Builds on** | [bridge protocol PRD](./pi-web-bridge-protocol.md), [web plugin architecture](../web-plugin-architecture.md), [pi-web](../pi-web.md), [plugin platform PRD](./pi-web-plugin-platform.md) |
 | **Gate** | `npm run tidy` green at every phase; browser-runtime e2e green when browser loading changes |
@@ -344,9 +344,9 @@ Each phase is committed separately. Rollback is `git revert <phase-commit>`; dyn
 
 ## 8. Decision gates
 
-These are open until the owner resolves them. The recommended answer is the working default but is not binding until recorded here.
+Resolved 2026-11-18. The recommendation in each row is now the binding decision.
 
-| ID | Question | Recommendation |
+| ID | Question | Decision |
 | --- | --- | --- |
 | D1 | Where does the standalone SDK live and what is its package name? | New top-level `packages/pi-web-bridge`, published as `@pi/web-bridge`; `web/core/protocol/` re-exports it |
 | D2 | Should plugin-specific messages be first-class catalog extensions? | Yes: namespaced `<plugin-id>.*` messages with plugin-owned schemas |
