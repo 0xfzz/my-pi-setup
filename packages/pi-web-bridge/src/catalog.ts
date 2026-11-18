@@ -101,8 +101,12 @@ export type MessageName = (typeof MESSAGE_CATALOG)[number]["name"];
 
 export const MESSAGE_NAMES: readonly MessageName[] = MESSAGE_CATALOG.map((message) => message.name);
 
+const MESSAGES_BY_NAME: ReadonlyMap<string, MessageDefinition> = new Map(
+  MESSAGE_CATALOG.map((message) => [message.name, message]),
+);
+
 export function lookupMessage(name: string): MessageDefinition | undefined {
-  return MESSAGE_CATALOG.find((message) => message.name === name);
+  return MESSAGES_BY_NAME.get(name);
 }
 
 export function legacyWires(): readonly string[] {

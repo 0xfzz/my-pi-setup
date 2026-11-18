@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { Value } from "typebox/value";
 
 import { MESSAGE_NAMES, protocolInvoke } from "./catalog.ts";
-import { ENVELOPE_MAX_BYTES, parseEnvelope, type BridgeEnvelope } from "./envelope.ts";
+import { BridgeEnvelopeSchema, ENVELOPE_MAX_BYTES, parseEnvelope, type BridgeEnvelope } from "./envelope.ts";
 import { BRIDGE_PROTOCOL, BRIDGE_PROTOCOL_VERSION, HELLO, versionMismatch } from "./version.ts";
 
 function helloEnvelope(overrides: Partial<BridgeEnvelope> = {}): BridgeEnvelope {
@@ -49,6 +50,40 @@ test("oversized envelopes are refused with a named error", () => {
   const result = parseEnvelope(helloEnvelope({ payload: { text: "x".repeat(ENVELOPE_MAX_BYTES) } }));
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.error.code, "VALIDATION_FAILED");
+});
+
+test("the fast envelope shape accepts exactly what the published schema accepts", () => {
+  const valid = helloEnvelope({ sessionId: "s", sequence: 1, cursor: "c", error: { code: "INTERNAL", message: "boom", retryable: false, details: { k: "v" } } });
+  const variants: unknown[] = [
+    valid,
+    ...["protocol", "version", "kind", "name", "messageId", "source", "timestamp", "payload"].map((key) => {
+      const copy = { ...valid } as Record<string, unknown>;
+      delete copy[key];
+      return copy;
+    }),
+    { ...valid, extra: 1 },
+    { ...valid, version: 1.5 },
+    { ...valid, kind: "bogus" },
+    { ...valid, name: "custom.message" },
+    { ...valid, messageId: "" },
+    { ...valid, source: { type: "browser", id: "", extra: 1 } },
+    { ...valid, target: { type: "host" } },
+    { ...valid, timestamp: -1 },
+    { ...valid, sequence: 0 },
+    { ...valid, cursor: 7 },
+    { ...valid, error: { code: "NOPE", message: "x", retryable: false } },
+    { ...valid, error: { code: "INTERNAL", message: "x", retryable: "false" } },
+    { ...valid, error: { code: "INTERNAL", message: "x", retryable: false, details: { k: {} } } },
+  ];
+  for (const value of variants) {
+    assert.equal(
+      parseEnvelope(value).ok,
+      Value.Check(BridgeEnvelopeSchema, value),
+      `shape mismatch for ${JSON.stringify(value).slice(0, 120)}`,
+    );
+  }
+  // Finite JSON data excludes undefined before schema checking.
+  assert.equal(parseEnvelope({ ...valid, payload: undefined }).ok, false);
 });
 
 test("a mismatch names both versions and is not retryable", () => {

@@ -74,7 +74,8 @@
     "test:web": "npm --prefix web run check && npm --prefix web test",
     "plugin:scaffold": "node --experimental-strip-types --no-warnings scripts/scaffold-web-plugin.mjs",
     "plugin:check": "node --experimental-strip-types --no-warnings scripts/check-web-plugin.mjs",
-    "bench:web": "npm --prefix web run bench"
+    "bench:web": "npm --prefix web run bench",
+    "bench:bridge": "npm --prefix web run bench:bridge"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "~1.4.0",

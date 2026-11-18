@@ -3,9 +3,9 @@
  * framing, rate limits and heartbeats belong to bindings, never here.
  */
 import { Type, type Static } from "typebox";
-import { Value } from "typebox/value";
 
 import { webUiText } from "./text.ts";
+import { isEnvelopeShape } from "./envelope-shape.ts";
 import { MESSAGE_NAMES } from "./catalog.ts";
 import { bridgeError, BridgeErrorSchema, type BridgeError } from "./errors.ts";
 import { BRIDGE_PROTOCOL } from "./version.ts";
@@ -50,6 +50,38 @@ export type EnvelopeValidation = { ok: true; envelope: BridgeEnvelope } | { ok: 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const isPlainRecord = (value: unknown): value is Record<string, unknown> => {
+  if (!isRecord(value)) return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
+
+/** Copy only the branches that actually changed; clean JSON stays shared. */
+function inertArray(value: unknown[], depth: number): unknown[] {
+  let copy: unknown[] | undefined;
+  for (let index = 0; index < value.length; index += 1) {
+    const entry = value[index];
+    const inert = inertJson(entry, depth + 1);
+    if (inert === entry || copy !== undefined) continue;
+    copy = value.slice();
+  }
+  if (copy === undefined) return value;
+  for (let index = 0; index < value.length; index += 1) copy[index] = inertJson(value[index], depth + 1);
+  return copy;
+}
+
+function inertRecord(value: Record<string, unknown>, depth: number, plain: boolean): Record<string, unknown> {
+  let copy: Record<string, unknown> | undefined;
+  for (const [key, entry] of Object.entries(value)) {
+    if (UNSAFE_KEYS.has(key)) throw new Error("unsafe object key");
+    const inert = inertJson(entry, depth + 1);
+    if (inert !== entry && copy === undefined) copy = { ...value };
+    if (copy !== undefined) copy[key] = inert;
+  }
+  if (copy !== undefined) return copy;
+  return plain ? value : { ...value };
+}
+
 /** Data stays data: terminal controls are stripped and hostile keys are refused. */
 function inertJson(value: unknown, depth: number): unknown {
   if (depth > ENVELOPE_MAX_DEPTH) throw new Error("envelope nesting exceeds 8");
@@ -59,15 +91,8 @@ function inertJson(value: unknown, depth: number): unknown {
     if (!Number.isFinite(value)) throw new Error("envelope contains a non-finite number");
     return value;
   }
-  if (Array.isArray(value)) return value.map((entry) => inertJson(entry, depth + 1));
-  if (isRecord(value)) {
-    const out: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value)) {
-      if (UNSAFE_KEYS.has(key)) throw new Error("unsafe object key");
-      out[key] = inertJson(entry, depth + 1);
-    }
-    return out;
-  }
+  if (Array.isArray(value)) return inertArray(value, depth);
+  if (isRecord(value)) return inertRecord(value, depth, isPlainRecord(value));
   throw new Error("envelope must contain finite JSON data");
 }
 
@@ -75,6 +100,8 @@ function inertJson(value: unknown, depth: number): unknown {
 export function inertJsonValue(value: unknown): unknown {
   return inertJson(value, 0);
 }
+
+const TEXT_ENCODER = new TextEncoder();
 
 function validationError(message: string): EnvelopeValidation {
   return { ok: false, error: bridgeError("VALIDATION_FAILED", message) };
@@ -84,13 +111,10 @@ function validationError(message: string): EnvelopeValidation {
 export function parseEnvelope(input: unknown, allowedNames: readonly string[] = []): EnvelopeValidation {
   try {
     const inert = inertJson(input, 0);
-    if (new TextEncoder().encode(JSON.stringify(inert)).length > ENVELOPE_MAX_BYTES) {
+    if (TEXT_ENCODER.encode(JSON.stringify(inert)).length > ENVELOPE_MAX_BYTES) {
       return validationError(`envelope exceeds ${ENVELOPE_MAX_BYTES} bytes`);
     }
-    const schema = allowedNames.length === 0
-      ? BridgeEnvelopeSchema
-      : makeEnvelopeSchema([...MESSAGE_NAMES, ...allowedNames]);
-    if (!Value.Check(schema, inert)) {
+    if (!isEnvelopeShape(inert, allowedNames)) {
       return validationError("envelope does not match the protocol schema");
     }
     return { ok: true, envelope: inert };
