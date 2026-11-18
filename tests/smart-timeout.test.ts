@@ -30,11 +30,14 @@ test("configuration rejects invalid, unknown and inconsistent limits", () => {
 });
 
 test("normal success and nonzero exit retain built-in behavior", async () => {
-  const ok = await run("printf hello");
+  // A whole-suite run can starve process startup; this test pins built-in
+  // pass/fail behavior, not the default 150 ms idle budget.
+  const timing = { idleSeconds: 0.5, defaultSeconds: 3, maxSeconds: 5 };
+  const ok = await run("printf hello", undefined, undefined, timing);
   assert.equal(ok.text, "hello");
   assert.equal(ok.report, undefined);
   assert.equal(ok.structured.exit_code, 0);
-  const fail = await run("printf failure; exit 3");
+  const fail = await run("printf failure; exit 3", undefined, undefined, timing);
   assert.equal(fail.result.isError, true);
   assert.equal(fail.structured.exit_code, 3);
   assert.match(fail.text, /failure/);
