@@ -90,6 +90,15 @@ test("the shell preloads the host bundles needed before app.js runs", () => {
   }
 });
 
+test("browser-half discovery scans once without a redundant final pass", () => {
+  const wrapper = source("../web/plugins/browser-halves.ts");
+  assert.doesNotMatch(wrapper, /\.finally\(/);
+  assert.doesNotMatch(wrapper, /runtime\.scan\(\)/);
+
+  const discovery = source("../web/core/client/plugin-system/discovered-browser-halves.ts");
+  assert.match(discovery, /registerBatch\(addDefinitions, \[\], \[\]/);
+});
+
 test("host modules and budgets are consumed by the build, not declared there", () => {
   for (const path of [
     "../web/build.mjs",

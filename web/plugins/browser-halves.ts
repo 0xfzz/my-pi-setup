@@ -27,20 +27,15 @@ export function mountPluginBrowserHalves(el: HTMLElement, ctx: Omit<WebPluginCon
   globalThis.window.piBrowserRuntime = runtime;
   globalThis.window.piBrowserRegisterHalf = (info) => registerBrowserHalfFromUrl(runtime, { ...info, sourcePath: info.url });
 
-  let stopped = false;
   void registerDiscoveredBrowserHalves(runtime)
     .then((report) => {
       for (const error of report.errors) ctx.logger.warn(`discovered browser half was skipped: ${error}`);
     })
     .catch((error: unknown) => {
       ctx.logger.warn(`browser-half discovery failed: ${String(error)}`);
-    })
-    .finally(() => {
-      if (!stopped) void runtime.scan();
     });
 
   return () => {
-    stopped = true;
     runtime.stop();
     delete globalThis.window.piBrowserRuntime;
     delete globalThis.window.piBrowserRegisterHalf;

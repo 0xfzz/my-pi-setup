@@ -82,12 +82,17 @@ test("a batch registration failure leaves no half reported as registered", async
   assert.deepEqual(report.errors, ["registration failed: server down"]);
 });
 
-test("a metadata failure is reported without throwing or registering anything", async () => {
+test("a metadata failure still scans the host's static halves", async () => {
+  const batches: Array<readonly string[]> = [];
   const fetchHalves = async () => ({ ok: false as const, error: new Error("offline") });
-  const report = await registerDiscoveredBrowserHalves({} as BrowserRuntime, { fetchHalves });
+  const report = await registerDiscoveredBrowserHalves({} as BrowserRuntime, {
+    fetchHalves,
+    addDefinitions: async (definitions) => { batches.push(definitions.map((item) => item.id)); },
+  });
   assert.deepEqual(report, {
     registered: [],
     skipped: [],
     errors: ["metadata request failed: offline"],
   });
+  assert.deepEqual(batches, [[]]);
 });

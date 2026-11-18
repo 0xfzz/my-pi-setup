@@ -96,6 +96,21 @@ async function prepareCandidate(
   }
 }
 
+async function registerBatch(
+  addDefinitions: NonNullable<DiscoveredHalvesOptions["addDefinitions"]>,
+  definitions: readonly BrowserHalfDefinition[],
+  skipped: readonly string[],
+  errors: readonly string[],
+): Promise<DiscoveredHalvesReport> {
+  try {
+    // Always scan, even with an empty batch: the host may have static halves.
+    await addDefinitions(definitions);
+    return { registered: definitions.map((definition) => definition.id), skipped, errors };
+  } catch (error) {
+    return { registered: [], skipped, errors: [...errors, `registration failed: ${errorText(error)}`] };
+  }
+}
+
 /** Individual failures are reported, never allowed to stop other halves. */
 export async function registerDiscoveredBrowserHalves(
   runtime: BrowserRuntime,
@@ -107,7 +122,7 @@ export async function registerDiscoveredBrowserHalves(
     options.addDefinitions ?? ((definitions) => runtime.addDefinitions(definitions));
   const result = await fetchHalves().catch((error: unknown) => ({ ok: false as const, error }));
   if (!result.ok) {
-    return { registered: [], skipped: [], errors: [`metadata request failed: ${errorText(result.error ?? "unknown error")}`] };
+    return registerBatch(addDefinitions, [], [], [`metadata request failed: ${errorText(result.error ?? "unknown error")}`]);
   }
 
   const rawHalves = Array.isArray(result.data.halves) ? result.data.halves : [];
@@ -118,13 +133,5 @@ export async function registerDiscoveredBrowserHalves(
     if ("definition" in outcome) definitions.push(outcome.definition);
     else selection.errors.push(outcome.error);
   }
-  if (definitions.length === 0) return { registered: [], skipped: selection.skipped, errors: selection.errors };
-
-  const registered = definitions.map((definition) => definition.id);
-  try {
-    await addDefinitions(definitions);
-  } catch (error) {
-    return { registered: [], skipped: selection.skipped, errors: [...selection.errors, `registration failed: ${errorText(error)}`] };
-  }
-  return { registered, skipped: selection.skipped, errors: selection.errors };
+  return registerBatch(addDefinitions, definitions, selection.skipped, selection.errors);
 }
