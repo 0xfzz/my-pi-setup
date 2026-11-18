@@ -19,6 +19,7 @@ import { closeAllEventChannels } from "../http/sse.ts";
 import { setServedRoot, watchClientBuild } from "./client-build.ts";
 import { webAuthConfigPath } from "../auth/config.ts";
 import { WebAuthService } from "../auth/service.ts";
+import { webExposureRefusal } from "../../../lib/web-exposure-policy.ts";
 
 // Mark this process as the web server. It resumes sessions in-process, which
 // loads the project extensions (including `web`) into THIS process; the `web`
@@ -248,6 +249,14 @@ export async function main(options: MainOptions = {}): Promise<void> {
   // in-process fallback; PI_WEB_SESSION_HOST=0 is the operator opt-out.
   if (process.env.NODE_TEST_CONTEXT === undefined) process.env.PI_WEB_SESSION_HOST ??= "1";
   const auth = defaultAuthService();
+  const refusal = webExposureRefusal({
+    host: DEFAULT_HOST,
+    authMode: auth.mode(),
+    trustProxy: defaultAuthHttpOptions().trustProxy ?? "loopback",
+    allowUnprotected: process.env.PI_WEB_ALLOW_UNPROTECTED === "1",
+    allowTrustAllProxy: process.env.PI_WEB_ALLOW_TRUST_ALL_PROXY === "1",
+  });
+  if (refusal !== null) throw new Error(refusal);
   const handle = await startWebServer({ auth, logging });
   installExitGuards(handle, logging);
   const url = `http://${handle.host}:${handle.port}`;

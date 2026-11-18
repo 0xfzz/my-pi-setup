@@ -243,8 +243,14 @@ detached server inherits it), or leave the server on loopback and put a TLS
 reverse proxy or tunnel (Caddy, nginx, cloudflared, Tailscale) in front. Use
 HTTPS on the public side: the password and cookies cross the network. Behind
 nginx set `proxy_set_header Host $host;` so the same-origin check sees the public
-host (or list it in `PI_WEB_ALLOWED_ORIGINS`). The server logs a warning when it
-listens beyond loopback with no password.
+host (or list it in `PI_WEB_ALLOWED_ORIGINS`).
+
+A non-loopback bind **refuses to start** without a configured password (run
+`/web set-password` first). `PI_WEB_ALLOW_UNPROTECTED=1` is an explicit, dangerous
+override for isolated networks. Likewise, `PI_WEB_TRUST_PROXY=all` is refused on
+a public bind because any client can forge forwarding headers; either keep the
+default `loopback` policy with a local proxy, use `off` for a direct bind, or set
+`PI_WEB_ALLOW_TRUST_ALL_PROXY=1` if you deliberately accept the risk.
 
 ### Tokens
 
