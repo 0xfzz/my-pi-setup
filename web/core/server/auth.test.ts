@@ -8,6 +8,7 @@ import { startWebServer } from "./main.ts";
 import { clearSessionsForTests, registerSession, type SessionCore } from "./sessions.ts";
 import { writeWebPassword } from "../auth/config.ts";
 import { WebAuthService } from "../auth/service.ts";
+import { CSRF_HEADER, CSRF_HEADER_VALUE } from "../shared/csrf.ts";
 import type { AuthHttpOptions } from "./auth.ts";
 
 const PASSWORD = "correct horse battery";
@@ -344,6 +345,24 @@ test("cookie-authenticated writes from another site are refused (CSRF)", async (
     // GET is never blocked on this ground.
     assert.equal((await call(h, jar, "GET", "/api/sessions", undefined, evil)).status, 200);
   });
+});
+
+test("cookie writes require the CSRF header when the opt-in is enabled", async () => {
+  await withProtectedServer(
+    async (h) => {
+      const jar = new Jar();
+      assert.equal((await login(h, jar)).status, 200, "login has no cookie to forge yet");
+      const without = await call(h, jar, "POST", "/api/agent/new", { cwd: "/nonexistent-dir-xyz" });
+      assert.equal(without.status, 403);
+      assert.equal(((await without.json()) as { code: string }).code, "cross_site");
+      const withHeader = await call(
+        h, jar, "POST", "/api/agent/new", { cwd: "/nonexistent-dir-xyz" },
+        { [CSRF_HEADER]: CSRF_HEADER_VALUE },
+      );
+      assert.equal(withHeader.status, 400, "the first-party header reaches the handler");
+    },
+    { requireCsrfHeader: true },
+  );
 });
 
 test("PI_WEB_ALLOWED_ORIGINS admits a front-end origin that differs from Host", async () => {

@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { CSRF_HEADER, CSRF_HEADER_VALUE } from "../../shared/csrf.ts";
 import { getJson, postJson, requestJson } from "./api-client.ts";
 
 type FetchArgs = { url: string; init?: RequestInit };
@@ -82,6 +83,7 @@ test("postJson sends a JSON body with its content type", async () => {
   assert.equal(seen?.init?.body, JSON.stringify({ api: "mcp.read", params: {} }));
   const headers = seen?.init?.headers as Record<string, string>;
   assert.equal(headers["Content-Type"], "application/json");
+  assert.equal(headers[CSRF_HEADER], CSRF_HEADER_VALUE);
 });
 
 test("a GET sends no body and no content type", async () => {

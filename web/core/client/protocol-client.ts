@@ -14,6 +14,7 @@ import {
   type PluginMessageKind,
 } from "../protocol/index.ts";
 import { MESSAGE_CATALOG, lookupMessage } from "../protocol/catalog.ts";
+import { csrfHeaders } from "../shared/csrf.ts";
 import { parseEnvelope, type BridgeEnvelope } from "../protocol/envelope.ts";
 import { BRIDGE_ERROR_CODES, bridgeError, type BridgeError, type BridgeErrorCode } from "../protocol/errors.ts";
 import { BRIDGE_PROTOCOL, BRIDGE_PROTOCOL_VERSION, HELLO, HelloAckSchema, HelloSchema, type HelloAck } from "../protocol/version.ts";
@@ -222,7 +223,7 @@ export class ProtocolClient {
     try {
       response = await this.post(this.protocolPath(this.sessionId), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...csrfHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify(request),
         ...(signal === undefined ? {} : { signal }),
       });

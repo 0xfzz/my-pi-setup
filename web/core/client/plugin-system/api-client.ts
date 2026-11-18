@@ -5,6 +5,8 @@
 // shared one: a discriminated result, never a throw, so a caller can tell a
 // network failure from a 403 from a plugin's own error code.
 
+import { csrfHeaders } from "../../shared/csrf.ts";
+
 export interface ApiFailure {
   ok: false;
   /** The server's error code, or `network` when it never answered. */
@@ -56,7 +58,7 @@ function failureFrom(response: Response, body: Record<string, unknown>): ApiFail
  * contract both sides import, so the cast is the single JSON boundary.
  */
 export async function requestJson<T>({ url, method = "GET", body, headers }: JsonRequest): Promise<ApiResult<T>> {
-  const requestHeaders: Record<string, string> = { Accept: "application/json", ...headers };
+  const requestHeaders: Record<string, string> = { ...csrfHeaders(), Accept: "application/json", ...headers };
   const init: RequestInit = { method, headers: requestHeaders };
   if (body !== undefined) {
     requestHeaders["Content-Type"] = "application/json";

@@ -300,7 +300,10 @@ live session.
   (100 / 15 min) backstops distributed guessing. Clients are told apart by IP — behind a
   local proxy the last `X-Forwarded-For` hop is used (`PI_WEB_TRUST_PROXY=1` trusts a
   non-loopback proxy, `0` never). If you lock yourself out, restart the server.
-- CSRF: SameSite=Strict plus a `Sec-Fetch-Site` / `Origin` check on writes.
+- CSRF: SameSite=Strict plus a `Sec-Fetch-Site` / `Origin` check on writes. Set
+  `PI_WEB_REQUIRE_CSRF_HEADER=1` to also require the first-party
+  `x-pi-web-csrf: 1` header on cookie-authenticated writes (the bundled client
+  always sends it). Bearer-token and body-token clients are unaffected.
 - Scripts can sign in with `POST /api/auth/login {"password": "...", "returnTokens": true}`
   and use `Authorization: Bearer <accessToken>`; refresh with
   `POST /api/auth/refresh {"refreshToken": "..."}` (one refresh at a time).

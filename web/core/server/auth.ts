@@ -20,6 +20,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { IssuedTokens, WebAuthService } from "../auth/service.ts";
 import { registerLenientJsonParser, parsedJsonBody } from "../http/json-body.ts";
 import { registerMethodFallback } from "../http/method-fallback.ts";
+import { CSRF_HEADER, CSRF_HEADER_VALUE } from "../shared/csrf.ts";
 import { AUTH_LOGIN_SCHEMA, AUTH_REFRESH_SCHEMA, PERMISSIVE_BODY_SCHEMA, coreRequestSchema } from "./request-schemas.ts";
 
 export const ACCESS_COOKIE = "pi_web_at";
@@ -34,6 +35,11 @@ export interface AuthHttpOptions {
   allowedOrigins?: readonly string[];
   /** Mark cookies Secure even when the request does not look like HTTPS. */
   forceSecureCookies?: boolean;
+  /**
+   * Require the first-party CSRF header on cookie-authenticated writes, even
+   * when a stripped Origin/Sec-Fetch-Site leaves the browser check blind.
+   */
+  requireCsrfHeader?: boolean;
 }
 
 /** What the gate needs from the request; a FastifyRequest satisfies it structurally. */
@@ -59,6 +65,7 @@ interface CookiePolicy {
   readonly trustProxy: "all" | "off" | "loopback";
   readonly allowedOrigins: Set<string>;
   readonly forceSecureCookies: boolean;
+  readonly requireCsrfHeader: boolean;
 }
 
 function policyOf(options: AuthHttpOptions): CookiePolicy {
@@ -66,6 +73,7 @@ function policyOf(options: AuthHttpOptions): CookiePolicy {
     trustProxy: options.trustProxy ?? "loopback",
     allowedOrigins: new Set((options.allowedOrigins ?? []).map((origin) => origin.replace(/\/+$/, "").toLowerCase())),
     forceSecureCookies: options.forceSecureCookies === true,
+    requireCsrfHeader: options.requireCsrfHeader === true,
   };
 }
 
@@ -117,6 +125,10 @@ function secureRequest(req: IncomingMessage, policy: CookiePolicy): boolean {
 function crossSiteWrite(req: IncomingMessage, policy: CookiePolicy): boolean {
   const method = req.method ?? "GET";
   if (method === "GET" || method === "HEAD" || method === "OPTIONS") return false;
+  // A programmatic client with no cookie keeps the historical bearer/body-token
+  // flow: only cookie-authenticated writes need the extra header.
+  if (policy.requireCsrfHeader && req.headers.cookie !== undefined
+    && firstHeader(req.headers[CSRF_HEADER]) !== CSRF_HEADER_VALUE) return true;
   const fetchSite = firstHeader(req.headers["sec-fetch-site"]);
   if (fetchSite !== undefined) return fetchSite !== "same-origin" && fetchSite !== "none";
   const origin = firstHeader(req.headers.origin);

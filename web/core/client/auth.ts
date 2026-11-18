@@ -18,6 +18,7 @@
 // told, and the app shows the login screen. A refresh that fails any other way (offline,
 // 5xx) is NOT a logout — it is retried later and the user keeps their session.
 
+import { csrfHeaders } from "../shared/csrf.ts";
 import { requestActivity } from "./request-activity.ts";
 
 export type RefreshOutcome = "ok" | "denied" | "unavailable";
@@ -162,7 +163,7 @@ export function createAuthClient(deps: AuthClientDeps): AuthClient {
     try {
       res = await deps.fetch("/api/auth/refresh", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...csrfHeaders(), "Content-Type": "application/json" },
         body: "{}",
         credentials: "same-origin",
       });
@@ -249,7 +250,7 @@ export function createAuthClient(deps: AuthClientDeps): AuthClient {
       try {
         res = await deps.fetch("/api/auth/login", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { ...csrfHeaders(), "Content-Type": "application/json" },
           body: JSON.stringify({ password }),
           credentials: "same-origin",
         });
@@ -275,7 +276,7 @@ export function createAuthClient(deps: AuthClientDeps): AuthClient {
       try {
         await deps.fetch("/api/auth/logout", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { ...csrfHeaders(), "Content-Type": "application/json" },
           body: "{}",
           credentials: "same-origin",
         });

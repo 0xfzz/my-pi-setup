@@ -2,6 +2,7 @@
 // menus, keyboard shortcuts). A declared confirm travels byte-identically;
 // instant actions (per the plugin-actions PRD) send none.
 
+import { csrfHeaders } from "../../shared/csrf.ts";
 import type { ActionDescriptor } from "./contract.ts";
 
 export interface ActionPostResult {
@@ -49,7 +50,7 @@ export async function postPluginAction(
 ): Promise<ActionPostOutcome> {
   const response = await fetch("/api/plugins/action", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...csrfHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({
       sessionId,
       pluginId,

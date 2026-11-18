@@ -76,6 +76,7 @@ function defaultAuthHttpOptions(): AuthHttpOptions {
     trustProxy: trust === "1" || trust === "all" ? "all" : trust === "0" || trust === "off" ? "off" : "loopback",
     allowedOrigins: (process.env.PI_WEB_ALLOWED_ORIGINS ?? "").split(",").map((origin) => origin.trim()).filter(Boolean),
     forceSecureCookies: process.env.PI_WEB_COOKIE_SECURE === "1",
+    requireCsrfHeader: process.env.PI_WEB_REQUIRE_CSRF_HEADER === "1",
   };
 }
 
