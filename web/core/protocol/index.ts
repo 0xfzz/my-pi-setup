@@ -1,6 +1,43 @@
 /** The public protocol surface: pure types and validators, no transport. */
-export * from "./catalog.ts";
-export * from "./envelope.ts";
-export * from "./errors.ts";
-export * from "./manifest-extension.ts";
-export * from "./version.ts";
+export {
+  BINDING_NAMES,
+  BRIDGE_ERROR_CODES,
+  BRIDGE_PROTOCOL,
+  BRIDGE_PROTOCOL_VERSION,
+  BROWSER_ENTRY,
+  BridgeEnvelopeSchema,
+  BridgeErrorSchema,
+  ENVELOPE_MAX_BYTES,
+  ENVELOPE_MAX_DEPTH,
+  HELLO,
+  HELLO_ACK,
+  HelloAckSchema,
+  HelloSchema,
+  MESSAGE_CATALOG,
+  MESSAGE_KINDS,
+  MESSAGE_NAMES,
+  PROTOCOL_INVOKE_CAPABILITY,
+  UNSAFE_KEYS,
+  bridgeError,
+  catalogCapabilities,
+  catalogMarkdown,
+  isAllowedBrowserEntry,
+  legacyWires,
+  lookupMessage,
+  parseEnvelope,
+  protocolInvoke,
+  versionMismatch,
+} from "@pi/web-bridge";
+export type {
+  BindingName,
+  BridgeEnvelope,
+  BridgeError,
+  BridgeErrorCode,
+  BrowserHalfContract,
+  EnvelopeValidation,
+  Hello,
+  HelloAck,
+  MessageDefinition,
+  MessageKind,
+  MessageName,
+} from "@pi/web-bridge";

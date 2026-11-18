@@ -5,6 +5,9 @@
   "type": "module",
   "description": "Conditional AI todo enforcement and uncertainty clarification for Pi and Herdr subagents",
   "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
   "engines": {
     "node": ">=22.6.0"
   },
@@ -62,7 +65,7 @@
     "build:subagent-graph": "node scripts/build-subagent-graph.mjs",
     "build:nowrite": "node scripts/build-nowrite.mjs",
     "build:wasm": "cargo build --manifest-path crates/ascii-anim-engine/Cargo.toml --target wasm32-unknown-unknown --release && cp crates/ascii-anim-engine/target/wasm32-unknown-unknown/release/ascii_anim_engine.wasm lib/ascii_anim_engine.wasm",
-    "lint:smell": "oxlint --deny-warnings extensions lib tests web/core web/bench web/plugins web/app.tsx web/server.ts",
+    "lint:smell": "oxlint --deny-warnings extensions lib tests web/core web/bench web/plugins web/app.tsx web/server.ts packages/pi-web-bridge/src",
     "lint:dead": "knip",
     "lint:dup": "jscpd extensions lib tests web/core web/plugins --threshold 12 --min-lines 12 --min-tokens 80",
     "smell": "npm run lint:dead && npm run lint:dup",

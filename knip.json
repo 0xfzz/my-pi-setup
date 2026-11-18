@@ -1,24 +1,38 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": [
-    "extensions/*.ts",
-    "tests/**/*.test.ts",
-    "scripts/*.mjs",
-    "lib/vcc/auto-compact-entry.ts",
-    "tests/fixtures/*.ts"
-  ],
-  "project": [
-    "extensions/**/*.ts",
-    "lib/**/*.ts",
-    "tests/**/*.ts",
-    "scripts/**/*.mjs"
-  ],
-  "ignoreExportsUsedInFile": true,
-  "ignoreDependencies": [
-    "@viz-js/viz",
-    "highlight.js",
-    "@earendil-works/pi-ai",
-    "pi-vcc",
-    "jiti"
-  ]
+  "workspaces": {
+    ".": {
+      "entry": [
+        "extensions/*.ts",
+        "tests/**/*.test.ts",
+        "scripts/*.mjs",
+        "lib/vcc/auto-compact-entry.ts",
+        "tests/fixtures/*.ts"
+      ],
+      "project": [
+        "extensions/**/*.ts",
+        "lib/**/*.ts",
+        "tests/**/*.ts",
+        "scripts/**/*.mjs"
+      ],
+      "ignoreExportsUsedInFile": true,
+      "ignoreDependencies": [
+        "@viz-js/viz",
+        "highlight.js",
+        "@earendil-works/pi-ai",
+        "pi-vcc",
+        "jiti",
+        "react",
+        "react-dom"
+      ]
+    },
+    "packages/pi-web-bridge": {
+      "entry": [
+        "src/index.ts"
+      ],
+      "project": [
+        "src/**/*.ts"
+      ]
+    }
+  }
 }

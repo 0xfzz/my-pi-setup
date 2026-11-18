@@ -1,3 +1,4 @@
+import { webUiText } from "@pi/web-bridge/text";
 import { validatePlacement, type WebPluginPlacement } from "./ui-contracts.ts";
 import { validateView, type WebView } from "./view.ts";
 
@@ -43,15 +44,7 @@ export type WebUiEvent<K extends WebUiType = WebUiType> = K extends WebUiType ? 
 } : never;
 export type UiValidation = { ok: true; event: WebUiEvent } | { ok: false; error: string };
 
-/** Strip terminal styling, OSC/DCS and unsupported controls. HTML stays inert text. */
-export function webUiText(text: string): string {
-  return text
-    // Deliberate ANSI/control matching: no terminal escapes reach browser models.
-    // oxlint-disable-next-line no-control-regex
-    .replace(/\x1b(?:\][\s\S]*?(?:\x07|\x1b\\)|[PX^_][\s\S]*?\x1b\\|\[[0-?]*[ -/]*[@-~]|[@-_])/g, "")
-    // oxlint-disable-next-line no-control-regex
-    .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
-}
+export { webUiText };
 function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
 function text(value: unknown, max = 8192): value is string { return typeof value === "string" && value.length <= max; }
 function key(value: unknown): value is string { return typeof value === "string" && /^[a-zA-Z0-9_./:@-]{1,160}$/.test(value) && !["__proto__", "constructor", "prototype"].includes(value); }

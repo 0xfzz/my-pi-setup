@@ -1,0 +1,23 @@
+{
+  "name": "@pi/web-bridge",
+  "version": "1.0.0",
+  "description": "Pure bridge protocol shared by pi hosts and trusted web plugins",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./text": {
+      "types": "./src/text.ts",
+      "default": "./src/text.ts"
+    }
+  },
+  "dependencies": {
+    "typebox": "^1.4.3"
+  }
+}

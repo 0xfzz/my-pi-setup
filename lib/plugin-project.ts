@@ -14,6 +14,9 @@ export interface ScaffoldResult {
 
 const ID_RE = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)*$/;
 
+/** The installable protocol package; plugins import it instead of web/core paths. */
+const BRIDGE_SDK_SPECIFIER = "@pi/web-bridge";
+
 function camel(id: string): string {
   return id.replace(/(^|[.-])([a-z])/g, (_match, _sep: string, letter: string) => letter.toUpperCase());
 }
@@ -63,6 +66,7 @@ export function scaffoldPluginProject(id: string, title = id, options: ScaffoldO
         build: "node build.mjs",
         check: `node "${options.checkerPath ?? "../../scripts/check-web-plugin.mjs"}" .`,
       },
+      dependencies: { [BRIDGE_SDK_SPECIFIER]: "^1.0.0" },
       devDependencies: { esbuild: "^0.28.2" },
     }, null, 2)}\n` },
     { path: "pi-web-plugin.json", content: `${JSON.stringify(manifest, null, 2)}\n` },
@@ -102,6 +106,16 @@ export interface ImportViolation {
   readonly specifier: string;
 }
 
+/** Only the package root and real subpaths are SDK imports; no traversal out of it. */
+function isBridgeSdkImport(specifier: string): boolean {
+  if (specifier === BRIDGE_SDK_SPECIFIER) return true;
+  const prefix = `${BRIDGE_SDK_SPECIFIER}/`;
+  if (!specifier.startsWith(prefix)) return false;
+  const subpath = specifier.slice(prefix.length);
+  return subpath.length > 0
+    && !subpath.split("/").some((segment) => segment === "" || segment === "." || segment === "..");
+}
+
 /** AC10: name every import of web/core internals, including relative escapes. */
 export function checkPluginProject(root: string, files: readonly ProjectFile[]): readonly ImportViolation[] {
   const violations: ImportViolation[] = [];
@@ -109,7 +123,7 @@ export function checkPluginProject(root: string, files: readonly ProjectFile[]):
     for (const [index, line] of file.content.split("\n").entries()) {
       for (const match of line.matchAll(/(?:import|export)[^;]*?from\s*["']([^"']+)["']|import\(\s*["']([^"']+)["']/g)) {
         const specifier = match[1] ?? match[2];
-        if (specifier === undefined) continue;
+        if (specifier === undefined || isBridgeSdkImport(specifier)) continue;
         const absolute = resolve(root, file.path, "..", specifier).split(sep).join("/");
         const coreAt = absolute.lastIndexOf("/web/core/");
         const target = coreAt === -1
