@@ -8,7 +8,7 @@ import { ArrowLeft, Clock, Copy } from "@phosphor-icons/react";
 import { LoadingSpinner, MarkdownBody } from "@pi-web/host-ui";
 import { artifactBodyKind, parseArtifactDetail } from "./lib/artifact-detail.ts";
 
-const CodeMirrorView = lazy(() => import("../../core/client/plugin-system/CodeMirrorView.tsx"));
+const CodeMirrorView = lazy(() => import("@pi-web/host-ui").then((module) => ({ default: module.CodeMirrorView })));
 
 function formatBytes(content: string): string {
   const bytes = new TextEncoder().encode(content).length;

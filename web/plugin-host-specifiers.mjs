@@ -15,6 +15,8 @@ export const HOST_MODULES = Object.freeze({
   "@pi-web/bridge": "sdk.js",
   "@pi-web/bridge/text": "sdk-text.js",
   "@pi-web/host-ui": "ui.js",
+  typebox: "typebox.js",
+  "typebox/value": "typebox-value.js",
 });
 
 export const HOST_SPECIFIERS = Object.freeze(Object.keys(HOST_MODULES));

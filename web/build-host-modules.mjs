@@ -52,9 +52,12 @@ async function buildEntry(name, source, external = []) {
   }
 }
 
-await buildEntry("runtime", "runtime.ts");
+const SHARED_VENDOR_SPECIFIERS = ["typebox", "typebox/value"];
+
+await buildEntry("runtime", "runtime.ts", SHARED_VENDOR_SPECIFIERS);
 await buildEntry("ui", "ui.ts", FIRST_PARTY_EXTERNALS);
 await buildEntry("icons", "icons.ts");
+await buildEntry("typebox-host", "typebox.ts");
 // The vendor packages themselves must be bundled here; only React and the
 // other shared host modules stay external so there is one React instance.
 await buildEntry(
@@ -75,6 +78,8 @@ const shims = {
   "@file-viewer/preset-office": 'export { officePresetDefault as default } from "./file-viewer.js";\n',
   "@pi-web/bridge": 'export * from "./runtime.js";\n',
   "@pi-web/bridge/text": 'export { webUiText } from "./runtime.js";\n',
+  typebox: 'export * from "./typebox-host.js";\n',
+  "typebox/value": 'export * from "./typebox-host.js";\n',
 };
 
 for (const specifier of HOST_SPECIFIERS) {

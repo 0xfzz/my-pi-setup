@@ -21,6 +21,8 @@ test("the browser import map is generated from the host module registry", () => 
   }
   assert.equal(map["@pi-web/bridge"], "/host/sdk.js");
   assert.equal(map["@pi-web/host-ui"], "/host/ui.js");
+  assert.equal(map.typebox, "/host/typebox.js");
+  assert.equal(map["typebox/value"], "/host/typebox-value.js");
 });
 
 test("host UI keeps lazy imports out of the entry bundle", () => {

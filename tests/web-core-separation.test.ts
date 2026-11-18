@@ -20,6 +20,11 @@ const productionSources = walk(core)
   .filter((path) => !path.includes(".test.") && !path.includes(`${join("core", "e2e")}`))
   .map((path) => ({ path: relative(root, path), text: readFileSync(path, "utf8") }));
 
+const pluginSources = walk(join(root, "web", "plugins"))
+  .filter((path) => /\.(ts|tsx)$/.test(path))
+  .filter((path) => !path.includes(".test.") && !path.includes(`${join("plugins", "subagent-graph", "app")}`))
+  .map((path) => ({ path: relative(root, path), text: readFileSync(path, "utf8") }));
+
 test("core production sources never import plugin modules", () => {
   const offenders: string[] = [];
   for (const { path, text } of productionSources) {
@@ -41,6 +46,17 @@ test("core client owns no plugin-styled class names", () => {
   assert.deepEqual(offenders, []);
 });
 
+test("plugin sources use the public host UI, not core internals", () => {
+  const offenders: string[] = [];
+  for (const { path, text } of pluginSources) {
+    if (path.endsWith("browser-halves.ts")) continue; // composition root, not a plugin half
+    for (const match of text.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)) {
+      if (match[1].includes("core/client")) offenders.push(`${path}: ${match[1]}`);
+    }
+  }
+  assert.deepEqual(offenders, []);
+});
+
 test("host vendor entries contain no plugin UI", () => {
   const viewer = readFileSync(join(core, "client", "host", "file-viewer.ts"), "utf8");
   assert.doesNotMatch(viewer, /data-testid|DocumentViewer|VIEWER_STYLE|files-/);
@@ -48,4 +64,8 @@ test("host vendor entries contain no plugin UI", () => {
   const icons = readFileSync(join(core, "client", "host", "icons.ts"), "utf8");
   assert.match(icons, /@phosphor-icons\/react/);
   assert.doesNotMatch(icons, /files-|router-|todo-/);
+
+  const typebox = readFileSync(join(core, "client", "host", "typebox.ts"), "utf8");
+  assert.match(typebox, /from "typebox"/);
+  assert.match(typebox, /from "typebox\/value"/);
 });
