@@ -134,7 +134,7 @@ diff record, not documentation.
 | [Artifacts](docs/artifacts.md) | Storing, recalling and editing plans, specs and scratchpads outside the chat turn, plus `@artifact` mentions. |
 | [Subagent graph](docs/subagent-graph.md) | The delegated-work graph in the web client, the standalone graph app, and the server's bounds and trust model. |
 | [Pi Web](docs/pi-web.md) | Operator guide for the first-party web client: setup, build/dev server, shadcn/Tailwind/Phosphor design system, plugin views, trust bounds, and resyncing. |
-| [Web performance](docs/pi-web-performance.md) | Latency audit of the Fastify/stream/render hot paths and the `npm run bench:web` acceptance benchmark. |
+| [Web performance](docs/pi-web-performance.md) | Latency and memory audit of the Fastify/stream/render and bridge-protocol hot paths, with the `npm run bench:web` and `npm run bench:bridge` acceptance benchmarks. |
 | [Smart timeout](docs/smart-timeout.md) | Wall-clock and idle limits for `bash`, explicit budgets, and timeout diagnostics. |
 | [Stream recovery](docs/stream-recovery.md) | Save interrupted write/command prefixes and continue with only the missing suffix, without replaying executed tools. |
 | [Sidebar](docs/sidebar.md) | The right rail, the `Alt+W` prefix menu, and the detail popups. |

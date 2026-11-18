@@ -8,12 +8,12 @@
 | **Status** | audit · current benchmark guide |
 | **Detail for** | [README § Web](../README.md) |
 | **Scope** | `web/core/server/`, `web/core/http/`, `web/core/client/`, `web/core/plugin-contracts/`, `web/core/auth/`, `lib/sse-pressure.ts` |
-| **Verified against** | `npm run bench:web`, `npm run tidy` |
+| **Verified against** | `npm run bench:web`, `npm run bench:bridge`, `npm run tidy` |
 | **Related** | [pi-web](pi-web.md), [web plugin architecture](web-plugin-architecture.md) |
 
 - **What it is** — a code-backed audit of pi-web's request, stream and render hot paths plus a standalone latency benchmark.
 - **Why it exists** — Fastify only stays fast when handlers do not rebuild codecs, reserialize frames, clone whole states or scan whole files per token/request.
-- **How it is enforced** — `web/bench/server-latency.bench.ts` and `web/bench/client-latency.bench.ts` report p50/p95/p99 per operation; each scenario has a p95 ceiling and the command exits non-zero when a ceiling is exceeded.
+- **How it is enforced** — `web/bench/server-latency.bench.ts`, `web/bench/client-latency.bench.ts` and `web/bench/bridge-protocol.bench.ts` report p50/p95/p99 per operation; each scenario has a p95 ceiling and the command exits non-zero when a ceiling is exceeded.
 - **What it refuses** — no benchmark runs inside `npm test` or `npm run test:web`; no assertion that a microbenchmark predicts inference latency.
 - **What it cannot do** — it measures Node-side and loopback costs on the host it runs on; browser paint cost needs a separate browser profile.
 
@@ -23,6 +23,7 @@
 
 ```sh
 npm run bench:web
+npm run bench:bridge   # bridge protocol latency + heap sampler
 ```
 
 Two standalone runners live in `web/bench/` (tooling, not either runtime):
@@ -77,6 +78,40 @@ a 2 ms operational ceiling instead: socket and event-loop noise on a shared host
 moves their p95 more than the few microseconds the fixes save, so their
 improvement is judged from the recorded before/after numbers, not from a ceiling
 below baseline.
+
+## Bridge protocol benchmark
+
+`npm run bench:bridge` starts Node with `--expose-gc` and samples heap growth
+per operation as well as latency. Every envelope, browser request and streamed
+delta crosses these paths after the protocol wiring. Recorded on this host
+(node v22.23.2, median of three runs, lower is better):
+
+| Scenario | Before p95 | After p95 | Before B/op | After B/op |
+| --- | ---: | ---: | ---: | ---: |
+| `envelope-parse` | 0.177 ms | 0.039 ms | ~4.0 KB* | ~6.8 KB* |
+| `envelope-publish` | 0.091 ms | 0.032 ms | ~5.6 KB* | ~7.0 KB* |
+| `protocol-query` | 0.158 ms | 0.013 ms | ~25 KB | ~5 KB |
+| `bridge-event-frame` | 0.010 ms | 0.009 ms | 1,380 B | 1,493 B |
+| `stream-replay` (1k tokens) | 0.064 ms | 0.104 ms | ~73 KB | ~40 KB |
+
+\* The heap sampler is noisy on small, short-lived scenarios; the durable
+memory improvements are the request and replay rows. All scenarios pass their
+p95 and heap ceilings after the fixes; retained heap is zero.
+
+Fixes behind those numbers: a direct envelope shape guard replaces the
+per-message TypeBox schema walk, clean strings and arrays are reused instead of
+cloned, the catalog name lookup is indexed, browser requests are validated once
+instead of three times, adapter tables are built per binding rather than per
+message, stream frames no longer take a stringify → parse → stringify detour,
+and text/thinking replay deltas are joined once at snapshot time instead of
+once per token.
+
+Still on the backlog: the client-side reducer in
+`web/core/client/streaming.ts` rebuilds its block array per delta, the tool-call
+argument prefix is still reparsed on every delta in the server tracker, the
+bridge poster in `extensions/web.ts` has no byte cap on its 25 ms queue, and
+`bridge.ts` copies its listener set on every fan-out. Each needs either a UI
+change or a pressure policy with a resync contract before it is worth the risk.
 
 ## What the audit found
 
