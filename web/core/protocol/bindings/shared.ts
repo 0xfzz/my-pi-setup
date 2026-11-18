@@ -1,6 +1,7 @@
 /** Envelope-level rules shared by every binding, independent of transport. */
 import { Value } from "typebox/value";
 
+import { BRIDGE_MESSAGE_DENIED, bridgeMessageDenied, FIRST_PARTY_BRIDGE_CLIENT } from "../index.ts";
 import { lookupMessage, type MessageDefinition } from "../catalog.ts";
 import type { BridgeEnvelope } from "../envelope.ts";
 import { bridgeError, type BridgeError } from "../errors.ts";
@@ -26,6 +27,7 @@ export interface Handshake extends HelloAck {
   readonly clientId: string;
   readonly grants: readonly Capability[];
   readonly pluginGrants: readonly Capability[];
+  readonly coreSlices?: ReadonlyMap<string, readonly string[]>;
 }
 
 function parseGrants(capabilities: readonly string[]): readonly Capability[] {
@@ -64,6 +66,7 @@ export function handshakeFor(hello: Hello, options: BindingOptions): BindingRepl
     clientId: hello.clientId,
     grants,
     pluginGrants: parseGrants(options.pluginGrants ?? []),
+    ...(options.bridgeSlices === undefined ? {} : { coreSlices: options.bridgeSlices }),
   };
   return { ok: true, value: state };
 }
@@ -90,6 +93,25 @@ export function attributedSource(
   return { ...envelope, source: { type: "browser", id: handshake.clientId } };
 }
 
+/**
+ * A hand-edited browser bundle cannot exceed the manifest slice: identity comes
+ * from the host-attributed source, never from the envelope payload.
+ */
+function sliceDenial(
+  envelope: BridgeEnvelope,
+  message: MessageDefinition,
+  handshake: Handshake,
+  audit?: (entry: CapabilityAuditEntry) => void,
+): BridgeError | undefined {
+  if (handshake.coreSlices === undefined) return undefined;
+  if (envelope.source.type !== "browser" && envelope.source.type !== "plugin") return undefined;
+  if (envelope.source.id === FIRST_PARTY_BRIDGE_CLIENT) return undefined;
+  if (handshake.coreSlices.get(envelope.source.id)?.includes(message.name) === true) return undefined;
+  const error = bridgeMessageDenied(envelope.source.id, message.name);
+  audit?.({ source: envelope.source.id, capability: BRIDGE_MESSAGE_DENIED, message: message.name });
+  return error;
+}
+
 /** Plugin- and browser-originated messages need a declared, granted capability. */
 export function gate(
   message: MessageDefinition,
@@ -97,6 +119,8 @@ export function gate(
   handshake: Handshake,
   audit?: (entry: CapabilityAuditEntry) => void,
 ): BridgeError | undefined {
+  const deniedSlice = sliceDenial(envelope, message, handshake, audit);
+  if (deniedSlice !== undefined) return deniedSlice;
   const capability = message.capability;
   if (capability === undefined || envelope.source.type === "core" || envelope.source.type === "host") {
     return undefined;

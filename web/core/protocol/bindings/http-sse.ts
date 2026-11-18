@@ -23,7 +23,11 @@ export function attributedEnvelope(envelope: BridgeEnvelope, clientId: string): 
 }
 
 export function createHttpSseBinding(options: HttpSseOptions): ProtocolBinding {
-  const delegate = createInProcessBinding({ ...options, name: "http-sse" });
+  const delegate = createInProcessBinding({
+    ...options,
+    name: "http-sse",
+    bridgeSlices: options.bridgeSlices,
+  });
   let clientId = options.clientId ?? "";
 
   return {

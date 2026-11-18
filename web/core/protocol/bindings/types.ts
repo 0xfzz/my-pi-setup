@@ -22,6 +22,8 @@ export interface BindingOptions {
   readonly grantedCapabilities: readonly string[];
   /** Separate grants for extension/plugin sources; empty unless the host says otherwise. */
   readonly pluginGrants?: readonly string[];
+  /** Core messages declared by discovered plugin manifests; keyed by plugin id. */
+  readonly bridgeSlices?: ReadonlyMap<string, readonly string[]>;
   readonly initialCursor?: string;
   /** Host-owned sink: every CAPABILITY_DENIED is reported here. */
   readonly audit?: (entry: CapabilityAuditEntry) => void;

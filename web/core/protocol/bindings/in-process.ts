@@ -65,6 +65,7 @@ export async function dispatchAdapter({ handshake, options, envelope, signal, se
   if (message === undefined) {
     return { ok: false, error: bridgeError("UNKNOWN_MESSAGE", `unknown protocol message "${envelope.name}"`) };
   }
+  // gate() checks the manifest slice from the handshake before capability grants.
   const denied = gate(message, envelope, handshake, options.audit);
   if (denied !== undefined) return { ok: false, error: denied };
   if (message.kind === "capability") return reply(envelope, { acknowledged: true }, { sequence, cursor });

@@ -7,6 +7,7 @@ import { Type, type Static } from "typebox";
 export const BRIDGE_ERROR_CODES = [
   "VERSION_MISMATCH",
   "CAPABILITY_DENIED",
+  "BRIDGE_MESSAGE_DENIED",
   "VALIDATION_FAILED",
   "RATE_LIMITED",
   "UNKNOWN_MESSAGE",

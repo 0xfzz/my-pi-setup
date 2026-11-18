@@ -136,3 +136,30 @@ test("engines ranges are checked against the host versions", () => {
   if (!oldSdk.ok) return;
   assert.match(engineMismatch(oldSdk.manifest) ?? "", /requires sdk/);
 });
+
+test("a bridge declaration validates core names and the Phase 4 extension shape", () => {
+  const ok = validateManifest({
+    ...base(),
+    bridge: {
+      core: { messages: ["session.list", "session.events"] },
+      extension: { messages: [{ name: "acme.zen-chat.state", kind: "event", schema: { type: "object" } }] },
+    },
+  });
+  assert.equal(ok.ok, true);
+  if (!ok.ok) return;
+  assert.deepEqual(ok.manifest.bridge?.core?.messages, ["session.list", "session.events"]);
+  assert.equal(ok.manifest.bridge?.extension?.messages[0]?.kind, "event");
+});
+
+test("a core slice cannot name an unknown catalog message or repeat one", () => {
+  expectError({ ...base(), bridge: { core: { messages: ["session.nope"] } } }, /unknown catalog message/);
+  expectError({ ...base(), bridge: { core: { messages: ["session.list", "session.list"] } } }, /repeats/);
+});
+
+test("bridge fields and extension messages reject unknown shape", () => {
+  expectError({ ...base(), bridge: { mystery: true } }, /bridge has unknown field/);
+  expectError({ ...base(), bridge: { core: { messages: [], extra: 1 } } }, /bridge.core has unknown field/);
+  expectError({ ...base(), bridge: { extension: { messages: [{ name: "other.state", kind: "event", schema: {} }] } } }, /namespaced plugin message/);
+  expectError({ ...base(), bridge: { extension: { messages: [{ name: "acme.zen-chat.state", kind: "magic", schema: {} }] } } }, /kind must be one of/);
+  expectError({ ...base(), bridge: { extension: { messages: [{ name: "acme.zen-chat.state", kind: "event", schema: {}, extra: true }] } } }, /unknown field/);
+});

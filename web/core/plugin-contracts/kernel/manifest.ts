@@ -3,6 +3,7 @@
  * any plugin code. Validation is total: every field is either accepted in its
  * declared shape or the whole manifest is rejected with a named error.
  */
+import { lookupMessage } from "@pi/web-bridge";
 import { TRUSTED_ONLY, validateCapabilities, type Capability } from "./capabilities.ts";
 import { isAllowedBrowserEntry } from "../../protocol/manifest-extension.ts";
 import { isValidRange } from "./semver.ts";
@@ -28,6 +29,25 @@ export type TrustTier = (typeof TRUST_TIERS)[number];
 export const ACTIVATION_EVENTS = ["onStartup"] as const;
 export type ActivationEvent = (typeof ACTIVATION_EVENTS)[number];
 
+export interface BridgeCoreDeclaration {
+  readonly messages: readonly string[];
+}
+
+export interface BridgeExtensionMessage {
+  readonly name: string;
+  readonly kind: "event" | "command" | "query";
+  readonly schema: Record<string, unknown>;
+}
+
+export interface BridgeExtensionDeclaration {
+  readonly messages: readonly BridgeExtensionMessage[];
+}
+
+export interface PluginBridgeDeclaration {
+  readonly core?: BridgeCoreDeclaration;
+  readonly extension?: BridgeExtensionDeclaration;
+}
+
 export interface PluginManifest {
   id: string;
   name: string;
@@ -39,6 +59,7 @@ export interface PluginManifest {
   dependsOn: Record<string, string>;
   optionalDependsOn: Record<string, string>;
   activation: ActivationEvent[];
+  bridge?: PluginBridgeDeclaration;
   settings?: Record<string, unknown>;
   contributes?: Record<string, unknown>;
 }
@@ -47,8 +68,12 @@ export type ManifestResult = { ok: true; manifest: PluginManifest } | { ok: fals
 
 const TOP_LEVEL = [
   "$schema", "id", "name", "version", "engines", "main", "trust", "capabilities",
-  "dependsOn", "optionalDependsOn", "activation", "settings", "contributes",
+  "dependsOn", "optionalDependsOn", "activation", "bridge", "settings", "contributes",
 ];
+
+const BRIDGE_FIELDS = ["core", "extension"] as const;
+const BRIDGE_EXTENSION_MESSAGE_FIELDS = ["name", "kind", "schema"] as const;
+const BRIDGE_EXTENSION_KINDS = ["event", "command", "query"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -76,6 +101,76 @@ function trustInput(value: unknown): "declarative" | "trusted" {
   return value === "trusted" ? "trusted" : "declarative";
 }
 
+type BridgeResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
+function bridgeFail(error: string): BridgeResult<never> {
+  return { ok: false, error };
+}
+
+function bridgeFields(value: Record<string, unknown>, fields: readonly string[], path: string): string | undefined {
+  const unknown = Object.keys(value).filter((key) => !fields.includes(key));
+  return unknown.length === 0 ? undefined : `${path} has unknown field(s): ${unknown.join(", ")}`;
+}
+
+function bridgeCore(value: unknown): BridgeResult<BridgeCoreDeclaration> {
+  if (!isRecord(value)) return bridgeFail("bridge.core must be an object");
+  const unknown = bridgeFields(value, ["messages"], "bridge.core");
+  if (unknown !== undefined) return bridgeFail(unknown);
+  if (!Array.isArray(value.messages)) return bridgeFail("bridge.core.messages must be an array of catalog names");
+  const seen = new Set<string>();
+  const messages: string[] = [];
+  for (const name of value.messages) {
+    if (typeof name !== "string" || lookupMessage(name) === undefined) {
+      return bridgeFail(`bridge.core.messages names unknown catalog message "${String(name)}"`);
+    }
+    if (seen.has(name)) return bridgeFail(`bridge.core.messages repeats "${name}"`);
+    seen.add(name);
+    messages.push(name);
+  }
+  return { ok: true, value: { messages } };
+}
+
+function bridgeExtension(value: unknown, pluginId: string): BridgeResult<BridgeExtensionDeclaration> {
+  if (!isRecord(value)) return bridgeFail("bridge.extension must be an object");
+  const unknown = bridgeFields(value, ["messages"], "bridge.extension");
+  if (unknown !== undefined) return bridgeFail(unknown);
+  if (!Array.isArray(value.messages)) return bridgeFail("bridge.extension.messages must be an array");
+  const seen = new Set<string>();
+  const messages: BridgeExtensionMessage[] = [];
+  for (const [index, raw] of value.messages.entries()) {
+    const path = `bridge.extension.messages[${index}]`;
+    if (!isRecord(raw)) return bridgeFail(`${path} must be an object`);
+    const unknownMessageField = bridgeFields(raw, BRIDGE_EXTENSION_MESSAGE_FIELDS, path);
+    if (unknownMessageField !== undefined) return bridgeFail(unknownMessageField);
+    if (typeof raw.name !== "string" || !raw.name.startsWith(`${pluginId}.`) || lookupMessage(raw.name) !== undefined) {
+      return bridgeFail(`${path}.name must be a namespaced plugin message owned by "${pluginId}"`);
+    }
+    if (typeof raw.kind !== "string" || !(BRIDGE_EXTENSION_KINDS as readonly unknown[]).includes(raw.kind)) {
+      return bridgeFail(`${path}.kind must be one of ${BRIDGE_EXTENSION_KINDS.join(", ")}`);
+    }
+    if (!isRecord(raw.schema)) return bridgeFail(`${path}.schema must be a JSON schema object`);
+    if (seen.has(raw.name)) return bridgeFail(`${path}.name repeats "${raw.name}"`);
+    seen.add(raw.name);
+    messages.push({ name: raw.name, kind: raw.kind as BridgeExtensionMessage["kind"], schema: structuredClone(raw.schema) });
+  }
+  return { ok: true, value: { messages } };
+}
+
+function bridgeDeclaration(value: unknown, pluginId: string): BridgeResult<PluginBridgeDeclaration | undefined> {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (!isRecord(value)) return bridgeFail("bridge must be an object");
+  const unknown = bridgeFields(value, BRIDGE_FIELDS, "bridge");
+  if (unknown !== undefined) return bridgeFail(unknown);
+  const core = value.core === undefined ? undefined : bridgeCore(value.core);
+  if (core !== undefined && !core.ok) return core;
+  const extension = value.extension === undefined ? undefined : bridgeExtension(value.extension, pluginId);
+  if (extension !== undefined && !extension.ok) return extension;
+  return { ok: true, value: {
+    ...(core === undefined ? {} : { core: core.value }),
+    ...(extension === undefined ? {} : { extension: extension.value }),
+  } };
+}
+
 export function validateManifest(input: unknown): ManifestResult {
   if (!isRecord(input)) return { ok: false, error: "manifest must be a JSON object" };
   const name = typeof input.id === "string" ? input.id : "unknown";
@@ -93,6 +188,9 @@ export function validateManifest(input: unknown): ManifestResult {
   if (typeof input.version !== "string" || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(input.version)) {
     return fail("version must be a strict semver string");
   }
+
+  const bridge = bridgeDeclaration(input.bridge, input.id);
+  if (!bridge.ok) return fail(bridge.error);
 
   if (!isRecord(input.engines) || typeof input.engines.piWeb !== "string" || typeof input.engines.sdk !== "string") {
     return fail("engines must declare piWeb and sdk semver ranges");
@@ -168,6 +266,7 @@ export function validateManifest(input: unknown): ManifestResult {
     dependsOn: deps.value,
     optionalDependsOn: optional.value,
     activation: [...(activation as ActivationEvent[])],
+    ...(bridge.value === undefined ? {} : { bridge: bridge.value }),
     ...(input.settings !== undefined ? { settings: structuredClone(input.settings) as Record<string, unknown> } : {}),
     ...(input.contributes !== undefined ? { contributes: structuredClone(input.contributes) as Record<string, unknown> } : {}),
   };

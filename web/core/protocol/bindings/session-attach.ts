@@ -56,6 +56,7 @@ export function createSessionAttachBinding(options: BindingOptions, connection: 
   const delegate = createInProcessBinding({
     ...options,
     name: "session-attach",
+    bridgeSlices: options.bridgeSlices,
     session: bridgeCommandSurface((command) => connection.sendCommand(command)),
     snapshot: () => ({
       commands: connection.getCommands?.() ?? [],

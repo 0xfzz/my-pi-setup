@@ -5,6 +5,13 @@
  */
 import { Value } from "typebox/value";
 
+import {
+  createPluginBridge,
+  FIRST_PARTY_BRIDGE_CLIENT,
+  type BridgeResult,
+  type PluginBridge,
+  type PluginBridgeTransport,
+} from "../protocol/index.ts";
 import { MESSAGE_CATALOG, lookupMessage } from "../protocol/catalog.ts";
 import { parseEnvelope, type BridgeEnvelope } from "../protocol/envelope.ts";
 import { BRIDGE_ERROR_CODES, bridgeError, type BridgeError, type BridgeErrorCode } from "../protocol/errors.ts";
@@ -49,6 +56,7 @@ function envelopeFor(
   sessionId: string,
   clientId: string,
   sequence: number,
+  sourceId: string = clientId,
 ): BridgeEnvelope {
   const message = lookupMessage(name);
   if (message === undefined) throw new Error(`unknown protocol message "${name}"`);
@@ -60,7 +68,7 @@ function envelopeFor(
     messageId: `${clientId}-${sequence}`,
     // Directory messages are session-less; a sentinel id would be a lie on the wire.
     ...(sessionId === "" ? {} : { sessionId }),
-    source: { type: "browser", id: clientId },
+    source: { type: "browser", id: sourceId },
     timestamp: 0,
     payload,
   };
@@ -107,7 +115,7 @@ export class ProtocolClient {
 
   constructor(options: ProtocolClientOptions) {
     this.sessionId = options.sessionId;
-    this.clientId = options.clientId ?? "pi-web";
+    this.clientId = options.clientId ?? FIRST_PARTY_BRIDGE_CLIENT;
     this.post = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.eventSource = options.eventSource ?? globalThis.EventSource;
     this.protocolPath = options.protocolPath ?? PROTOCOL_PATH;
@@ -211,6 +219,17 @@ export class ProtocolClient {
 
   /** Send one typed envelope; commands and queries share the same transport. */
   async invoke<T>(name: string, payload: unknown, signal?: AbortSignal): Promise<ProtocolResult<T>> {
+    return this.invokeAs<T>({ name, payload, signal, sourceId: this.clientId });
+  }
+
+  /** A plugin half keeps the shared session stream but labels its own envelopes. */
+  private async invokeAs<T>(request: {
+    readonly name: string;
+    readonly payload: unknown;
+    readonly signal?: AbortSignal;
+    readonly sourceId: string;
+  }): Promise<ProtocolResult<T>> {
+    const { name, payload, signal, sourceId } = request;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         await this.handshake();
@@ -220,7 +239,20 @@ export class ProtocolClient {
         if (attempt === 1 || !bridgeError.retryable) return { ok: false, error: bridgeError };
       }
     }
-    return this.send<T>(envelopeFor(name, payload, this.sessionId, this.clientId, ++this.sequence), signal);
+    return this.send<T>(envelopeFor(name, payload, this.sessionId, this.clientId, ++this.sequence, sourceId), signal);
+  }
+
+  /** SDK plugins receive this adapter instead of the full internal client. */
+  pluginTransport(sourceId: string): PluginBridgeTransport {
+    return {
+      invoke: <T>(name: string, payload: unknown, signal?: AbortSignal): Promise<BridgeResult<T>> =>
+        this.invokeAs<T>({ name, payload, signal, sourceId }),
+      subscribe: (name, listener, onError) => this.subscribe(
+        name,
+        listener,
+        onError === undefined ? undefined : (source) => onError(source),
+      ),
+    };
   }
 
   /** Read-only alias that makes UI call sites state their intent. */
@@ -346,6 +378,22 @@ export class ProtocolClient {
 
 /** Plugin halves share one client that follows the selected session. */
 export const pluginProtocolClient = new ProtocolClient({ sessionId: "" });
+
+export interface CorePluginBridgeOptions {
+  readonly pluginId: string;
+  readonly core: readonly string[];
+  readonly client?: ProtocolClient;
+}
+
+/** The core-side factory: SDK policy over the existing browser transport. */
+export function createCorePluginBridge(options: CorePluginBridgeOptions): PluginBridge {
+  const client = options.client ?? pluginProtocolClient;
+  return createPluginBridge({
+    pluginId: options.pluginId,
+    core: options.core,
+    transport: client.pluginTransport(options.pluginId),
+  });
+}
 
 export function setPluginSession(sessionId: string | null): void {
   pluginProtocolClient.setSessionId(sessionId ?? "");

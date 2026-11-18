@@ -9,7 +9,7 @@ import { BRIDGE_PROTOCOL, BRIDGE_PROTOCOL_VERSION, HELLO } from "../version.ts";
 import { conformanceCases, runConformance } from "../testing/conformance.ts";
 import { createInProcessBinding, type InProcessOptions } from "./in-process.ts";
 import { createSessionAttachBinding } from "./session-attach.ts";
-import type { BindingOptions } from "./types.ts";
+import type { BindingOptions, CapabilityAuditEntry } from "./types.ts";
 
 const allCapabilities = (): string[] => {
   const definitions: readonly MessageDefinition[] = MESSAGE_CATALOG;
@@ -105,6 +105,7 @@ test("commands and queries before the handshake are refused", async () => {
 test("a plugin message without its capability is denied and named", async () => {
   const binding = createInProcessBinding({
     ...options("in-process", []),
+    bridgeSlices: new Map([["evil.plugin", ["session.prompt"]]]),
     session: session(),
   });
   await handshake(binding);
@@ -116,6 +117,50 @@ test("a plugin message without its capability is denied and named", async () => 
     assert.equal(reply.error.code, "CAPABILITY_DENIED");
     assert.deepEqual(reply.error.details, { plugin: "evil.plugin", capability: "session.write" });
   }
+});
+
+test("a declared core slice is used and an undeclared message is denied once", async () => {
+  const audited: CapabilityAuditEntry[] = [];
+  const binding = createInProcessBinding({
+    ...options("in-process"),
+    bridgeSlices: new Map([["acme.plugin", ["session.prompt"]]]),
+    pluginGrants: allCapabilities(),
+    audit: (entry) => { audited.push(entry); },
+    session: session(),
+  });
+  await handshake(binding);
+  const allowed = await binding.invoke(envelope("session.prompt", { text: "hi" }, {
+    type: "plugin", id: "acme.plugin",
+  }));
+  assert.equal(allowed.ok, true);
+
+  const denied = await binding.invoke(envelope("session.delete", {}, {
+    type: "plugin", id: "acme.plugin",
+  }));
+  assert.equal(denied.ok, false);
+  if (!denied.ok) {
+    assert.equal(denied.error.code, "BRIDGE_MESSAGE_DENIED");
+    assert.deepEqual(denied.error.details, { plugin: "acme.plugin", message: "session.delete" });
+  }
+  assert.deepEqual(audited, [{
+    source: "acme.plugin", capability: "BRIDGE_MESSAGE_DENIED", message: "session.delete",
+  }]);
+  await binding.close();
+});
+
+test("an external plugin with no declared slice has no core messages", async () => {
+  const binding = createInProcessBinding({
+    ...options("in-process"),
+    bridgeSlices: new Map(),
+    session: session(),
+  });
+  await handshake(binding);
+  const denied = await binding.invoke(envelope("session.list", {}, {
+    type: "browser", id: "unknown.plugin",
+  }));
+  assert.equal(denied.ok, false);
+  if (!denied.ok) assert.equal(denied.error.code, "BRIDGE_MESSAGE_DENIED");
+  await binding.close();
 });
 
 test("session adapters forward bridge commands to the owning session", () => {

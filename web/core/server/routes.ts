@@ -48,6 +48,7 @@ import { catalogCapabilities } from "../protocol/catalog.ts";
 import {
   createDirectoryProtocolHost,
   createProtocolHost,
+  declaredBridgeSlices,
   type ProtocolHost,
 } from "./protocol-host.ts";
 import { getWebLogger } from "../http/logging.ts";
@@ -377,7 +378,8 @@ function protocolHostFor(sessionId: string): ProtocolHost {
       sessionId,
       cwd: getSession(sessionId)?.cwd ?? process.cwd(),
       grantedCapabilities: catalogCapabilities(),
-      onAudit: (entry) => getWebLogger().warn(entry, "protocol capability denied"),
+      bridgeSlices: declaredBridgeSlices(),
+      onAudit: (entry) => getWebLogger().warn(entry, "protocol slice or capability denied"),
     });
     protocolHosts.set(sessionId, host);
   }
@@ -388,7 +390,8 @@ function directoryProtocolHostFor(): ProtocolHost {
   directoryProtocolHost ??= createDirectoryProtocolHost({
     cwd: process.cwd(),
     grantedCapabilities: catalogCapabilities(),
-    onAudit: (entry) => getWebLogger().warn(entry, "protocol capability denied"),
+    bridgeSlices: declaredBridgeSlices(),
+    onAudit: (entry) => getWebLogger().warn(entry, "protocol slice or capability denied"),
   });
   return directoryProtocolHost;
 }

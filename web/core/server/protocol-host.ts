@@ -188,10 +188,14 @@ export interface ProtocolHostOptions {
   readonly sessionId?: string;
   readonly cwd: string;
   readonly grantedCapabilities: readonly string[];
+  /** Capabilities granted to plugin-originated sources; separate from browser grants. */
+  readonly pluginGrants?: readonly string[];
   readonly session?: SessionSurface;
   readonly directory?: DirectorySurface;
   readonly snapshot?: () => unknown;
   readonly onAudit?: (entry: AuditEntry) => void;
+  /** Overrides the discovered manifest slices, mainly for isolated tests. */
+  readonly bridgeSlices?: ReadonlyMap<string, readonly string[]>;
 }
 
 export interface ProtocolHost {
@@ -199,6 +203,21 @@ export interface ProtocolHost {
   handle(input: unknown): Promise<BindingReply>;
   denials(): readonly AuditEntry[];
   close(): Promise<void>;
+}
+
+/** Phase 2 owns discovery; the host exposes only the derived slice map. */
+export function declaredBridgeSlices(): ReadonlyMap<string, readonly string[]> {
+  const host: unknown = getPluginHost();
+  if (host === null || typeof host !== "object") return new Map();
+  const candidate: unknown = Reflect.get(host, "bridgeSlices");
+  if (!(candidate instanceof Map)) return new Map();
+  const slices = new Map<string, readonly string[]>();
+  for (const [id, messages] of candidate.entries()) {
+    if (typeof id !== "string" || !Array.isArray(messages)
+      || !messages.every((name): name is string => typeof name === "string")) continue;
+    slices.set(id, [...messages]);
+  }
+  return slices;
 }
 
 function clientIdOf(input: unknown): string | undefined {
@@ -281,6 +300,10 @@ export function createProtocolHost(options: ProtocolHostOptions): ProtocolHost {
     sessionId,
     cwd: options.cwd,
     grantedCapabilities: grants,
+    pluginGrants: options.pluginGrants,
+    // Only the composition root opts a host into slice enforcement; an
+    // explicitly empty map still denies every undeclared plugin message.
+    bridgeSlices: options.bridgeSlices,
     clientId,
     audit,
     session,
@@ -295,6 +318,8 @@ export function createDirectoryProtocolHost(options: ProtocolHostOptions): Proto
     name: "http-sse",
     cwd: options.cwd,
     grantedCapabilities: grants,
+    pluginGrants: options.pluginGrants,
+    bridgeSlices: options.bridgeSlices,
     clientId,
     audit,
     directory: options.directory ?? directorySurfaceOf(),
