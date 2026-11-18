@@ -8,6 +8,7 @@ import {
   HOST_SPECIFIERS,
   WEB_PLUGINS,
   hostImportMap,
+  hostPreloadUrls,
 } from "../web/config/registry.config.ts";
 
 const source = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8");
@@ -66,6 +67,27 @@ test("the browser import map is generated from the one web registry", () => {
   assert.equal(map["@pi-web/host-ui"], "/host/ui.js");
   assert.equal(map.typebox, "/host/typebox.js");
   assert.equal(map["typebox/value"], "/host/typebox-value.js");
+});
+
+test("the shell preloads the host bundles needed before app.js runs", () => {
+  const urls = hostPreloadUrls();
+  for (const file of ["runtime.js", "ui.js", "typebox-host.js"]) {
+    assert.ok(urls.includes(`/host/${file}`), `missing preload for ${file}`);
+  }
+  for (const url of ["/host/sdk.js", "/host/react.js", "/host/typebox.js"]) {
+    assert.ok(urls.includes(url), `missing preload for ${url}`);
+  }
+  assert.equal(urls.some((url) => url.includes("viewer") || url.includes("icons")), false);
+  assert.equal(new Set(urls).size, urls.length, "preloads must not fetch the same URL twice");
+
+  const template = source("../web/core/client/index.html");
+  assert.match(template, /<!-- PI_WEB_MODULE_PRELOAD -->/);
+  assert.match(source("../web/build.mjs"), /hostPreloadUrls\(\)/);
+
+  const built = source("../web/core/client/dist/index.html");
+  for (const url of urls) {
+    assert.ok(built.includes(`rel="modulepreload" href="${url}"`), `built shell missing ${url}`);
+  }
 });
 
 test("host modules and budgets are consumed by the build, not declared there", () => {

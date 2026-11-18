@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 import { assertBundleWithinBudget } from "./bundle-budget.mjs";
 import { registry } from "./load-registry.mjs";
 
-const { FILE_VIEWER_ASSETS, FIRST_PARTY_EXTERNALS, hostImportMap } = registry;
+const { FILE_VIEWER_ASSETS, FIRST_PARTY_EXTERNALS, hostImportMap, hostPreloadUrls } = registry;
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)));
 const client = resolve(root, "core", "client");
@@ -74,11 +74,17 @@ execFileSync(
 // shims, so adding a shared browser module never means editing two files.
 const htmlTemplate = await readFile(resolve(client, "index.html"), "utf8");
 const importMap = JSON.stringify({ imports: hostImportMap() }, null, 2);
-const html = htmlTemplate.replace(
-  "<!-- PI_WEB_IMPORT_MAP -->",
-  `<script type="importmap">\n${importMap}\n  </script>`,
-);
-if (html === htmlTemplate) throw new Error("index.html import-map placeholder is missing");
+const preloads = hostPreloadUrls()
+  .map((url) => `  <link rel="modulepreload" href="${url}" />`)
+  .join("\n");
+const html = htmlTemplate
+  .replace(
+    "<!-- PI_WEB_IMPORT_MAP -->",
+    `<script type="importmap">\n${importMap}\n  </script>`,
+  )
+  .replace("<!-- PI_WEB_MODULE_PRELOAD -->", preloads);
+if (html === htmlTemplate) throw new Error("index.html placeholders are missing");
+if (html.includes("<!-- PI_WEB_MODULE_PRELOAD -->")) throw new Error("index.html module-preload placeholder is missing");
 await writeFile(resolve(dist, "index.html"), html);
 await cp(resolve(client, "base.css"), resolve(dist, "app.css"));
 // Shared panel styles stay in core; each plugin owns and injects its own CSS.

@@ -130,3 +130,17 @@ export function hostImportMap(base = "/host/"): Record<string, string> {
     Object.entries(hostModuleTable).map(([specifier, entry]) => [specifier, `${entry.base ?? base}${entry.file}`]),
   );
 }
+
+const COLD_PATH_BUNDLES: readonly HostBundleName[] = ["runtime", "ui", "typebox-host"];
+
+/**
+ * Host URLs the shell can preload before app.js is parsed. The icon and
+ * viewer bundles are deliberately absent: they are only needed on demand.
+ */
+export function hostPreloadUrls(base = "/host/"): readonly string[] {
+  const shims = Object.values(hostModuleTable)
+    .filter((entry) => entry.bundle !== "icons" && entry.bundle !== "file-viewer")
+    .map((entry) => `${entry.base ?? base}${entry.file}`);
+  const bundles = COLD_PATH_BUNDLES.map((name) => `${base}${name}.js`);
+  return [...new Set([...shims, ...bundles])];
+}
