@@ -126,6 +126,13 @@ test("an untitled session is named once, from the first exchange, on the current
   assert.equal(h.requests.length, 1, "a titled session with no refinement signal is not titled again");
 });
 
+test("a title request carries the session id so OpenCode can route it", async () => {
+  const h = harness();
+  await h.emit("agent_end");
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests[0].options.sessionId, "s1", "a direct title request must send OpenCode's routing session id");
+});
+
 test("a generated title is recorded on the branch before it is applied", async () => {
   const h = harness();
   await h.emit("agent_end");

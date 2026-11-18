@@ -206,7 +206,16 @@ export default function autoTitleExtension(pi: ExtensionAPI, options: { stateFil
       // Reasoning is omitted (off) unless the model cannot turn it off. A one-off
       // request marked cacheRetention "none" is routed around claude-bridge's
       // prompt capture, and maxRetries 0 leaves retries to this policy.
-      { maxTokens: budget.maxTokens, signal, maxRetries: 0, cacheRetention: "none", ...(budget.reasoning ? { reasoning: budget.reasoning } : {}) },
+      {
+        maxTokens: budget.maxTokens,
+        signal,
+        maxRetries: 0,
+        cacheRetention: "none",
+        // Direct requests bypass the agent loop, so pass the routing id pi-ai
+        // uses for OpenCode's required x-opencode-session header.
+        sessionId: context.sessionManager.getSessionId(),
+        ...(budget.reasoning ? { reasoning: budget.reasoning } : {}),
+      },
     ) as AsyncIterable<AssistantMessageEvent>);
     let reply = await send(options);
     if (reply.stopReason === "length") reply = await send(lengthRetryOptions(options));
