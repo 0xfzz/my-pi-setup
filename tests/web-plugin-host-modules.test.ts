@@ -28,7 +28,36 @@ test("host UI keeps lazy imports out of the entry bundle", () => {
   assert.match(build, /splitting:\s*true/);
   assert.doesNotMatch(build, /splitting:\s*false/);
   assert.match(build, /chunkNames:/);
+  assert.match(build, /assertBundleWithinBudget/);
 
   const markdown = source("../web/core/client/plugin-system/markdown.tsx");
   assert.match(markdown, /import\("mermaid"\)/);
+});
+
+test("the shared runtime carries no icon catalogue or document viewer", () => {
+  const runtime = source("../web/core/client/host/runtime.ts");
+  assert.doesNotMatch(runtime, /@phosphor-icons\/react/);
+  assert.doesNotMatch(runtime, /@file-viewer\//);
+
+  const build = source("../web/build-host-modules.mjs");
+  assert.match(build, /buildEntry\("icons", "icons\.ts"\)/);
+  assert.match(build, /buildEntry\(\s*"file-viewer"/s);
+
+  for (const path of [
+    "../web/build.mjs",
+    "../web/build-plugin-halves.mjs",
+    "../web/build-host-modules.mjs",
+  ]) {
+    assert.match(source(path), /FIRST_PARTY_EXTERNALS/);
+  }
+});
+
+test("plugin UI owns the document viewer and loads the vendor lazily", () => {
+  const viewer = source("../web/plugins/files/DocumentViewer.tsx");
+  assert.doesNotMatch(viewer, /^import\s+FileViewer/m);
+  assert.match(viewer, /import\("@file-viewer\/react"\)/);
+  assert.match(viewer, /data-testid="files-document"/);
+
+  assert.equal(HOST_MODULES["@pi-web/document-viewer"], undefined);
+  assert.equal(HOST_MODULES["@phosphor-icons/react"], "phosphor.js");
 });

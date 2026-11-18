@@ -16,7 +16,8 @@ import { cp, readFile, writeFile } from "node:fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HOST_SPECIFIERS, hostImportMap } from "./plugin-host-specifiers.mjs";
+import { assertBundleWithinBudget } from "./bundle-budget.mjs";
+import { FIRST_PARTY_EXTERNALS, hostImportMap } from "./plugin-host-specifiers.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)));
 const client = resolve(root, "core", "client");
@@ -31,7 +32,7 @@ if (!existsSync(dist)) {
   mkdirSync(dist, { recursive: true });
 }
 
-await build({
+const clientBuild = await build({
   // The client entry is the top-level composition root, which imports the
   // core shell and the first-party plugin panel registrations. It lives
   // outside core so the core client never imports a plugin module.
@@ -50,8 +51,12 @@ await build({
   // Match the `@/*` tsconfig paths so shadcn components import from
   // `@/components/ui/…` and `@/lib/utils` without a bundler config file.
   alias: { "@": client },
-  external: HOST_SPECIFIERS,
+  external: FIRST_PARTY_EXTERNALS,
+  metafile: true,
 });
+for (const [path, output] of Object.entries(clientBuild.metafile.outputs)) {
+  if (path.endsWith("/app.js")) assertBundleWithinBudget("app.js", output.bytes);
+}
 
 execFileSync(process.execPath, [resolve(root, "build-host-modules.mjs")], { stdio: "inherit" });
 execFileSync(process.execPath, [resolve(root, "build-plugin-halves.mjs")], { stdio: "inherit" });

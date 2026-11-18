@@ -19,6 +19,15 @@ export const HOST_MODULES = Object.freeze({
 
 export const HOST_SPECIFIERS = Object.freeze(Object.keys(HOST_MODULES));
 
+/**
+ * First-party entries bundle icons themselves. The hosted phosphor shim still
+ * exists for external plugins, but keeping it external here would pull every
+ * icon into the initial page load through the shared runtime.
+ */
+export const FIRST_PARTY_EXTERNALS = Object.freeze(
+  HOST_SPECIFIERS.filter((specifier) => specifier !== "@phosphor-icons/react"),
+);
+
 /** The browser import map, derived from the same registry as the shims. */
 export function hostImportMap(base = "/host/") {
   return Object.fromEntries(Object.entries(HOST_MODULES).map(([specifier, file]) => [specifier, `${base}${file}`]));

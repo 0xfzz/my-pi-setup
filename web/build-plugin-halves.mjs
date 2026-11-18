@@ -3,12 +3,12 @@ import { build } from "esbuild";
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HOST_SPECIFIERS } from "./plugin-host-specifiers.mjs";
+import { FIRST_PARTY_EXTERNALS } from "./plugin-host-specifiers.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const plugins = resolve(root, "plugins");
 
-const external = HOST_SPECIFIERS;
+const external = FIRST_PARTY_EXTERNALS;
 
 for (const name of readdirSync(plugins, { withFileTypes: true })) {
   if (!name.isDirectory()) continue;

@@ -3,8 +3,8 @@
  *
  * Plugin modules are imported from blob URLs. A generated document import map
  * maps their bare specifiers to shims beside this bundle, so React, the JSX
- * runtime, the SDK, icons and renderers keep one module instance across
- * every plugin.
+ * runtime and the SDK keep one module instance across every plugin. Optional
+ * icon and document-renderer catalogues live in their own lazy entries.
  */
 export {
   Children,
@@ -54,7 +54,3 @@ export {
   version,
 } from "react-dom";
 export { createRoot, hydrateRoot } from "react-dom/client";
-export * from "@phosphor-icons/react";
-export { default as FileViewerDefault, FileViewer, useFileViewerState } from "@file-viewer/react";
-export { setDefaultFileViewerAssetBaseUrl } from "@file-viewer/core";
-export { default as officePresetDefault } from "@file-viewer/preset-office";
