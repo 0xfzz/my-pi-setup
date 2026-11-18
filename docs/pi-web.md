@@ -308,6 +308,15 @@ live session.
   and use `Authorization: Bearer <accessToken>`; refresh with
   `POST /api/auth/refresh {"refreshToken": "..."}` (one refresh at a time).
 
+**Deployment checklist.** pi-web has one operator credential, not per-user
+accounts: anyone who can sign in can drive the agent, read project files,
+edit provider/MCP settings and run shell commands. Do not share the URL and
+password as if it were a multi-user service — put an identity-aware proxy
+(OIDC/mTLS) or a private tunnel in front, and run the server as a dedicated,
+least-privileged user. For a public listener, set a password, keep the proxy
+trust policy at its default, enable `PI_WEB_HSTS=1` and
+`PI_WEB_REQUIRE_CSRF_HEADER=1`, and terminate TLS at the proxy.
+
 **Diagnostics.** Both hosts run on Fastify. Request ids are always assigned;
 a structured logger is enabled at `warn` level so ordinary requests stay
 silent and only warnings/errors are emitted. The request field set is
