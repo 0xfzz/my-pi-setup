@@ -10,9 +10,11 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import type { WebPluginDescriptor } from "../plugin-contracts/descriptor.ts";
 import { createPluginHost, type PluginHost } from "../plugin-contracts/kernel/host.ts";
+import type { DiscoveryRoots } from "../plugin-contracts/kernel/discovery.ts";
 import { createPluginUiSink } from "./plugin-ui-sink.ts";
 import { importPluginModule } from "./plugin-module-loader.ts";
 import { tryGetWebLogger } from "../http/logging.ts";
+import { pluginProjectRoots } from "../../../lib/plugin-project.ts";
 
 const GLOBAL_HOST_KEY = Symbol.for("pi-web:plugin-host:v1");
 
@@ -38,6 +40,33 @@ export function flushPluginHostWarnings(): void {
 
 /** The first-party plugin tree, which is also a discovery root (Files ships a manifest). */
 const webPluginsDir = fileURLToPath(new URL("../../plugins", import.meta.url));
+
+export interface WebPluginDiscoveryDirs {
+  readonly repo: string;
+  readonly user: string;
+  readonly project: string;
+}
+
+function defaultDiscoveryDirs(): WebPluginDiscoveryDirs {
+  return {
+    repo: webPluginsDir,
+    user: join(homedir(), ".pi", "agent", "web-plugins"),
+    project: join(process.cwd(), ".pi", "web-plugins"),
+  };
+}
+
+/** External package roots are opt-in; without the env var discovery is unchanged. */
+export function webPluginDiscoveryRoots(
+  env: Record<string, string | undefined>,
+  dirs: WebPluginDiscoveryDirs = defaultDiscoveryDirs(),
+): Pick<DiscoveryRoots, "repo" | "user" | "project" | "packages"> {
+  return {
+    repo: dirs.repo,
+    user: dirs.user,
+    project: dirs.project,
+    packages: pluginProjectRoots(env),
+  };
+}
 
 /**
  * How long the registry may wait for the kernel to finish booting before it
@@ -111,14 +140,7 @@ export function registerWebPlugins(
     // Plugin storage sits beside the operator state, so a suite that points
     // PI_WEB_PLUGIN_STATE at a temp dir also redirects the storage file.
     storagePath: process.env.PI_WEB_PLUGIN_STORAGE ?? `${pluginStatePath()}.storage.json`,
-    roots: {
-      // First-party plugins may ship a real manifest (pi-web-plugin.json) with a
-      // server half — the Files plugin does — so the repo tree is a discovery
-      // root exactly like a user or project directory.
-      repo: webPluginsDir,
-      user: join(homedir(), ".pi", "agent", "web-plugins"),
-      project: join(process.cwd(), ".pi", "web-plugins"),
-    },
+    roots: webPluginDiscoveryRoots(process.env),
     env: process.env,
     loader: loadPluginRuntime,
     onWarning: recordPluginWarning,

@@ -20,6 +20,8 @@ import { loadStorageSnapshot, saveStorageSnapshot } from "./storage-file.ts";
 import { loadState, saveState, type WebPluginsState } from "./state.ts";
 import { validatePlugin } from "../descriptor.ts";
 import { validateRegistry } from "../registry.ts";
+import { formatCapability } from "./capabilities.ts";
+import type { BrowserHalfSource } from "./browser-halves.ts";
 
 /** Coalesce a burst of storage writes into one file write. */
 const STORAGE_SAVE_DEBOUNCE_MS = 250;
@@ -47,6 +49,10 @@ export interface PluginHost<D extends DescriptorLike> {
   readonly manager: PluginManager;
   readonly audit: AuditLog;
   readonly shadowed: readonly Shadowed[];
+  /** Declared core message slices by plugin id; absence means no declared slice. */
+  readonly bridgeSlices: ReadonlyMap<string, readonly string[]>;
+  /** Browser entries from winning discovered manifests, with an internal directory for the asset route. */
+  readonly browserHalves: readonly BrowserHalfSource[];
   /** Logic hooks shared by every plugin; the host calls `waterfall`/`bail` at its call sites. */
   readonly hooks: HookBus;
   /**
@@ -83,6 +89,29 @@ const defaultLoader: PluginLoader = (plugin): PluginRuntime => {
   }
   return {};
 };
+
+type ManifestLike = DiscoveredPlugin["manifest"];
+
+function declaredCoreMessages(manifest: ManifestLike): readonly string[] {
+  const bridge = (manifest as unknown as { bridge?: { core?: { messages?: unknown } } }).bridge;
+  const messages = bridge?.core?.messages;
+  if (!Array.isArray(messages)) return [];
+  return messages.filter((name): name is string => typeof name === "string" && name.length > 0);
+}
+
+function browserHalfSource(plugin: DiscoveredPlugin): BrowserHalfSource | undefined {
+  const entry = plugin.manifest.main.browser;
+  if (entry === undefined) return undefined;
+  return {
+    id: plugin.id,
+    version: plugin.manifest.version,
+    source: plugin.source,
+    dir: plugin.dir,
+    sourcePath: entry,
+    capabilities: plugin.manifest.capabilities.map(formatCapability),
+    trust: plugin.manifest.trust,
+  };
+}
 
 /**
  * Compile a discovered manifest's `contributes` block into a validated
@@ -137,6 +166,15 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     inline: compatCandidates(options.descriptors, options.descriptorDir),
   });
   for (const warning of discovered.diagnostics) warn(warning);
+
+  const bridgeSlices = new Map<string, readonly string[]>();
+  const browserHalves: BrowserHalfSource[] = [];
+  for (const plugin of discovered.selected) {
+    const slice = declaredCoreMessages(plugin.manifest);
+    if (slice.length > 0) bridgeSlices.set(plugin.id, slice);
+    const half = browserHalfSource(plugin);
+    if (half !== undefined) browserHalves.push(half);
+  }
 
   const audit = new AuditLog({ clock: options.now });
   const hooks = new HookBus();
@@ -248,6 +286,8 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     manager,
     audit,
     shadowed: discovered.shadowed,
+    bridgeSlices,
+    browserHalves,
     hooks,
     events,
     channels,

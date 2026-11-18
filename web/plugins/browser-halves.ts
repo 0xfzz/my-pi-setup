@@ -11,6 +11,7 @@ import {
   type BrowserHalfDefinition,
   type BrowserRuntime,
 } from "../core/client/plugin-system/browser-host.ts";
+import { registerDiscoveredBrowserHalves } from "../core/client/plugin-system/discovered-browser-halves.ts";
 import * as artifacts from "./artifacts/browser/index.ts";
 import * as files from "./files/browser/index.ts";
 import * as router from "./router/browser/index.ts";
@@ -46,15 +47,29 @@ declare global {
 }
 
 export function mountPluginBrowserHalves(el: HTMLElement, ctx: Omit<WebPluginContext, "register" | "contributions">): () => void {
+  const staticDefinitions = definitions();
   const runtime = createBrowserRuntimeHost({
-    definitions: definitions(),
+    definitions: staticDefinitions,
     element: el,
     context: ctx,
   });
   globalThis.window.piBrowserRuntime = runtime;
   globalThis.window.piBrowserRegisterHalf = (info) => registerBrowserHalfFromUrl(runtime, { ...info, sourcePath: info.url });
-  void runtime.scan();
+
+  let stopped = false;
+  void registerDiscoveredBrowserHalves(runtime, { staticIds: staticDefinitions.map((half) => half.id) })
+    .then((report) => {
+      for (const error of report.errors) ctx.logger.warn(`discovered browser half was skipped: ${error}`);
+    })
+    .catch((error: unknown) => {
+      ctx.logger.warn(`browser-half discovery failed: ${String(error)}`);
+    })
+    .finally(() => {
+      if (!stopped) void runtime.scan();
+    });
+
   return () => {
+    stopped = true;
     runtime.stop();
     delete globalThis.window.piBrowserRuntime;
     delete globalThis.window.piBrowserRegisterHalf;

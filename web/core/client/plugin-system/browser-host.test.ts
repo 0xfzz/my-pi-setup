@@ -5,6 +5,7 @@ import {
   createBrowserRuntimeHost,
   type BrowserHalfDefinition,
   type BrowserRuntimeStatus,
+  verifyBrowserSourceHash,
 } from "./browser-host.ts";
 import type { BrowserModule, WebPluginContext } from "./browser-loader.ts";
 import { BROWSER_GRANTS_KEY, type BrowserGrantStorage } from "./browser-grants.ts";
@@ -156,6 +157,15 @@ test("three render failures quarantine the half and revoke its grant", async () 
   } finally {
     runtime.stop();
   }
+});
+
+test("a published hash mismatch refuses a fetched bundle before it is imported", () => {
+  assert.doesNotThrow(() => verifyBrowserSourceHash("acme.panel", "sha256:abc", "sha256:abc"));
+  assert.doesNotThrow(() => verifyBrowserSourceHash("acme.panel", "sha256:abc"));
+  assert.throws(
+    () => verifyBrowserSourceHash("acme.panel", "sha256:abc", "sha256:def"),
+    /acme\.panel hash changed/,
+  );
 });
 
 test("a changed hash revokes the stored grant until the operator confirms again", async () => {

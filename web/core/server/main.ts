@@ -12,6 +12,7 @@ import { createWebApp } from "./app.ts";
 import { httpLoggerOptions } from "../http/observability.ts";
 import { createWebLogger, installCrashLogging, setWebLogger, type WebLoggerBundle } from "../http/logging.ts";
 import { registerPluginRoutes } from "./plugin-routes.ts";
+import { registerBrowserHalfRoutes } from "./browser-half-routes.ts";
 import { flushPluginHostWarnings, getPluginHost } from "./plugin-host.ts";
 import { runTeardown, teardownNote } from "./shutdown.ts";
 import { announceBuildChanged } from "./sessions.ts";
@@ -151,6 +152,7 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
     // Plugin backend routes, the core API and the auth endpoints are native now;
     // the kernel matcher behind the plugin gateway stays dynamic.
     await registerPluginRoutes(app);
+    await registerBrowserHalfRoutes(app);
     await registerCoreRoutes(app);
     await registerAuthRoutes(app, service, authHttp);
     try {

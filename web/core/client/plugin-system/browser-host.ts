@@ -96,19 +96,31 @@ export function hashBrowserSource(source: string): Promise<string> {
   return sha256(source);
 }
 
+/** A published hash is a grant: changed bytes must never be imported. */
+export function verifyBrowserSourceHash(id: string, hash: string, expectedHash?: string): void {
+  if (expectedHash !== undefined && hash !== expectedHash) {
+    throw new Error(`browser half ${id} hash changed since the operator grant`);
+  }
+}
+
 /** Fetch, hash, import and register one externally built browser half. */
 export async function registerBrowserHalfFromUrl(
   runtime: BrowserRuntime,
-  info: Omit<BrowserHalfDefinition, "module" | "hash"> & { readonly url: string },
+  info: Omit<BrowserHalfDefinition, "module" | "hash"> & {
+    readonly url: string;
+    readonly expectedHash?: string;
+  },
 ): Promise<void> {
   const response = await fetch(info.url, { cache: "no-store" });
   if (!response.ok) throw new Error(`browser half ${info.id} returned HTTP ${response.status}`);
   const source = await response.text();
   const hash = await hashBrowserSource(source);
+  verifyBrowserSourceHash(info.id, hash, info.expectedHash);
+  const { expectedHash: _expectedHash, ...definition } = info;
   const objectUrl = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
   try {
     const module = await import(/* @vite-ignore */ objectUrl) as BrowserModule;
-    await runtime.addDefinition({ ...info, sourcePath: info.url, hash, module });
+    await runtime.addDefinition({ ...definition, hash, module });
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
