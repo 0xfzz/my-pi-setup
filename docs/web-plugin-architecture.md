@@ -73,14 +73,27 @@ When a TUI extension grows a web surface, the web plugin is the *bridge
 for that surface*: it maps the TUI shape to a web placement. It never
 decides anything; it declares.
 
-**Two ways to install one.** A first-party plugin is listed in
+**Ways to install one.** A first-party plugin is listed in
 `web/plugins/index.ts` and registered by the composition root. A plugin from
 anywhere else ships a directory with `pi-web-plugin.json` under
-`~/.pi/agent/web-plugins`, `<project>/.pi/web-plugins`, or a pi package's
-`pi.webPlugins`; the kernel discovers it, validates the manifest without
-running code, and compiles its `contributes` block through the same
-descriptor validator. The repo tree is a discovery root too, which is how
-`web/plugins/files` ships a manifest **and** a server half.
+`~/.pi/agent/web-plugins`, `<project>/.pi/web-plugins`, a pi package's
+`pi.webPlugins`, or an absolute directory in `PI_WEB_PLUGIN_ROOTS`; the kernel
+discovers it, validates the manifest without running code, and compiles its
+`contributes` block through the same descriptor validator. The repo tree is a
+discovery root too, which is how `web/plugins/files` ships a manifest **and**
+a server half.
+
+**Fully independent browser projects** add `main.browser` to that manifest,
+pointing at one bundled `.js`/`.mjs` module. Enabling the plugin from the
+plugin manager makes `/api/browser-halves` publish its metadata and exact asset
+bytes; the browser then requires a hash-bound operator grant before executing
+the bundle. Trusted only, contained paths, fixed MIME/type, a 2 MiB cap, safe
+mode, protected points and the render-failure breaker all apply. New projects
+depend only on the standalone SDK `@pi/web-bridge` (root
+`packages/pi-web-bridge`); `web/core/protocol/` re-exports that single
+implementation. The legacy `web/core/*` import allowlist remains only for
+unmigrated first-party panels and is enabled by the plugin checker for repo
+plugin folders, never for a new external project.
 
 **A server half is code, and lives behind its own rule.** A plugin may declare
 `main.server`; that entry point runs in the web server process (native dynamic
@@ -420,10 +433,25 @@ pi's own implementation; the client never reaches pi directly.
 `trust.*`, `auth.*` and `mcp.*` are commands or queries in the generated
 [catalog](bridge-protocol-catalog.md). Extension surfaces arrive through
 the bridge extension's typed publisher, always with the source extension
-id. Browser halves of trusted plugin projects consume the same protocol
-client; the browser host checks hash-bound operator grants, safe mode and
-protected points before mounting, restores the built-in on a render failure,
-and disabling one removes only its contributions.
+id.
+
+A plugin manifest may declare `bridge.core.messages` as a slice of the frozen
+catalog; the SDK client and the host independently deny every undeclared call
+with `BRIDGE_MESSAGE_DENIED` and one audit entry. It may also declare
+`bridge.extension.messages`: namespaced `<plugin-id>.*` events/commands with
+inline JSON schemas. The SDK registry validates their source, schema and
+lifecycle; the generic bridge relay forwards SDK-validated envelopes (or a
+registry check in-process), and the host binding remains the authoritative
+gate. Custom commands use the existing action bus.
+
+Browser halves of trusted plugin projects consume the same protocol client;
+the browser host checks hash-bound operator grants, safe mode and protected
+points before mounting, restores the built-in on a render failure, and
+disabling one removes only its contributions. The fixture plugin is the
+dogfood: its build output is copied to a temporary `PI_WEB_PLUGIN_ROOTS`
+package by the e2e, with no repository edit at install time. Files, Artifacts,
+Router and Web Bridge remain deprecated static compatibility shims until their
+own self-contained bundles land.
 
 ## The decision test
 
@@ -489,10 +517,11 @@ silent reach.
 
 ## Scaffold
 
-`templates/web-plugin/` is the copy-paste starting point: a shared
-constants file, a bridge-shaped extension, a declarative descriptor, and a
-per-plugin `package.json`, with a README that walks the rename/register
-steps and the two typed channels (`publishWebView` out, the action-request
-event in, and the `web/core/pi-api/` facade for built-ins). It lives
-outside the guarded zones on purpose — copy each piece into place, never an
-entire template into a zone.
+Run `npm run plugin:scaffold <id> [title] [target]` for a new independent
+project. It writes a manifest, browser entry, self-contained build script,
+contract, `package.json` with `@pi/web-bridge`, and a README. Run
+`npm run plugin:check <dir>` before installing: it rejects `web/core/*`
+imports for external projects while allowing the legacy paths only inside
+first-party plugin folders. The generated bundle can be installed under a
+`PI_WEB_PLUGIN_ROOTS` directory and activated through the plugin manager and
+the browser-code grant.

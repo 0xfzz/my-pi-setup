@@ -2,11 +2,11 @@
 
 > Part of [pi-workflow-extensions](../../README.md). Plan for making plugin projects externally installable, protocol-only consumers with optional extension bridges.
 >
-> **Execution disclaimer.** The source of truth for the already-shipped bridge is [PRD: Pi Web Bridge Protocol](./pi-web-bridge-protocol.md); the completed work is recorded in [its implementation plan](./pi-web-bridge-protocol-implementation-plan.md). This document governs the next increment. All decision gates in §8 are resolved; if execution reveals a conflict, update this document before code.
+> **Execution disclaimer.** The source of truth for the shipped bridge is [PRD: Pi Web Bridge Protocol](./pi-web-bridge-protocol.md); the earlier increment is recorded in [its implementation plan](./pi-web-bridge-protocol-implementation-plan.md). This document records the independent-plugin increment: all decision gates in §8 were resolved before code, and §12 records the committed implementation and its residual compatibility path.
 
 | Field | Value |
 | --- | --- |
-| **Status** | In progress — Phase 0 decisions resolved |
+| **Status** | Implemented — Phases 0–6 committed (Phase 5 shims documented in §12) |
 | **Owner** | Faiz |
 | **Builds on** | [bridge protocol PRD](./pi-web-bridge-protocol.md), [web plugin architecture](../web-plugin-architecture.md), [pi-web](../pi-web.md), [plugin platform PRD](./pi-web-plugin-platform.md) |
 | **Gate** | `npm run tidy` green at every phase; browser-runtime e2e green when browser loading changes |
@@ -383,3 +383,21 @@ Disabling a plugin stops its browser half, unregisters its custom messages, and 
 ## 11. Definition of done
 
 Done when AC1–AC14 pass, all §8 decisions are resolved, at least one real plugin runs entirely from an external discovery root, the compatibility path is documented, generated docs are updated, `npm run tidy` is green, and the working tree is clean.
+
+## 12. Implementation record
+
+| Phase | Commit | Result |
+| --- | --- | --- |
+| 0 | `0614c40` | Decisions D1–D6 resolved from the plan's recommendations. |
+| 1 | `9caacd1` | `packages/pi-web-bridge` owns the pure protocol; `web/core/protocol/` re-exports it. |
+| infrastructure | `67c3bf4` | Default per-file test timeout raised to 60s for load-sensitive suites. |
+| 3 | `09b3bfa` | Manifest-declared core slices are enforced by client, bindings and host with named denials and audit. |
+| 2 | `bfe5011` | External browser halves load from authenticated, hash-bound, contained asset routes. |
+| 4 | `f8a59b8` | Plugin-owned namespaced messages flow through the SDK registry, kernel lifecycle, bindings, action bus and generic bridge relay. |
+| 5 | `f14185c` | The fixture plugin loads from an external discovery root; new projects import only `@pi/web-bridge`; static halves are deprecated compatibility shims. |
+
+**Verified.** `npm run tidy` and `npm run lint:dead` pass; both `web/core/e2e/browser-runtime.e2e.mjs` and `web/core/e2e/browser-loading.e2e.mjs` pass with the external fixture; generated protocol catalog and parity docs are unchanged.
+
+**External install.** Put a trusted plugin package under a directory listed in `PI_WEB_PLUGIN_ROOTS` (colon-separated absolute paths). Its `package.json` may declare `pi.webPlugins`; its `pi-web-plugin.json` declares `main.browser` as a bundled `.js`/`.mjs` entry. The plugin starts disabled: enable it from the plugin manager, then confirm the hash-bound browser-code prompt. `--experimental-strip-types` is required only for SDK source consumers in this repository; shipped plugin bundles are ordinary JavaScript.
+
+**Compatibility path and removal condition.** `web/plugins/browser-halves.ts` still statically mounts Files, Artifacts, Router and Web Bridge because their bundles currently depend on shared React/panel-registry module instances. They are marked `@deprecated`; remove each static entry only after that plugin ships a self-contained browser bundle and its manifest activates it from discovery. Sandboxed/untrusted browser code, multi-file browser asset graphs and hot reload with state preservation remain out of scope.

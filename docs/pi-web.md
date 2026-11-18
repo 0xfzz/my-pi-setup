@@ -44,6 +44,8 @@ rebuilt and restarted instead of being attached to at its old version — see
 ## Architecture
 
 ```
+packages/
+  pi-web-bridge/  standalone pure protocol SDK (@pi/web-bridge); web/core/protocol re-exports it
 web/
   server.ts     composition root: registers WEB_PLUGINS into the plugin host,
                 then starts the core server (core never imports a plugin)
@@ -82,6 +84,12 @@ The plugin contract itself lives in the root repo and is shared with the
 TUI: `web/core/plugin-contracts/` (view vocabulary, descriptors, actions, kernel,
 publisher) and `web/plugins/` (the descriptors). Extensions publish views
 from `extensions/*.ts` — unchanged from the vendored era.
+
+The pure protocol vocabulary has its own installable package:
+`packages/pi-web-bridge` (`@pi/web-bridge`). Server, client and core protocol
+shims re-export it so there is one implementation; new plugin projects depend
+on the SDK instead of `web/core/*`. The legacy core paths remain only for the
+unmigrated first-party panels.
 
 ## Realtime design
 
@@ -344,7 +352,12 @@ subscribed name, and a terminal `startup_error` closes that client's session
 streams instead of reconnecting forever. The old `pi_api` route was a Phase 7
 alias and is retired. The catalog and parity matrix are
 generated in [bridge-protocol-catalog.md](bridge-protocol-catalog.md) and
-[bridge-protocol-parity.md](bridge-protocol-parity.md). A browser half runs only
+[bridge-protocol-parity.md](bridge-protocol-parity.md). A plugin may declare
+`bridge.core.messages` to receive only the catalog names it needs; undeclared
+calls are denied and audited. `bridge.extension.messages` declares namespaced
+plugin-owned events/commands with inline JSON schemas; the SDK registry,
+kernel lifecycle, bindings and generic bridge relay enforce ownership and
+validation without changing the frozen catalog. A browser half runs only
 after hash-bound operator confirmation; safe mode, protected points and the
 per-contribution breaker are enforced by the browser host in `web/app.tsx`.
 
@@ -495,6 +508,15 @@ repo; the losers are listed as `shadowed` in the manager.
 
 First-party plugins may use the same mechanism: `web/plugins/files` ships a
 real manifest with a server half, so the repo tree is a discovery root too.
+
+**Fully independent plugin projects** add a manifest with `main.browser`
+pointing to a bundled `.js`/`.mjs` file, place the package under an absolute
+path from `PI_WEB_PLUGIN_ROOTS`, enable it through the plugin manager, then
+confirm the hash-bound browser-code prompt. The authenticated
+`/api/browser-halves` routes publish metadata and the exact asset bytes;
+containment, MIME, size limits, safe mode and the breaker apply to every
+external half. New projects import only `@pi/web-bridge`; the old core import
+paths are a legacy allowance for unmigrated first-party panels.
 
 ### A plugin's own backend endpoints
 
