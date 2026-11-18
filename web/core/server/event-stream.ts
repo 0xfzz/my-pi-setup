@@ -24,7 +24,6 @@ import {
   type SessionInfo,
 } from "./sessions.ts";
 import { recordExtensionUi, webUiStore } from "./ui-store.ts";
-import type { PluginStateFrame } from "../shared/plugin-state.ts";
 import { sessionBus } from "./plugin-sessions.ts";
 import { servedClientBuild } from "./client-build.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT } from "../plugin-contracts/ui-event-models.ts";
@@ -33,10 +32,35 @@ import { BRIDGE_PROTOCOL, BRIDGE_PROTOCOL_VERSION } from "../protocol/version.ts
 
 export type ProtocolEventName = "session.events" | "session.directory.events";
 
-/** The wire drops undefined fields; the envelope must carry that same JSON. */
-function jsonPayload(payload: unknown): unknown {
-  const encoded = JSON.stringify(payload);
-  return encoded === undefined ? null : JSON.parse(encoded) as unknown;
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Match JSON.stringify's handling of undefined without stringify/parse per frame. */
+function jsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    let copy: unknown[] | undefined;
+    for (let index = 0; index < value.length; index += 1) {
+      const entry = value[index];
+      const clean = jsonValue(entry);
+      if (clean === entry || copy !== undefined) continue;
+      copy = value.slice();
+    }
+    if (copy === undefined) return value;
+    for (let index = 0; index < value.length; index += 1) copy[index] = jsonValue(value[index]) ?? null;
+    return copy;
+  }
+  if (isRecord(value)) {
+    let copy: Record<string, unknown> | undefined;
+    for (const [key, entry] of Object.entries(value)) {
+      const clean = jsonValue(entry);
+      if (clean === entry && entry !== undefined) continue;
+      copy ??= { ...value };
+      if (clean === undefined) delete copy[key];
+      else copy[key] = clean;
+    }
+    return copy ?? value;
+  }
+  return value;
 }
 
 /** One sequenced envelope per streamed event. */
@@ -57,7 +81,7 @@ export function protocolEvent(
     timestamp: 0,
     sequence,
     cursor: String(sequence),
-    payload: jsonPayload(payload),
+    payload: jsonValue(payload) ?? null,
   };
 }
 
@@ -322,11 +346,12 @@ export function attachAgentEventStream(
           custom: sessionState?.custom ?? {},
           notifications: sessionState?.notifications ?? [],
         };
-        const signature = JSON.stringify(content);
-        if (signature === lastPluginStateSignature) return;
-        lastPluginStateSignature = signature;
-        const frame: PluginStateFrame = { type: "plugin_state", revision: snapshot.revision, ...content };
-        sendEncodedFrame(JSON.stringify(frame));
+        const contentJson = JSON.stringify(content);
+        if (contentJson === lastPluginStateSignature) return;
+        lastPluginStateSignature = contentJson;
+        // The frame's JSON differs from the dedupe signature only by its type
+        // and revision fields; stringify the plugin content once, not twice.
+        sendEncodedFrame(`{"type":"plugin_state","revision":${snapshot.revision},${contentJson.slice(1)}`);
       };
       sendPluginState();
       if (closed) return;
