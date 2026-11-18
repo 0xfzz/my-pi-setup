@@ -21,6 +21,7 @@ export {
   lazy,
   memo,
   startTransition,
+  use,
   useCallback,
   useContext,
   useEffect,

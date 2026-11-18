@@ -38,6 +38,7 @@ test("the shared runtime carries no icon catalogue or document viewer", () => {
   const runtime = source("../web/core/client/host/runtime.ts");
   assert.doesNotMatch(runtime, /@phosphor-icons\/react/);
   assert.doesNotMatch(runtime, /@file-viewer\//);
+  assert.match(runtime, /^  use,$/m);
 
   const build = source("../web/build-host-modules.mjs");
   assert.match(build, /buildEntry\("icons", "icons\.ts"\)/);
