@@ -165,6 +165,33 @@ The host now always resumes by exact session id (pi finds the project file by
 that id), so the conflicting flag is gone and the stream no longer waits for a
 process that cannot start. Regression: `tests/session-host.test.ts`.
 
+## Browser bundle budgets
+
+The initial page load used to ship three ESM entry bundles that esbuild could
+not tree-shake: every exported symbol of an entry is reachable by definition.
+`core/client/host/runtime.ts` re-exported all ~9,000 Phosphor icons and every
+file-viewer renderer, and the host build had `splitting: false`, so Mermaid and
+its diagram stack were inlined into `ui.js` despite an existing `import()`.
+The browser downloaded ~19.6 MB of uncompressed JavaScript before it could
+paint, matching the multi-second network bars in the HAR screenshot.
+
+| Entry | Before | After | Where the rest went |
+| --- | ---: | ---: | --- |
+| `runtime.js` | 14.87 MB | 401 KB | `icons.js` and `file-viewer.js` are separate entries, fetched only on use |
+| `ui.js` | 4.05 MB | 543 KB | Mermaid/KaTeX/Cytoscape are hashed dynamic chunks |
+| `app.js` | 655 KB | 736 KB | icons are imported by name and bundled into the app |
+
+First-party app and plugin builds use `FIRST_PARTY_EXTERNALS`, which excludes
+only the icon shim; external plugins can still import any icon through the
+import map. The files plugin suspends on the `@file-viewer/*` vendor modules
+when a document preview opens, so neither the runtime nor the plugin half
+pulls the viewers onto the cold path. `web/bundle-budget.mjs` fails the build
+if `app.js`, `runtime.js` or `ui.js` drifts above its ceiling again.
+
+This is a bundle-size fix, not a claim about a specific wall-clock number:
+transfer time still depends on the proxy's compression and the client link.
+Measure the rebuilt HAR to confirm the target on the deployment in question.
+
 ## Already optimized — do not re-fix
 
 - Token deltas render at most once per frame (`web/core/client/frame-coalescer.ts`)
