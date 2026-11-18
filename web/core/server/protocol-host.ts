@@ -6,12 +6,13 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
+import type { PluginMessageRegistry } from "@pi/web-bridge";
 import type { DirectorySurface } from "../adapters/directory.ts";
 import type { SessionSurface } from "../adapters/session.ts";
 import { createDirectoryBinding } from "../protocol/bindings/directory.ts";
 import { createHttpSseBinding } from "../protocol/bindings/http-sse.ts";
 import { handshakeRequired } from "../protocol/bindings/shared.ts";
-import type { BindingReply, CapabilityAuditEntry as AuditEntry, ProtocolBinding } from "../protocol/bindings/types.ts";
+import type { BindingReply, CapabilityAuditEntry as AuditEntry, PluginCommandRelay, ProtocolBinding } from "../protocol/bindings/types.ts";
 import { parseEnvelope } from "../protocol/envelope.ts";
 import { bridgeError, type BridgeError } from "../protocol/errors.ts";
 import { BRIDGE_PROTOCOL_VERSION, HELLO, type Hello, type HelloAck } from "../protocol/version.ts";
@@ -21,6 +22,7 @@ import { piBuiltinCommands } from "../pi-api/index.ts";
 import { gitBranch } from "./git-branch.ts";
 import { createHistoryCache, fileStamp } from "./history-cache.ts";
 import { getPluginHost } from "./plugin-host.ts";
+import { pluginMessageRegistry } from "./plugin-message-loader.ts";
 import { recordSessionName } from "./sessions.ts";
 import {
   deleteSession,
@@ -196,6 +198,8 @@ export interface ProtocolHostOptions {
   readonly onAudit?: (entry: AuditEntry) => void;
   /** Overrides the discovered manifest slices, mainly for isolated tests. */
   readonly bridgeSlices?: ReadonlyMap<string, readonly string[]>;
+  readonly messageRegistry?: PluginMessageRegistry;
+  readonly pluginCommand?: PluginCommandRelay;
 }
 
 export interface ProtocolHost {
@@ -240,6 +244,8 @@ function createHost(
   makeBinding: (grants: readonly string[], clientId: string, audit: (entry: AuditEntry) => void) => ProtocolBinding,
 ): ProtocolHost {
   const bindings = new Map<string, ProtocolBinding>();
+  const registry = options.messageRegistry ?? pluginMessageRegistry();
+  const allowedNames = registry?.names().map((entry) => entry.name);
   const denials: AuditEntry[] = [];
   const audit = (entry: AuditEntry): void => {
     denials.push(entry);
@@ -257,7 +263,7 @@ function createHost(
 
   return {
     async handle(input: unknown): Promise<BindingReply> {
-      const parsed = parseEnvelope(input);
+      const parsed = parseEnvelope(input, allowedNames);
       if (!parsed.ok) return { ok: false, error: parsed.error };
       const clientId = clientIdOf(parsed.envelope);
       if (clientId === undefined) return refusal("VALIDATION_FAILED", "envelope.source.id identifies the client");
@@ -295,6 +301,7 @@ export function createProtocolHost(options: ProtocolHostOptions): ProtocolHost {
   if (sessionId === undefined) throw new Error("a session host needs a sessionId");
   const session = options.session ?? sessionSurfaceOf(sessionId, options.cwd);
   const directory = options.directory ?? directorySurfaceOf();
+  const registry = options.messageRegistry ?? pluginMessageRegistry();
   return createHost(options, (grants, clientId, audit) => createHttpSseBinding({
     name: "http-sse",
     sessionId,
@@ -304,6 +311,8 @@ export function createProtocolHost(options: ProtocolHostOptions): ProtocolHost {
     // Only the composition root opts a host into slice enforcement; an
     // explicitly empty map still denies every undeclared plugin message.
     bridgeSlices: options.bridgeSlices,
+    messageRegistry: registry,
+    pluginCommand: options.pluginCommand,
     clientId,
     audit,
     session,
@@ -314,12 +323,15 @@ export function createProtocolHost(options: ProtocolHostOptions): ProtocolHost {
 
 /** Session-less host: POST /api/protocol. Envelopes must not carry sessionId. */
 export function createDirectoryProtocolHost(options: ProtocolHostOptions): ProtocolHost {
+  const registry = options.messageRegistry ?? pluginMessageRegistry();
   return createHost(options, (grants, clientId, audit) => createDirectoryBinding({
     name: "http-sse",
     cwd: options.cwd,
     grantedCapabilities: grants,
     pluginGrants: options.pluginGrants,
     bridgeSlices: options.bridgeSlices,
+    messageRegistry: registry,
+    pluginCommand: options.pluginCommand,
     clientId,
     audit,
     directory: options.directory ?? directorySurfaceOf(),

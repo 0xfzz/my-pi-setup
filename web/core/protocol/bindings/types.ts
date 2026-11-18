@@ -1,4 +1,5 @@
 /** Transport-neutral binding surface the conformance suite drives. */
+import type { PluginMessageRegistry } from "../index.ts";
 import type { BridgeEnvelope } from "../envelope.ts";
 import type { BridgeError } from "../errors.ts";
 import { BINDING_NAMES, type Hello, type HelloAck } from "../version.ts";
@@ -6,6 +7,17 @@ import { BINDING_NAMES, type Hello, type HelloAck } from "../version.ts";
 export type BindingName = (typeof BINDING_NAMES)[number];
 
 export type BindingReply<T = BridgeEnvelope> = { ok: true; value: T } | { ok: false; error: BridgeError };
+
+export interface PluginCommandRequest {
+  readonly name: string;
+  readonly pluginId: string;
+  readonly payload: unknown;
+}
+
+export type PluginCommandRelay = (request: PluginCommandRequest) => Promise<{
+  ok: boolean;
+  value: unknown;
+}>;
 
 /** A denial is an auditable event, never a dropped message. */
 export interface CapabilityAuditEntry {
@@ -24,6 +36,10 @@ export interface BindingOptions {
   readonly pluginGrants?: readonly string[];
   /** Core messages declared by discovered plugin manifests; keyed by plugin id. */
   readonly bridgeSlices?: ReadonlyMap<string, readonly string[]>;
+  /** Registered custom message names; authoritative for non-catalog envelopes. */
+  readonly messageRegistry?: PluginMessageRegistry;
+  /** Host-owned relay for declared plugin commands. */
+  readonly pluginCommand?: PluginCommandRelay;
   readonly initialCursor?: string;
   /** Host-owned sink: every CAPABILITY_DENIED is reported here. */
   readonly audit?: (entry: CapabilityAuditEntry) => void;

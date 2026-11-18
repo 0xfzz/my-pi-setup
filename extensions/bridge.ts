@@ -15,10 +15,21 @@ import {
   type BridgePublishTarget,
 } from "../web/core/protocol/publisher.ts";
 import type { MessageName } from "../web/core/protocol/catalog.ts";
+import {
+  activePluginMessageRegistry,
+  BRIDGE_RELAY_MARKER,
+  validationMarkOf,
+  type PluginMessageRegistry,
+  type PublishOptions,
+} from "../web/core/protocol/index.ts";
 
 export const BRIDGE_EXTENSION_ID = "bridge";
 
-const BRIDGED_MARKER = "__bridgedByBridgeExtension";
+const BRIDGED_MARKER = BRIDGE_RELAY_MARKER;
+
+export interface BridgeExtensionOptions {
+  readonly registry?: PluginMessageRegistry;
+}
 
 function markedPayload(payload: unknown): unknown {
   if (payload !== null && typeof payload === "object" && !Array.isArray(payload)
@@ -43,7 +54,7 @@ const UI_MESSAGE_NAMES: Record<string, MessageName> = {
   "ui.notify": "ui.notify",
 };
 
-export default function bridgeExtension(pi: ExtensionAPI): () => void {
+export default function bridgeExtension(pi: ExtensionAPI, options: BridgeExtensionOptions = {}): () => void {
   const events = (pi as unknown as BridgePublishTarget).events;
   const unsubscribes: Array<() => void> = [];
   const listen = (channel: string, handler: (raw: unknown) => void): void => {
@@ -51,9 +62,9 @@ export default function bridgeExtension(pi: ExtensionAPI): () => void {
     if (off !== undefined) unsubscribes.push(off);
   };
   let sequence = 0;
-  const emit = (sourceId: string, name: MessageName, payload: unknown): void => {
+  const emit = (sourceId: string, name: string, payload: unknown, publishOptions: PublishOptions = {}): void => {
     const marked = markedPayload(payload);
-    publishBridgeMessage(pi as unknown as BridgePublishTarget, { type: "extension", id: sourceId }, name, marked ?? payload, `${sourceId}:${name}:${++sequence}`);
+    publishBridgeMessage(pi as unknown as BridgePublishTarget, { type: "extension", id: sourceId }, name, marked ?? payload, `${sourceId}:${name}:${++sequence}`, publishOptions);
   };
 
   listen(WEB_UI_EVENT, (raw: unknown) => {
@@ -81,13 +92,27 @@ export default function bridgeExtension(pi: ExtensionAPI): () => void {
   listen(BRIDGE_MESSAGE_EVENT, (raw: unknown) => {
     // Opt-in publishers already carry an envelope; re-emit it with this
     // extension's attribution so a consumer can filter one source id.
-    const envelope = raw as { source?: { id?: unknown }; name?: unknown; payload?: unknown };
+    const envelope = raw as { source?: { id?: unknown; type?: unknown }; name?: unknown; payload?: unknown };
     const payload = envelope.payload;
     const isMarked = payload !== null && typeof payload === "object" && !Array.isArray(payload)
       && Object.hasOwn(payload, BRIDGED_MARKER);
     if (isMarked || typeof envelope.name !== "string") return;
     const source = typeof envelope.source?.id === "string" ? envelope.source.id : BRIDGE_EXTENSION_ID;
-    emit(source, envelope.name as MessageName, payload);
+    const registry = options.registry ?? activePluginMessageRegistry();
+    const name = envelope.name;
+    const mark = validationMarkOf(payload);
+    const markedCustom = mark?.name === name && mark.pluginId === source && name.startsWith(`${source}.`);
+    const custom = registry?.lookup(name);
+    if (custom !== undefined || markedCustom) {
+      if (custom !== undefined) {
+        if (envelope.source?.type !== "extension" && envelope.source?.type !== "plugin") return;
+        if (source !== custom.pluginId) return;
+        if (registry === undefined || !registry.validatePayload(name, payload).ok) return;
+      } else if (!markedCustom) return;
+      emit(source, name, payload, { registry, trustMark: registry === undefined });
+      return;
+    }
+    emit(source, name as MessageName, payload);
   });
 
   unsubscribes.push(pi.on("tool_execution_start", (event: unknown) => {

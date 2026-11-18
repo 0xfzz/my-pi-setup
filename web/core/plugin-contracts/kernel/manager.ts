@@ -5,6 +5,7 @@
  * injected, so the same logic runs in production (a native dynamic import of
  * the manifest's `main.server`) and in tests (fakes).
  */
+import type { PluginMessageRegistry } from "@pi/web-bridge";
 import { AuditLog } from "./audit.ts";
 import { CircuitBreaker } from "./breaker.ts";
 import { engineMismatch } from "./compat.ts";
@@ -194,6 +195,8 @@ export interface ManagerOptions {
    * plugin can still spawn, but nothing reclaims what it leaves behind.
    */
   processes?: PluginProcessRegistry;
+  /** Registry that tracks this host's plugin-owned custom messages. */
+  messages?: PluginMessageRegistry;
 }
 
 export interface BootReport {
@@ -261,6 +264,7 @@ export class PluginManager {
   private readonly routes: PluginRouteRegistry;
   private readonly storage: PluginStorage;
   private readonly processes: PluginProcessRegistry;
+  private readonly messages?: PluginMessageRegistry;
   private state: WebPluginsState;
   private safeMode = false;
 
@@ -283,6 +287,7 @@ export class PluginManager {
     this.routes = options.routes ?? new PluginRouteRegistry();
     this.storage = options.storage ?? new PluginStorage();
     this.processes = options.processes ?? createProcessRegistry();
+    this.messages = options.messages;
     this.hooks.setFailureHandler((failure) => {
       void this.reportFailure(failure.pluginId, `${failure.point} ${failure.reason}: ${failure.message}`);
     });
@@ -680,6 +685,20 @@ export class PluginManager {
     return register();
   }
 
+  /** Custom messages are live only while the plugin is active; disposal is LIFO. */
+  private registerMessages(slot: Slot): string | undefined {
+    if (this.messages === undefined) return undefined;
+    const declarations = slot.plugin.manifest.bridge?.extension?.messages ?? [];
+    if (declarations.length === 0) return undefined;
+    try {
+      const unregister = this.track(slot, () => this.messages!.register(slot.plugin.id, declarations));
+      this.addDisposer(slot, unregister);
+      return undefined;
+    } catch (error) {
+      return `plugin message registration failed: ${errorText(error)}`;
+    }
+  }
+
   private makeContext(slot: Slot, signal: AbortSignal): PluginContext {
     const id = slot.plugin.id;
     const owner = { pluginId: id, grants: slot.grants };
@@ -885,6 +904,10 @@ export class PluginManager {
     slot.disposed = false;
     slot.life.dispatch("load");
     slot.life.dispatch("activate");
+    const registrationFailure = this.registerMessages(slot);
+    if (registrationFailure !== undefined) {
+      return this.fail(slot, registrationFailure, options.countFailure ?? true, "activate-fail");
+    }
     this.state = markActivating(this.state, [...(this.state.activating), id]);
     this.save();
 

@@ -23,6 +23,7 @@ import { existsSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { attachBridge, getBridge, type BridgeState } from "./bridge.ts";
 import { getPluginDescriptor, getPluginHost, pluginsWhenReady } from "./plugin-host.ts";
+import { pluginMessageCapabilities, pluginMessageRegistry } from "./plugin-message-loader.ts";
 import { checkAndSetInFlightAction, recordActionAudit } from "./plugin-actions.ts";
 import { validateActionValues } from "../plugin-contracts/actions.ts";
 import { isKnownSession, relayActionRequest } from "./plugin-sessions.ts";
@@ -45,6 +46,7 @@ import {
 import { createHistoryCache, fileStamp } from "./history-cache.ts";
 import { toWireToolResults } from "./tool-result-wire.ts";
 import { catalogCapabilities } from "../protocol/catalog.ts";
+import type { PluginCommandRelay } from "../protocol/bindings/types.ts";
 import {
   createDirectoryProtocolHost,
   createProtocolHost,
@@ -371,14 +373,26 @@ async function handleBridgeDetach(request: FastifyRequest, reply: FastifyReply):
 const protocolHosts = new Map<string, ProtocolHost>();
 let directoryProtocolHost: ProtocolHost | undefined;
 
+/** A declared plugin command reuses the existing action bus, not a new catalog message. */
+function pluginCommandRelay(sessionId: string): PluginCommandRelay {
+  return async ({ name, pluginId }) => {
+    const actionId = name.slice(pluginId.length + 1);
+    const requestId = randomUUID();
+    const { relayed } = relayActionRequest(sessionId, pluginId, actionId, requestId);
+    return { ok: relayed, value: { relayed, requestId } };
+  };
+}
+
 function protocolHostFor(sessionId: string): ProtocolHost {
   let host = protocolHosts.get(sessionId);
   if (host === undefined) {
     host = createProtocolHost({
       sessionId,
       cwd: getSession(sessionId)?.cwd ?? process.cwd(),
-      grantedCapabilities: catalogCapabilities(),
+      grantedCapabilities: [...catalogCapabilities(), ...pluginMessageCapabilities()],
       bridgeSlices: declaredBridgeSlices(),
+      messageRegistry: pluginMessageRegistry(),
+      pluginCommand: pluginCommandRelay(sessionId),
       onAudit: (entry) => getWebLogger().warn(entry, "protocol slice or capability denied"),
     });
     protocolHosts.set(sessionId, host);
@@ -389,8 +403,9 @@ function protocolHostFor(sessionId: string): ProtocolHost {
 function directoryProtocolHostFor(): ProtocolHost {
   directoryProtocolHost ??= createDirectoryProtocolHost({
     cwd: process.cwd(),
-    grantedCapabilities: catalogCapabilities(),
+    grantedCapabilities: [...catalogCapabilities(), ...pluginMessageCapabilities()],
     bridgeSlices: declaredBridgeSlices(),
+    messageRegistry: pluginMessageRegistry(),
     onAudit: (entry) => getWebLogger().warn(entry, "protocol slice or capability denied"),
   });
   return directoryProtocolHost;

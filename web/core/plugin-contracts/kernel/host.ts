@@ -4,6 +4,7 @@
  * descriptors may be shown or acted on. A descriptor whose plugin is disabled or
  * quarantined is hidden, and its actions are refused, in the same request.
  */
+import { createPluginMessageRegistry, setActivePluginMessageRegistry, type PluginMessageRegistry } from "@pi/web-bridge";
 import { AuditLog } from "./audit.ts";
 import { compatCandidates, type DescriptorLike } from "./compat.ts";
 import { discoverPlugins, type DiscoveredPlugin, type DiscoveryRoots, type Shadowed } from "./discovery.ts";
@@ -51,6 +52,8 @@ export interface PluginHost<D extends DescriptorLike> {
   readonly shadowed: readonly Shadowed[];
   /** Declared core message slices by plugin id; absence means no declared slice. */
   readonly bridgeSlices: ReadonlyMap<string, readonly string[]>;
+  /** Registered plugin-owned custom messages from active manifests. */
+  readonly messages: PluginMessageRegistry;
   /** Browser entries from winning discovered manifests, with an internal directory for the asset route. */
   readonly browserHalves: readonly BrowserHalfSource[];
   /** Logic hooks shared by every plugin; the host calls `waterfall`/`bail` at its call sites. */
@@ -183,6 +186,8 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
   const ui = new PluginUiRegistry();
   const services = new ServiceRegistry();
   const routes = new PluginRouteRegistry();
+  const messages = createPluginMessageRegistry();
+  const restoreActiveMessages = setActivePluginMessageRegistry(messages);
   const storage = new PluginStorage({ onChange: () => scheduleStorageSave() });
 
   // Plugin storage is durable: the snapshot a previous process wrote is loaded
@@ -237,6 +242,7 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     routes,
     storage,
     processes,
+    messages,
     persist: (state: WebPluginsState) => {
       try {
         saveState(options.statePath, state);
@@ -282,11 +288,12 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
     return manager.start();
   }
 
-  return {
+  const host: PluginHost<D> = {
     manager,
     audit,
     shadowed: discovered.shadowed,
     bridgeSlices,
+    messages,
     browserHalves,
     hooks,
     events,
@@ -311,6 +318,8 @@ export function createPluginHost<D extends DescriptorLike>(options: PluginHostOp
       await manager.shutdown();
       await processes.dispose();
       writeStorageNow();
+      restoreActiveMessages();
     },
   };
+  return host;
 }

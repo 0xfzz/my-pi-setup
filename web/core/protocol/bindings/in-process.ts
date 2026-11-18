@@ -3,9 +3,14 @@ import { createSessionAdapters, type SessionSurface } from "../../adapters/sessi
 import type { DirectorySurface } from "../../adapters/directory.ts";
 import { piApiAdapters } from "../../adapters/pi-api.ts";
 import type { ProtocolAdapter } from "../../adapters/types.ts";
+import {
+  activePluginMessageRegistry,
+  payloadForDelivery,
+  stripRelayMarker,
+} from "../index.ts";
 import { lookupMessage } from "../catalog.ts";
 import { parseEnvelope, type BridgeEnvelope } from "../envelope.ts";
-import { bridgeError } from "../errors.ts";
+import { bridgeError, type BridgeError } from "../errors.ts";
 import { BRIDGE_PROTOCOL_VERSION, versionMismatch, type Hello, type HelloAck } from "../version.ts";
 import {
   attributedSource,
@@ -50,6 +55,14 @@ export function adapterFor(name: string, options: InProcessOptions): ProtocolAda
   return undefined;
 }
 
+export function validatedEnvelope(envelope: BridgeEnvelope, options: BindingOptions): { ok: true; envelope: BridgeEnvelope } | { ok: false; error: BridgeError } {
+  const registry = options.messageRegistry ?? activePluginMessageRegistry();
+  if (registry?.lookup(envelope.name) === undefined) return { ok: true, envelope };
+  const checked = registry!.validatePayload(envelope.name, stripRelayMarker(envelope.payload));
+  if (!checked.ok) return { ok: false, error: checked.error };
+  return { ok: true, envelope: { ...envelope, payload: payloadForDelivery(checked.value) } };
+}
+
 export interface DispatchOptions {
   readonly handshake: Handshake;
   readonly options: InProcessOptions;
@@ -61,7 +74,7 @@ export interface DispatchOptions {
 
 /** One adapter call, with the sequence/cursor the host stamped on its reply. */
 export async function dispatchAdapter({ handshake, options, envelope, signal, sequence, cursor }: DispatchOptions): Promise<BindingReply> {
-  const message = messageFor(envelope);
+  const message = messageFor(envelope, options.messageRegistry);
   if (message === undefined) {
     return { ok: false, error: bridgeError("UNKNOWN_MESSAGE", `unknown protocol message "${envelope.name}"`) };
   }
@@ -69,6 +82,15 @@ export async function dispatchAdapter({ handshake, options, envelope, signal, se
   const denied = gate(message, envelope, handshake, options.audit);
   if (denied !== undefined) return { ok: false, error: denied };
   if (message.kind === "capability") return reply(envelope, { acknowledged: true }, { sequence, cursor });
+  const registration = (options.messageRegistry ?? activePluginMessageRegistry())?.lookup(envelope.name);
+  if (registration !== undefined) {
+    if (registration.kind !== "command") return reply(envelope, envelope.payload, { sequence, cursor });
+    if (options.pluginCommand === undefined) {
+      return { ok: false, error: bridgeError("ADAPTER_UNAVAILABLE", `no command relay for "${envelope.name}"`) };
+    }
+    const relayed = await options.pluginCommand({ name: registration.name, pluginId: registration.pluginId, payload: envelope.payload });
+    return reply(envelope, relayed.value, { sequence, cursor, ...(relayed.ok ? {} : { error: bridgeError("INTERNAL", `plugin command "${envelope.name}" was not relayed`) }) });
+  }
   const adapter = adapterFor(envelope.name, options);
   if (adapter === undefined) {
     return { ok: false, error: bridgeError("ADAPTER_UNAVAILABLE", `no adapter for "${envelope.name}"`) };
@@ -106,25 +128,30 @@ export function createInProcessBinding(options: InProcessOptions): ProtocolBindi
 
     async invoke(envelope: BridgeEnvelope, signal: AbortSignal = new AbortController().signal): Promise<BindingReply> {
       if (handshake === undefined) return { ok: false, error: handshakeRequired() };
-      const parsed = parseEnvelope(envelope);
+      const parsed = parseEnvelope(envelope, options.messageRegistry?.names().map((entry) => entry.name));
       if (!parsed.ok) return { ok: false, error: parsed.error };
       if (parsed.envelope.version !== BRIDGE_PROTOCOL_VERSION) {
         return { ok: false, error: versionMismatch(parsed.envelope.version) };
       }
       const attributed = attributedSource(parsed.envelope, handshake, "in-process");
-      const message = messageFor(attributed);
+      const message = messageFor(attributed, options.messageRegistry);
       if (message === undefined) {
         return { ok: false, error: bridgeError("UNKNOWN_MESSAGE", `unknown protocol message "${attributed.name}"`) };
       }
       const denied = gate(message, attributed, handshake, options.audit);
       if (denied !== undefined) return { ok: false, error: denied };
+      const checked = validatedEnvelope(attributed, options);
+      if (!checked.ok) {
+        options.audit?.({ source: attributed.source.id, capability: "VALIDATION_FAILED", message: attributed.name });
+        return { ok: false, error: checked.error };
+      }
 
       sequence += 1;
       cursor = String(sequence);
       if (message.kind === "event") {
-        buffered.push({ ...attributed, sequence, cursor });
+        buffered.push({ ...checked.envelope, sequence, cursor });
       }
-      return dispatchAdapter({ handshake, options, envelope: attributed, signal, sequence, cursor });
+      return dispatchAdapter({ handshake, options, envelope: checked.envelope, signal, sequence, cursor });
     },
 
     events(): readonly BridgeEnvelope[] {

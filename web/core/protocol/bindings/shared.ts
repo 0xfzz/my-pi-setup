@@ -1,8 +1,8 @@
 /** Envelope-level rules shared by every binding, independent of transport. */
 import { Value } from "typebox/value";
 
-import { BRIDGE_MESSAGE_DENIED, bridgeMessageDenied, FIRST_PARTY_BRIDGE_CLIENT } from "../index.ts";
-import { lookupMessage, type MessageDefinition } from "../catalog.ts";
+import { BRIDGE_MESSAGE_DENIED, bridgeMessageDenied, FIRST_PARTY_BRIDGE_CLIENT, resolveMessage } from "../index.ts";
+import type { MessageDefinition } from "../catalog.ts";
 import type { BridgeEnvelope } from "../envelope.ts";
 import { bridgeError, type BridgeError } from "../errors.ts";
 import {
@@ -28,6 +28,7 @@ export interface Handshake extends HelloAck {
   readonly grants: readonly Capability[];
   readonly pluginGrants: readonly Capability[];
   readonly coreSlices?: ReadonlyMap<string, readonly string[]>;
+  readonly messageRegistry?: BindingOptions["messageRegistry"];
 }
 
 function parseGrants(capabilities: readonly string[]): readonly Capability[] {
@@ -67,6 +68,7 @@ export function handshakeFor(hello: Hello, options: BindingOptions): BindingRepl
     grants,
     pluginGrants: parseGrants(options.pluginGrants ?? []),
     ...(options.bridgeSlices === undefined ? {} : { coreSlices: options.bridgeSlices }),
+    ...(options.messageRegistry === undefined ? {} : { messageRegistry: options.messageRegistry }),
   };
   return { ok: true, value: state };
 }
@@ -103,6 +105,7 @@ function sliceDenial(
   handshake: Handshake,
   audit?: (entry: CapabilityAuditEntry) => void,
 ): BridgeError | undefined {
+  if (handshake.messageRegistry?.lookup(message.name) !== undefined) return undefined;
   if (handshake.coreSlices === undefined) return undefined;
   if (envelope.source.type !== "browser" && envelope.source.type !== "plugin") return undefined;
   if (envelope.source.id === FIRST_PARTY_BRIDGE_CLIENT) return undefined;
@@ -162,6 +165,6 @@ export function reply(envelope: BridgeEnvelope, payload: unknown, options: {
   return { ok: true, value };
 }
 
-export function messageFor(envelope: BridgeEnvelope): MessageDefinition | undefined {
-  return lookupMessage(envelope.name);
+export function messageFor(envelope: BridgeEnvelope, registry?: BindingOptions["messageRegistry"]): MessageDefinition | undefined {
+  return resolveMessage(envelope.name, registry);
 }

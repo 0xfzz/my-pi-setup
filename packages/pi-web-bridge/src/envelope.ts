@@ -6,7 +6,7 @@ import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
 import { webUiText } from "./text.ts";
-import { MESSAGE_NAMES, type MessageName } from "./catalog.ts";
+import { MESSAGE_NAMES } from "./catalog.ts";
 import { bridgeError, BridgeErrorSchema, type BridgeError } from "./errors.ts";
 import { BRIDGE_PROTOCOL } from "./version.ts";
 
@@ -24,13 +24,13 @@ const EndpointSchema = Type.Object({
   id: Type.String({ minLength: 1, maxLength: 160 }),
 }, { additionalProperties: false });
 
-export const BridgeEnvelopeSchema = Type.Object({
+const makeEnvelopeSchema = (names: readonly string[]) => Type.Object({
   protocol: Type.Literal(BRIDGE_PROTOCOL),
   version: Type.Integer({ minimum: 1 }),
   kind: Type.Unsafe<"command" | "query" | "event" | "capability">({
     type: "string", enum: ["command", "query", "event", "capability"],
   }),
-  name: Type.Unsafe<MessageName>({ type: "string", enum: [...MESSAGE_NAMES] }),
+  name: Type.Unsafe<string>({ type: "string", enum: [...names] }),
   messageId: Type.String({ minLength: 1, maxLength: 160 }),
   sessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 160 })),
   source: EndpointSchema,
@@ -42,7 +42,9 @@ export const BridgeEnvelopeSchema = Type.Object({
   error: Type.Optional(BridgeErrorSchema),
 }, { additionalProperties: false });
 
-export type BridgeEnvelope = Static<typeof BridgeEnvelopeSchema>;
+export const BridgeEnvelopeSchema = makeEnvelopeSchema(MESSAGE_NAMES);
+
+export type BridgeEnvelope = Omit<Static<typeof BridgeEnvelopeSchema>, "name"> & { name: string };
 export type EnvelopeValidation = { ok: true; envelope: BridgeEnvelope } | { ok: false; error: BridgeError };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -69,18 +71,26 @@ function inertJson(value: unknown, depth: number): unknown {
   throw new Error("envelope must contain finite JSON data");
 }
 
+/** Reuse the envelope's depth, key and terminal-control guards outside parsing. */
+export function inertJsonValue(value: unknown): unknown {
+  return inertJson(value, 0);
+}
+
 function validationError(message: string): EnvelopeValidation {
   return { ok: false, error: bridgeError("VALIDATION_FAILED", message) };
 }
 
 /** Validate, bound and sanitise one envelope. Never throws on hostile input. */
-export function parseEnvelope(input: unknown): EnvelopeValidation {
+export function parseEnvelope(input: unknown, allowedNames: readonly string[] = []): EnvelopeValidation {
   try {
     const inert = inertJson(input, 0);
     if (new TextEncoder().encode(JSON.stringify(inert)).length > ENVELOPE_MAX_BYTES) {
       return validationError(`envelope exceeds ${ENVELOPE_MAX_BYTES} bytes`);
     }
-    if (!Value.Check(BridgeEnvelopeSchema, inert)) {
+    const schema = allowedNames.length === 0
+      ? BridgeEnvelopeSchema
+      : makeEnvelopeSchema([...MESSAGE_NAMES, ...allowedNames]);
+    if (!Value.Check(schema, inert)) {
       return validationError("envelope does not match the protocol schema");
     }
     return { ok: true, envelope: inert };

@@ -3,6 +3,7 @@
  * envelopes carry no sessionId. It grants the same session-less messages the
  * old /api/sessions and /api/agent/new routes served, nothing more.
  */
+import { activePluginMessageRegistry } from "../index.ts";
 import { createDirectoryAdapters, type DirectorySurface } from "../../adapters/directory.ts";
 import type { ProtocolAdapter } from "../../adapters/types.ts";
 import { parseEnvelope, type BridgeEnvelope } from "../envelope.ts";
@@ -17,6 +18,7 @@ import {
   reply,
   type Handshake,
 } from "./shared.ts";
+import { validatedEnvelope } from "./in-process.ts";
 import type { BindingOptions, BindingReply, ProtocolBinding } from "./types.ts";
 
 export interface DirectoryOptions extends BindingOptions {
@@ -51,7 +53,7 @@ export function createDirectoryBinding(options: DirectoryOptions): ProtocolBindi
 
     async invoke(envelope: BridgeEnvelope, signal: AbortSignal = new AbortController().signal): Promise<BindingReply> {
       if (handshake === undefined) return { ok: false, error: handshakeRequired() };
-      const parsed = parseEnvelope(envelope);
+      const parsed = parseEnvelope(envelope, options.messageRegistry?.names().map((entry) => entry.name));
       if (!parsed.ok) return { ok: false, error: parsed.error };
       if (parsed.envelope.sessionId !== undefined) {
         return { ok: false, error: bridgeError("VALIDATION_FAILED", "directory messages must not select a session") };
@@ -60,28 +62,42 @@ export function createDirectoryBinding(options: DirectoryOptions): ProtocolBindi
         return { ok: false, error: versionMismatch(parsed.envelope.version) };
       }
       const attributed = attributedSource(parsed.envelope, handshake, "http-sse");
-      const message = messageFor(attributed);
+      const message = messageFor(attributed, options.messageRegistry);
       if (message === undefined) {
         return { ok: false, error: bridgeError("UNKNOWN_MESSAGE", `unknown protocol message "${attributed.name}"`) };
       }
       const denied = gate(message, attributed, handshake, options.audit);
       if (denied !== undefined) return { ok: false, error: denied };
+      const checked = validatedEnvelope(attributed, options);
+      if (!checked.ok) {
+        options.audit?.({ source: attributed.source.id, capability: "VALIDATION_FAILED", message: attributed.name });
+        return { ok: false, error: checked.error };
+      }
 
       sequence += 1;
       cursor = String(sequence);
-      if (message.kind === "event") buffered.push({ ...attributed, sequence, cursor });
-      if (message.kind === "capability") return reply(attributed, { acknowledged: true }, { sequence, cursor });
+      if (message.kind === "event") buffered.push({ ...checked.envelope, sequence, cursor });
+      if (message.kind === "capability") return reply(checked.envelope, { acknowledged: true }, { sequence, cursor });
+      const registration = (options.messageRegistry ?? activePluginMessageRegistry())?.lookup(checked.envelope.name);
+      if (registration !== undefined) {
+        if (registration.kind !== "command") return reply(checked.envelope, checked.envelope.payload, { sequence, cursor });
+        if (options.pluginCommand === undefined) {
+          return { ok: false, error: bridgeError("ADAPTER_UNAVAILABLE", `no command relay for "${checked.envelope.name}"`) };
+        }
+        const relayed = await options.pluginCommand({ name: registration.name, pluginId: registration.pluginId, payload: checked.envelope.payload });
+        return reply(checked.envelope, relayed.value, { sequence, cursor, ...(relayed.ok ? {} : { error: bridgeError("INTERNAL", `plugin command "${checked.envelope.name}" was not relayed`) }) });
+      }
 
-      const adapter = adapterFor(attributed.name, options.directory);
+      const adapter = adapterFor(checked.envelope.name, options.directory);
       if (adapter === undefined) {
         return { ok: false, error: bridgeError("ADAPTER_UNAVAILABLE", `"${attributed.name}" requires a session route`) };
       }
       const result = await adapter(
         { cwd: options.cwd, grantedCapabilities: options.grantedCapabilities },
-        attributed.payload,
+        checked.envelope.payload,
         signal,
       );
-      return reply(attributed, result.ok ? result.value : null, {
+      return reply(checked.envelope, result.ok ? result.value : null, {
         sequence,
         cursor,
         ...(result.ok ? {} : { error: result.error }),

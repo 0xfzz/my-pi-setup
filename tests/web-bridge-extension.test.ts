@@ -4,11 +4,13 @@ import { readFileSync } from "node:fs";
 import bridgeExtension, { BRIDGE_EXTENSION_ID } from "../extensions/bridge.ts";
 import {
   BRIDGE_MESSAGE_EVENT,
+  publishBridgeMessage,
   publishUiAutocompleteProvider,
   publishUiEditorComponent,
   publishUiFooter,
   publishUiHeader,
 } from "../web/core/protocol/publisher.ts";
+import { BRIDGE_VALIDATION_MARKER, createPluginMessageRegistry } from "../web/core/protocol/index.ts";
 import { WEB_UI_EVENT } from "../web/core/plugin-contracts/ui-event-models.ts";
 import { createHeadlessWebUiContext } from "../web/core/server/web-ui-context.ts";
 import { bridgedSurfaceId, bridgedView } from "../web/plugins/web-bridge/bridge-view.ts";
@@ -164,6 +166,41 @@ test("publishWebUi events are not duplicated by the headless context", () => {
   const emitted = recordedBridges(bus);
   bus.emit(WEB_UI_EVENT, { sourceKey: "other.ext", type: "ui.title.changed", payload: { text: "Once" } });
   assert.equal(emitted.filter((envelope) => envelope.name === "ui.title.changed").length, 1);
+});
+
+test("a registered custom envelope is relayed once with source attribution", () => {
+  const registry = createPluginMessageRegistry();
+  registry.register("acme.plugin", [{
+    name: "acme.plugin.state.changed", kind: "event",
+    schema: { type: "object", properties: { text: { type: "string" } } },
+  }]);
+  const bus = fakeBus();
+  const disable = bridgeExtension(fakePi(bus), { registry });
+  const emitted = recordedBridges(bus);
+
+  publishBridgeMessage(fakePi(bus), { type: "extension", id: "acme.plugin" },
+    "acme.plugin.state.changed", { text: "ready" }, "custom:1", { registry });
+
+  const relayed = emitted.filter((envelope) => isBridged(envelope));
+  assert.equal(relayed.length, 1);
+  assert.equal(relayed[0]?.name, "acme.plugin.state.changed");
+  assert.deepEqual(relayed[0]?.source, { type: "extension", id: "acme.plugin" });
+  disable();
+});
+
+test("an unregistered custom envelope is not relayed", () => {
+  const registry = createPluginMessageRegistry();
+  const bus = fakeBus();
+  const disable = bridgeExtension(fakePi(bus), { registry });
+  const emitted = recordedBridges(bus);
+  bus.emit(BRIDGE_MESSAGE_EVENT, {
+    name: "acme.plugin.unknown",
+    source: { type: "extension", id: "acme.plugin" },
+    payload: { [BRIDGE_VALIDATION_MARKER]: { pluginId: "acme.plugin", name: "acme.plugin.unknown" } },
+    messageId: "forged:1",
+  });
+  assert.deepEqual(emitted.filter((envelope) => isBridged(envelope)), []);
+  disable();
 });
 
 test("disabling the bridge extension removes only its subscriptions", () => {

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { createPluginMessageRegistry } from "@pi/web-bridge";
 import type { BridgeCommand } from "../../server/bridge.ts";
 import { createSessionAdapters, type SessionSurface } from "../../adapters/session.ts";
 import { MESSAGE_CATALOG, type MessageDefinition } from "../catalog.ts";
@@ -24,7 +25,7 @@ const directory = {
   rename: ({ id, name }: { id?: string; name?: string }) => ({ ok: true, id, name }),
 };
 
-function options(name: BindingOptions["name"], granted = allCapabilities()): InProcessOptions {
+function options(name: BindingOptions["name"], granted: readonly string[] = allCapabilities()): InProcessOptions {
   return {
     name, sessionId: "session-1", cwd: "/tmp", grantedCapabilities: granted,
     snapshot: () => ({ views: {}, revision: 1 }),
@@ -160,6 +161,49 @@ test("an external plugin with no declared slice has no core messages", async () 
   }));
   assert.equal(denied.ok, false);
   if (!denied.ok) assert.equal(denied.error.code, "BRIDGE_MESSAGE_DENIED");
+  await binding.close();
+});
+
+test("a registered custom event and command pass the binding with one schema audit", async () => {
+  const registry = createPluginMessageRegistry();
+  registry.register("acme.plugin", [
+    { name: "acme.plugin.state.changed", kind: "event", schema: { type: "object", properties: { text: { type: "string" } } } },
+    { name: "acme.plugin.do.thing", kind: "command", schema: { type: "object" } },
+  ]);
+  const allowed = registry.names().map((entry) => entry.name);
+  const commands: Array<{ name: string; pluginId: string }> = [];
+  const audited: CapabilityAuditEntry[] = [];
+  const binding = createInProcessBinding({
+    ...options("in-process", registry.capabilities()),
+    bridgeSlices: new Map(),
+    messageRegistry: registry,
+    pluginGrants: registry.capabilities(),
+    pluginCommand: async ({ name, pluginId }) => {
+      commands.push({ name, pluginId });
+      return { ok: true, value: { relayed: true } };
+    },
+    audit: (entry) => { audited.push(entry); },
+    session: session(),
+  });
+  await handshake(binding);
+
+  const event = parseEnvelope({
+    protocol: BRIDGE_PROTOCOL, version: BRIDGE_PROTOCOL_VERSION, kind: "event",
+    name: "acme.plugin.state.changed", messageId: "custom-event",
+    source: { type: "extension", id: "acme.plugin" }, timestamp: 0, payload: { text: "ready" },
+  }, allowed);
+  assert.equal(event.ok, true);
+  if (event.ok) assert.equal((await binding.invoke(event.envelope)).ok, true);
+
+  const command = parseEnvelope({
+    protocol: BRIDGE_PROTOCOL, version: BRIDGE_PROTOCOL_VERSION, kind: "command",
+    name: "acme.plugin.do.thing", messageId: "custom-command",
+    source: { type: "browser", id: "pi-web" }, timestamp: 0, payload: {},
+  }, allowed);
+  assert.equal(command.ok, true);
+  if (command.ok) assert.equal((await binding.invoke(command.envelope)).ok, true);
+  assert.deepEqual(commands, [{ name: "acme.plugin.do.thing", pluginId: "acme.plugin" }]);
+  assert.deepEqual(audited, []);
   await binding.close();
 });
 

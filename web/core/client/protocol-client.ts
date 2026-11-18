@@ -11,6 +11,7 @@ import {
   type BridgeResult,
   type PluginBridge,
   type PluginBridgeTransport,
+  type PluginMessageKind,
 } from "../protocol/index.ts";
 import { MESSAGE_CATALOG, lookupMessage } from "../protocol/catalog.ts";
 import { parseEnvelope, type BridgeEnvelope } from "../protocol/envelope.ts";
@@ -57,13 +58,16 @@ function envelopeFor(
   clientId: string,
   sequence: number,
   sourceId: string = clientId,
+  kindOverride?: string,
 ): BridgeEnvelope {
-  const message = lookupMessage(name);
-  if (message === undefined) throw new Error(`unknown protocol message "${name}"`);
+  const coreKind = lookupMessage(name)?.kind;
+  const kind = kindOverride === "event" || kindOverride === "command"
+    || kindOverride === "query" || kindOverride === "capability" ? kindOverride : coreKind;
+  if (kind === undefined) throw new Error(`unknown protocol message "${name}"`);
   return {
     protocol: BRIDGE_PROTOCOL,
     version: BRIDGE_PROTOCOL_VERSION,
-    kind: message.kind,
+    kind,
     name: name as BridgeEnvelope["name"],
     messageId: `${clientId}-${sequence}`,
     // Directory messages are session-less; a sentinel id would be a lie on the wire.
@@ -109,6 +113,7 @@ export class ProtocolClient {
   private readonly eventSource: typeof EventSource;
   private readonly protocolPath: (sessionId: string) => string;
   private readonly streams = new Map<string, EventStream>();
+  private readonly customMessageKinds = new Map<string, PluginMessageKind>();
   private readonly bridgedListeners = new Map<string, Set<EventListener>>();
   private readonly pendingSessionListeners = new Set<StreamListener>();
   private ready: Promise<void> | undefined;
@@ -119,6 +124,27 @@ export class ProtocolClient {
     this.post = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.eventSource = options.eventSource ?? globalThis.EventSource;
     this.protocolPath = options.protocolPath ?? PROTOCOL_PATH;
+  }
+
+  /** Declared plugin names are client-side policy; the host still enforces them. */
+  registerCustomMessages(declarations: readonly { name: string; kind: PluginMessageKind }[]): () => void {
+    const added: Array<{ name: string; kind: PluginMessageKind }> = [];
+    for (const declaration of declarations) {
+      if (this.customMessageKinds.has(declaration.name)) continue;
+      this.customMessageKinds.set(declaration.name, declaration.kind);
+      added.push(declaration);
+    }
+    return () => {
+      for (const declaration of added) {
+        if (this.customMessageKinds.get(declaration.name) === declaration.kind) {
+          this.customMessageKinds.delete(declaration.name);
+        }
+      }
+    };
+  }
+
+  private customNames(): readonly string[] {
+    return [...this.customMessageKinds.keys()];
   }
 
   /** A failed handshake must never be cached: auth refresh can repair it. */
@@ -230,6 +256,7 @@ export class ProtocolClient {
     readonly sourceId: string;
   }): Promise<ProtocolResult<T>> {
     const { name, payload, signal, sourceId } = request;
+    const kind = this.customMessageKinds.get(name);
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         await this.handshake();
@@ -239,7 +266,7 @@ export class ProtocolClient {
         if (attempt === 1 || !bridgeError.retryable) return { ok: false, error: bridgeError };
       }
     }
-    return this.send<T>(envelopeFor(name, payload, this.sessionId, this.clientId, ++this.sequence, sourceId), signal);
+    return this.send<T>(envelopeFor(name, payload, this.sessionId, this.clientId, ++this.sequence, sourceId, kind), signal);
   }
 
   /** SDK plugins receive this adapter instead of the full internal client. */
@@ -257,8 +284,8 @@ export class ProtocolClient {
 
   /** Read-only alias that makes UI call sites state their intent. */
   query<T>(name: string, params: unknown = {}, signal?: AbortSignal): Promise<ProtocolResult<T>> {
-    const message = lookupMessage(name);
-    if (message?.kind !== "query") {
+    const kind = lookupMessage(name)?.kind ?? this.customMessageKinds.get(name);
+    if (kind !== "query") {
       return Promise.resolve({
         ok: false,
         error: { code: "UNKNOWN_MESSAGE", message: `${name} is not a query`, retryable: false },
@@ -290,7 +317,7 @@ export class ProtocolClient {
     if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return;
     const wrapper = payload as { type?: unknown; envelope?: unknown };
     if (wrapper.type !== "protocol_envelope") return;
-    const parsed = parseEnvelope(wrapper.envelope);
+    const parsed = parseEnvelope(wrapper.envelope, this.customNames());
     if (!parsed.ok || parsed.envelope.kind !== "event") return;
     for (const listener of this.bridgedListeners.get(parsed.envelope.name) ?? []) listener(parsed.envelope);
   }
@@ -303,7 +330,7 @@ export class ProtocolClient {
       } catch {
         return;
       }
-      const parsed = parseEnvelope(frame);
+      const parsed = parseEnvelope(frame, this.customNames());
       if (!parsed.ok || parsed.envelope.kind !== "event" || parsed.envelope.name !== stream.name) return;
       for (const entry of stream.listeners) entry.listener(parsed.envelope);
       if (stream.name === SESSION_EVENTS) {
@@ -331,8 +358,8 @@ export class ProtocolClient {
     listener: EventListener,
     onError?: (source: EventSource) => void,
   ): () => void {
-    const message = lookupMessage(name);
-    if (message?.kind !== "event") throw new Error(`${name} is not an event`);
+    const kind = lookupMessage(name)?.kind ?? this.customMessageKinds.get(name);
+    if (kind !== "event") throw new Error(`${name} is not an event`);
     if (name !== SESSION_EVENTS && name !== DIRECTORY_EVENTS) {
       let listeners = this.bridgedListeners.get(name);
       if (listeners === undefined) {
@@ -383,16 +410,24 @@ export interface CorePluginBridgeOptions {
   readonly pluginId: string;
   readonly core: readonly string[];
   readonly client?: ProtocolClient;
+  readonly custom?: readonly { name: string; kind: PluginMessageKind }[];
+}
+
+export interface CorePluginBridge extends PluginBridge {
+  /** Removes names that became stale after plugins_changed. */
+  dispose(): void;
 }
 
 /** The core-side factory: SDK policy over the existing browser transport. */
-export function createCorePluginBridge(options: CorePluginBridgeOptions): PluginBridge {
+export function createCorePluginBridge(options: CorePluginBridgeOptions): CorePluginBridge {
   const client = options.client ?? pluginProtocolClient;
-  return createPluginBridge({
+  const release = client.registerCustomMessages(options.custom ?? []);
+  const bridge = createPluginBridge({
     pluginId: options.pluginId,
     core: options.core,
     transport: client.pluginTransport(options.pluginId),
   });
+  return { ...bridge, dispose: release };
 }
 
 export function setPluginSession(sessionId: string | null): void {
