@@ -31,6 +31,7 @@ const step = (name) => console.log(`[viewers-e2e] ${name}`);
 async function writeFixtures() {
   await writeFile(join(fixtureDir, "README.md"), "# Viewer E2E\n\n- alpha\n- beta\n");
   await writeFile(join(fixtureDir, "hello.txt"), "hello from the text viewer\nsecond line\n");
+  await writeFile(join(fixtureDir, "highlight.ts"), "// syntax fixture\nconst value: string = \"highlighted\";\n");
   await writeFile(join(fixtureDir, "data.csv"), "name,count\nalpha,1\nbeta,2\n");
   await writeFile(join(fixtureDir, "pixel.png"), makePng(12, 12, [200, 40, 40]));
   // One second of silent mono PCM; metadata is decoded by native <audio>.
@@ -269,6 +270,34 @@ async function run() {
     await openFile(page, "hello.txt");
     await assertKind(page, "Source");
     await assertPreviewBodyContains(page, "hello from the text viewer");
+    await backToFiles(page);
+
+    step("code viewer highlights tokens and keeps the dark gutter on the app palette");
+    await openFile(page, "highlight.ts");
+    await assertKind(page, "Source");
+    await page.locator(".cm-line span").first().waitFor({ state: "attached", timeout: 10_000 });
+    const codeColors = await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--code-keyword)";
+      document.body.append(probe);
+      const keyword = getComputedStyle(probe).color;
+      probe.style.color = "var(--code-string)";
+      const string = getComputedStyle(probe).color;
+      probe.remove();
+      const gutter = document.querySelector(".cm-gutters");
+      const editor = document.querySelector(".cm-editor");
+      return {
+        keyword,
+        string,
+        tokens: [...document.querySelectorAll(".cm-line span")].map((el) => getComputedStyle(el).color),
+        gutter: getComputedStyle(gutter).backgroundColor,
+        editor: getComputedStyle(editor).backgroundColor,
+      };
+    });
+    assert.ok(codeColors.tokens.includes(codeColors.keyword), "TypeScript keywords use the keyword token color");
+    assert.ok(codeColors.tokens.includes(codeColors.string), "string literals use the string token color");
+    assert.equal(codeColors.gutter, codeColors.editor, "the gutter follows the editor background in dark mode");
+    assert.notEqual(codeColors.gutter, "rgb(255, 255, 255)", "the dark-mode gutter is not CodeMirror's white default");
     await backToFiles(page);
 
     step("csv viewer renders the delimited text");

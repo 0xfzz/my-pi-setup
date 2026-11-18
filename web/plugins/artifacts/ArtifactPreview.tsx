@@ -93,7 +93,7 @@ export function ArtifactPreview({ title, detail, onBack }: ArtifactPreviewProps)
           <div className="artifacts-empty">No content recorded for this artifact.</div>
         ) : kind === "code" ? (
           <Suspense fallback={<LoadingSpinner label="Loading editor…" />}>
-            <CodeMirrorView text={content} />
+            <CodeMirrorView text={content} filename={title} />
           </Suspense>
         ) : (
           <div className="artifacts-markdown">

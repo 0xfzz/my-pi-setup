@@ -151,7 +151,7 @@ export function FilePreview({ sessionId, file, onBack }: FilePreviewProps) {
             ? <UnsupportedPreview file={file} sessionId={sessionId} note="Binary content." />
             : (
               <Suspense fallback={<LoadingSpinner label="Loading editor…" />}>
-                <CodeMirrorView text={text.text} />
+                <CodeMirrorView text={text.text} filename={file.name} />
               </Suspense>
             )}
         </>

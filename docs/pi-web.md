@@ -586,6 +586,9 @@ The Files plugin is the reference: `web/plugins/files/server/index.ts` mounts
 `/api/p/files`, `/read`, `/search` and `/download`, reusing the audited
 traversal/symlink policy in `web/core/server/files.ts` rather than duplicating
 it. Its client (`web/plugins/files/lib/files-api.ts`) calls those routes.
+Text and code previews use the shared `CodeMirrorView`; the filename selects a
+lazily loaded language pack, and the gutter and token colors follow the app's
+light/dark theme.
 
 ### A plugin's realtime surface
 

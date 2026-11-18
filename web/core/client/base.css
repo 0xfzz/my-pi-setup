@@ -24,6 +24,16 @@
   --bg-hover: var(--bg-input);
   --bg-active: #333333;
   --focus-ring: var(--accent);
+  --code-comment: #6b7a8f;
+  --code-keyword: #c792ea;
+  --code-string: #a6e3a1;
+  --code-number: #f6c177;
+  --code-type: #7fd1c0;
+  --code-function: #8ab4ff;
+  --code-variable: #9ecbff;
+  --code-tag: #f38ba8;
+  --code-attribute: #e0af68;
+  --code-punctuation: var(--fg-dim);
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --chat-content-max-width: 800px;
 }
@@ -48,6 +58,16 @@
   --scrim: rgba(24, 28, 33, 0.35);
   --bg-code: #f7f7f5;
   --bg-active: #eaeae6;
+  --code-comment: #6a737d;
+  --code-keyword: #8250df;
+  --code-string: #0a7a3d;
+  --code-number: #a15c00;
+  --code-type: #0b6e6e;
+  --code-function: #0550ae;
+  --code-variable: #24292f;
+  --code-tag: #cf222e;
+  --code-attribute: #953800;
+  --code-punctuation: #57606a;
 }
 
 * {
@@ -3478,6 +3498,39 @@ button.msg-compaction-label:hover {
 
 .host-code-editor .cm-editor {
   height: 100%;
+}
+
+/* CodeMirror injects its light base theme at runtime. Keep the gutters and
+ * selection on the app palette so dark mode never shows its white default. */
+.host-code-view .host-code-editor .cm-editor {
+  background: var(--bg-code);
+  color: var(--fg);
+}
+
+.host-code-view .host-code-editor .cm-editor .cm-scroller {
+  font-family: var(--font-mono);
+}
+
+.host-code-view .host-code-editor .cm-editor .cm-gutters {
+  background: var(--bg-code);
+  color: var(--fg-faint);
+  border: 0;
+  border-right: 1px solid var(--border);
+}
+
+.host-code-view .host-code-editor .cm-editor .cm-activeLine,
+.host-code-view .host-code-editor .cm-editor .cm-activeLineGutter {
+  background: var(--bg-hover);
+}
+
+.host-code-view .host-code-editor .cm-editor .cm-cursor,
+.host-code-view .host-code-editor .cm-editor .cm-dropCursor {
+  border-left-color: var(--fg);
+}
+
+.host-code-view .host-code-editor .cm-editor .cm-selectionBackground,
+.host-code-view .host-code-editor .cm-editor.cm-focused .cm-selectionBackground {
+  background: var(--bg-active);
 }
 
 .host-code-editor .cm-editor.cm-focused {
