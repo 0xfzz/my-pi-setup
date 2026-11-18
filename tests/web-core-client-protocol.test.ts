@@ -412,6 +412,12 @@ test("plugin halves follow the selected session instead of a sentinel client", (
   assert.match(hook, /setPluginSession\(selectedId\)/);
 });
 
+test("the session hook boots from one batched query instead of four", () => {
+  const hook = sourceOf("use-session.ts");
+  assert.match(hook, /query<SessionBoot>\("session\.boot"\)/);
+  assert.match(hook, /void fetchBoot\(selectedId\);/);
+});
+
 test("the session hook shares the plugin stream instead of opening a second SSE", () => {
   const hook = sourceOf("use-session.ts");
   assert.match(hook, /pluginProtocolClient\.subscribe\(\s*["']session\.events["']/);
@@ -424,8 +430,8 @@ test("the session hook uses named protocol messages for migrated reads and comma
     "session.list",
     "session.search",
     "session.get",
+    "session.boot",
     "session.create",
-    "session.models",
     "session.commands",
     "session.history",
     "session.resync",

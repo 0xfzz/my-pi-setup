@@ -64,6 +64,14 @@ export interface ModelsState {
   current?: ModelRefLike;
 }
 
+/** The four independent reads made on every selection, carried in one envelope. */
+interface SessionBoot {
+  readonly session?: { readonly state?: SessionStateLike };
+  readonly branch?: unknown;
+  readonly models?: ModelsState;
+  readonly commands?: readonly WebCommand[];
+}
+
 export interface DialogRequest {
   dialog: string;
   nonce: number;
@@ -477,52 +485,59 @@ export function usePiSession() {
     return leave;
   }, [refreshPlugins, convergeOnBuild]);
 
-  const fetchState = useCallback(async (id: string) => {
-    const outcome = await protocolClient(id).query<{ state?: SessionStateLike }>("session.get");
-    if (!outcome.ok) return; // The stream reports connection health.
-    const body = outcome.value;
+  const applySessionState = useCallback((state: SessionStateLike | undefined): void => {
     // Merge, not replace: a session_state push may have landed before this
     // read (or between it and now), and the fetched bridge state can lag a
     // just-applied model. The push is the fresher truth.
     setSessionState((prev) => ({
-      isStreaming: body.state?.isStreaming ?? prev?.isStreaming ?? false,
-      isBashRunning: body.state?.isBashRunning ?? prev?.isBashRunning ?? false,
-      isCompacting: body.state?.isCompacting ?? prev?.isCompacting ?? false,
-      model: body.state?.model ?? prev?.model,
-      contextUsage: body.state?.contextUsage ?? prev?.contextUsage ?? null,
-      thinkingLevel: body.state?.thinkingLevel ?? prev?.thinkingLevel ?? "off",
+      isStreaming: state?.isStreaming ?? prev?.isStreaming ?? false,
+      isBashRunning: state?.isBashRunning ?? prev?.isBashRunning ?? false,
+      isCompacting: state?.isCompacting ?? prev?.isCompacting ?? false,
+      model: state?.model ?? prev?.model,
+      contextUsage: state?.contextUsage ?? prev?.contextUsage ?? null,
+      thinkingLevel: state?.thinkingLevel ?? prev?.thinkingLevel ?? "off",
     }));
   }, []);
 
-  /**
-   * The selected session's git branch for the composer's workspace line.
-   *
-   * Best-effort and one-shot per selection: a null branch (not a worktree, or
-   * no git) simply leaves the line to the path alone, and a failed read never
-   * blocks the session.
-   */
-  const fetchWorkspaceBranch = useCallback(async (id: string) => {
-    const outcome = await protocolClient(id).query<{ branch?: unknown }>("session.branch");
-    if (!outcome.ok) return; // No branch is a valid answer for this line.
-    const branch = outcome.value.branch;
+  const fetchState = useCallback(async (id: string) => {
+    const outcome = await protocolClient(id).query<{ state?: SessionStateLike }>("session.get");
+    if (outcome.ok) applySessionState(outcome.value.state);
+  }, [applySessionState]);
+
+  /** A null branch (not a worktree, or no git) leaves the workspace line alone. */
+  const applyWorkspaceBranch = useCallback((branch: unknown): void => {
     setWorkspaceBranch(typeof branch === "string" && branch !== "" ? branch : null);
   }, []);
 
-  // The web picker's model list. The SSE `web_models` push keeps it live;
-  // this fetch is the initial read so a session switch never shows the
-  // previous session's list.
-  const fetchModels = useCallback(async (id: string) => {
-    const outcome = await protocolClient(id).query<ModelsState>("session.models");
-    // A slow response for a session the user already left must not
-    // overwrite the now-selected session's list.
-    if (!outcome.ok || selectedIdRef.current !== id) return;
-    const data = outcome.value;
+  // A slow response for a session the user already left must not overwrite
+  // the now-selected session's models.
+  const applyModels = useCallback((id: string, data: ModelsState | undefined): void => {
+    if (data === undefined || selectedIdRef.current !== id) return;
     setModels((prev) => ({
       models: Array.isArray(data.models) ? data.models : prev.models,
       all: Array.isArray(data.all) ? data.all : prev.all,
       current: data.current ?? prev.current,
     }));
   }, []);
+
+  const fetchModels = useCallback(async (id: string) => {
+    const outcome = await protocolClient(id).query<ModelsState>("session.models");
+    if (outcome.ok) applyModels(id, outcome.value);
+  }, [applyModels]);
+
+  /** One round trip for the four independent reads made on every selection. */
+  const fetchBoot = useCallback(async (id: string): Promise<void> => {
+    const outcome = await protocolClient(id).query<SessionBoot>("session.boot");
+    // A slow response for a session the user already left must not paint it.
+    if (!outcome.ok || selectedIdRef.current !== id) return;
+    const boot = outcome.value;
+    applySessionState(boot.session?.state);
+    applyWorkspaceBranch(boot.branch);
+    applyModels(id, boot.models);
+    if (selectedIdRef.current === id && Array.isArray(boot.commands)) {
+      setSessionCommands([...boot.commands]);
+    }
+  }, [applySessionState, applyWorkspaceBranch, applyModels]);
 
   /** Fetch the preceding transcript page without disturbing the live stream. */
   const loadOlder = useCallback((): void => {
@@ -593,21 +608,9 @@ export function usePiSession() {
     let closed = false;
     setConnection("connecting");
 
-    // The live session's dispatchable slash commands (extension/prompt/
-    // skill); built-ins come from the shared list. Best-effort: a failed
-    // fetch just leaves the built-ins.
-    void protocolClient(selectedId).query<{ commands?: WebCommand[] }>("session.commands")
-      .then((outcome) => {
-        if (!outcome.ok || closed) return;
-        setSessionCommands(outcome.value.commands ?? []);
-      })
-      .catch(() => {
-        // The palette falls back to the built-ins.
-      });
-
-    // The picker's initial read for this session, so the chip and the
-    // selector are correct without opening the picker first.
-    void fetchModels(selectedId);
+    // State, branch, models and commands travel together; a failed read
+    // leaves each surface at its built-in default.
+    void fetchBoot(selectedId);
 
     // The initial page and the event stream race: an assistant reply that
     // ends while history is loading is buffered until the page lands. After
@@ -763,11 +766,6 @@ export function usePiSession() {
         })
         .finally(() => clearTimeout(timeout));
     };
-
-    // The initial state read (model, thinking, context): the model chip
-    // renders from it before any session_state push arrives.
-    void fetchState(selectedId);
-    void fetchWorkspaceBranch(selectedId);
 
     protocolCursorRef.current = null;
     let leaveEvents: () => void = () => {};
@@ -1143,7 +1141,7 @@ export function usePiSession() {
       leaveEvents();
       setConnection("idle");
     };
-  }, [selectedId, applyStream, fetchState, fetchModels]);
+  }, [selectedId, applyStream, fetchBoot, fetchState]);
 
   /** Result keys (session + tool call) already requested, so an expansion fetches once. */
   const requestedToolResults = useRef(new Set<string>());

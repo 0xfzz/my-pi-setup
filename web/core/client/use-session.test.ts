@@ -27,7 +27,8 @@ test("use-session subscribes to directory events, not a /api/sessions poll", () 
 // happened to push its own web_models event.
 test("switching sessions resets the model list and refetches it", () => {
   assert.match(source, /setModels\(\{ models: \[\] \}\)/, "the selection effect clears the previous session's models");
-  assert.match(source, /void fetchModels\(selectedId\)/, "the selection effect fetches the new session's models");
+  assert.match(source, /void fetchBoot\(selectedId\)/, "the boot batch fetches the new session's models");
+  assert.match(source, /applyModels\(id, boot\.models\)/, "the boot batch applies the model list");
 });
 
 // Regression: a slow /models response for a session the user had already

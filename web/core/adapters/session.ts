@@ -93,6 +93,11 @@ async function readSurface(operation: string, read: (() => Promise<unknown> | un
   }
 }
 
+async function bestEffortRead(operation: string, read: (() => Promise<unknown> | unknown) | undefined): Promise<unknown> {
+  const result = await readSurface(operation, read);
+  return result.ok ? result.value : undefined;
+}
+
 export function createSessionAdapters(
   owner: SessionSurface,
   directory?: DirectorySurface,
@@ -125,6 +130,23 @@ export function createSessionAdapters(
       return owner.webCommand === undefined ? false : owner.webCommand(name, typeof args === "string" ? args : "");
     }),
     "session.get": () => readSurface("read session", owner.get),
+    "session.boot": async () => {
+      const [state, branch, models, commands] = await Promise.all([
+        bestEffortRead("read session", owner.get),
+        bestEffortRead("read branch", owner.branch),
+        bestEffortRead("read models", owner.models),
+        bestEffortRead("read commands", owner.commands),
+      ]);
+      return {
+        ok: true,
+        value: {
+          ...(state === undefined ? {} : { session: state }),
+          ...(branch === undefined ? {} : { branch }),
+          ...(models === undefined ? {} : { models }),
+          ...(commands === undefined ? {} : { commands }),
+        },
+      };
+    },
     "session.branch": () => readSurface("read branch", owner.branch),
     "session.models": () => readSurface("read models", owner.models),
     "session.tree": () => readSurface("read tree", owner.tree),

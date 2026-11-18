@@ -21,4 +21,4 @@ Every PRD §7.5 baseline row must name a catalog message, an adapter and a test.
 | Tree, fork, clone | `web-command.dispatch`, `plugin.action.submit` | `extensions/web/commands.ts` | `tests/web-bridge-web-commands.test.ts` |
 | Extension UI | `ui.status.changed`, `ui.widget.changed`, `ui.title.changed`, `ui.editor.changed`, `ui.notify`, `ui.working.changed`, `ui.header.changed`, `ui.footer.changed`, `ui.editor-component.changed`, `ui.autocomplete-provider.changed` | `extensions/web/commands.ts` | `tests/web-ui-events.test.ts` |
 
-Catalog messages: 60.
+Catalog messages: 61.

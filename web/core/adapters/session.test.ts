@@ -26,6 +26,33 @@ test("session.prompt forwards validated images to the owner", async () => {
   assert.deepEqual(calls, [{ text: "look", images }]);
 });
 
+test("session.boot reads the four initial surfaces in one adapter call", async () => {
+  const surface: SessionSurface = {
+    prompt: () => undefined,
+    abort: () => undefined,
+    get: () => ({ state: { model: { provider: "openai", id: "gpt" } } }),
+    branch: () => "feature/pi-web",
+    models: () => ({ models: [{ provider: "openai", id: "gpt" }] }),
+    commands: () => [{ name: "review", description: "review the diff" }],
+  };
+  const result = await createSessionAdapters(surface)["session.boot"](context, {}, signal);
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.deepEqual(result.value, {
+      session: { state: { model: { provider: "openai", id: "gpt" } } },
+      branch: "feature/pi-web",
+      models: { models: [{ provider: "openai", id: "gpt" }] },
+      commands: [{ name: "review", description: "review the diff" }],
+    });
+  }
+});
+
+test("session.boot omits unavailable surfaces instead of failing the whole read", async () => {
+  const surface: SessionSurface = { prompt: () => undefined, abort: () => undefined, branch: () => "main" };
+  const result = await createSessionAdapters(surface)["session.boot"](context, {}, signal);
+  assert.deepEqual(result, { ok: true, value: { branch: "main" } });
+});
+
 test("session.prompt refuses invalid images without throwing", async () => {
   const { surface, calls } = owner();
   const adapter = createSessionAdapters(surface)["session.prompt"];

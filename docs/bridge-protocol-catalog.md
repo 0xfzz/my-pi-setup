@@ -44,6 +44,7 @@ Protocol `pi-web-bridge` v1. Every legacy wire name maps to one catalog message;
 | `session.list` | `session.read` | Directory listing, optionally filtered by query; never needs a selected session. |
 | `session.search` | `session.read` | Directory search by name; never needs a selected session. |
 | `session.get` | `session.read` | One session's live state. |
+| `session.boot` | `session.read` | Initial state, branch, models and commands in one read. |
 | `session.branch` | `session.read` | Git branch of the session's working directory. |
 | `session.models` | `session.read` | Model catalogue and current model for one session. |
 | `session.tree` | `session.read` | Session tree nodes. |

@@ -43,6 +43,7 @@ export const MESSAGE_CATALOG = [
   { name: "session.list", kind: "query", legacy: [], capability: "session.read", description: "Directory listing, optionally filtered by query; never needs a selected session." },
   { name: "session.search", kind: "query", legacy: [], capability: "session.read", description: "Directory search by name; never needs a selected session." },
   { name: "session.get", kind: "query", legacy: [], capability: "session.read", description: "One session's live state." },
+  { name: "session.boot", kind: "query", legacy: [], capability: "session.read", description: "Initial state, branch, models and commands in one read." },
   { name: "session.branch", kind: "query", legacy: [], capability: "session.read", description: "Git branch of the session's working directory." },
   { name: "session.models", kind: "query", legacy: [], capability: "session.read", description: "Model catalogue and current model for one session." },
   { name: "session.tree", kind: "query", legacy: [], capability: "session.read", description: "Session tree nodes." },
