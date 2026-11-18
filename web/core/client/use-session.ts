@@ -1,5 +1,5 @@
 // The pi session hook: session list, selection, live transcript state.
-// The protocol client owns one subscribed event stream per selected session;
+// The UI and plugin halves share one event stream per selected session;
 // user messages render optimistically and replies stream in via delta payloads.
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -36,7 +36,13 @@ import { pluginStateFrameOf } from "../shared/plugin-state.ts";
 import { buildVerdict, ownBuildId } from "./build-identity.ts";
 import { isCompactionReason, type CompactionReason } from "./compaction.ts";
 import { HISTORY_FETCH_TIMEOUT_MS, historyRetryDelayMs } from "./history-retry.ts";
-import { directoryProtocolClient, protocolClient, setPluginSession, type ProtocolResult } from "./protocol-client.ts";
+import {
+  directoryProtocolClient,
+  pluginProtocolClient,
+  protocolClient,
+  setPluginSession,
+  type ProtocolResult,
+} from "./protocol-client.ts";
 
 export type { CustomPanelLike, WebNotificationLike, WidgetModelLike };
 export type { HistoryEntryLike, ToolResultLike } from "./history-pages.ts";
@@ -765,7 +771,9 @@ export function usePiSession() {
 
     protocolCursorRef.current = null;
     let leaveEvents: () => void = () => {};
-    leaveEvents = protocolClient(selectedId).subscribe(
+    // The plugin client follows this selection (setPluginSession above), so
+    // its stream is the page's one agent event connection.
+    leaveEvents = pluginProtocolClient.subscribe(
       "session.events",
       (envelope) => {
         const data = envelope.payload as Record<string, unknown>;
