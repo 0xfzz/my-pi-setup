@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import {
   FILE_VIEWER_ASSETS,
   HOST_MODULE_TABLE,
@@ -8,9 +8,43 @@ import {
   HOST_SPECIFIERS,
   WEB_PLUGINS,
   hostImportMap,
-} from "../web/registry.config.ts";
+} from "../web/config/registry.config.ts";
 
 const source = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8");
+const configDir = new URL("../web/config/", import.meta.url);
+
+test("registrations live in focused files under web/config", () => {
+  assert.equal(existsSync(new URL("../web/registry.config.ts", import.meta.url)), false);
+
+  assert.deepEqual(readdirSync(configDir).sort(), [
+    "build.config.ts",
+    "fixtures.config.ts",
+    "host-modules.config.ts",
+    "plugins.config.ts",
+    "registry.config.ts",
+    "viewer.config.ts",
+  ]);
+
+  const barrel = source("../web/config/registry.config.ts");
+  for (const file of [
+    "plugins.config.ts",
+    "host-modules.config.ts",
+    "viewer.config.ts",
+    "build.config.ts",
+    "fixtures.config.ts",
+  ]) {
+    assert.match(barrel, new RegExp(`export \\* from "\\./${file.replaceAll(".", "\\.")}";`));
+  }
+  assert.equal((barrel.match(/^export \* from /gm) ?? []).length, 5);
+
+  assert.match(source("../web/config/plugins.config.ts"), /export const WEB_PLUGINS/);
+  assert.match(source("../web/config/plugins.config.ts"), /export const WEB_PLUGIN_OPT_OUT/);
+  assert.match(source("../web/config/host-modules.config.ts"), /const hostModuleTable/);
+  assert.match(source("../web/config/host-modules.config.ts"), /export function hostImportMap/);
+  assert.match(source("../web/config/viewer.config.ts"), /export const FILE_VIEWER_ASSETS/);
+  assert.match(source("../web/config/build.config.ts"), /export const INITIAL_BUNDLE_BUDGETS/);
+  assert.match(source("../web/config/fixtures.config.ts"), /export const WEB_TEST_FIXTURES/);
+});
 
 test("the browser import map is generated from the one web registry", () => {
   const template = source("../web/core/client/index.html");
@@ -34,12 +68,7 @@ test("the browser import map is generated from the one web registry", () => {
   assert.equal(map["typebox/value"], "/host/typebox-value.js");
 });
 
-test("host modules and budgets are declared once and consumed by the build", () => {
-  const registry = source("../web/registry.config.ts");
-  assert.match(registry, /const hostModuleTable/);
-  assert.match(registry, /export const INITIAL_BUNDLE_BUDGETS/);
-  assert.doesNotMatch(registry, /from "\.\/plugin-host-specifiers/);
-
+test("host modules and budgets are consumed by the build, not declared there", () => {
   for (const path of [
     "../web/build.mjs",
     "../web/build-plugin-halves.mjs",
@@ -68,10 +97,12 @@ test("the shared runtime carries no icon catalogue, document viewer or plugin li
   assert.doesNotMatch(runtime, /@file-viewer\//);
   assert.match(runtime, /^  use,$/m);
 
-  const config = source("../web/registry.config.ts");
-  assert.match(config, /bundle: "icons"/);
-  assert.match(config, /bundle: "file-viewer"/);
-  assert.doesNotMatch(config, /from "\.\/core\/client\/host\/file-viewer/);
+  const modules = source("../web/config/host-modules.config.ts");
+  assert.match(modules, /bundle: "icons"/);
+  assert.match(modules, /bundle: "file-viewer"/);
+
+  const viewer = source("../web/config/viewer.config.ts");
+  assert.doesNotMatch(viewer, /from "\.\.\/core\/client\/host\/file-viewer/);
 });
 
 test("plugin UI owns the document viewer, its vendor and its asset path", () => {
@@ -101,10 +132,10 @@ test("first-party descriptors are registered only in the config", () => {
   const barrel = source("../web/plugins/index.ts");
   assert.equal(barrel.trim(), [
     '/**',
-    ' * Compatibility barrel. All registrations live in web/registry.config.ts;',
+    ' * Compatibility barrel. All registrations live in web/config/*.config.ts;',
     ' * this module only preserves the existing import path for consumers.',
     ' */',
-    'export { WEB_PLUGINS, WEB_PLUGIN_OPT_OUT } from "../registry.config.ts";',
+    'export { WEB_PLUGINS, WEB_PLUGIN_OPT_OUT } from "../config/registry.config.ts";',
   ].join("\n"));
 
   const ids = WEB_PLUGINS.map((plugin) => plugin.id);

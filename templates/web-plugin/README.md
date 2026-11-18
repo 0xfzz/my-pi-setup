@@ -36,7 +36,8 @@ cp templates/web-plugin/package.json  "web/plugins/$id/package.json"
 Rename `hello-world` → `$id` across the three files (mind that an id like
 `my-plugin` is not a JS identifier, so also rename the `helloWorldWebView` /
 `helloWorldPlugin` symbols). Then add one descriptor import and `WEB_PLUGINS` entry in
-`web/registry.config.ts`, the single web registration file.
+`web/config/plugins.config.ts`. It is published through the single public
+barrel, `web/config/registry.config.ts`.
 
 ## 2. Wire the extension (the bridge)
 

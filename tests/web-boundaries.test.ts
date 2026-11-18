@@ -263,7 +263,7 @@ const ZONES: readonly ZoneRules[] = [
     dir: "web/plugins/fixture-e2e/server",
     runtimeAllow: [
       "web/plugins/fixture-e2e/server/",
-      "web/registry.config.ts",
+      "web/config/",
       "web/core/server/",
       "web/core/plugin-contracts/",
       "web/core/shared/",

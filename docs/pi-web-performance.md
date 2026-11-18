@@ -187,8 +187,9 @@ The artifacts plugin also stopped importing a core internal path for
 CodeMirror; it uses the public `@pi-web/host-ui` surface, as the files plugin
 does. `tests/web-core-separation.test.ts` guards that boundary. The document
 viewer bundle and assets are emitted under `/plugins/files/`, not `/host/`;
-core owns no plugin viewer entry. `web/registry.config.ts` is the single place
-where plugins, host modules, budgets and viewer assets are registered.
+core owns no plugin viewer entry. Registrations are grouped in
+`web/config/*.config.ts` and exposed through the single public barrel
+`web/config/registry.config.ts`.
 
 First-party app and plugin builds use `FIRST_PARTY_EXTERNALS`, which excludes
 only the icon shim; external plugins can still import any icon through the

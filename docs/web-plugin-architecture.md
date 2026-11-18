@@ -46,7 +46,7 @@ dependencies belong to the plugin and never pile up in `web/package.json`.
 The web root declares those folders as npm workspaces
 (`"workspaces": ["plugins/*"]`), so plugin dependencies still install
 and hoist into `web/node_modules`. Add one descriptor entry to
-`web/registry.config.ts` and it ships.
+`web/config/plugins.config.ts` and it ships.
 
 The only place core and plugins meet is the composition roots outside
 `web/core/`: `web/app.tsx` (client) imports the shell and the panel
@@ -74,7 +74,7 @@ for that surface*: it maps the TUI shape to a web placement. It never
 decides anything; it declares.
 
 **Ways to install one.** A first-party plugin is listed in
-`web/registry.config.ts` and registered by the composition root. A plugin from
+`web/config/plugins.config.ts` and registered by the composition root. A plugin from
 anywhere else ships a directory with `pi-web-plugin.json` under
 `~/.pi/agent/web-plugins`, `<project>/.pi/web-plugins`, a pi package's
 `pi.webPlugins`, or an absolute directory in `PI_WEB_PLUGIN_ROOTS`; the kernel
@@ -312,7 +312,7 @@ descriptor compile → activation with grants → tap → store.
 
 1. **Descriptor** — `web/plugins/<id>/descriptor.ts` declares the view, placement
    (`region`/`slot`/`anchor`), surfaces and actions. Registered in
-   `web/registry.config.ts` (`WEB_PLUGINS`). A plugin installed from a directory
+   `web/config/plugins.config.ts` (`WEB_PLUGINS`). A plugin installed from a directory
    instead ships `pi-web-plugin.json` whose `contributes` block carries the same
    fields; the kernel compiles it through the same validator, so both kinds of
    plugin reach the client identically.
@@ -456,12 +456,13 @@ Router, Web Bridge, Plugin Manager and MCP Manager now load from their own
 manifest-declared bundles; repo-owned halves are marked core, while outside
 plugins still require the operator's hash-bound confirmation.
 
-All first-party registration lives in `web/registry.config.ts`: plugin
-descriptors and opt-outs, browser module specifiers, bundle entries and
-budgets, viewer assets, and e2e fixture surfaces. Build scripts read it
+All first-party registration lives in `web/config/*.config.ts`, grouped by
+concern: plugins and opt-outs, browser module specifiers, bundle entries and
+budgets, viewer assets, and e2e fixture surfaces. `web/config/registry.config.ts`
+is the single public barrel every consumer imports. Build scripts read it
 through `web/load-registry.mjs`; `web/plugins/index.ts` is only a compatibility
-barrel. Anyone adding a plugin or a shared browser module edits that one file,
-not the build or the core server.
+barrel. Anyone adding a plugin or a shared browser module edits the relevant
+config file, not the build or the core server.
 
 The shared browser module graph is generated from those entries. The build
 emits matching shims, externalizes registered specifiers in plugin bundles,

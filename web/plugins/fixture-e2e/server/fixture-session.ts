@@ -1,6 +1,6 @@
 // Fixture session owned by the e2e plugin. Core starts it through the
 // composition-root hook; it contains no plugin view registration.
-import { WEB_TEST_FIXTURES } from "../../../registry.config.ts";
+import { WEB_TEST_FIXTURES } from "../../../config/registry.config.ts";
 import { FIXTURE_SESSION_ID } from "./fixtures.ts";
 import { registerSession } from "../../../core/server/sessions.ts";
 

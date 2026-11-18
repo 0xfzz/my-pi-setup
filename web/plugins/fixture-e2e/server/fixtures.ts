@@ -3,7 +3,7 @@
  * single web registry; the factories stay in this fixture plugin so core owns
  * no plugin data.
  */
-import { WEB_TEST_FIXTURES } from "../../../registry.config.ts";
+import { WEB_TEST_FIXTURES } from "../../../config/registry.config.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../../../core/plugin-contracts/actions.ts";
 import { recordPluginView, pluginView } from "../../../core/server/plugin-views.ts";
 import { clearActionState, releaseInFlightActions } from "../../../core/server/plugin-actions.ts";

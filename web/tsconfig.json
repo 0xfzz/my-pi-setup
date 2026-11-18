@@ -19,6 +19,7 @@
   "include": [
     "app.tsx",
     "server.ts",
+    "config/**/*.ts",
     "bench/**/*.ts",
     "core/client/**/*.ts",
     "core/client/**/*.tsx",

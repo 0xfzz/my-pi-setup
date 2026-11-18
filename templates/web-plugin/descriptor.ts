@@ -6,8 +6,9 @@ import {
 
 /**
  * The declarative bridge for the hello-world extension. Copy this file to
- * `web/plugins/<id>/descriptor.ts` and register it in `web/registry.config.ts`
- * (the `WEB_PLUGINS` registry). Data only — it maps the extension's published
+ * `web/plugins/<id>/descriptor.ts` and add it to `WEB_PLUGINS` in
+ * `web/config/plugins.config.ts`, exported through `web/config/registry.config.ts`.
+ * Data only — it maps the extension's published
  * view to a placement and declares the action the web forwards back.
  */
 export const helloWorldPlugin: WebPluginDescriptor = {

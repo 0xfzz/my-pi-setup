@@ -3,7 +3,7 @@
 // imports a plugin — the built-in descriptor list is registered here, then
 // the core server starts. Run directly (tsx server.ts) or via /web start.
 
-import { WEB_PLUGINS, WEB_TEST_FIXTURES } from "./registry.config.ts";
+import { WEB_PLUGINS, WEB_TEST_FIXTURES } from "./config/registry.config.ts";
 import { registerWebPlugins } from "./core/server/plugin-host.ts";
 import { watchPluginRegistry } from "./core/server/plugin-registry-broadcast.ts";
 import { announcePluginsChanged } from "./core/server/sessions.ts";
