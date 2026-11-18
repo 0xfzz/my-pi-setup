@@ -54,15 +54,23 @@ function parsedArguments(text: string): Record<string, unknown> | undefined {
   }
 }
 
-/** The block with one delta applied, or undefined when the delta does not extend this block. */
-function extendBlock(block: Block, type: string, delta: string, argumentText: string): Block | undefined {
-  if (type === "text_delta" && block.type === "text") return { ...block, text: `${String(block.text ?? "")}${delta}` };
-  if (type === "thinking_delta" && block.type === "thinking") return { ...block, thinking: `${String(block.thinking ?? "")}${delta}` };
-  if (type === "toolcall_delta" && block.type === "toolCall") {
-    const args = parsedArguments(argumentText);
-    return args === undefined ? block : { ...block, arguments: args };
-  }
-  return undefined;
+/** The tool-call block with its parsed argument prefix, if that prefix is JSON. */
+function withArguments(block: Block, argumentText: string): Block | undefined {
+  if (block.type !== "toolCall") return undefined;
+  const args = parsedArguments(argumentText);
+  return args === undefined ? block : { ...block, arguments: args };
+}
+
+interface TextChunks {
+  text?: string[];
+  thinking?: string[];
+}
+
+/** Join deferred text deltas once, at snapshot time, instead of per token. */
+function materializeBlock(block: Block, chunks: TextChunks | undefined): Block {
+  if (chunks?.text !== undefined && block.type === "text") return { ...block, text: chunks.text.join("") };
+  if (chunks?.thinking !== undefined && block.type === "thinking") return { ...block, thinking: chunks.thinking.join("") };
+  return block;
 }
 
 export function createStreamTracker(): StreamTracker {
@@ -70,12 +78,16 @@ export function createStreamTracker(): StreamTracker {
   let content: Block[] | null = null;
   // The raw JSON text of each tool call's arguments, by content index, as its deltas arrive.
   const argumentText = new Map<number, string>();
+  // Text/thinking deltas accumulate as chunks; rebuilding the whole prefix
+  // on every token was quadratic in the length of the answer.
+  const textChunks = new Map<number, TextChunks>();
 
   const messageSnapshot = (): StreamSnapshot["message"] =>
-    content === null ? null : { role: "assistant", content: [...content] };
+    content === null ? null : { role: "assistant", content: content.map((block, index) => materializeBlock(block, textChunks.get(index))) };
 
   const replaceContent = (partial: AssistantMessageLike): void => {
     content = Array.isArray(partial.content) ? partial.content.filter(isObject) : [];
+    textChunks.clear();
   };
 
   const applyDelta = (update: Record<string, unknown>): void => {
@@ -83,9 +95,20 @@ export function createStreamTracker(): StreamTracker {
     const index = update.contentIndex;
     const block = content[index];
     if (block === undefined || typeof update.type !== "string") return;
-    if (update.type === "toolcall_delta") argumentText.set(index, `${argumentText.get(index) ?? ""}${update.delta}`);
-    const extended = extendBlock(block, update.type, update.delta, argumentText.get(index) ?? "");
-    if (extended !== undefined) content[index] = extended;
+    if (update.type === "toolcall_delta") {
+      argumentText.set(index, `${argumentText.get(index) ?? ""}${update.delta}`);
+      const extended = withArguments(block, argumentText.get(index) ?? "");
+      if (extended !== undefined) content[index] = extended;
+      return;
+    }
+    const field = update.type === "text_delta" ? "text" : update.type === "thinking_delta" ? "thinking" : undefined;
+    if (field === undefined) return;
+    let chunks = textChunks.get(index);
+    if (chunks === undefined) {
+      chunks = {};
+      textChunks.set(index, chunks);
+    }
+    (chunks[field] ??= []).push(update.delta);
   };
 
   const applyUpdate = (update: Record<string, unknown>): void => {
@@ -127,6 +150,7 @@ export function createStreamTracker(): StreamTracker {
             started = false;
             content = null;
             argumentText.clear();
+            textChunks.clear();
           }
           return;
         }
@@ -136,6 +160,7 @@ export function createStreamTracker(): StreamTracker {
           started = false;
           content = null;
           argumentText.clear();
+          textChunks.clear();
           return;
         }
         default:

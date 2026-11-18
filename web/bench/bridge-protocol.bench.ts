@@ -167,6 +167,28 @@ function eventFrameScenario(): Scenario {
   };
 }
 
+function streamReplayScenario(): Scenario {
+  const start = { type: "message_start", message: { role: "assistant", content: [{ type: "text", text: "" }] } };
+  const delta = { type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "x" } };
+  return {
+    name: "stream-replay",
+    unit: "turn",
+    iterations: 500,
+    heapIterations: 100,
+    // Prefix concatenation allocated ~73 KB per 1k-token turn; chunking halves it.
+    budgetP95Ms: 0.15,
+    budgetHeapBytes: 60_000,
+    run() {
+      const tracker = createStreamTracker();
+      tracker.feed(start);
+      for (let index = 0; index < 1_000; index += 1) tracker.feed(delta);
+      const snapshot = tracker.snapshot();
+      const content = snapshot.message?.content as Array<{ text?: string }> | undefined;
+      return content?.[0]?.text?.length ?? 0;
+    },
+  };
+}
+
 async function measure(scenario: Scenario): Promise<{ p50: number; p95: number; p99: number; heap: number; retained: number }> {
   scenario.run();
   const warmup = Math.min(100, Math.floor(scenario.iterations / 10));
@@ -203,6 +225,7 @@ const scenarios = [
   publishScenario(),
   await protocolScenario(),
   eventFrameScenario(),
+  streamReplayScenario(),
 ];
 
 console.log(`bridge protocol benchmark — node ${process.version}, lower is better`);
