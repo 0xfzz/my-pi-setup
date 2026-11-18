@@ -1,11 +1,20 @@
-/** Merge manifest-discovered browser halves into the trusted runtime before its first scan. */
+/**
+ * Merge manifest-discovered browser halves into the trusted runtime before its
+ * first scan. Bundles are fetched and hash-verified in parallel, then handed
+ * to one batched registration so a page load pays one status round trip.
+ */
 import {
   BROWSER_HALVES_API,
   isBrowserHalfMetadata,
   type BrowserHalfMetadata,
 } from "../../shared/browser-halves.ts";
 import { getJson } from "./api-client.ts";
-import { registerBrowserHalfFromUrl, type BrowserRuntime } from "./browser-host.ts";
+import {
+  prepareBrowserHalfFromUrl,
+  type BrowserHalfDefinition,
+  type BrowserHalfSourceInfo,
+  type BrowserRuntime,
+} from "./browser-host.ts";
 
 type MetadataResult =
   | { readonly ok: true; readonly data: { readonly halves: unknown } }
@@ -19,8 +28,20 @@ export interface DiscoveredHalvesReport {
 
 export interface DiscoveredHalvesOptions {
   readonly fetchHalves?: () => Promise<MetadataResult>;
-  readonly register?: typeof registerBrowserHalfFromUrl;
+  readonly prepare?: (info: BrowserHalfSourceInfo) => Promise<BrowserHalfDefinition>;
+  readonly addDefinitions?: (definitions: readonly BrowserHalfDefinition[]) => Promise<void>;
   readonly staticIds?: readonly string[];
+}
+
+interface Candidate {
+  readonly id: string;
+  readonly info: BrowserHalfSourceInfo;
+}
+
+interface Selection {
+  readonly candidates: readonly Candidate[];
+  readonly skipped: readonly string[];
+  readonly errors: string[];
 }
 
 function errorText(error: unknown): string {
@@ -31,16 +52,8 @@ function defaultFetchHalves(): Promise<MetadataResult> {
   return getJson<{ halves: unknown }>(BROWSER_HALVES_API);
 }
 
-function rows(data: { readonly halves: unknown }): readonly unknown[] {
-  return Array.isArray(data.halves) ? data.halves : [];
-}
-
-async function registerOne(
-  runtime: BrowserRuntime,
-  half: BrowserHalfMetadata,
-  register: typeof registerBrowserHalfFromUrl,
-): Promise<void> {
-  await register(runtime, {
+function requestFor(half: BrowserHalfMetadata): BrowserHalfSourceInfo {
+  return {
     id: half.id,
     version: half.version,
     sourcePath: half.sourcePath,
@@ -49,46 +62,69 @@ async function registerOne(
     ...(half.corePlugin === true ? { corePlugin: true } : {}),
     url: half.url,
     expectedHash: half.hash,
-  });
+  };
 }
 
-/** Individual failures are reported, never allowed to stop static halves. */
+function selectCandidates(values: readonly unknown[], staticIds: ReadonlySet<string>): Selection {
+  const candidates: Candidate[] = [];
+  const skipped: string[] = [];
+  const errors: string[] = [];
+  for (const value of values) {
+    if (!isBrowserHalfMetadata(value)) {
+      errors.push("discarded a malformed browser-half declaration");
+      continue;
+    }
+    if (staticIds.has(value.id) || value.trust !== "trusted") {
+      skipped.push(value.id);
+      continue;
+    }
+    candidates.push({ id: value.id, info: requestFor(value) });
+  }
+  return { candidates, skipped, errors };
+}
+
+type PrepareHalf = (info: BrowserHalfSourceInfo) => Promise<BrowserHalfDefinition>;
+
+async function prepareCandidate(
+  prepare: PrepareHalf,
+  candidate: Candidate,
+): Promise<{ readonly definition: BrowserHalfDefinition } | { readonly error: string }> {
+  try {
+    return { definition: await prepare(candidate.info) };
+  } catch (error) {
+    return { error: `${candidate.id}: ${errorText(error)}` };
+  }
+}
+
+/** Individual failures are reported, never allowed to stop other halves. */
 export async function registerDiscoveredBrowserHalves(
   runtime: BrowserRuntime,
   options: DiscoveredHalvesOptions = {},
 ): Promise<DiscoveredHalvesReport> {
   const fetchHalves = options.fetchHalves ?? defaultFetchHalves;
-  const register = options.register ?? registerBrowserHalfFromUrl;
-  const staticIds = new Set(options.staticIds ?? []);
-  const registered: string[] = [];
-  const skipped: string[] = [];
-  const errors: string[] = [];
-
+  const prepare: NonNullable<DiscoveredHalvesOptions["prepare"]> = options.prepare ?? prepareBrowserHalfFromUrl;
+  const addDefinitions: NonNullable<DiscoveredHalvesOptions["addDefinitions"]> =
+    options.addDefinitions ?? ((definitions) => runtime.addDefinitions(definitions));
   const result = await fetchHalves().catch((error: unknown) => ({ ok: false as const, error }));
   if (!result.ok) {
-    errors.push(`metadata request failed: ${errorText(result.error ?? "unknown error")}`);
-    return { registered, skipped, errors };
+    return { registered: [], skipped: [], errors: [`metadata request failed: ${errorText(result.error ?? "unknown error")}`] };
   }
 
-  for (const value of rows(result.data)) {
-    if (!isBrowserHalfMetadata(value)) {
-      errors.push("discarded a malformed browser-half declaration");
-      continue;
-    }
-    if (staticIds.has(value.id)) {
-      skipped.push(value.id);
-      continue;
-    }
-    if (value.trust !== "trusted") {
-      skipped.push(value.id);
-      continue;
-    }
-    try {
-      await registerOne(runtime, value, register);
-      registered.push(value.id);
-    } catch (error) {
-      errors.push(`${value.id}: ${errorText(error)}`);
-    }
+  const rawHalves = Array.isArray(result.data.halves) ? result.data.halves : [];
+  const selection = selectCandidates(rawHalves, new Set(options.staticIds ?? []));
+  const outcomes = await Promise.all(selection.candidates.map((candidate) => prepareCandidate(prepare, candidate)));
+  const definitions: BrowserHalfDefinition[] = [];
+  for (const outcome of outcomes) {
+    if ("definition" in outcome) definitions.push(outcome.definition);
+    else selection.errors.push(outcome.error);
   }
-  return { registered, skipped, errors };
+  if (definitions.length === 0) return { registered: [], skipped: selection.skipped, errors: selection.errors };
+
+  const registered = definitions.map((definition) => definition.id);
+  try {
+    await addDefinitions(definitions);
+  } catch (error) {
+    return { registered: [], skipped: selection.skipped, errors: [...selection.errors, `registration failed: ${errorText(error)}`] };
+  }
+  return { registered, skipped: selection.skipped, errors: selection.errors };
 }

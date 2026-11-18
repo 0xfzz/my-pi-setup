@@ -48,6 +48,8 @@ export interface BrowserRuntime {
   scan(): Promise<void>;
   /** Hot-swap an externally built plugin half without restarting the server. */
   addDefinition(definition: BrowserHalfDefinition): Promise<void>;
+  /** Hot-swap a batch with one scan, so discovery pays one status round trip. */
+  addDefinitions(definitions: readonly BrowserHalfDefinition[]): Promise<void>;
   removeDefinition(id: string): void;
   /** Re-run one half's mount in this page; the breaker state persists. */
   remount(id: string): Promise<void>;
@@ -103,27 +105,35 @@ export function verifyBrowserSourceHash(id: string, hash: string, expectedHash?:
   }
 }
 
-/** Fetch, hash, import and register one externally built browser half. */
-export async function registerBrowserHalfFromUrl(
-  runtime: BrowserRuntime,
-  info: Omit<BrowserHalfDefinition, "module" | "hash"> & {
-    readonly url: string;
-    readonly expectedHash?: string;
-  },
-): Promise<void> {
+export type BrowserHalfSourceInfo = Omit<BrowserHalfDefinition, "module" | "hash"> & {
+  readonly url: string;
+  readonly expectedHash?: string;
+};
+
+/** Fetch, hash and import one bundle; registration is a separate decision. */
+export async function prepareBrowserHalfFromUrl(info: BrowserHalfSourceInfo): Promise<BrowserHalfDefinition> {
   const response = await fetch(info.url, { cache: "no-store" });
   if (!response.ok) throw new Error(`browser half ${info.id} returned HTTP ${response.status}`);
   const source = await response.text();
   const hash = await hashBrowserSource(source);
   verifyBrowserSourceHash(info.id, hash, info.expectedHash);
-  const { expectedHash: _expectedHash, ...definition } = info;
+  const { id, version, sourcePath, capabilities, trust, corePlugin } = info;
   const objectUrl = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
   try {
     const module = await import(/* @vite-ignore */ objectUrl) as BrowserModule;
-    await runtime.addDefinition({ ...definition, hash, module });
+    return {
+      id, version, sourcePath, capabilities, hash, module,
+      ...(trust === undefined ? {} : { trust }),
+      ...(corePlugin === undefined ? {} : { corePlugin }),
+    };
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
+}
+
+/** One-off registration for the browser's dynamic import hook. */
+export async function registerBrowserHalfFromUrl(runtime: BrowserRuntime, info: BrowserHalfSourceInfo): Promise<void> {
+  await runtime.addDefinition(await prepareBrowserHalfFromUrl(info));
 }
 
 /** The kernel already owns safe mode and lifecycle; the browser reads its report. */
@@ -280,12 +290,17 @@ export function createBrowserRuntimeHost(options: BrowserRuntimeOptions): Browse
 
   const runtime: BrowserRuntime = {
     async addDefinition(definition) {
-      const index = definitions.findIndex((entry) => entry.id === definition.id);
-      if (index === -1) definitions.push(definition);
-      else definitions[index] = definition;
-      hashes.delete(definition.id);
-      unmount(definition.id);
-      refused.delete(definition.id);
+      await runtime.addDefinitions([definition]);
+    },
+    async addDefinitions(added) {
+      for (const definition of added) {
+        const index = definitions.findIndex((entry) => entry.id === definition.id);
+        if (index === -1) definitions.push(definition);
+        else definitions[index] = definition;
+        hashes.delete(definition.id);
+        unmount(definition.id);
+        refused.delete(definition.id);
+      }
       await runtime.scan();
     },
     removeDefinition(id) {

@@ -76,6 +76,29 @@ test("a core half is hash-granted and mounted through the runtime", async () => 
   assert.equal(cleanups, 1, "stopping the runtime unmounts every half");
 });
 
+test("a batch of halves triggers one status read and one mount pass", async () => {
+  let statusReads = 0;
+  const definitions = ["acme.one", "acme.two"].map((id) =>
+    definition({ mount: () => () => undefined }, { id, corePlugin: true }));
+  const runtime = createBrowserRuntimeHost({
+    definitions: [],
+    element: {} as HTMLElement,
+    context: context(),
+    storage: storage(),
+    hash: async (item) => item.hash ?? "sha256:unknown",
+    fetchStatus: async () => { statusReads += 1; return { safeMode: false, states: {} }; },
+    now: () => 42,
+    pollMs: 3_600_000,
+  });
+  try {
+    await runtime.addDefinitions(definitions);
+    assert.equal(statusReads, 1);
+    assert.deepEqual(runtime.state().mounted, ["acme.one", "acme.two"]);
+  } finally {
+    runtime.stop();
+  }
+});
+
 test("a non-core half waits for the operator and audits a refusal", async () => {
   const reg = definition({ mount: () => () => undefined });
   const { runtime } = host([reg]);
