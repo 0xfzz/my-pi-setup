@@ -235,10 +235,16 @@ async function spawnFixture(runtimeDir: string, sessionId: string, mode = "hold"
   return fixture;
 }
 
+const bootstrapCookies = new Map<string, string>();
+
 async function bootstrap(address: { browserUrl: string }): Promise<string> {
+  const cached = bootstrapCookies.get(address.browserUrl);
+  if (cached !== undefined) return cached;
   const response = await fetch(address.browserUrl, { redirect: "manual" });
   assert.equal(response.status, 302, "bootstrap must mint a browser cookie");
-  return response.headers.getSetCookie()[0]!.split(";")[0]!;
+  const cookie = response.headers.getSetCookie()[0]!.split(";")[0]!;
+  bootstrapCookies.set(address.browserUrl, cookie);
+  return cookie;
 }
 
 async function fetchSessions(address: SubagentGraphAddress, cookie: string): Promise<any[]> {

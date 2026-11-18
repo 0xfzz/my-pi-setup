@@ -129,7 +129,11 @@ async function withServer(
   }
 }
 
+const bootstrapCookies = new Map<string, string>();
+
 async function bootstrapCookie(handle: { browserUrl: string }): Promise<string> {
+  const cached = bootstrapCookies.get(handle.browserUrl);
+  if (cached !== undefined) return cached;
   const response = await fetch(handle.browserUrl, { redirect: "manual" });
   assert.equal(response.status, 302);
   const cookies = response.headers.getSetCookie();
@@ -138,7 +142,9 @@ async function bootstrapCookie(handle: { browserUrl: string }): Promise<string> 
   assert.match(raw, /HttpOnly/);
   assert.match(raw, /SameSite=Strict/);
   assert.match(raw, /Path=\//);
-  return raw.split(";")[0]!;
+  const cookie = raw.split(";")[0]!;
+  bootstrapCookies.set(handle.browserUrl, cookie);
+  return cookie;
 }
 
 function apiUrl(handle: { url: string }, path: string): URL {
@@ -401,6 +407,14 @@ test("a hostile JSON body cannot smuggle __proto__ into server state", async () 
 });
 
 // ── Browser auth ────────────────────────────────────────────────────────────
+
+test("the browser bootstrap URL mints only one session", async () => {
+  await withServer({ idleMs: 0 }, async ({ handle }) => {
+    await bootstrapCookie(handle);
+    const replay = await fetch(handle.browserUrl, { redirect: "manual" });
+    assert.equal(replay.status, 403, "a token left in history must not mint another cookie");
+  });
+});
 
 test("graph library cookies use first duplicate and decoded values without leaking credentials", async () => {
   await withServer({ idleMs: 0 }, async ({ handle }) => {

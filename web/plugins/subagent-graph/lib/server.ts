@@ -503,7 +503,7 @@ class SubagentGraphRuntime {
   readonly #options: ResolvedOptions;
   #app: FastifyInstance | null = null;
   readonly #instanceId = randomBytes(16).toString("hex");
-  readonly #bootstrapToken = randomBytes(32).toString("hex");
+  #bootstrapToken: string | null = randomBytes(32).toString("hex");
   readonly #startedAt = Date.now();
   #producerToken = "";
   #port = 0;
@@ -687,10 +687,14 @@ class SubagentGraphRuntime {
   // ── Browser bootstrap ────────────────────────────────────────────────────
 
   #bootstrap(token: string, reply: FastifyReply): void {
-    if (!safeEqual(token, this.#bootstrapToken)) {
+    const expected = this.#bootstrapToken;
+    if (expected === null || !safeEqual(token, expected)) {
       void reply.code(403).send({ error: "invalid bootstrap token" });
       return;
     }
+    // The URL is shown once and can linger in history; it must not mint a
+    // second browser session after the operator has used it.
+    this.#bootstrapToken = null;
     const sessionToken = randomBytes(32).toString("base64url");
     const expiresAt = this.#options.now() + BROWSER_SESSION_TTL_MS;
     this.#browserSessions.set(sessionToken, expiresAt);
