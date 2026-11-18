@@ -1,7 +1,7 @@
 // Guard test for the session-list transport: the sidebar used to poll
-// GET /api/sessions every 2 s; it must now hold one directory EventSource.
-// This reads the hook's source rather than rendering React, which makes the
-// regression cheap to pin without a DOM harness.
+// GET /api/sessions every 2 s; it must now subscribe through the protocol
+// client's directory binding. This reads the hook's source rather than
+// rendering React, which makes the regression cheap to pin without a DOM.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -10,8 +10,12 @@ import { fileURLToPath } from "node:url";
 
 const source = readFileSync(fileURLToPath(new URL("./use-session.ts", import.meta.url)), "utf8");
 
-test("use-session holds a directory EventSource, not a /api/sessions poll", () => {
-  assert.match(source, /new EventSource\("\/api\/sessions\/events"\)/, "the directory stream is opened");
+test("use-session subscribes to directory events, not a /api/sessions poll", () => {
+  assert.match(
+    source,
+    /directoryProtocolClient\(\)\.subscribe\("session\.directory\.events"/,
+    "the directory stream is opened through the protocol client",
+  );
   assert.doesNotMatch(source, /setInterval/, "no interval timer drives the session list refresh");
   // A one-shot fallback timer (the /reload indicator expiry) is fine; what
   // must never return is a timer wired to the session-list refresh.

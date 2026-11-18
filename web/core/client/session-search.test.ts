@@ -92,6 +92,6 @@ test("the sidebar asks the server for a query and the hook sends it", () => {
   assert.match(sidebar, /onSearch\(query\)/, "the sidebar calls the search callback");
 
   const hook = readFileSync(fileURLToPath(new URL("./use-session.ts", import.meta.url)), "utf8");
-  assert.match(hook, /\/api\/sessions\?q=\$\{encodeURIComponent\(trimmed\)\}/, "the hook sends the query to the server");
+  assert.match(hook, /query<unknown>\("session\.search", \{ query: trimmed \}\)/, "the hook sends the query through the protocol client");
   assert.match(hook, /searchQueryRef\.current !== trimmed/, "a stale response is dropped");
 });

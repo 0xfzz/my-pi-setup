@@ -3,10 +3,12 @@
  * here; the HTTP+SSE binding (route paths and SSE event names) lives in this
  * file, never in message schemas or components.
  */
+import { Value } from "typebox/value";
+
 import { MESSAGE_CATALOG, lookupMessage } from "../protocol/catalog.ts";
-import { BRIDGE_PROTOCOL, BRIDGE_PROTOCOL_VERSION, HELLO } from "../protocol/version.ts";
-import type { BridgeEnvelope } from "../protocol/envelope.ts";
-import type { BridgeError } from "../protocol/errors.ts";
+import { parseEnvelope, type BridgeEnvelope } from "../protocol/envelope.ts";
+import { BRIDGE_ERROR_CODES, bridgeError, type BridgeError, type BridgeErrorCode } from "../protocol/errors.ts";
+import { BRIDGE_PROTOCOL, BRIDGE_PROTOCOL_VERSION, HELLO, HelloAckSchema, HelloSchema } from "../protocol/version.ts";
 import type { PiApiName, PiApiParams, PiApiResult } from "../shared/pi-api.ts";
 
 export type ProtocolResult<T> = { ok: true; value: T } | { ok: false; error: BridgeError };
@@ -15,11 +17,24 @@ export interface ProtocolClientOptions {
   readonly sessionId: string;
   readonly clientId?: string;
   readonly fetch?: typeof fetch;
+  readonly eventSource?: typeof EventSource;
   readonly protocolPath?: (sessionId: string) => string;
 }
 
+interface EventStream {
+  readonly source: EventSource;
+  readonly listeners: Set<{
+    listener: (envelope: BridgeEnvelope) => void;
+    onError?: (source: EventSource) => void;
+  }>;
+}
+
+const DIRECTORY_EVENTS = "session.directory.events";
+const DIRECTORY_EVENTS_PATH = "/api/sessions/events";
+
 const PROTOCOL_PATH = (sessionId: string): string =>
   `/api/agent/${encodeURIComponent(sessionId)}/protocol`;
+const DIRECTORY_PROTOCOL_PATH = (): string => "/api/protocol";
 
 /** One envelope factory for every call, including correlation and source id. */
 function envelopeFor(
@@ -37,7 +52,8 @@ function envelopeFor(
     kind: message.kind,
     name: name as BridgeEnvelope["name"],
     messageId: `${clientId}-${sequence}`,
-    sessionId,
+    // Directory messages are session-less; a sentinel id would be a lie on the wire.
+    ...(sessionId === "" ? {} : { sessionId }),
     source: { type: "browser", id: clientId },
     timestamp: 0,
     payload,
@@ -52,36 +68,73 @@ function transportFailure(error: unknown): BridgeError {
   };
 }
 
+/** A binding reply may carry a named BridgeError; only its declared fields cross. */
+function namedError(value: unknown): BridgeError | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const candidate = value as Partial<BridgeError>;
+  if (!BRIDGE_ERROR_CODES.includes(candidate.code as BridgeErrorCode) || typeof candidate.message !== "string") {
+    return undefined;
+  }
+  return {
+    code: candidate.code as BridgeErrorCode,
+    message: candidate.message,
+    retryable: candidate.retryable === true,
+    ...(candidate.details === undefined ? {} : { details: candidate.details }),
+  };
+}
+
+function asBridgeError(error: unknown): BridgeError {
+  return namedError(error) ?? transportFailure(error);
+}
+
 export class ProtocolClient {
   private sequence = 0;
   private readonly sessionId: string;
   private readonly clientId: string;
   private readonly post: typeof fetch;
+  private readonly eventSource: typeof EventSource;
   private readonly protocolPath: (sessionId: string) => string;
+  private readonly streams = new Map<string, EventStream>();
   private ready: Promise<void> | undefined;
 
   constructor(options: ProtocolClientOptions) {
     this.sessionId = options.sessionId;
     this.clientId = options.clientId ?? "pi-web";
     this.post = options.fetch ?? globalThis.fetch.bind(globalThis);
+    this.eventSource = options.eventSource ?? globalThis.EventSource;
     this.protocolPath = options.protocolPath ?? PROTOCOL_PATH;
   }
 
   /** The capability handshake runs once, before any command or query. */
   private handshake(): Promise<void> {
-    this.ready ??= this.send<{ version: number }>(envelopeFor(
+    this.ready ??= this.openHandshake();
+    return this.ready;
+  }
+
+  private async openHandshake(): Promise<void> {
+    const hello = {
+      version: BRIDGE_PROTOCOL_VERSION,
+      bindings: ["http-sse"],
+      clientId: this.clientId,
+      capabilities: [],
+    };
+    if (!Value.Check(HelloSchema, hello)) {
+      throw bridgeError("VALIDATION_FAILED", "the client hello does not match the protocol schema");
+    }
+    const outcome = await this.send<{ version: number }>(envelopeFor(
       HELLO,
-      { version: BRIDGE_PROTOCOL_VERSION, bindings: ["http-sse"], clientId: this.clientId, capabilities: [] },
+      hello,
       this.sessionId,
       this.clientId,
       0,
-    )).then((outcome) => {
-      if (!outcome.ok) throw new Error(outcome.error.message);
-      if (outcome.value.version !== BRIDGE_PROTOCOL_VERSION) {
-        throw new Error(`protocol version mismatch: ${outcome.value.version}`);
-      }
-    });
-    return this.ready;
+    ));
+    if (!outcome.ok) throw outcome.error;
+    if (outcome.value.version !== BRIDGE_PROTOCOL_VERSION) {
+      throw bridgeError("VERSION_MISMATCH", `peer speaks protocol v${outcome.value.version}`);
+    }
+    if (!Value.Check(HelloAckSchema, outcome.value)) {
+      throw bridgeError("VALIDATION_FAILED", "the server hello-ack does not match the protocol schema");
+    }
   }
 
   private async send<T>(request: BridgeEnvelope, signal?: AbortSignal): Promise<ProtocolResult<T>> {
@@ -102,9 +155,11 @@ export class ProtocolClient {
       error?: BridgeError;
     } | null;
     if (body?.ok !== true || body.value === undefined) {
-      return { ok: false, error: body?.error ?? transportFailure("invalid protocol reply") };
+      return { ok: false, error: namedError(body?.error) ?? transportFailure("invalid protocol reply") };
     }
-    if (body.value.error !== undefined) return { ok: false, error: body.value.error };
+    if (body.value.error !== undefined) {
+      return { ok: false, error: namedError(body.value.error) ?? transportFailure("invalid protocol error") };
+    }
     return { ok: true, value: body.value.payload as T };
   }
 
@@ -113,7 +168,7 @@ export class ProtocolClient {
     try {
       await this.handshake();
     } catch (error) {
-      return { ok: false, error: transportFailure(error) };
+      return { ok: false, error: asBridgeError(error) };
     }
     return this.send<T>(envelopeFor(name, payload, this.sessionId, this.clientId, ++this.sequence), signal);
   }
@@ -135,26 +190,54 @@ export class ProtocolClient {
     return this.invoke<PiApiResult[K]>(api, params, signal);
   }
 
-  /** Subscribe to a catalog event name; the binding maps it to the SSE stream. */
-  subscribe(name: string, listener: (envelope: BridgeEnvelope) => void): () => void {
+  private eventPath(name: string): string {
+    if (name === DIRECTORY_EVENTS) return DIRECTORY_EVENTS_PATH;
+    return this.protocolPath(this.sessionId).replace(/\/protocol$/, "/events");
+  }
+
+  private openStream(name: string): EventStream {
+    const source = new this.eventSource(this.eventPath(name));
+    const stream: EventStream = { source, listeners: new Set() };
+    source.onmessage = (event) => {
+      let frame: unknown;
+      try {
+        frame = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      const parsed = parseEnvelope(frame);
+      if (!parsed.ok || parsed.envelope.kind !== "event" || parsed.envelope.name !== name) return;
+      for (const entry of stream.listeners) entry.listener(parsed.envelope);
+    };
+    source.onerror = () => {
+      for (const entry of stream.listeners) entry.onError?.(source);
+    };
+    return stream;
+  }
+
+  /** Subscribe to a catalog event; subscribers of one channel share the stream. */
+  subscribe(
+    name: string,
+    listener: (envelope: BridgeEnvelope) => void,
+    onError?: (source: EventSource) => void,
+  ): () => void {
     const message = lookupMessage(name);
     if (message?.kind !== "event") throw new Error(`${name} is not an event`);
-    const source = new EventSource(this.protocolPath(this.sessionId).replace("/protocol", "/events"));
-    source.onmessage = (event) => {
-      try {
-        const raw = JSON.parse(event.data) as { type?: string; event?: { type?: string }; payload?: unknown };
-        if (raw.type === "web_ui_event" && raw.event?.type === name) {
-          listener({
-            ...envelopeFor(name, raw.payload ?? {}, this.sessionId, this.clientId, ++this.sequence),
-            kind: "event",
-            sequence: this.sequence,
-          });
-        }
-      } catch {
-        // A malformed stream frame is dropped; the next resync converges.
-      }
+    let stream = this.streams.get(name);
+    if (stream === undefined) {
+      stream = this.openStream(name);
+      this.streams.set(name, stream);
+    }
+    const entry = { listener, onError };
+    stream.listeners.add(entry);
+    return () => {
+      const current = this.streams.get(name);
+      if (current === undefined) return;
+      current.listeners.delete(entry);
+      if (current.listeners.size !== 0) return;
+      current.source.close();
+      this.streams.delete(name);
     };
-    return () => source.close();
   }
 
   /** Rebuild UI state from the same stores the live events update. */
@@ -173,6 +256,17 @@ export function protocolClient(sessionId: string): ProtocolClient {
     clients.set(sessionId, client);
   }
   return client;
+}
+
+/** Session-less directory calls use their own binding; no session is implied. */
+let directoryClient: ProtocolClient | undefined;
+
+export function directoryProtocolClient(): ProtocolClient {
+  directoryClient ??= new ProtocolClient({
+    sessionId: "",
+    protocolPath: DIRECTORY_PROTOCOL_PATH,
+  });
+  return directoryClient;
 }
 
 export const PROTOCOL_MESSAGE_COUNT = MESSAGE_CATALOG.length;

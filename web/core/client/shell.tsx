@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SidebarSimple } from "@phosphor-icons/react";
 import { usePiSession } from "./use-session.ts";
+import { protocolClient } from "./protocol-client.ts";
 import { addEntryCommand, needsSettingsDispatch, settingsDialog, settingsPages, settingsPluginIds } from "./model-settings.ts";
 import { useVisualViewport } from "./use-visual-viewport.ts";
 import { Transcript } from "./transcript.tsx";
@@ -254,18 +255,20 @@ export function AppShell() {
     let attempts = 0;
     const poll = (): void => {
       attempts += 1;
-      void fetch(`/api/agent/${encodeURIComponent(id)}/tree`)
-        .then(async (res) => {
-          if (res.status === 404 && attempts < 12) {
-            setTimeout(poll, 250);
+      void protocolClient(id).query<{ nodes?: WebTreeNode[] }>("session.tree")
+        .then((outcome) => {
+          if (!outcome.ok) {
+            // The projection lands after the dispatch; keep polling through
+            // a missing session or a not-yet-posted tree.
+            if (attempts < 12) {
+              setTimeout(poll, 250);
+              return;
+            }
+            setTreeError(`tree unavailable: ${outcome.error.message}`);
             return;
           }
-          if (!res.ok) {
-            setTreeError(`tree unavailable (HTTP ${res.status})`);
-            return;
-          }
-          const body = (await res.json()) as { nodes?: WebTreeNode[] };
-          if (body.nodes !== undefined && body.nodes.length > 0) setTreeNodes(body.nodes);
+          const nodes = outcome.value.nodes;
+          if (nodes !== undefined && nodes.length > 0) setTreeNodes(nodes);
           else if (attempts < 12) setTimeout(poll, 250);
         })
         .catch(() => {

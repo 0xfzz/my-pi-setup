@@ -1,6 +1,6 @@
 // The pi session hook: session list, selection, live transcript state.
-// One EventSource per selected session carries the agent event wire; user
-// messages render optimistically and assistant replies stream in via deltas.
+// The protocol client owns one subscribed event stream per selected session;
+// user messages render optimistically and replies stream in via delta payloads.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getAuth } from "./auth.ts";
@@ -36,6 +36,7 @@ import { pluginStateFrameOf } from "../shared/plugin-state.ts";
 import { buildVerdict, ownBuildId } from "./build-identity.ts";
 import { isCompactionReason, type CompactionReason } from "./compaction.ts";
 import { HISTORY_FETCH_TIMEOUT_MS, historyRetryDelayMs } from "./history-retry.ts";
+import { directoryProtocolClient, protocolClient, type ProtocolResult } from "./protocol-client.ts";
 
 export type { CustomPanelLike, WebNotificationLike, WidgetModelLike };
 export type { HistoryEntryLike, ToolResultLike } from "./history-pages.ts";
@@ -175,6 +176,26 @@ const EMPTY_HISTORY_PAGE: HistoryPageResponse = {};
 /** How long the reloading banner stays before a missing completion signal expires it. */
 const RELOAD_INDICATOR_TIMEOUT_MS = 20_000;
 
+/** A resync carries the next opaque protocol cursor alongside the history page. */
+type ResyncPage = HistoryPageResponse & { cursor?: string };
+
+/** A session with no transcript file is empty, not a failed read worth retrying. */
+function pageFrom(outcome: ProtocolResult<HistoryPageResponse>): HistoryPageResponse {
+  if (outcome.ok) return outcome.value;
+  if (outcome.error.code === "SESSION_NOT_FOUND") return EMPTY_HISTORY_PAGE;
+  throw new Error(outcome.error.message);
+}
+
+/** Directory adapters return the same session rows the old list route returned. */
+function sessionsFrom(value: unknown): SessionSummary[] {
+  if (Array.isArray(value)) return value as SessionSummary[];
+  if (typeof value === "object" && value !== null) {
+    const sessions = (value as { sessions?: unknown }).sessions;
+    if (Array.isArray(sessions)) return sessions as SessionSummary[];
+  }
+  return [];
+}
+
 export function usePiSession() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
@@ -245,6 +266,9 @@ export function usePiSession() {
   // Cursors live outside React state: the SSE handler reads the latest page
   // position without re-subscribing the event stream on every append.
   const historyCursorRef = useRef<{ older: string | null; newer: string | null }>({ older: null, newer: null });
+  // The binding's resume cursor is distinct from the history page cursor used
+  // for duplicate-free merging; the next resync resumes from this one.
+  const protocolCursorRef = useRef<string | null>(null);
   const loadingOlderRef = useRef(false);
   // Latest selection, read by async callbacks (fetchModels) that must not
   // apply a response belonging to a session the user already left.
@@ -302,13 +326,9 @@ export function usePiSession() {
   }, [reloading]);
 
   const refreshSessions = useCallback(async () => {
-    try {
-      const res = await fetch("/api/sessions");
-      const body = (await res.json()) as { sessions?: SessionSummary[] };
-      setSessions(body.sessions ?? []);
-    } catch {
-      // Offline: keep the last list.
-    }
+    const outcome = await directoryProtocolClient().query<unknown>("session.list");
+    if (!outcome.ok) return; // Offline: keep the last list.
+    setSessions(sessionsFrom(outcome.value));
   }, []);
 
   // The latest search the user typed. A slower earlier response must not
@@ -323,14 +343,9 @@ export function usePiSession() {
     const trimmed = query.trim();
     searchQueryRef.current = trimmed;
     if (trimmed === "") return [];
-    try {
-      const res = await fetch(`/api/sessions?q=${encodeURIComponent(trimmed)}`);
-      const body = (await res.json()) as { sessions?: SessionSummary[] };
-      if (searchQueryRef.current !== trimmed) return [];
-      return body.sessions ?? [];
-    } catch {
-      return [];
-    }
+    const outcome = await directoryProtocolClient().query<unknown>("session.search", { query: trimmed });
+    if (!outcome.ok || searchQueryRef.current !== trimmed) return [];
+    return sessionsFrom(outcome.value);
   }, []);
 
   // The plugin registry is fetched once per page load; the surfaces it declares
@@ -351,19 +366,12 @@ export function usePiSession() {
     refreshPlugins();
   }, [refreshPlugins, convergeOnBuild]);
 
-  // The session list is push-driven: one directory EventSource carries the
-  // full snapshot on connect, then only running/idle and add/remove
-  // transitions — no polling. A failed stream (server restart) reconnects
-  // and re-snapshots on its own.
+  // The session list is push-driven: the protocol client holds one directory
+  // event stream, whose envelopes carry the snapshot then only running/idle
+  // and add/remove transitions — no polling.
   useEffect(() => {
-    const source = new EventSource("/api/sessions/events");
-    source.onmessage = (event: MessageEvent<string>) => {
-      let data: Record<string, unknown>;
-      try {
-        data = JSON.parse(event.data) as Record<string, unknown>;
-      } catch {
-        return;
-      }
+    const leave = directoryProtocolClient().subscribe("session.directory.events", (envelope) => {
+      const data = envelope.payload as Record<string, unknown>;
       switch (data.type) {
         case "sessions_snapshot": {
           const body = data as { bootId?: unknown; buildId?: unknown; sessions?: SessionSummary[] };
@@ -459,28 +467,25 @@ export function usePiSession() {
           // heartbeat and future frame types pass silently.
           break;
       }
-    };
-    return () => source.close();
+    });
+    return leave;
   }, [refreshPlugins, convergeOnBuild]);
 
   const fetchState = useCallback(async (id: string) => {
-    try {
-      const res = await fetch(`/api/agent/${encodeURIComponent(id)}`);
-      const body = (await res.json()) as { running?: boolean; state?: SessionStateLike };
-      // Merge, not replace: a session_state push may have landed before this
-      // fetch (or between its read and now), and the fetched bridge state
-      // can lag a just-applied model. The push is the fresher truth.
-      setSessionState((prev) => ({
-        isStreaming: body.state?.isStreaming ?? prev?.isStreaming ?? false,
-        isBashRunning: body.state?.isBashRunning ?? prev?.isBashRunning ?? false,
-        isCompacting: body.state?.isCompacting ?? prev?.isCompacting ?? false,
-        model: body.state?.model ?? prev?.model,
-        contextUsage: body.state?.contextUsage ?? prev?.contextUsage ?? null,
-        thinkingLevel: body.state?.thinkingLevel ?? prev?.thinkingLevel ?? "off",
-      }));
-    } catch {
-      // State reads are best-effort; the stream reports connection health.
-    }
+    const outcome = await protocolClient(id).query<{ state?: SessionStateLike }>("session.get");
+    if (!outcome.ok) return; // The stream reports connection health.
+    const body = outcome.value;
+    // Merge, not replace: a session_state push may have landed before this
+    // read (or between it and now), and the fetched bridge state can lag a
+    // just-applied model. The push is the fresher truth.
+    setSessionState((prev) => ({
+      isStreaming: body.state?.isStreaming ?? prev?.isStreaming ?? false,
+      isBashRunning: body.state?.isBashRunning ?? prev?.isBashRunning ?? false,
+      isCompacting: body.state?.isCompacting ?? prev?.isCompacting ?? false,
+      model: body.state?.model ?? prev?.model,
+      contextUsage: body.state?.contextUsage ?? prev?.contextUsage ?? null,
+      thinkingLevel: body.state?.thinkingLevel ?? prev?.thinkingLevel ?? "off",
+    }));
   }, []);
 
   /**
@@ -491,35 +496,26 @@ export function usePiSession() {
    * blocks the session.
    */
   const fetchWorkspaceBranch = useCallback(async (id: string) => {
-    try {
-      const res = await fetch(`/api/agent/${encodeURIComponent(id)}/branch`);
-      if (!res.ok) return;
-      const body = (await res.json()) as { branch?: unknown };
-      setWorkspaceBranch(typeof body.branch === "string" && body.branch !== "" ? body.branch : null);
-    } catch {
-      // The line is context, not session state: no branch is a valid answer.
-    }
+    const outcome = await protocolClient(id).query<{ branch?: unknown }>("session.branch");
+    if (!outcome.ok) return; // No branch is a valid answer for this line.
+    const branch = outcome.value.branch;
+    setWorkspaceBranch(typeof branch === "string" && branch !== "" ? branch : null);
   }, []);
 
   // The web picker's model list. The SSE `web_models` push keeps it live;
   // this fetch is the initial read so a session switch never shows the
   // previous session's list.
   const fetchModels = useCallback(async (id: string) => {
-    try {
-      const response = await fetch(`/api/agent/${encodeURIComponent(id)}/models`);
-      if (!response.ok) return;
-      const data = (await response.json()) as ModelsState;
-      // A slow response for a session the user already left must not
-      // overwrite the now-selected session's list.
-      if (selectedIdRef.current !== id) return;
-      setModels((prev) => ({
-        models: Array.isArray(data.models) ? data.models : prev.models,
-        all: Array.isArray(data.all) ? data.all : prev.all,
-        current: data.current ?? prev.current,
-      }));
-    } catch {
-      // The picker falls back to what the SSE already delivered.
-    }
+    const outcome = await protocolClient(id).query<ModelsState>("session.models");
+    // A slow response for a session the user already left must not
+    // overwrite the now-selected session's list.
+    if (!outcome.ok || selectedIdRef.current !== id) return;
+    const data = outcome.value;
+    setModels((prev) => ({
+      models: Array.isArray(data.models) ? data.models : prev.models,
+      all: Array.isArray(data.all) ? data.all : prev.all,
+      current: data.current ?? prev.current,
+    }));
   }, []);
 
   /** Fetch the preceding transcript page without disturbing the live stream. */
@@ -529,16 +525,11 @@ export function usePiSession() {
     if (id === null || cursor === null || loadingOlderRef.current) return;
     loadingOlderRef.current = true;
     setLoadingOlder(true);
-    const query = new URLSearchParams({ limit: String(HISTORY_PAGE_LIMIT), cursor, direction: "older" });
+    const params = { limit: HISTORY_PAGE_LIMIT, cursor, direction: "older" };
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), HISTORY_FETCH_TIMEOUT_MS);
-    void fetch(`/api/agent/${encodeURIComponent(id)}/history?${query}`, { signal: controller.signal })
-      .then((res) => {
-        // A fixture or a session with no transcript file has no older pages.
-        if (res.status === 404) return EMPTY_HISTORY_PAGE;
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<HistoryPageResponse>;
-      })
+    void protocolClient(id).query<HistoryPageResponse>("session.history", params, controller.signal)
+      .then(pageFrom)
       .then((page) => {
         setHistory((prev) => mergeHistoryEntries(prev, page.entries ?? [], "prepend"));
         setToolResults((prev) => ({ ...page.toolResults, ...prev }));
@@ -598,10 +589,10 @@ export function usePiSession() {
     // The live session's dispatchable slash commands (extension/prompt/
     // skill); built-ins come from the shared list. Best-effort: a failed
     // fetch just leaves the built-ins.
-    void fetch(`/api/agent/${encodeURIComponent(selectedId)}/commands`)
-      .then((res) => (res.ok ? (res.json() as Promise<{ commands?: WebCommand[] }>) : { commands: [] }))
-      .then((body) => {
-        if (!closed) setSessionCommands(body.commands ?? []);
+    void protocolClient(selectedId).query<{ commands?: WebCommand[] }>("session.commands")
+      .then((outcome) => {
+        if (!outcome.ok || closed) return;
+        setSessionCommands(outcome.value.commands ?? []);
       })
       .catch(() => {
         // The palette falls back to the built-ins.
@@ -704,21 +695,15 @@ export function usePiSession() {
       attempt?: number;
     }): void => {
       if (closed || (options.placement === "initial" && historyApplied)) return;
-      const query = new URLSearchParams({ limit: String(HISTORY_PAGE_LIMIT) });
+      const params: Record<string, string | number> = { limit: HISTORY_PAGE_LIMIT };
       if (options.cursor !== undefined) {
-        query.set("cursor", options.cursor);
-        query.set("direction", options.direction ?? "older");
+        params.cursor = options.cursor;
+        params.direction = options.direction ?? "older";
       }
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), HISTORY_FETCH_TIMEOUT_MS);
-      void fetch(`/api/agent/${encodeURIComponent(selectedId)}/history?${query}`, { signal: controller.signal })
-        .then((res) => {
-          // A session without a transcript file is an empty conversation,
-          // not a read failure worth retrying forever.
-          if (res.status === 404) return EMPTY_HISTORY_PAGE;
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.json() as Promise<HistoryPageResponse>;
-        })
+      void protocolClient(selectedId).query<HistoryPageResponse>("session.history", params, controller.signal)
+        .then(pageFrom)
         .then((page) => {
           clearTimeout(timeout);
           applyPage(page, options.placement);
@@ -745,15 +730,31 @@ export function usePiSession() {
       fetchPage({ placement: "initial" });
     };
 
-    /** Reconnect and bridge-gap recovery read only what landed after the cursor. */
+    /**
+     * Reconnect and bridge-gap recovery read a page from the binding's cursor;
+     * the history page cursor stays the merge key so overlap never renders twice.
+     */
     const resyncHistory = (): void => {
       if (!historyApplied) return;
-      const cursor = historyCursorRef.current.newer;
-      if (cursor === null) {
-        reloadHistory();
-        return;
-      }
-      fetchPage({ placement: "append", cursor, direction: "newer" });
+      // The first resync has no opaque binding cursor yet; the server then
+      // returns one, and the next gap resumes from it. newerCursor stays the
+      // local merge key so an overlapping snapshot never duplicates a row.
+      const params = protocolCursorRef.current === null ? {} : { cursor: protocolCursorRef.current };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), HISTORY_FETCH_TIMEOUT_MS);
+      void protocolClient(selectedId).query<ResyncPage>("session.resync", params, controller.signal)
+        .then((outcome) => {
+          if (!outcome.ok) throw new Error(outcome.error.message);
+          return outcome.value;
+        })
+        .then((page) => {
+          if (typeof page.cursor === "string") protocolCursorRef.current = page.cursor;
+          applyPage(page, "append");
+        })
+        .catch(() => {
+          // The next stream event retries; the transcript keeps its last page.
+        })
+        .finally(() => clearTimeout(timeout));
     };
 
     // The initial state read (model, thinking, context): the model chip
@@ -761,15 +762,13 @@ export function usePiSession() {
     void fetchState(selectedId);
     void fetchWorkspaceBranch(selectedId);
 
-    const source = new EventSource(`/api/agent/${encodeURIComponent(selectedId)}/events`);
-    source.onmessage = (event: MessageEvent<string>) => {
-      let data: Record<string, unknown>;
-      try {
-        data = JSON.parse(event.data) as Record<string, unknown>;
-      } catch {
-        return;
-      }
-      switch (data.type) {
+    protocolCursorRef.current = null;
+    let leaveEvents: () => void = () => {};
+    leaveEvents = protocolClient(selectedId).subscribe(
+      "session.events",
+      (envelope) => {
+        const data = envelope.payload as Record<string, unknown>;
+        switch (data.type) {
         case "connected":
           setConnection("connected");
           applyStream(data.isStreaming ? { type: "run_start" } : { type: "run_end" });
@@ -785,7 +784,7 @@ export function usePiSession() {
           break;
         case "startup_error":
           setConnection("error");
-          source.close();
+          leaveEvents();
           // No live stream — the file still renders (best effort).
           if (!everConnected) {
             everConnected = true;
@@ -1075,10 +1074,9 @@ export function usePiSession() {
           // the palette and the dispatch channel stay current.
           setReloading(false);
           if (selectedId !== null) {
-            void fetch(`/api/agent/${encodeURIComponent(selectedId)}/commands`)
-              .then((res) => (res.ok ? (res.json() as Promise<{ commands?: WebCommand[] }>) : { commands: [] }))
-              .then((body) => {
-                if (!closed) setSessionCommands(body.commands ?? []);
+            void protocolClient(selectedId).query<{ commands?: WebCommand[] }>("session.commands")
+              .then((outcome) => {
+                if (outcome.ok && !closed) setSessionCommands(outcome.value.commands ?? []);
               })
               .catch(() => undefined);
           }
@@ -1113,26 +1111,27 @@ export function usePiSession() {
         default:
           // heartbeat and any future event types pass silently.
           break;
-      }
-    };
-    source.onerror = () => {
-      // EventSource reconnects on its own; surface the gap as "connecting".
-      setConnection((prev) => (prev === "connected" ? "connecting" : "error"));
-      // But it gives up for good on a 401 (CLOSED, no retry) — an access token that expired
-      // while the stream was down. Refresh the session and open a fresh stream.
-      if (source.readyState === EventSource.CLOSED && !closed) {
-        void getAuth()
-          .recoverStream()
-          .then((recovered) => {
-            if (recovered && !closed) resyncHistory();
-          });
-      }
-    };
+        }
+      },
+      (source) => {
+        // EventSource reconnects on its own; surface the gap as "connecting".
+        setConnection((prev) => (prev === "connected" ? "connecting" : "error"));
+        // It gives up for good on a 401 (CLOSED, no retry) — an access token that
+        // expired while the stream was down. Refresh, then resync from a gap.
+        if (source.readyState === EventSource.CLOSED && !closed) {
+          void getAuth()
+            .recoverStream()
+            .then((recovered) => {
+              if (recovered && !closed) resyncHistory();
+            });
+        }
+      },
+    );
 
     return () => {
       closed = true;
       clearTimeout(historyRetry);
-      source.close();
+      leaveEvents();
       setConnection("idle");
     };
   }, [selectedId, applyStream, fetchState, fetchModels]);
@@ -1149,9 +1148,11 @@ export function usePiSession() {
     const key = `${selectedId}\u0000${toolCallId}`;
     if (requestedToolResults.current.has(key)) return;
     requestedToolResults.current.add(key);
-    const url = `/api/agent/${encodeURIComponent(selectedId)}/tool-results/${encodeURIComponent(toolCallId)}`;
-    void fetch(url)
-      .then((res) => (res.ok ? (res.json() as Promise<ToolResultLike>) : Promise.reject(new Error(`HTTP ${res.status}`))))
+    void protocolClient(selectedId).query<ToolResultLike>("session.tool-result", { toolCallId })
+      .then((outcome) => {
+        if (!outcome.ok) throw new Error(outcome.error.message);
+        return outcome.value;
+      })
       .then((full) => {
         setToolResults((prev) => ({ ...prev, [toolCallId]: full }));
       })
@@ -1161,22 +1162,15 @@ export function usePiSession() {
   }, [selectedId]);
 
   const newSession = useCallback(async (cwd?: string) => {
-    try {
-      const res = await fetch("/api/agent/new", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cwd !== undefined && cwd.trim() !== "" ? { cwd } : {}),
-      });
-      const body = (await res.json()) as { sessionId?: string; error?: string };
-      if (body.sessionId !== undefined) {
-        await refreshSessions();
-        setSelectedId(body.sessionId);
-        return null;
-      }
-      return body.error ?? `new session failed (HTTP ${res.status})`;
-    } catch {
-      return "could not reach the server";
-    }
+    const outcome = await directoryProtocolClient().invoke<{ sessionId?: string }>(
+      "session.create",
+      cwd !== undefined && cwd.trim() !== "" ? { cwd } : {},
+    );
+    if (!outcome.ok) return outcome.error.message;
+    if (outcome.value.sessionId === undefined) return "new session failed";
+    await refreshSessions();
+    setSelectedId(outcome.value.sessionId);
+    return null;
   }, [refreshSessions]);
 
   const sendPrompt = useCallback(async (
@@ -1194,23 +1188,11 @@ export function usePiSession() {
       },
     ]);
     setSendError(null);
-    try {
-      const res = await fetch(`/api/agent/${encodeURIComponent(id)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "prompt",
-          message: text,
-          ...(images.length > 0 ? { images } : {}),
-        }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setSendError(body.error ?? `prompt failed (HTTP ${res.status})`);
-      }
-    } catch {
-      setSendError("prompt could not be delivered — is the server reachable?");
-    }
+    const outcome = await protocolClient(id).invoke("session.prompt", {
+      text,
+      ...(images.length > 0 ? { images } : {}),
+    });
+    if (!outcome.ok) setSendError(outcome.error.message);
   }, [selectedId]);
 
   // Dispatch a web core command: the session's extension registry runs it in
@@ -1221,37 +1203,18 @@ export function usePiSession() {
     if (id === null) return;
     setSendError(null);
     if (name === "reload") setReloading(true);
-    try {
-      const res = await fetch(`/api/agent/${encodeURIComponent(id)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "web_command",
-          name,
-          ...(args !== "" ? { args } : {}),
-        }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setSendError(body.error ?? `/${name} failed (HTTP ${res.status})`);
-      }
-    } catch {
-      setSendError(`/${name} could not be delivered — is the server reachable?`);
-    }
+    const outcome = await protocolClient(id).invoke("web-command.dispatch", {
+      name,
+      ...(args !== "" ? { args } : {}),
+    });
+    if (!outcome.ok) setSendError(outcome.error.message);
   }, [selectedId]);
 
   const abort = useCallback(async () => {
     const id = selectedId;
     if (id === null) return;
-    try {
-      await fetch(`/api/agent/${encodeURIComponent(id)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "abort" }),
-      });
-    } catch {
-      // Same as above: the stream reports the true state.
-    }
+    await protocolClient(id).invoke("session.abort", {});
+    // The stream reports the true state; a refused abort needs no banner.
   }, [selectedId]);
 
   // Apply a model from the web picker. The session acknowledges via the
@@ -1260,20 +1223,8 @@ export function usePiSession() {
     const sessionId = selectedId;
     if (sessionId === null) return "no session selected";
     setSessionState((prev) => prev === null ? prev : { ...prev, model: { provider, id } });
-    try {
-      const response = await fetch(`/api/agent/${encodeURIComponent(sessionId)}/model`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, id }),
-      });
-      if (!response.ok) {
-        const data = (await response.json().catch(() => ({}))) as { error?: string };
-        return data.error ?? "model not available";
-      }
-      return null;
-    } catch (error) {
-      return error instanceof Error ? error.message : String(error);
-    }
+    const outcome = await protocolClient(sessionId).invoke("session.set-model", { provider, id });
+    return outcome.ok ? null : outcome.error.message;
   }, [selectedId]);
 
   const setThinking = useCallback(async (level: string): Promise<string | null> => {
@@ -1281,20 +1232,8 @@ export function usePiSession() {
     if (sessionId === null) return "no session selected";
     // Optimistic like setModel: the session_state push confirms or corrects.
     setSessionState((prev) => prev === null ? prev : { ...prev, thinkingLevel: level });
-    try {
-      const response = await fetch(`/api/agent/${encodeURIComponent(sessionId)}/thinking`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ level }),
-      });
-      if (!response.ok) {
-        const data = (await response.json().catch(() => ({}))) as { error?: string };
-        return data.error ?? "thinking level rejected";
-      }
-      return null;
-    } catch (error) {
-      return error instanceof Error ? error.message : String(error);
-    }
+    const outcome = await protocolClient(sessionId).invoke("session.set-thinking", { level });
+    return outcome.ok ? null : outcome.error.message;
   }, [selectedId]);
 
   const clearDialogRequest = useCallback((): void => {

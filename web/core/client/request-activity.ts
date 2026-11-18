@@ -4,22 +4,32 @@ import { reportClientError, reportClientWarning } from "./logging.ts";
 
 const BODY_READERS = new Set(["json", "text", "blob", "arrayBuffer", "formData", "bytes"]);
 
+const PROTOCOL_PATH = /^\/api\/(?:agent\/[^/]+\/)?protocol$/;
+const TURN_MESSAGES = new Set(["session.prompt", "web-command.dispatch"]);
+const LEGACY_TURN_TYPES = new Set(["prompt", "web_command"]);
+
+/** Old command routes are still recognised until their aliases are removed. */
+function isLegacyTurn(path: string, body: { name?: unknown; type?: unknown }): boolean {
+  if (path === "/api/agent/new" || !/^\/api\/agent\/[^/]+$/.test(path)) return false;
+  return typeof body.type === "string" && LEGACY_TURN_TYPES.has(body.type);
+}
+
 /**
- * A request whose answer arrives only when the agent's turn ends: a prompt or a
- * web command posted to a session. Its pending time is the turn itself, which
- * the transcript's working line already shows; counting it would keep the
- * loading card up for the whole of every reply. Abort and every other request
- * answer at once, so they stay tracked.
+ * A request whose answer arrives only when the agent's turn ends: a protocol
+ * command that starts or continues a turn. Its pending time is the turn itself,
+ * which the transcript's working line already shows; counting it would keep
+ * the loading card up for the whole of every reply. Every other protocol
+ * message answers at once, so it stays tracked.
  */
 export function isTurnRequest(input: RequestInfo | URL, init?: RequestInit): boolean {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   const path = new URL(url, "http://local").pathname;
-  if (path === "/api/agent/new" || !/^\/api\/agent\/[^/]+$/.test(path)) return false;
   if ((init?.method ?? "GET").toUpperCase() !== "POST") return false;
   if (typeof init?.body !== "string") return false;
   try {
-    const type = (JSON.parse(init.body) as { type?: unknown }).type;
-    return type === "prompt" || type === "web_command";
+    const body = JSON.parse(init.body) as { name?: unknown; type?: unknown };
+    if (!PROTOCOL_PATH.test(path)) return isLegacyTurn(path, body);
+    return typeof body.name === "string" && TURN_MESSAGES.has(body.name);
   } catch {
     return false;
   }

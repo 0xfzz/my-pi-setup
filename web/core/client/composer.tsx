@@ -136,8 +136,8 @@ function ContextUsageBar({ usage }: { usage: ContextUsage | null }) {
 /**
  * Where the session runs, at the top of the input field: a folder icon and the
  * directory, then a branch pill when that directory is a worktree. The path
- * comes from the session list the client already has, the branch from
- * `/api/agent/:id/branch`, and the branch is simply absent off-repository.
+ * comes from the session list the client already has, the branch from the
+ * `session.branch` protocol query, and the branch is simply absent off-repository.
  *
  * It has a row of its own rather than a place beside the context meter, so a
  * long path ellipsizes instead of squeezing the model and thinking chips.
