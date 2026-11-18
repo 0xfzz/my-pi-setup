@@ -13,7 +13,7 @@ import {
   type MinimalEventBus,
 } from "./plugin-sessions.ts";
 import { checkAndSetInFlightAction, getActionAuditLog, recordActionAudit } from "./plugin-actions.ts";
-import { clearWebPluginStateForTests, seedPluginFixtures } from "./plugin-fixtures.ts";
+import { clearWebPluginStateForTests, seedPluginFixtures } from "../../plugins/fixture-e2e/server/fixtures.ts";
 import { pluginView, recordPluginView } from "./plugin-views.ts";
 import { recordExtensionUi, webUiStore } from "./ui-store.ts";
 import type { WebPluginDescriptor } from "../plugin-contracts/descriptor.ts";

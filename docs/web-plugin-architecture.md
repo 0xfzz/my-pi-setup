@@ -45,8 +45,8 @@ Every plugin owns one folder `web/plugins/<id>/` with its own
 dependencies belong to the plugin and never pile up in `web/package.json`.
 The web root declares those folders as npm workspaces
 (`"workspaces": ["plugins/*"]`), so plugin dependencies still install
-and hoist into `web/node_modules`. Register the plugin in
-`web/plugins/index.ts` and it ships.
+and hoist into `web/node_modules`. Add one descriptor entry to
+`web/registry.config.ts` and it ships.
 
 The only place core and plugins meet is the composition roots outside
 `web/core/`: `web/app.tsx` (client) imports the shell and the panel
@@ -74,7 +74,7 @@ for that surface*: it maps the TUI shape to a web placement. It never
 decides anything; it declares.
 
 **Ways to install one.** A first-party plugin is listed in
-`web/plugins/index.ts` and registered by the composition root. A plugin from
+`web/registry.config.ts` and registered by the composition root. A plugin from
 anywhere else ships a directory with `pi-web-plugin.json` under
 `~/.pi/agent/web-plugins`, `<project>/.pi/web-plugins`, a pi package's
 `pi.webPlugins`, or an absolute directory in `PI_WEB_PLUGIN_ROOTS`; the kernel
@@ -312,7 +312,7 @@ descriptor compile → activation with grants → tap → store.
 
 1. **Descriptor** — `web/plugins/<id>/descriptor.ts` declares the view, placement
    (`region`/`slot`/`anchor`), surfaces and actions. Registered in
-   `web/plugins/index.ts` (`WEB_PLUGINS`). A plugin installed from a directory
+   `web/registry.config.ts` (`WEB_PLUGINS`). A plugin installed from a directory
    instead ships `pi-web-plugin.json` whose `contributes` block carries the same
    fields; the kernel compiles it through the same validator, so both kinds of
    plugin reach the client identically.
@@ -456,17 +456,25 @@ Router, Web Bridge, Plugin Manager and MCP Manager now load from their own
 manifest-declared bundles; repo-owned halves are marked core, while outside
 plugins still require the operator's hash-bound confirmation.
 
-The shared browser module graph is generated, not hardcoded. One registry in
-`web/plugin-host-specifiers.mjs` names React, the JSX runtime, the SDK,
-`@pi-web/host-ui` and renderer modules. The build emits matching `/host/*`
-shims, externalizes those specifiers in plugin bundles, and writes the import
-map into the built `index.html` from a template placeholder. The icon,
-Typebox and `@file-viewer/*` shims point at separate vendor-only entries;
-first-party entries bundle their own named icons, and the files plugin imports
-the viewer vendors only when a document opens. Plugin UI such as
-`DocumentViewer.tsx` stays in `web/plugins/files`, never in the shared
-runtime, and plugin previews use the public `@pi-web/host-ui` surface instead
-of importing `web/core/client` internals.
+All first-party registration lives in `web/registry.config.ts`: plugin
+descriptors and opt-outs, browser module specifiers, bundle entries and
+budgets, viewer assets, and e2e fixture surfaces. Build scripts read it
+through `web/load-registry.mjs`; `web/plugins/index.ts` is only a compatibility
+barrel. Anyone adding a plugin or a shared browser module edits that one file,
+not the build or the core server.
+
+The shared browser module graph is generated from those entries. The build
+emits matching shims, externalizes registered specifiers in plugin bundles,
+and writes the import map into the built `index.html` from a template
+placeholder. Core owns baseline modules (React, SDK, host UI, Typebox, named
+icons). The files plugin owns the `@file-viewer/*` source, its generated
+`/plugins/files/*` bundle and its `/plugins/files/file-viewer/` assets;
+core owns no plugin viewer entry. Plugin UI such as `DocumentViewer.tsx` stays
+in `web/plugins/files`, never in the shared runtime, and plugin previews use
+the public `@pi-web/host-ui` surface instead of importing `web/core/client`
+internals. E2E fixture views and the fixture session likewise live in
+`web/plugins/fixture-e2e`; the composition root starts them through a generic
+hook, so `web/core` contains no plugin seed data.
 
 ## The decision test
 

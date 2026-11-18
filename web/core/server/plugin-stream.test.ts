@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import type { ServerResponse } from "node:http";
 import { registerWebPlugins } from "./plugin-host.ts";
-import { clearWebPluginStateForTests } from "./plugin-fixtures.ts";
+import { clearWebPluginStateForTests } from "../../plugins/fixture-e2e/server/fixtures.ts";
 import { startWebServer } from "./main.ts";
 import { WEB_PLUGINS } from "../../plugins/index.ts";
 import type { PluginRouteHandler } from "../plugin-contracts/kernel/routes.ts";

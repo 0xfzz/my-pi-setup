@@ -244,7 +244,7 @@ test("a stream returned after client disconnect is released without being sent",
 
 test("a plugin route answers over HTTP with its body, status and headers", async () => {
   const { registerWebPlugins } = await import("../web/core/server/plugin-host.ts");
-  const { clearWebPluginStateForTests } = await import("../web/core/server/plugin-fixtures.ts");
+  const { clearWebPluginStateForTests } = await import("../web/plugins/fixture-e2e/server/fixtures.ts");
   const { startWebServer } = await import("../web/core/server/main.ts");
   const { WEB_PLUGINS } = await import("../web/plugins/index.ts");
   const dir = mkdtempSync(join(tmpdir(), "pi-plugin-routes-"));

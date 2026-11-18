@@ -177,7 +177,7 @@ paint, matching the multi-second network bars in the HAR screenshot.
 
 | Entry | Before | After | Where the rest went |
 | --- | ---: | ---: | --- |
-| `runtime.js` | 14.87 MB | 250 KB | `icons.js`, `file-viewer.js` and `typebox-host.js` are separate entries |
+| `runtime.js` | 14.87 MB | 250 KB | `icons.js` and `typebox-host.js` are separate; the files plugin owns `file-viewer.js` |
 | `ui.js` | 4.05 MB | 416 KB | Mermaid/KaTeX/Cytoscape are hashed dynamic chunks; Typebox is shared |
 | `app.js` | 655 KB | 609 KB | icons are imported by name; Typebox is no longer duplicated |
 
@@ -185,7 +185,10 @@ All cold-path JavaScript together — app, host modules and enabled plugin
 halves — is about **1.64 MB raw / 485 KB gzipped**, down from ~19.6 MB raw.
 The artifacts plugin also stopped importing a core internal path for
 CodeMirror; it uses the public `@pi-web/host-ui` surface, as the files plugin
-does. `tests/web-core-separation.test.ts` guards that boundary.
+does. `tests/web-core-separation.test.ts` guards that boundary. The document
+viewer bundle and assets are emitted under `/plugins/files/`, not `/host/`;
+core owns no plugin viewer entry. `web/registry.config.ts` is the single place
+where plugins, host modules, budgets and viewer assets are registered.
 
 First-party app and plugin builds use `FIRST_PARTY_EXTERNALS`, which excludes
 only the icon shim; external plugins can still import any icon through the

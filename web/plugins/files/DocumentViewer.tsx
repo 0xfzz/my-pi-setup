@@ -11,6 +11,8 @@ import type { FileViewerOptions } from "@file-viewer/core";
 import { LoadingSpinner } from "@pi-web/host-ui";
 import { downloadUrl, type FileRef } from "./lib/files-api.ts";
 
+type CoreModule = typeof import("@file-viewer/core") & { FILE_VIEWER_ASSET_BASE_URL: string };
+
 type ViewerModules = {
   FileViewer: typeof import("@file-viewer/react").FileViewer;
   useFileViewerState: typeof import("@file-viewer/react").useFileViewerState;
@@ -27,7 +29,8 @@ function loadViewerModules(): Promise<ViewerModules> {
   ]).then(([react, core, office]) => {
     // The bundled default derives the asset base from import.meta.url, which
     // esbuild rewrites to a module URL: workers then 404 at the site root.
-    core.setDefaultFileViewerAssetBaseUrl("/file-viewer/");
+    const registeredCore = core as CoreModule;
+    registeredCore.setDefaultFileViewerAssetBaseUrl(registeredCore.FILE_VIEWER_ASSET_BASE_URL);
     const options: FileViewerOptions = {
       preset: office.default,
       rendererMode: "replace",

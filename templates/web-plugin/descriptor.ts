@@ -6,7 +6,7 @@ import {
 
 /**
  * The declarative bridge for the hello-world extension. Copy this file to
- * `web/plugins/<id>/descriptor.ts` and import it in `web/plugins/index.ts`
+ * `web/plugins/<id>/descriptor.ts` and register it in `web/registry.config.ts`
  * (the `WEB_PLUGINS` registry). Data only — it maps the extension's published
  * view to a placement and declares the action the web forwards back.
  */

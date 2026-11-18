@@ -236,7 +236,12 @@ const ZONES: readonly ZoneRules[] = [
     dir: "web/plugins",
     runtimeAllow: ["web/plugins/", "web/core/client/plugin-system/", "web/core/client/protocol-client.ts", "web/core/shared/", "web/core/protocol/", "web/core/plugin-contracts/ui-event-models.ts", "web/core/plugin-contracts/view.ts", "lib/"],
     typeOnlyAllow: ["lib/", "web/core/plugin-contracts/"],
-    skip: ["web/plugins/subagent-graph", "web/plugins/files/server", "web/plugins/fixture-e2e/build.mjs"],
+    skip: [
+      "web/plugins/subagent-graph",
+      "web/plugins/files/server",
+      "web/plugins/fixture-e2e/server",
+      "web/plugins/fixture-e2e/build.mjs",
+    ],
     why: "plugin descriptors are declarative and plugin UI reuses core renderers; they never import pi behavior",
   },
   {
@@ -249,6 +254,24 @@ const ZONES: readonly ZoneRules[] = [
     runtimeAllow: ["web/plugins/files/server/", "web/core/server/", "web/core/plugin-contracts/", "web/core/shared/", "lib/", "node:"],
     typeOnlyAllow: null,
     why: "a plugin's server half mounts its own /api/p/<id> routes and reuses the core fs policy; it still never imports client or pi behavior",
+  },
+  {
+    // The e2e fixture plugin's SERVER half. It seeds the registered plugin
+    // views and simulates one session. Like Files' server half, it reuses the
+    // audited core server stores and the one registration config; no pi
+    // behavior and no browser client source enters this zone.
+    dir: "web/plugins/fixture-e2e/server",
+    runtimeAllow: [
+      "web/plugins/fixture-e2e/server/",
+      "web/registry.config.ts",
+      "web/core/server/",
+      "web/core/plugin-contracts/",
+      "web/core/shared/",
+      "lib/",
+      "node:",
+    ],
+    typeOnlyAllow: null,
+    why: "the e2e fixture server owns fixture views and reuses core stores; the browser client and pi behavior stay out",
   },
   {
     // The plugin contract/vocabulary: shared by pi-side publishers and web

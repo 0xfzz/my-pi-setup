@@ -3,7 +3,9 @@ import { build } from "esbuild";
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FIRST_PARTY_EXTERNALS } from "./plugin-host-specifiers.mjs";
+import { registry } from "./load-registry.mjs";
+
+const { FIRST_PARTY_EXTERNALS } = registry;
 
 const root = dirname(fileURLToPath(import.meta.url));
 const plugins = resolve(root, "plugins");

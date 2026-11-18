@@ -1,5 +1,5 @@
 /**
- * `core.compat` (PRD §5.7): turns today's `WEB_PLUGINS` descriptors into
+ * `core.compat` (PRD §5.7): turns registered descriptors into
  * declarative candidates for the manager, so they run through the same lifecycle
  * (enable, disable, quarantine, persisted state) without any change to the
  * descriptors themselves. A descriptor carries no code, so its candidate has no

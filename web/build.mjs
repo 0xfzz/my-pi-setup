@@ -17,7 +17,9 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertBundleWithinBudget } from "./bundle-budget.mjs";
-import { FIRST_PARTY_EXTERNALS, hostImportMap } from "./plugin-host-specifiers.mjs";
+import { registry } from "./load-registry.mjs";
+
+const { FILE_VIEWER_ASSETS, FIRST_PARTY_EXTERNALS, hostImportMap } = registry;
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)));
 const client = resolve(root, "core", "client");
@@ -82,19 +84,11 @@ await cp(resolve(client, "base.css"), resolve(dist, "app.css"));
 // Shared panel styles stay in core; each plugin owns and injects its own CSS.
 await cp(resolve(client, "plugin-system", "plugins.css"), resolve(dist, "plugins.css"));
 
-// Flyfish File Viewer's Workers/WASM/fonts are self-hosted beside the client
-// and resolved at /file-viewer/ (the default asset base). Only the renderers
-// the Files panel uses are copied — PDF, Word, spreadsheet, presentation —
-// keeping the payload at ~15 MB instead of the full 190 MB matrix. The
-// document viewer fetches bytes through the download endpoint (fetch is not
-// blocked by X-Frame-Options, unlike an <iframe>).
+// The files plugin owns its viewer assets and renderer list; this build only
+// copies what its registry entry declares into the plugin's static path.
 execFileSync(
   resolve(root, "node_modules", ".bin", process.platform === "win32" ? "file-viewer-copy-assets.cmd" : "file-viewer-copy-assets"),
-  [
-    resolve(dist, "file-viewer"),
-    "--renderers",
-    "pdf,office-word-openxml,spreadsheet-openxml,office-presentation,office-presentation-binary",
-  ],
+  [resolve(dist, FILE_VIEWER_ASSETS.outdir), "--renderers", FILE_VIEWER_ASSETS.renderers.join(",")],
   { stdio: "inherit" },
 );
 // The build's identity, beside the assets it describes. `/app.js` is a fixed

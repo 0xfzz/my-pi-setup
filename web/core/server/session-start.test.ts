@@ -13,7 +13,7 @@ import {
 import { publishWebView } from "../plugin-contracts/publisher.ts";
 import { createHeadlessWebUiContext } from "./web-ui-context.ts";
 import { attachSessionPlugins } from "./plugin-sessions.ts";
-import { clearWebPluginStateForTests } from "./plugin-fixtures.ts";
+import { clearWebPluginStateForTests } from "../../plugins/fixture-e2e/server/fixtures.ts";
 import { pluginView } from "./plugin-views.ts";
 
 type ModelRef = NonNullable<CreateAgentSessionOptions["model"]>;

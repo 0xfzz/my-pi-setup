@@ -4,7 +4,7 @@ import { startWebServer } from "./main.ts";
 import { clearSessionsForTests, registerSession, type SessionCore, type SessionStateLite } from "./sessions.ts";
 import { createStreamTracker } from "./stream-tracker.ts";
 import { attachSessionPlugins, type MinimalEventBus } from "./plugin-sessions.ts";
-import { clearWebPluginStateForTests } from "./plugin-fixtures.ts";
+import { clearWebPluginStateForTests } from "../../plugins/fixture-e2e/server/fixtures.ts";
 import { WEB_PLUGIN_VIEW_EVENT } from "../plugin-contracts/view.ts";
 import { parseEnvelope } from "../protocol/envelope.ts";
 

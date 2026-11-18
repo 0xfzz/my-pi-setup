@@ -4,7 +4,7 @@ import { startWebServer } from "./main.ts";
 import { getPluginDescriptor, registerWebPlugins } from "./plugin-host.ts";
 import { attachSessionPlugins, registerSessionBusForTests, type MinimalEventBus } from "./plugin-sessions.ts";
 import { getActionAuditLog } from "./plugin-actions.ts";
-import { clearWebPluginStateForTests } from "./plugin-fixtures.ts";
+import { clearWebPluginStateForTests } from "../../plugins/fixture-e2e/server/fixtures.ts";
 import { WEB_PLUGIN_ACTION_REQUEST_EVENT } from "../plugin-contracts/actions.ts";
 import { WEB_PLUGINS } from "../../plugins/index.ts";
 

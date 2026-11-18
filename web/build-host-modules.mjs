@@ -1,23 +1,46 @@
-/** Build the shared browser modules that external plugin bundles import. */
+/** Build every shared browser module declared in the single web registry. */
 import { build } from "esbuild";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { readdir, unlink } from "node:fs/promises";
+import { access, readdir, unlink } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertBundleWithinBudget, INITIAL_BUNDLE_BUDGETS } from "./bundle-budget.mjs";
-import { FIRST_PARTY_EXTERNALS, HOST_MODULES, HOST_SPECIFIERS } from "./plugin-host-specifiers.mjs";
+import { assertBundleWithinBudget } from "./bundle-budget.mjs";
+import { registry } from "./load-registry.mjs";
+
+const {
+  HOST_BUNDLES,
+  HOST_BUNDLE_EXTERNALS,
+  HOST_MODULE_TABLE,
+  HOST_MODULES,
+  HOST_SHIMS,
+  LEGACY_CORE_HOST_FILES,
+} = registry;
 
 const root = dirname(fileURLToPath(import.meta.url));
-const host = resolve(root, "core/client/host");
-const out = resolve(root, "core/client/dist/host");
-const chunks = resolve(out, "chunks");
+const dist = resolve(root, "core/client/dist");
 
-mkdirSync(out, { recursive: true });
-mkdirSync(chunks, { recursive: true });
-// Hash-named chunks from an older build are never referenced again. Remove the
-// files, not the directory: the pi runtime watches this tree while building.
-for (const entry of await readdir(chunks, { withFileTypes: true })) {
-  if (entry.isFile()) await unlink(resolve(chunks, entry.name));
+// Create in place and replace files, never remove a watched directory.
+for (const outdir of new Set(Object.values(HOST_BUNDLES).map((bundle) => bundle.outdir))) {
+  const out = resolve(dist, outdir);
+  mkdirSync(out, { recursive: true });
+  const chunks = resolve(out, "chunks");
+  mkdirSync(chunks, { recursive: true });
+  // Hash-named chunks from an older build are never referenced again.
+  for (const entry of await readdir(chunks, { withFileTypes: true })) {
+    if (entry.isFile()) await unlink(resolve(chunks, entry.name));
+  }
+}
+
+// The viewer bundle moved into the files plugin; drop its old core-owned
+// generated files so a served /host/ URL cannot keep pointing at stale code.
+for (const file of LEGACY_CORE_HOST_FILES) {
+  const stale = resolve(dist, "host", file);
+  try {
+    await access(stale);
+    await unlink(stale);
+  } catch {
+    // Already gone.
+  }
 }
 
 const options = {
@@ -27,12 +50,9 @@ const options = {
   target: "es2022",
   minify: true,
   jsx: "automatic",
-  // Host modules are ESM entry points: their exports cannot be tree-shaken.
-  // Splitting keeps dynamic imports (mermaid, viewer renderers) in lazy chunks
-  // instead of inlining megabytes into every page load.
+  // Entry exports cannot be tree-shaken. Splitting keeps dynamic imports
+  // (mermaid, viewer renderers) in lazy chunks instead of the entry bundle.
   splitting: true,
-  outdir: out,
-  entryNames: "[name]",
   chunkNames: "chunks/[name]-[hash]",
   alias: { "@": resolve(root, "core/client") },
   define: { "process.env.NODE_ENV": '"production"' },
@@ -40,52 +60,28 @@ const options = {
   metafile: true,
 };
 
-async function buildEntry(name, source, external = []) {
+async function buildEntry(name) {
+  const bundle = HOST_BUNDLES[name];
   const result = await build({
     ...options,
-    external,
-    entryPoints: { [name]: resolve(host, source) },
+    outdir: resolve(dist, bundle.outdir),
+    external: HOST_BUNDLE_EXTERNALS[bundle.external],
+    entryPoints: { [name]: resolve(root, bundle.source) },
   });
   for (const [path, output] of Object.entries(result.metafile.outputs)) {
     const file = basename(path);
-    if (Object.hasOwn(INITIAL_BUNDLE_BUDGETS, file)) assertBundleWithinBudget(file, output.bytes);
+    if (Object.hasOwn(registry.INITIAL_BUNDLE_BUDGETS, file)) {
+      assertBundleWithinBudget(file, output.bytes);
+    }
   }
 }
 
-const SHARED_VENDOR_SPECIFIERS = ["typebox", "typebox/value"];
+for (const name of Object.keys(HOST_BUNDLES)) await buildEntry(name);
 
-await buildEntry("runtime", "runtime.ts", SHARED_VENDOR_SPECIFIERS);
-await buildEntry("ui", "ui.ts", FIRST_PARTY_EXTERNALS);
-await buildEntry("icons", "icons.ts");
-await buildEntry("typebox-host", "typebox.ts");
-// The vendor packages themselves must be bundled here; only React and the
-// other shared host modules stay external so there is one React instance.
-await buildEntry(
-  "file-viewer",
-  "file-viewer.ts",
-  HOST_SPECIFIERS.filter((specifier) => !specifier.startsWith("@file-viewer/")),
-);
-
-/** Each shared specifier has one tiny shim over its host bundle. */
-const shims = {
-  react: 'export * from "./runtime.js";\nexport { ReactDefault as default } from "./runtime.js";\n',
-  "react/jsx-runtime": 'export { jsx, jsxs, JSXFragment as Fragment } from "./runtime.js";\n',
-  "react-dom": 'export { createPortal, flushSync, preconnect, prefetchDNS, preinit, preinitModule, preload, preloadModule, requestFormReset, unstable_batchedUpdates, useFormState, useFormStatus, version, ReactDOM as default } from "./runtime.js";\n',
-  "react-dom/client": 'export { createRoot, hydrateRoot } from "./runtime.js";\n',
-  "@phosphor-icons/react": 'export * from "./icons.js";\n',
-  "@file-viewer/react": 'export { FileViewer, FileViewerDefault as default, useFileViewerState } from "./file-viewer.js";\n',
-  "@file-viewer/core": 'export { setDefaultFileViewerAssetBaseUrl } from "./file-viewer.js";\n',
-  "@file-viewer/preset-office": 'export { officePresetDefault as default } from "./file-viewer.js";\n',
-  "@pi-web/bridge": 'export * from "./runtime.js";\n',
-  "@pi-web/bridge/text": 'export { webUiText } from "./runtime.js";\n',
-  typebox: 'export * from "./typebox-host.js";\n',
-  "typebox/value": 'export * from "./typebox-host.js";\n',
-};
-
-for (const specifier of HOST_SPECIFIERS) {
-  const source = shims[specifier];
-  if (source === undefined) continue; // @pi-web/host-ui is the ui.js bundle itself.
-  writeFileSync(resolve(out, HOST_MODULES[specifier]), source, "utf8");
+for (const [specifier, source] of Object.entries(HOST_SHIMS)) {
+  const bundleName = HOST_MODULE_TABLE[specifier].bundle;
+  const outdir = resolve(dist, HOST_BUNDLES[bundleName].outdir, HOST_MODULES[specifier]);
+  writeFileSync(outdir, source, "utf8");
 }
 
 console.log("[build] host runtime modules");
