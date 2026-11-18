@@ -7,7 +7,7 @@ import { MESSAGE_CATALOG, type MessageDefinition } from "../catalog.ts";
 import { parseEnvelope, type BridgeEnvelope } from "../envelope.ts";
 import { BRIDGE_PROTOCOL, BRIDGE_PROTOCOL_VERSION, HELLO } from "../version.ts";
 import { conformanceCases, runConformance } from "../testing/conformance.ts";
-import { createInProcessBinding } from "./in-process.ts";
+import { createInProcessBinding, type InProcessOptions } from "./in-process.ts";
 import { createSessionAttachBinding } from "./session-attach.ts";
 import type { BindingOptions } from "./types.ts";
 
@@ -16,8 +16,21 @@ const allCapabilities = (): string[] => {
   return definitions.flatMap((message) => message.capability === undefined ? [] : [message.capability]);
 };
 
-function options(name: BindingOptions["name"], granted = allCapabilities()): BindingOptions {
-  return { name, sessionId: "session-1", cwd: "/tmp", grantedCapabilities: granted };
+const directory = {
+  list: () => ({ sessions: [] }),
+  create: ({ cwd }: { cwd?: string }) => ({ sessionId: "new-session", cwd: cwd ?? "/tmp" }),
+  get: ({ id }: { id?: string }) => ({ session: { id } }),
+  remove: ({ id }: { id?: string }) => ({ ok: true, id }),
+  rename: ({ id, name }: { id?: string; name?: string }) => ({ ok: true, id, name }),
+};
+
+function options(name: BindingOptions["name"], granted = allCapabilities()): InProcessOptions {
+  return {
+    name, sessionId: "session-1", cwd: "/tmp", grantedCapabilities: granted,
+    snapshot: () => ({ views: {}, revision: 1 }),
+    directory,
+    session: session(),
+  };
 }
 
 function session(): SessionSurface {

@@ -40,6 +40,15 @@ export const MESSAGE_CATALOG = [
   { name: "ui.snapshot", kind: "query", legacy: ["ui_sync", "web-plugin:ui-sync"], capability: publish, description: "Re-emit the session's current UI surfaces." },
   { name: "session.resync", kind: "query", legacy: ["bridge_resync"], capability: "session.read", description: "Gap recovery from the last cursor." },
   { name: "plugin-state.snapshot", kind: "query", legacy: ["plugin_state"], capability: "session.read", description: "Current plugin state snapshot." },
+  { name: "session.list", kind: "query", legacy: [], capability: "session.read", description: "Directory listing, optionally filtered by query; never needs a selected session." },
+  { name: "session.search", kind: "query", legacy: [], capability: "session.read", description: "Directory search by name; never needs a selected session." },
+  { name: "session.get", kind: "query", legacy: [], capability: "session.read", description: "One session's live state." },
+  { name: "session.branch", kind: "query", legacy: [], capability: "session.read", description: "Git branch of the session's working directory." },
+  { name: "session.models", kind: "query", legacy: [], capability: "session.read", description: "Model catalogue and current model for one session." },
+  { name: "session.tree", kind: "query", legacy: [], capability: "session.read", description: "Session tree nodes." },
+  { name: "session.commands", kind: "query", legacy: [], capability: "session.read", description: "Built-in and extension commands available to one session." },
+  { name: "session.history", kind: "query", legacy: [], capability: "session.read", description: "One page of transcript history." },
+  { name: "session.tool-result", kind: "query", legacy: [], capability: "session.read", description: "Full result of one tool call." },
 
   // Commands — may mutate pi after capability and confirmation revalidation.
   { name: "settings.write", kind: "command", legacy: ["settings.write"], capability: invoke("settings.write"), description: "Write one setting." },
@@ -51,6 +60,9 @@ export const MESSAGE_CATALOG = [
   { name: "mcp.write", kind: "command", legacy: ["mcp.write"], capability: invoke("mcp.write"), description: "Add, patch, override or remove an MCP server." },
   { name: "session.prompt", kind: "command", legacy: ["prompt"], capability: "session.write", description: "Send a user prompt to the live session." },
   { name: "session.abort", kind: "command", legacy: ["abort"], capability: "session.write", description: "Abort the current turn." },
+  { name: "session.create", kind: "command", legacy: [], capability: "session.write", description: "Start a session in a cwd; never needs a selected session." },
+  { name: "session.delete", kind: "command", legacy: [], capability: "session.write", description: "Delete one session." },
+  { name: "session.rename", kind: "command", legacy: [], capability: "session.write", description: "Rename a session." },
   { name: "plugin.action.submit", kind: "command", legacy: ["action"], capability: invoke("plugin.action.submit"), description: "Submit a declared action with its confirm string." },
   { name: "session.set-model", kind: "command", legacy: ["set_model"], capability: "session.write", description: "Change the session model." },
   { name: "session.set-thinking", kind: "command", legacy: ["set_thinking"], capability: "session.write", description: "Change the thinking level." },
@@ -73,6 +85,8 @@ export const MESSAGE_CATALOG = [
   { name: "models.changed", kind: "event", legacy: ["web-plugin:models-changed"], capability: "events.subscribe:models", description: "The model catalogue changed." },
   { name: "tool.execution.changed", kind: "event", legacy: [], capability: "events.subscribe:tools", description: "A tool call started, updated or finished in another extension." },
   { name: "session.attach.attached", kind: "event", legacy: ["bridge_attached", "web_commands", "web_models", "web_tree"], capability: "session.read", description: "Session attach snapshot: commands, models and tree." },
+  { name: "session.events", kind: "event", legacy: [], capability: "events.subscribe:session", description: "One session's live agent events as sequenced envelopes." },
+  { name: "session.directory.events", kind: "event", legacy: [], capability: "events.subscribe:directory", description: "Session-directory transitions as sequenced envelopes." },
   { name: "ui.header.changed", kind: "event", legacy: [], capability: publish, description: "setHeader surfaced through the bridge." },
   { name: "ui.footer.changed", kind: "event", legacy: [], capability: publish, description: "setFooter surfaced through the bridge." },
   { name: "ui.editor-component.changed", kind: "event", legacy: [], capability: publish, description: "setEditorComponent surfaced through the bridge." },
@@ -93,6 +107,13 @@ export function lookupMessage(name: string): MessageDefinition | undefined {
 
 export function legacyWires(): readonly string[] {
   return MESSAGE_CATALOG.flatMap((message) => message.legacy);
+}
+
+/** The host grants the first-party browser every message the catalog declares. */
+export function catalogCapabilities(): readonly string[] {
+  const definitions: readonly MessageDefinition[] = MESSAGE_CATALOG;
+  return [...new Set(definitions.flatMap((message) =>
+    message.capability === undefined ? [] : [message.capability]))];
 }
 
 function definitionRows(messages: readonly MessageDefinition[]): string {

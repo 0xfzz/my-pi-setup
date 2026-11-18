@@ -57,11 +57,18 @@ test("tool progress keeps only the latest update per call for 150 ms and a termi
   emit({ type: "tool_execution_update", toolCallId: "a", partialResult: "latest" });
   emit({ type: "tool_execution_update", toolCallId: "b", partialResult: "obsolete" });
   emit({ type: "tool_execution_end", toolCallId: "b" });
+  const isProtocolFrame = (frame: unknown): boolean =>
+    typeof frame === "object" && frame !== null && "protocol" in frame;
+  const legacyFrames = (): unknown[] => frames.filter((frame) => !isProtocolFrame(frame));
+  const protocolFrames = (): unknown[] => frames.filter(isProtocolFrame);
+
   t.mock.timers.tick(149);
-  assert.equal(frames.length, 1);
+  assert.equal(legacyFrames().length, 1);
+  assert.equal(protocolFrames().length, 1);
   t.mock.timers.tick(1);
-  assert.deepEqual(frames[1], { type: "tool_execution_update", toolCallId: "a", partialResult: "latest" });
-  assert.equal(frames.length, 2);
+  assert.deepEqual(legacyFrames()[1], { type: "tool_execution_update", toolCallId: "a", partialResult: "latest" });
+  assert.equal(legacyFrames().length, 2);
+  assert.equal(protocolFrames().length, 2);
   channel.close();
 });
 

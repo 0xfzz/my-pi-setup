@@ -1,7 +1,9 @@
 /** Session adapters: protocol commands become calls on the session owner. */
 import type { BridgeCommand } from "../server/bridge.ts";
+import { parseSessionCommand } from "../server/sessions.ts";
 import { bridgeError } from "../protocol/errors.ts";
 import type { AdapterResult, ProtocolAdapter } from "./types.ts";
+import { createDirectoryAdapters, type DirectorySurface } from "./directory.ts";
 
 /** The slice of a session owner the protocol commands need. */
 export interface SessionSurface {
@@ -10,6 +12,16 @@ export interface SessionSurface {
   setModel?(provider: string, id: string): Promise<boolean> | boolean;
   setThinkingLevel?(level: string): Promise<boolean> | boolean;
   webCommand?(name: string, args: string): Promise<void> | void;
+  /** Read-only surfaces backed by the live session or its persisted stores. */
+  get?(): unknown;
+  branch?(): Promise<unknown> | unknown;
+  models?(): Promise<unknown> | unknown;
+  tree?(): unknown;
+  commands?(): Promise<unknown> | unknown;
+  history?(params: unknown): Promise<unknown> | unknown;
+  toolResult?(toolCallId: string): Promise<unknown> | unknown;
+  snapshot?(): unknown;
+  resync?(cursor?: string): Promise<unknown> | unknown;
 }
 
 /** Session-attach owners execute commands by forwarding them to the TUI. */
@@ -53,9 +65,45 @@ async function resultOf(
   }
 }
 
-export function createSessionAdapters(owner: SessionSurface): Record<string, ProtocolAdapter> {
+/** Reuse the server's image bounds; a bad attachment is a named failure, never a throw. */
+function promptRequest(params: unknown): { text: string; images?: Array<{ data: string; mimeType: string }> } {
+  const text = requireText(params, "text");
+  const images = (params as Record<string, unknown> | null)?.images;
+  const parsed = parseSessionCommand({
+    type: "prompt",
+    message: text,
+    ...(images === undefined ? {} : { images }),
+  });
+  if ("error" in parsed || parsed.type !== "prompt") {
+    throw new Error("error" in parsed ? parsed.error : "prompt validation failed");
+  }
+  return { text: parsed.message, images: parsed.images };
+}
+
+async function readSurface(operation: string, read: (() => Promise<unknown> | unknown) | undefined): Promise<AdapterResult<unknown>> {
+  if (read === undefined) return unavailable(operation);
+  try {
+    const value = await read();
+    return value === undefined ? unavailable(operation) : { ok: true, value };
+  } catch (error) {
+    return {
+      ok: false,
+      error: bridgeError("ADAPTER_UNAVAILABLE", `session owner cannot ${operation}: ${error instanceof Error ? error.message : "unknown error"}`),
+    };
+  }
+}
+
+export function createSessionAdapters(
+  owner: SessionSurface,
+  directory?: DirectorySurface,
+): Record<string, ProtocolAdapter> {
+  const directoryAdapters = directory === undefined ? {} : createDirectoryAdapters(directory);
   return {
-    "session.prompt": (_ctx, params) => resultOf("prompt", () => owner.prompt(requireText(params, "text"))),
+    ...directoryAdapters,
+    "session.prompt": (_ctx, params) => resultOf("prompt", () => {
+      const request = promptRequest(params);
+      return owner.prompt(request.text, request.images);
+    }),
     "session.abort": () => resultOf("abort", () => owner.abort()),
     "session.set-model": (_ctx, params) => resultOf("set model", () => {
       const provider = requireText(params, "provider");
@@ -76,5 +124,17 @@ export function createSessionAdapters(owner: SessionSurface): Record<string, Pro
       const args = (params as Record<string, unknown>).args;
       return owner.webCommand === undefined ? false : owner.webCommand(name, typeof args === "string" ? args : "");
     }),
+    "session.get": () => readSurface("read session", owner.get),
+    "session.branch": () => readSurface("read branch", owner.branch),
+    "session.models": () => readSurface("read models", owner.models),
+    "session.tree": () => readSurface("read tree", owner.tree),
+    "session.commands": () => readSurface("read commands", owner.commands),
+    "session.history": (_ctx, params) => readSurface("read history", () => owner.history?.(params)),
+    "session.tool-result": (_ctx, params) => readSurface("read tool result", () => owner.toolResult?.(requireText(params, "toolCallId"))),
+    "ui.snapshot": () => Promise.resolve({ ok: true, value: owner.snapshot?.() ?? {} }),
+    "session.resync": (_ctx, params) => {
+      const cursor = (params as Record<string, unknown> | null)?.cursor;
+      return readSurface("resync session", () => owner.resync?.(typeof cursor === "string" ? cursor : undefined));
+    },
   };
 }

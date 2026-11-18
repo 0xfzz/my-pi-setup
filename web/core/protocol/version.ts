@@ -29,7 +29,8 @@ export const HelloAckSchema = Type.Object({
   version: Type.Integer({ minimum: 1 }),
   capabilities: Type.Array(Type.String(), { maxItems: 128 }),
   bindings: Type.Array(BindingNameSchema, { minItems: 1 }),
-  sessionId: Type.String(),
+  /** Directory-level handshakes have no selected session. */
+  sessionId: Type.Optional(Type.String()),
   cursor: Type.String(),
 }, { additionalProperties: false });
 

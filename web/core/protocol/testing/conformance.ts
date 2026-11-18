@@ -5,9 +5,9 @@
 import assert from "node:assert/strict";
 
 import { type BindingName, type BindingReply, type ProtocolBinding } from "../bindings/types.ts";
-import { MESSAGE_CATALOG, type MessageKind, type MessageName } from "../catalog.ts";
+import { lookupMessage, MESSAGE_CATALOG, type MessageKind, type MessageName } from "../catalog.ts";
 import { ENVELOPE_MAX_BYTES, parseEnvelope, type BridgeEnvelope } from "../envelope.ts";
-import type { BridgeErrorCode } from "../errors.ts";
+import { BRIDGE_ERROR_CODES, type BridgeErrorCode } from "../errors.ts";
 import { BRIDGE_PROTOCOL, BRIDGE_PROTOCOL_VERSION, HELLO, type Hello } from "../version.ts";
 
 export interface ConformanceCase {
@@ -64,6 +64,59 @@ async function assertRejected(
 
 async function runCatalogCase(binding: ProtocolBinding, name: MessageName, kind: MessageKind): Promise<void> {
   assertOkReply(await binding.invoke(catalogEnvelope(name, kind)), `catalog:${name}`);
+}
+
+/** Every catalog row has a rejected shape: a hostile key is never data. */
+async function runRejectedShape(binding: ProtocolBinding, name: MessageName, kind: MessageKind): Promise<void> {
+  const input = { ...catalogEnvelope(name, kind), payload: hostilePayload() };
+  await assertRejected(binding, input, ["VALIDATION_FAILED"], `rejected:${name}`);
+}
+
+/** Every gated row has an auditable denial for an ungranted plugin source. */
+async function runCapabilityGate(binding: ProtocolBinding, name: MessageName, kind: MessageKind): Promise<void> {
+  const input = {
+    ...catalogEnvelope(name, kind),
+    source: { type: "plugin" as const, id: "conformance-ungranted" },
+  };
+  await assertRejected(binding, input, ["CAPABILITY_DENIED"], `capability:${name}`);
+}
+
+/** Replies carry correlation, a sequence and an opaque cursor for every row. */
+async function runReplyShape(binding: ProtocolBinding, name: MessageName, kind: MessageKind): Promise<void> {
+  const reply = await binding.invoke(catalogEnvelope(name, kind));
+  const label = `reply:${name}`;
+  assertOkReply(reply, label);
+  if (!reply.ok) return;
+  assert.equal(reply.value.messageId, `${CONFORMANCE_CLIENT_ID}:${name}`, `${label}: messageId correlation`);
+  assert.ok(Number.isInteger(reply.value.sequence) && (reply.value.sequence ?? 0) >= 1, `${label}: missing sequence`);
+  assert.equal(typeof reply.value.cursor, "string", `${label}: missing cursor`);
+  if (reply.value.error !== undefined) {
+    assert.ok(BRIDGE_ERROR_CODES.includes(reply.value.error.code), `${label}: unknown error code`);
+  }
+}
+
+/** Both snapshot messages read the same store, so their payloads must agree. */
+async function runSnapshotEquivalence(binding: ProtocolBinding): Promise<void> {
+  const snapshot = await binding.invoke(catalogEnvelope("ui.snapshot", "query"));
+  const resync = await binding.invoke(catalogEnvelope("session.resync", "query"));
+  assertOkReply(snapshot, "snapshot-equivalence:ui.snapshot");
+  assertOkReply(resync, "snapshot-equivalence:session.resync");
+  if (!snapshot.ok || !resync.ok) return;
+  assert.deepEqual(resync.value.payload, snapshot.value.payload, "snapshot-equivalence: stores disagree");
+  assert.equal(typeof resync.value.cursor, "string", "snapshot-equivalence: resync needs a cursor");
+}
+
+/** Handshake failures name their code and never become a generic transport error. */
+async function runErrorCodes(binding: ProtocolBinding): Promise<void> {
+  const input: HelloInput = {
+    version: BRIDGE_PROTOCOL_VERSION + 1,
+    bindings: [binding.name],
+    clientId: CONFORMANCE_CLIENT_ID,
+    capabilities: [],
+  };
+  const mismatch = await binding.hello(input as Hello);
+  if (mismatch.ok) assert.fail("error-codes: a future version was accepted");
+  assert.equal(mismatch.error.code, "VERSION_MISMATCH");
 }
 
 interface RejectionCase {
@@ -162,11 +215,36 @@ export function conformanceCases(): readonly ConformanceCase[] {
       description: `${message.name} accepts a valid ${message.kind} envelope.`,
       run: (binding) => runCatalogCase(binding, message.name, message.kind),
     })),
+    ...MESSAGE_CATALOG.map((message): ConformanceCase => ({
+      id: `rejected:${message.name}`,
+      description: `${message.name} refuses a hostile payload.`,
+      run: (binding) => runRejectedShape(binding, message.name, message.kind),
+    })),
+    ...MESSAGE_CATALOG.filter((message) => lookupMessage(message.name)?.capability !== undefined).map((message): ConformanceCase => ({
+      id: `capability:${message.name}`,
+      description: `${message.name} denies an ungranted plugin source.`,
+      run: (binding) => runCapabilityGate(binding, message.name, message.kind),
+    })),
+    ...MESSAGE_CATALOG.map((message): ConformanceCase => ({
+      id: `reply:${message.name}`,
+      description: `${message.name} replies with correlation, sequence and cursor.`,
+      run: (binding) => runReplyShape(binding, message.name, message.kind),
+    })),
     ...REJECTION_CASES.map((spec): ConformanceCase => ({
       id: spec.id,
       description: spec.description,
       run: (binding) => assertRejected(binding, spec.input(), spec.codes, spec.id),
     })),
+    {
+      id: "error-codes",
+      description: "a future hello version is a named VERSION_MISMATCH.",
+      run: runErrorCodes,
+    },
+    {
+      id: "snapshot-equivalence",
+      description: "ui.snapshot and session.resync read the same store and cursor.",
+      run: runSnapshotEquivalence,
+    },
     {
       id: "sequence-cursor",
       description: "event snapshots stay stable and never repeat cursors or channel sequences.",

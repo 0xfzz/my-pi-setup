@@ -1,46 +1,120 @@
 /** Envelope-level rules shared by every binding, independent of transport. */
+import { Value } from "typebox/value";
+
 import { lookupMessage, type MessageDefinition } from "../catalog.ts";
 import type { BridgeEnvelope } from "../envelope.ts";
 import { bridgeError, type BridgeError } from "../errors.ts";
-import { formatCapability, parseCapability } from "../../plugin-contracts/kernel/capabilities.ts";
-import { BINDING_NAMES, BRIDGE_PROTOCOL_VERSION, versionMismatch, type Hello, type HelloAck } from "../version.ts";
-import type { BindingName, BindingOptions, BindingReply } from "./types.ts";
+import {
+  isGranted,
+  parseCapability,
+  type Capability,
+} from "../../plugin-contracts/kernel/capabilities.ts";
+import {
+  BINDING_NAMES,
+  BRIDGE_PROTOCOL_VERSION,
+  HelloSchema,
+  versionMismatch,
+  type Hello,
+  type HelloAck,
+} from "../version.ts";
+import type { BindingName, BindingOptions, BindingReply, CapabilityAuditEntry } from "./types.ts";
 
-function grantedSet(capabilities: readonly string[]): Set<string> {
-  return new Set(capabilities);
+export type BindingTransport = "in-process" | "session-attach" | "http-sse";
+
+/** The host-owned result of a successful hello. Grants are never client-supplied. */
+export interface Handshake extends HelloAck {
+  readonly clientId: string;
+  readonly grants: readonly Capability[];
+  readonly pluginGrants: readonly Capability[];
 }
 
-export function helloAck(hello: Hello, options: BindingOptions): BindingReply<HelloAck> {
+function parseGrants(capabilities: readonly string[]): readonly Capability[] {
+  return capabilities.flatMap((entry) => {
+    const parsed = parseCapability(entry);
+    return parsed.ok ? [parsed.value] : [];
+  });
+}
+
+/** The grant grammar's globs (`protocol.invoke:*`) decide coverage, not string equality. */
+export function isGrantedCapability(grants: readonly Capability[], requested: Capability): boolean {
+  return isGranted(grants, requested);
+}
+
+export function handshakeFor(hello: Hello, options: BindingOptions): BindingReply<Handshake> {
+  if (!Value.Check(HelloSchema, hello)) {
+    return { ok: false, error: bridgeError("VALIDATION_FAILED", "bridge.hello does not match the handshake schema") };
+  }
   if (hello.version !== BRIDGE_PROTOCOL_VERSION) {
     return { ok: false, error: versionMismatch(hello.version) };
   }
-  if (!hello.bindings.includes(options.name)) {
+  if (!hello.bindings.includes(options.name as BindingName)) {
     return { ok: false, error: bridgeError("UNSUPPORTED_BINDING", `binding "${options.name}" is not supported by the client`) };
   }
-  const granted = grantedSet(options.grantedCapabilities);
-  const ack: HelloAck = {
+  const grants = parseGrants(options.grantedCapabilities);
+  const capabilities = hello.capabilities.filter((requested) => {
+    const parsed = parseCapability(requested);
+    return parsed.ok && isGrantedCapability(grants, parsed.value);
+  });
+  const state: Handshake = {
     version: BRIDGE_PROTOCOL_VERSION,
-    capabilities: hello.capabilities.filter((capability) => granted.has(capability)),
-    bindings: [...BINDING_NAMES] as BindingName[],
+    capabilities,
+    bindings: [...BINDING_NAMES],
     sessionId: options.sessionId,
     cursor: options.initialCursor ?? "0",
+    clientId: hello.clientId,
+    grants,
+    pluginGrants: parseGrants(options.pluginGrants ?? []),
   };
-  return { ok: true, value: ack };
+  return { ok: true, value: state };
 }
 
-/** Plugin-originated messages need their declared capability; core messages do not. */
-export function gate(message: MessageDefinition, envelope: BridgeEnvelope, options: BindingOptions): BridgeError | undefined {
-  if (message.capability === undefined || envelope.source.type === "core" || envelope.source.type === "host") {
+/** Retained for callers that only need the public ack object. */
+export function helloAck(hello: Hello, options: BindingOptions): BindingReply<HelloAck> {
+  const handshake = handshakeFor(hello, options);
+  if (!handshake.ok) return handshake;
+  const { version, capabilities, bindings, sessionId, cursor } = handshake.value;
+  return { ok: true, value: { version, capabilities, bindings, sessionId, cursor } };
+}
+
+/**
+ * Only the host labels a message's origin. A browser transport that claims a
+ * core/host identity is relabelled so it cannot bypass the capability gate.
+ */
+export function attributedSource(
+  envelope: BridgeEnvelope,
+  handshake: Handshake,
+  transport: BindingTransport,
+): BridgeEnvelope {
+  if (transport !== "http-sse") return envelope;
+  if (envelope.source.type !== "core" && envelope.source.type !== "host") return envelope;
+  return { ...envelope, source: { type: "browser", id: handshake.clientId } };
+}
+
+/** Plugin- and browser-originated messages need a declared, granted capability. */
+export function gate(
+  message: MessageDefinition,
+  envelope: BridgeEnvelope,
+  handshake: Handshake,
+  audit?: (entry: CapabilityAuditEntry) => void,
+): BridgeError | undefined {
+  const capability = message.capability;
+  if (capability === undefined || envelope.source.type === "core" || envelope.source.type === "host") {
     return undefined;
   }
-  const requested = parseCapability(message.capability);
-  if (!requested.ok || !grantedSet(options.grantedCapabilities).has(formatCapability(requested.value))) {
-    return bridgeError("CAPABILITY_DENIED", `plugin "${envelope.source.id}" cannot ${message.name}`, {
-      plugin: envelope.source.id,
-      capability: message.capability,
-    });
-  }
-  return undefined;
+  const requested = parseCapability(capability);
+  const grants = envelope.source.type === "browser" ? handshake.grants : handshake.pluginGrants;
+  if (requested.ok && isGrantedCapability(grants, requested.value)) return undefined;
+
+  const error = bridgeError("CAPABILITY_DENIED", `${envelope.source.type} "${envelope.source.id}" cannot ${message.name}`, {
+    plugin: envelope.source.id,
+    capability,
+  });
+  audit?.({ source: envelope.source.id, capability, message: message.name });
+  return error;
+}
+
+export function handshakeRequired(): BridgeError {
+  return bridgeError("INTERNAL", "bridge.hello must precede commands and queries");
 }
 
 export function dispatchError(message: string, name?: string): BridgeError {

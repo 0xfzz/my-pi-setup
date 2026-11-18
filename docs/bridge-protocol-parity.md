@@ -16,9 +16,9 @@ Every PRD §7.5 baseline row must name a catalog message, an adapter and a test.
 | Sessions | `session.attach.attached`, `session.prompt`, `session.abort` | `web/core/adapters/session.ts` | `web/core/server/bridge.test.ts` |
 | Transcript | `session.resync` | `web/core/adapters/session.ts` | `web/core/server/bridge.test.ts` |
 | Model and thinking | `session.set-model`, `session.set-thinking` | `web/core/adapters/session.ts` | `tests/web-bridge-model-pick.test.ts` |
-| Compaction | `web-command.dispatch` | `extensions/web/commands.ts` | `tests/web-bridge-compaction.test.ts` |
+| Compaction | `web-command.dispatch` | `extensions/web/commands.ts` | `tests/web-bridge-compaction.test.ts + web/core/protocol/testing/conformance.test.ts` |
 | Realtime and resilience | `ui.snapshot`, `session.resync` | `web/core/client/protocol-client.ts` | `web/core/protocol/bindings/bindings.test.ts` |
 | Tree, fork, clone | `web-command.dispatch`, `plugin.action.submit` | `extensions/web/commands.ts` | `tests/web-bridge-web-commands.test.ts` |
 | Extension UI | `ui.status.changed`, `ui.widget.changed`, `ui.title.changed`, `ui.editor.changed`, `ui.notify`, `ui.working.changed`, `ui.header.changed`, `ui.footer.changed`, `ui.editor-component.changed`, `ui.autocomplete-provider.changed` | `extensions/web/commands.ts` | `tests/web-ui-events.test.ts` |
 
-Catalog messages: 46.
+Catalog messages: 60.

@@ -7,12 +7,24 @@ export type BindingName = (typeof BINDING_NAMES)[number];
 
 export type BindingReply<T = BridgeEnvelope> = { ok: true; value: T } | { ok: false; error: BridgeError };
 
+/** A denial is an auditable event, never a dropped message. */
+export interface CapabilityAuditEntry {
+  readonly source: string;
+  readonly capability: string;
+  readonly message: string;
+}
+
 export interface BindingOptions {
   readonly name: BindingName;
-  readonly sessionId: string;
+  /** Omitted for directory-level bindings, which never select a session. */
+  readonly sessionId?: string;
   readonly cwd: string;
   readonly grantedCapabilities: readonly string[];
+  /** Separate grants for extension/plugin sources; empty unless the host says otherwise. */
+  readonly pluginGrants?: readonly string[];
   readonly initialCursor?: string;
+  /** Host-owned sink: every CAPABILITY_DENIED is reported here. */
+  readonly audit?: (entry: CapabilityAuditEntry) => void;
 }
 
 /**

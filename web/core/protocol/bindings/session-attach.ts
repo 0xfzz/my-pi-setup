@@ -30,7 +30,7 @@ function attachedEventName(raw: unknown): string | undefined {
   return undefined;
 }
 
-function toEnvelope(raw: unknown, sessionId: string, sequence: number): BridgeEnvelope | undefined {
+function toEnvelope(raw: unknown, sessionId: string | undefined, sequence: number): BridgeEnvelope | undefined {
   const name = attachedEventName(raw);
   if (name === undefined) return undefined;
   return {
@@ -39,7 +39,7 @@ function toEnvelope(raw: unknown, sessionId: string, sequence: number): BridgeEn
     kind: "event",
     name: name as BridgeEnvelope["name"],
     messageId: `attach-${sequence}`,
-    sessionId,
+    ...(sessionId === undefined ? {} : { sessionId }),
     source: { type: "extension", id: "session-attach" },
     timestamp: 0,
     sequence,

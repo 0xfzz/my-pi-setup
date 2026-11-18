@@ -28,6 +28,32 @@ import type { PluginStateFrame } from "../shared/plugin-state.ts";
 import { sessionBus } from "./plugin-sessions.ts";
 import { servedClientBuild } from "./client-build.ts";
 import { WEB_PLUGIN_UI_SYNC_EVENT } from "../plugin-contracts/ui-event-models.ts";
+import type { BridgeEnvelope } from "../protocol/envelope.ts";
+import { BRIDGE_PROTOCOL, BRIDGE_PROTOCOL_VERSION } from "../protocol/version.ts";
+
+export type ProtocolEventName = "session.events" | "session.directory.events";
+
+/** One sequenced envelope per streamed event; the legacy frame stays an alias. */
+export function protocolEvent(
+  name: ProtocolEventName,
+  sessionId: string | undefined,
+  payload: unknown,
+  sequence: number,
+): BridgeEnvelope {
+  return {
+    protocol: BRIDGE_PROTOCOL,
+    version: BRIDGE_PROTOCOL_VERSION,
+    kind: "event",
+    name,
+    messageId: `${name}-${sequence}`,
+    ...(sessionId === undefined ? {} : { sessionId }),
+    source: { type: "host", id: "protocol-host" },
+    timestamp: 0,
+    sequence,
+    cursor: String(sequence),
+    payload,
+  };
+}
 
 const TOOL_UPDATE_COALESCE_MS = 150;
 const SESSION_UI_SYNC_MS = 1_000;
@@ -103,6 +129,11 @@ export function attachAgentEventStream(
   let releaseSessionSync: (() => void) | null = null;
   const pendingToolUpdates = new BoundedSseEvents();
   const startupEvents = new BoundedSseEvents();
+  let protocolSequence = 0;
+  const sendProtocolEvent = (payload: unknown): void => {
+    protocolSequence += 1;
+    send(protocolEvent("session.events", sessionId, payload, protocolSequence));
+  };
 
   const cleanup = (): void => {
     if (closed) return;
@@ -138,7 +169,10 @@ export function attachAgentEventStream(
 
   const flushToolUpdates = (): void => {
     toolUpdateTimer = null;
-    for (const { encoded } of pendingToolUpdates.consumeEncoded()) sendEncoded(encoded, { droppable: true });
+    for (const { encoded } of pendingToolUpdates.consumeEncoded()) {
+      sendEncoded(encoded, { droppable: true });
+      sendProtocolEvent(JSON.parse(encoded) as unknown);
+    }
   };
 
   const sendClientEvent = (clientEvent: AgentEventLike): void => {
@@ -161,6 +195,7 @@ export function attachAgentEventStream(
       pendingToolUpdates.clear();
     }
     send(clientEvent, { droppable: isDroppableEvent(clientEvent) });
+    sendProtocolEvent(clientEvent);
   };
 
   const forwardEvent = (event: unknown): void => {
@@ -332,6 +367,7 @@ export function attachSessionsEventStream(channel: EventChannel): void {
   let heartbeat: ReturnType<typeof setInterval> | null = null;
   let unsubscribe: (() => void) | null = null;
   const buffered = new BoundedSseEvents();
+  let protocolSequence = 0;
 
   const cleanup = (): void => {
     if (closed) return;
@@ -348,6 +384,10 @@ export function attachSessionsEventStream(channel: EventChannel): void {
     channel.send(data, { ...options, reservedBytes: buffered.bytes });
     if (channel.closed) cleanup();
   };
+  const sendProtocolEvent = (payload: unknown): void => {
+    protocolSequence += 1;
+    send(protocolEvent("session.directory.events", undefined, payload, protocolSequence));
+  };
 
   // Subscribe-before-snapshot: transitions that land while the (async) disk
   // scan runs are buffered and flushed after the snapshot, so no flip is lost.
@@ -361,22 +401,33 @@ export function attachSessionsEventStream(channel: EventChannel): void {
       return;
     }
     send(event);
+    sendProtocolEvent(event);
   };
   unsubscribe = subscribeSessionDirectory(forward);
 
   void buildSessionsSnapshot()
     .then((sessions) => {
       if (closed) return;
-      send({ type: "sessions_snapshot", bootId: getServerBootId(), buildId: servedClientBuild()?.buildId ?? null, sessions });
+      const snapshot = { type: "sessions_snapshot", bootId: getServerBootId(), buildId: servedClientBuild()?.buildId ?? null, sessions };
+      send(snapshot);
+      sendProtocolEvent(snapshot);
       announced = true;
-      for (const event of buffered.consume()) send(event);
+      for (const event of buffered.consume()) {
+        send(event);
+        sendProtocolEvent(event);
+      }
     })
     .catch((error: unknown) => {
       getWebLogger().warn({ err: error }, "session directory snapshot failed");
       if (closed) return;
-      send({ type: "sessions_snapshot", bootId: getServerBootId(), buildId: servedClientBuild()?.buildId ?? null, sessions: [] });
+      const snapshot = { type: "sessions_snapshot", bootId: getServerBootId(), buildId: servedClientBuild()?.buildId ?? null, sessions: [] };
+      send(snapshot);
+      sendProtocolEvent(snapshot);
       announced = true;
-      for (const event of buffered.consume()) send(event);
+      for (const event of buffered.consume()) {
+        send(event);
+        sendProtocolEvent(event);
+      }
     });
 
   channel.onClose(cleanup);

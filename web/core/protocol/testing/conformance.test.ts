@@ -5,7 +5,7 @@ import type { BindingName, BindingReply, ProtocolBinding } from "../bindings/typ
 import { lookupMessage, MESSAGE_CATALOG, type MessageName } from "../catalog.ts";
 import { parseEnvelope, type BridgeEnvelope } from "../envelope.ts";
 import { bridgeError } from "../errors.ts";
-import { BRIDGE_PROTOCOL, BRIDGE_PROTOCOL_VERSION, type Hello, type HelloAck } from "../version.ts";
+import { BRIDGE_PROTOCOL, BRIDGE_PROTOCOL_VERSION, HELLO, type Hello, type HelloAck } from "../version.ts";
 import { conformanceCases, runConformance } from "./conformance.ts";
 
 function eventEnvelope(name: MessageName, sequence: number, cursor: string): BridgeEnvelope {
@@ -45,6 +45,7 @@ class FakeBinding implements ProtocolBinding {
   private readonly buffered: readonly BridgeEnvelope[];
   private readonly unstableEvents: boolean;
   private reads = 0;
+  private sequence = 0;
 
   constructor(options: FakeOptions = {}) {
     this.deniedName = options.deniedName;
@@ -54,6 +55,9 @@ class FakeBinding implements ProtocolBinding {
   }
 
   async hello(hello: Hello): Promise<BindingReply<HelloAck>> {
+    if (hello.version !== BRIDGE_PROTOCOL_VERSION) {
+      return { ok: false, error: bridgeError("VERSION_MISMATCH", "wrong version") };
+    }
     return {
       ok: true,
       value: {
@@ -66,22 +70,36 @@ class FakeBinding implements ProtocolBinding {
     };
   }
 
-  async invoke(envelope: BridgeEnvelope): Promise<BindingReply> {
-    if (envelope.protocol !== BRIDGE_PROTOCOL) {
+  async invoke(input: BridgeEnvelope): Promise<BindingReply> {
+    if (input.protocol !== BRIDGE_PROTOCOL) {
       return { ok: false, error: bridgeError("VALIDATION_FAILED", "foreign protocol") };
     }
-    if (envelope.version !== BRIDGE_PROTOCOL_VERSION) {
+    if (input.version !== BRIDGE_PROTOCOL_VERSION) {
       return { ok: false, error: bridgeError("VERSION_MISMATCH", `expected v${BRIDGE_PROTOCOL_VERSION}`) };
     }
-    if (!lookupMessage(envelope.name)) {
-      return { ok: false, error: bridgeError("UNKNOWN_MESSAGE", `unknown message ${envelope.name}`) };
+    const message = lookupMessage(input.name);
+    if (message === undefined) {
+      return { ok: false, error: bridgeError("UNKNOWN_MESSAGE", `unknown message ${input.name}`) };
     }
-    if (envelope.name === this.deniedName) {
-      return { ok: false, error: bridgeError("CAPABILITY_DENIED", `no grant for ${envelope.name}`) };
-    }
-    const parsed = parseEnvelope(envelope);
+    const parsed = parseEnvelope(input);
     if (!parsed.ok) return { ok: false, error: parsed.error };
-    return { ok: true, value: parsed.envelope };
+    if (input.source.type === "plugin" && input.source.id === "conformance-ungranted" && message.capability !== undefined) {
+      return { ok: false, error: bridgeError("CAPABILITY_DENIED", "no grant for plugin") };
+    }
+    if (input.name === this.deniedName) {
+      return { ok: false, error: bridgeError("CAPABILITY_DENIED", `no grant for ${input.name}`) };
+    }
+    this.sequence += 1;
+    return {
+      ok: true,
+      value: {
+        ...parsed.envelope,
+        source: { type: "host", id: "protocol-host" },
+        target: parsed.envelope.source,
+        sequence: this.sequence,
+        cursor: String(this.sequence),
+      },
+    };
   }
 
   events(): readonly BridgeEnvelope[] {
@@ -99,19 +117,26 @@ function hasHostileKey(payload: unknown): boolean {
   return typeof payload === "object" && payload !== null && Object.hasOwn(payload, "__proto__");
 }
 
-/** Rejects bad input, but reports the wrong error codes on three paths. */
+/** Rejects bad input, but reports the wrong error codes on four paths. */
 class MisreportingBinding extends FakeBinding {
-  async invoke(envelope: BridgeEnvelope): Promise<BindingReply> {
-    if (envelope.version !== BRIDGE_PROTOCOL_VERSION) {
+  async hello(hello: Hello): Promise<BindingReply<HelloAck>> {
+    if (hello.version !== BRIDGE_PROTOCOL_VERSION) {
       return { ok: false, error: bridgeError("VALIDATION_FAILED", "wrong version") };
     }
-    if (!lookupMessage(envelope.name)) {
-      return { ok: false, error: bridgeError("CAPABILITY_DENIED", `unknown message ${envelope.name}`) };
+    return super.hello(hello);
+  }
+
+  async invoke(input: BridgeEnvelope): Promise<BindingReply> {
+    if (input.version !== BRIDGE_PROTOCOL_VERSION) {
+      return { ok: false, error: bridgeError("VALIDATION_FAILED", "wrong version") };
     }
-    if (hasHostileKey(envelope.payload)) {
+    if (!lookupMessage(input.name)) {
+      return { ok: false, error: bridgeError("CAPABILITY_DENIED", `unknown message ${input.name}`) };
+    }
+    if (input.name === HELLO && hasHostileKey(input.payload)) {
       return { ok: false, error: bridgeError("RATE_LIMITED", "hostile key") };
     }
-    return super.invoke(envelope);
+    return super.invoke(input);
   }
 }
 
@@ -123,8 +148,20 @@ const EDGE_CASE_IDS = [
   "malformed:oversized-payload",
   "malformed:plugin-source-id",
   "handshake",
+  "error-codes",
+  "snapshot-equivalence",
   "sequence-cursor",
 ];
+
+function expectedIds(): string[] {
+  const perRow = MESSAGE_CATALOG.flatMap((message) => [
+    `catalog:${message.name}`,
+    `rejected:${message.name}`,
+    `reply:${message.name}`,
+    ...(lookupMessage(message.name)?.capability === undefined ? [] : [`capability:${message.name}`]),
+  ]);
+  return [...perRow, ...EDGE_CASE_IDS];
+}
 
 function failedIds(failures: ReadonlyArray<{ id: string; error: string }>): readonly string[] {
   return failures.map((failure) => failure.id);
@@ -140,15 +177,10 @@ function failureFor(
 }
 
 test("conformance cases cover every catalog row and every required edge case", () => {
-  const cases = conformanceCases();
-  const ids = cases.map((entry) => entry.id);
+  const ids = conformanceCases().map((entry) => entry.id);
+  assert.deepEqual([...ids].sort(), expectedIds().sort());
   assert.equal(new Set(ids).size, ids.length, "case ids must be unique");
-  for (const message of MESSAGE_CATALOG) {
-    assert.ok(ids.includes(`catalog:${message.name}`), `missing case for ${message.name}`);
-  }
-  for (const id of EDGE_CASE_IDS) assert.ok(ids.includes(id), `missing case ${id}`);
-  assert.equal(cases.length, MESSAGE_CATALOG.length + EDGE_CASE_IDS.length);
-  for (const entry of cases) assert.ok(entry.description.length > 0, entry.id);
+  for (const entry of conformanceCases()) assert.ok(entry.description.length > 0, entry.id);
 });
 
 test("a binding that accepts the catalog passes the whole suite cleanly", async () => {
@@ -163,14 +195,17 @@ test("version, unknown message, hostile key and capability denial are named fail
   const repeated = await runConformance(new MisreportingBinding({ deniedName }));
   assert.deepEqual(repeated, report, "reports must be stable across runs");
 
-  assert.equal(report.passed, conformanceCases().length - 4);
   assert.deepEqual([...failedIds(report.failures)].sort(), [
     "malformed:version",
+    "error-codes",
     "malformed:unknown-message",
     "malformed:hostile-key",
+    "rejected:bridge.hello",
     `catalog:${deniedName}`,
+    `reply:${deniedName}`,
   ].sort());
   assert.match(failureFor(report.failures, "malformed:version"), /expected VERSION_MISMATCH, got VALIDATION_FAILED/);
+  assert.match(failureFor(report.failures, "error-codes"), /VERSION_MISMATCH/);
   assert.match(failureFor(report.failures, "malformed:unknown-message"), /UNKNOWN_MESSAGE or VALIDATION_FAILED, got CAPABILITY_DENIED/);
   assert.match(failureFor(report.failures, "malformed:hostile-key"), /expected VALIDATION_FAILED, got RATE_LIMITED/);
   assert.match(failureFor(report.failures, `catalog:${deniedName}`), /CAPABILITY_DENIED/);

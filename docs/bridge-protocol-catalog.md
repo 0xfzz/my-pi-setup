@@ -17,6 +17,9 @@ Protocol `pi-web-bridge` v1. Every legacy wire name maps to one catalog message;
 | `mcp.write` | `protocol.invoke:mcp.write` | Add, patch, override or remove an MCP server. |
 | `session.prompt` | `session.write` | Send a user prompt to the live session. |
 | `session.abort` | `session.write` | Abort the current turn. |
+| `session.create` | `session.write` | Start a session in a cwd; never needs a selected session. |
+| `session.delete` | `session.write` | Delete one session. |
+| `session.rename` | `session.write` | Rename a session. |
 | `plugin.action.submit` | `protocol.invoke:plugin.action.submit` | Submit a declared action with its confirm string. |
 | `session.set-model` | `session.write` | Change the session model. |
 | `session.set-thinking` | `session.write` | Change the thinking level. |
@@ -38,6 +41,15 @@ Protocol `pi-web-bridge` v1. Every legacy wire name maps to one catalog message;
 | `ui.snapshot` | `ui.publish` | Re-emit the session's current UI surfaces. |
 | `session.resync` | `session.read` | Gap recovery from the last cursor. |
 | `plugin-state.snapshot` | `session.read` | Current plugin state snapshot. |
+| `session.list` | `session.read` | Directory listing, optionally filtered by query; never needs a selected session. |
+| `session.search` | `session.read` | Directory search by name; never needs a selected session. |
+| `session.get` | `session.read` | One session's live state. |
+| `session.branch` | `session.read` | Git branch of the session's working directory. |
+| `session.models` | `session.read` | Model catalogue and current model for one session. |
+| `session.tree` | `session.read` | Session tree nodes. |
+| `session.commands` | `session.read` | Built-in and extension commands available to one session. |
+| `session.history` | `session.read` | One page of transcript history. |
+| `session.tool-result` | `session.read` | Full result of one tool call. |
 
 ## event
 
@@ -58,6 +70,8 @@ Protocol `pi-web-bridge` v1. Every legacy wire name maps to one catalog message;
 | `models.changed` | `events.subscribe:models` | The model catalogue changed. |
 | `tool.execution.changed` | `events.subscribe:tools` | A tool call started, updated or finished in another extension. |
 | `session.attach.attached` | `session.read` | Session attach snapshot: commands, models and tree. |
+| `session.events` | `events.subscribe:session` | One session's live agent events as sequenced envelopes. |
+| `session.directory.events` | `events.subscribe:directory` | Session-directory transitions as sequenced envelopes. |
 | `ui.header.changed` | `ui.publish` | setHeader surfaced through the bridge. |
 | `ui.footer.changed` | `ui.publish` | setFooter surfaced through the bridge. |
 | `ui.editor-component.changed` | `ui.publish` | setEditorComponent surfaced through the bridge. |

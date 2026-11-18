@@ -3,28 +3,68 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 
 import { MESSAGE_NAMES } from "../web/core/protocol/catalog.ts";
-import { PARITY_BASELINE, parityMarkdown } from "../web/core/protocol/parity.ts";
+import { PARITY_BASELINE, parityMarkdown, type ParityRow } from "../web/core/protocol/parity.ts";
 
-test("every parity row names a catalog message, an adapter and a test", () => {
-  const adapters = new Set<string>();
-  for (const row of PARITY_BASELINE) {
-    assert.ok(row.messages.length > 0, `${row.area} has no message`);
-    for (const name of row.messages) assert.ok(MESSAGE_NAMES.includes(name as never), `${row.area}: ${name}`);
-    assert.match(row.adapter, /\.(ts|tsx)/, `${row.area} has no adapter`);
-    assert.match(row.test, /\.test\.ts/, `${row.area} has no test`);
-    adapters.add(row.adapter);
+/**
+ * A row keeps coverage only while all three cells still point at real things:
+ * a catalog message, every adapter file and a test that declares tests and
+ * names the surface it exercises (or runs the catalog-wide conformance suite).
+ */
+function coverageGaps(row: ParityRow): string[] {
+  const gaps: string[] = [];
+  for (const name of row.messages) {
+    if (!MESSAGE_NAMES.includes(name as never)) gaps.push(`message ${name}`);
   }
-  assert.ok(adapters.size > 1, "parity must cover more than one adapter");
+  const adapterFiles = row.adapter.split(" + ").map((file) => file.trim());
+  for (const file of adapterFiles) {
+    if (!existsSync(file)) gaps.push(`adapter ${file}`);
+  }
+  const testFiles = row.test.split(" + ").map((file) => file.trim());
+  const sources: string[] = [];
+  for (const file of testFiles) {
+    if (!existsSync(file)) {
+      gaps.push(`test ${file}`);
+      continue;
+    }
+    const source = readFileSync(file, "utf8");
+    if (!/\btest\s*\(/.test(source)) gaps.push(`${file} declares no tests`);
+    sources.push(source);
+  }
+  const stems = adapterFiles.map((file) => file.split("/").pop()?.replace(/\.(tsx?|mjs)$/, "") ?? "");
+  const namesSurface = sources.some((source) => row.messages.some((name) => source.includes(name))
+    || stems.some((stem) => stem !== "" && source.includes(stem))
+    || source.includes("runConformance"));
+  if (sources.length > 0 && !namesSurface) gaps.push(`${row.test} no longer names a message or adapter`);
+  return gaps;
+}
+
+test("every parity row keeps its message, adapter and test coverage", () => {
+  const gaps = PARITY_BASELINE.flatMap((row) => coverageGaps(row).map((gap) => `${row.area}: ${gap}`));
+  assert.deepEqual(gaps, [], `parity rows lost coverage:\n  ${gaps.join("\n  ")}`);
+});
+
+test("coverage detection fails for a row that loses a message, adapter or test", () => {
+  const broken: ParityRow = {
+    area: "Detector self-test",
+    baseline: "synthetic",
+    messages: ["message.that.does.not.exist"],
+    adapter: "web/core/adapters/missing.ts",
+    test: "tests/missing.test.ts",
+  };
+  assert.deepEqual(coverageGaps(broken), [
+    "message message.that.does.not.exist",
+    "adapter web/core/adapters/missing.ts",
+    "test tests/missing.test.ts",
+  ]);
+  const noTests: ParityRow = {
+    ...broken,
+    messages: ["settings.read"],
+    adapter: "web/core/adapters/pi-api.ts",
+    test: "web/core/protocol/envelope.test.ts",
+  };
+  assert.deepEqual(coverageGaps(noTests), ["web/core/protocol/envelope.test.ts no longer names a message or adapter"]);
 });
 
 test("the generated parity doc matches the baseline table", () => {
   assert.equal(readFileSync("docs/bridge-protocol-parity.md", "utf8"), parityMarkdown());
-});
-
-test("every baseline file still exists", () => {
-  for (const row of PARITY_BASELINE) {
-    for (const file of [row.adapter.split(" + ")[0], row.test]) {
-      assert.ok(existsSync(file), `${row.area}: missing ${file}`);
-    }
-  }
 });

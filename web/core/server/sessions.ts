@@ -543,6 +543,14 @@ export async function applyEnabledModelScope(session: AgentSession): Promise<voi
   }
 }
 
+/** The bus shape the bridge publisher needs; a missing bus stays a no-op. */
+function webUiPublishEvents(sessionId: string): { emit(channel: string, data: unknown): void; on(channel: string, handler: (data: unknown) => void): () => void } | undefined {
+  const bus = sessionBus(sessionId);
+  const emit = bus?.emit;
+  if (bus === undefined || emit === undefined) return undefined;
+  return { emit: (channel, data) => emit(channel, data), on: (channel, handler) => bus.on(channel, handler) };
+}
+
 /** Spawn a brand-new pi session with the project's real extensions loaded. */
 export async function startSession(options: {
   cwd: string;
@@ -570,7 +578,15 @@ export async function startSession(options: {
   // must too, or plugins never publish their resting views until a prompt
   // fires an agent event. Bind headlessly: views publish onto the session
   // bus, and the TUI-only `ctx.ui` methods stay safe no-ops.
-  await session.bindExtensions({ uiContext: createHeadlessWebUiContext() });
+  // Pi hands one UI context to every extension, so the context cannot name
+  // its caller. Use the session id as the producer label; cooperative
+  // publishWebUi calls still carry their own sourceKey on the bus.
+  await session.bindExtensions({
+    uiContext: createHeadlessWebUiContext({
+      events: webUiPublishEvents(session.sessionId),
+      sourceId: session.sessionId,
+    }),
+  });
   return register(toCore(session), options.cwd, session.sessionFile ?? "", session);
 }
 
@@ -590,7 +606,12 @@ export async function resumeSession(options: {
   await applyEnabledModelScope(session);
   // Same rationale as startSession: a resumed session must republish its
   // resting plugin views the moment it is opened, not on the first turn.
-  await session.bindExtensions({ uiContext: createHeadlessWebUiContext() });
+  await session.bindExtensions({
+    uiContext: createHeadlessWebUiContext({
+      events: webUiPublishEvents(session.sessionId),
+      sourceId: session.sessionId,
+    }),
+  });
   return register(toCore(session), cwd, options.sessionFile, session);
 }
 

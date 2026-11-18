@@ -163,6 +163,7 @@ const ZONES: readonly ZoneRules[] = [
       "web/core/server/pi-api.ts",
       "web/core/server/pi-api-body.ts",
       "web/core/server/bridge.ts",
+      "web/core/server/sessions.ts",
       "web/core/shared/",
       "web/core/plugin-contracts/",
       "@earendil-works/",
@@ -233,9 +234,9 @@ const ZONES: readonly ZoneRules[] = [
     // contracts and shared lib constants — no pi runtime, no arbitrary web
     // app internals.
     dir: "web/plugins",
-    runtimeAllow: ["web/plugins/", "web/core/client/plugin-system/", "web/core/client/protocol-client.ts", "web/core/shared/", "web/core/protocol/", "lib/"],
+    runtimeAllow: ["web/plugins/", "web/core/client/plugin-system/", "web/core/client/protocol-client.ts", "web/core/shared/", "web/core/protocol/", "web/core/plugin-contracts/ui-event-models.ts", "web/core/plugin-contracts/view.ts", "lib/"],
     typeOnlyAllow: ["lib/", "web/core/plugin-contracts/"],
-    skip: ["web/plugins/subagent-graph", "web/plugins/files/server"],
+    skip: ["web/plugins/subagent-graph", "web/plugins/files/server", "web/plugins/fixture-e2e/build.mjs"],
     why: "plugin descriptors are declarative and plugin UI reuses core renderers; they never import pi behavior",
   },
   {
@@ -350,21 +351,51 @@ test("the web↔extension boundary holds on the import graph", () => {
 /**
  * AC1: a client or plugin may reach pi only through the protocol binding.
  * Imports are covered above; this catches the other side door — a literal
- * pi_api route pasted into a component or plugin page.
+ * server route pasted into a component or plugin page. Every route except the
+ * explicitly grandfathered transport/telemetry calls is a violation.
  */
-const PI_API_ROUTE = /\/api\/agent\/[^"'`\s]*\/pi_api/;
+const DIRECT_PI_ROUTE = /\/api\/(?:agent|sessions|bridge|directories|plugins\/action|plugin-manager|reload-state|client\/log)\b/;
 
-test("the client and plugins never call the pi_api route directly", () => {
+/** Files that still own a non-capability route, and exactly which one. */
+const ROUTE_EXCEPTIONS: Readonly<Record<string, readonly string[]>> = {
+  "web/core/client/logging.ts": ["/api/client/log"],
+  "web/core/client/protocol-client.ts": ["/api/agent/${", "/api/sessions/events"],
+  "web/core/client/request-activity.ts": ["/api/agent/"],
+  "web/core/client/new-session-dialog.tsx": ["/api/directories"],
+  "web/core/client/plugin-system/actionClient.ts": ["/api/plugins/action"],
+};
+
+function directRouteViolations(file: string, text: string): string[] {
+  const allowed = ROUTE_EXCEPTIONS[file] ?? [];
+  const violations: string[] = [];
+  for (const [index, line] of text.split("\n").entries()) {
+    const match = line.match(DIRECT_PI_ROUTE)?.[0];
+    if (match !== undefined && !allowed.some((prefix) => line.includes(prefix))) {
+      violations.push(`${file}:${index + 1} ${match}`);
+    }
+  }
+  return violations;
+}
+
+test("a direct pi route in client or plugin code is detected", () => {
+  assert.deepEqual(
+    directRouteViolations("web/core/client/example.tsx", 'void fetch("/api/agent/abc/history");'),
+    ["web/core/client/example.tsx:1 /api/agent"],
+  );
+  assert.deepEqual(
+    directRouteViolations("web/core/client/protocol-client.ts", 'void fetch("/api/agent/abc/history");'),
+    ["web/core/client/protocol-client.ts:1 /api/agent"],
+  );
+});
+
+test("the client and plugins never call undeclared pi routes directly", () => {
   const offenders: string[] = [];
   for (const dir of ["web/core/client", "web/plugins"]) {
     for (const file of sourceFiles(join(process.cwd(), dir), ["web/plugins/subagent-graph"])) {
-      const text = readFileSync(file, "utf8");
-      for (const [index, line] of text.split("\n").entries()) {
-        if (PI_API_ROUTE.test(line)) offenders.push(`${relative(process.cwd(), file)}:${index + 1}`);
-      }
+      offenders.push(...directRouteViolations(relative(process.cwd(), file), readFileSync(file, "utf8")));
     }
   }
-  assert.deepEqual(offenders, [], `pi_api routes belong in web/core/client/protocol-client.ts:\n  ${offenders.join("\n  ")}`);
+  assert.deepEqual(offenders, [], `direct pi routes belong behind the protocol binding:\n  ${offenders.join("\n  ")}`);
 });
 
 test("migrated panels self-register from plugin-owned browser halves", () => {
