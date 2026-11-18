@@ -328,26 +328,6 @@
   flex-direction: column;
 }
 
-.files-code-view {
-  height: 100%;
-  min-height: 0;
-  display: flex;
-}
-
-.files-code-editor {
-  flex: 1;
-  height: 100%;
-  font-size: 13px;
-}
-
-.files-code-editor .cm-editor {
-  height: 100%;
-}
-
-.files-code-editor .cm-editor.cm-focused {
-  outline: none;
-}
-
 .files-media {
   position: relative;
   flex: 1;
