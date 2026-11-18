@@ -18,7 +18,13 @@ const options = {
   target: "es2022",
   minify: true,
   jsx: "automatic",
-  splitting: false,
+  // Host modules are ESM entry points: their exports cannot be tree-shaken.
+  // Splitting keeps dynamic imports (mermaid, the file viewer) in lazy chunks
+  // instead of inlining megabytes into every page load.
+  splitting: true,
+  outdir: out,
+  entryNames: "[name]",
+  chunkNames: "chunks/[name]-[hash]",
   alias: { "@": resolve(root, "core/client") },
   define: { "process.env.NODE_ENV": '"production"' },
   logLevel: "warning",
@@ -26,15 +32,13 @@ const options = {
 
 await build({
   ...options,
-  entryPoints: [resolve(host, "runtime.ts")],
-  outfile: resolve(out, "runtime.js"),
+  entryPoints: { runtime: resolve(host, "runtime.ts") },
 });
 
 await build({
   ...options,
   external: HOST_SPECIFIERS,
-  entryPoints: [resolve(host, "ui.ts")],
-  outfile: resolve(out, "ui.js"),
+  entryPoints: { ui: resolve(host, "ui.ts") },
 });
 
 /** Each shared specifier has one tiny shim over the single runtime bundle. */

@@ -22,3 +22,13 @@ test("the browser import map is generated from the host module registry", () => 
   assert.equal(map["@pi-web/bridge"], "/host/sdk.js");
   assert.equal(map["@pi-web/host-ui"], "/host/ui.js");
 });
+
+test("host UI keeps lazy imports out of the entry bundle", () => {
+  const build = source("../web/build-host-modules.mjs");
+  assert.match(build, /splitting:\s*true/);
+  assert.doesNotMatch(build, /splitting:\s*false/);
+  assert.match(build, /chunkNames:/);
+
+  const markdown = source("../web/core/client/plugin-system/markdown.tsx");
+  assert.match(markdown, /import\("mermaid"\)/);
+});
