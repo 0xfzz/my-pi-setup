@@ -396,8 +396,8 @@ Done when AC1–AC14 pass, all §8 decisions are resolved, at least one real plu
 | 3 | `09b3bfa` | Manifest-declared core slices are enforced by client, bindings and host with named denials and audit. |
 | 2 | `bfe5011` | External browser halves load from authenticated, hash-bound, contained asset routes. |
 | 4 | `f8a59b8` | Plugin-owned namespaced messages flow through the SDK registry, kernel lifecycle, bindings, action bus and generic bridge relay. |
-| 5 | `f14185c` | The fixture plugin loads from an external discovery root; new projects import only `@pi-web/bridge`; static halves are deprecated compatibility shims. |
-| 5 (completion) | final migration | All first-party browser halves and pages load from manifest-declared bundles; the import map and host runtime shims are generated from one registry. |
+| 5 | `f14185c` | The fixture plugin loads from an external discovery root and new projects import only `@pi-web/bridge`; static halves were deprecated compatibility shims at this point and are superseded by the completion row. |
+| 5 (completion) | `9275162` | All first-party browser halves and pages load from manifest-declared bundles; the import map and host runtime shims are generated from one registry. |
 
 **Verified.** `npm run tidy` and `npm run lint:dead` pass; both `web/core/e2e/browser-runtime.e2e.mjs` and `web/core/e2e/browser-loading.e2e.mjs` pass with the external fixture; generated protocol catalog and parity docs are unchanged.
 
