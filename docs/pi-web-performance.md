@@ -196,7 +196,11 @@ if `app.js`, `runtime.js` or `ui.js` drifts above its ceiling again.
 
 This is a bundle-size fix, not a claim about a specific wall-clock number:
 transfer time still depends on the proxy's compression and the client link.
-Measure the rebuilt HAR to confirm the target on the deployment in question.
+The screenshot's own numbers give a rough guide: 7.49 MB in 45.42 s is about
+165 KB/s aggregate, so 485 KB of compressed JavaScript would take ~3 s on the
+same link. Without compression the same build is 1.64 MB and cannot meet a
+4 s target on that link. Measure the rebuilt HAR to confirm the target on the
+deployment in question.
 
 ## Already optimized — do not re-fix
 
