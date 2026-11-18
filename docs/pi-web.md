@@ -245,6 +245,11 @@ HTTPS on the public side: the password and cookies cross the network. Behind
 nginx set `proxy_set_header Host $host;` so the same-origin check sees the public
 host (or list it in `PI_WEB_ALLOWED_ORIGINS`).
 
+Set `PI_WEB_HSTS=1` once HTTPS is in place to emit
+`Strict-Transport-Security: max-age=31536000; includeSubDomains` on every
+response. It is off by default so a plain-HTTP localhost server never tells
+browsers to upgrade to a TLS endpoint that does not exist.
+
 A non-loopback bind **refuses to start** without a configured password (run
 `/web set-password` first). `PI_WEB_ALLOW_UNPROTECTED=1` is an explicit, dangerous
 override for isolated networks. Likewise, `PI_WEB_TRUST_PROXY=all` is refused on

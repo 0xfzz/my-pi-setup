@@ -46,6 +46,8 @@ export interface StartWebServerOptions {
   authHttp?: AuthHttpOptions;
   /** Structured logging bundle. The direct server entry owns one; tests stay quiet by default. */
   logging?: WebLoggerBundle;
+  /** Emit HSTS; defaults to PI_WEB_HSTS=1 so TLS deployments can opt in. */
+  hsts?: boolean;
 }
 
 function envNumber(name: string): number | undefined {
@@ -144,6 +146,7 @@ export function startWebServer(options: StartWebServerOptions = {}): Promise<Web
       return authorizeRequest(request, reply, url, auth);
     },
     staticRoot: root,
+    hsts: options.hsts ?? process.env.PI_WEB_HSTS === "1",
     // Release residual auth response tracking during close(). Fastify's
     // forceCloseConnections policy owns the bounded socket teardown.
     onClose: () => auth.close(),

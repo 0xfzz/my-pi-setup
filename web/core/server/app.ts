@@ -42,6 +42,11 @@ export interface WebAppOptions {
    * redacted logger; the default keeps factories quiet for tests.
    */
   logger?: FastifyLoggerOptions & PinoLoggerOptions;
+  /**
+   * Emit HSTS on every response. Off by default because a plain-HTTP
+   * localhost deployment has no TLS to upgrade to.
+   */
+  hsts?: boolean;
 }
 
 /**
@@ -98,6 +103,12 @@ export async function createWebApp(options: WebAppOptions = {}): Promise<Fastify
   await app.register(fastifySSE);
   await app.register(cookie);
   await app.register(helmet, { global: true, ...SECURITY_HEADERS });
+
+  if (options.hsts === true) {
+    app.addHook("onRequest", async (_request, reply) => {
+      reply.header("strict-transport-security", "max-age=31536000; includeSubDomains");
+    });
+  }
 
   if (options.authorize !== undefined) {
     const authorize = options.authorize;

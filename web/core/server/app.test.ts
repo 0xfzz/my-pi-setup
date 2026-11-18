@@ -148,6 +148,21 @@ test("the security-header policy applies to native routes", async () => {
   }
 });
 
+test("opt-in HSTS is emitted on native responses", async () => {
+  const app = await createWebApp({ delegate: jsonDelegate({}), hsts: true });
+  app.get("/native", async () => ({ ok: true }));
+  await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = app.server.address();
+  assert.ok(address !== null && typeof address === "object");
+  try {
+    const res = await fetch(`http://127.0.0.1:${address.port}/native`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("strict-transport-security"), "max-age=31536000; includeSubDomains");
+  } finally {
+    await app.close();
+  }
+});
+
 test("a thrown native error is answered with a sanitized 500", async () => {
   const app = await createWebApp({ delegate: jsonDelegate({}) });
   app.get("/boom", async () => {
