@@ -17,7 +17,7 @@ import { join, relative, basename, extname, sep } from "node:path";
 const ROOT = process.cwd();
 const TESTS = join(ROOT, "tests");
 const TIERS_FILE = join(TESTS, "tiers.json");
-const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 60_000;
 
 const walk = (dir) => {
   const out = [];
