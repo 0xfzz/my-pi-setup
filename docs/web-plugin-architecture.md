@@ -460,11 +460,13 @@ The shared browser module graph is generated, not hardcoded. One registry in
 `web/plugin-host-specifiers.mjs` names React, the JSX runtime, the SDK,
 `@pi-web/host-ui` and renderer modules. The build emits matching `/host/*`
 shims, externalizes those specifiers in plugin bundles, and writes the import
-map into the built `index.html` from a template placeholder. The icon shim and
-the `@file-viewer/*` shims point at separate vendor-only entries; first-party
-entries bundle their own named icons, and the files plugin imports the viewer
-vendors only when a document opens. Plugin UI such as `DocumentViewer.tsx`
-stays in `web/plugins/files`, never in the shared runtime.
+map into the built `index.html` from a template placeholder. The icon,
+Typebox and `@file-viewer/*` shims point at separate vendor-only entries;
+first-party entries bundle their own named icons, and the files plugin imports
+the viewer vendors only when a document opens. Plugin UI such as
+`DocumentViewer.tsx` stays in `web/plugins/files`, never in the shared
+runtime, and plugin previews use the public `@pi-web/host-ui` surface instead
+of importing `web/core/client` internals.
 
 ## The decision test
 

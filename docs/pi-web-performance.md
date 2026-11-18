@@ -177,9 +177,15 @@ paint, matching the multi-second network bars in the HAR screenshot.
 
 | Entry | Before | After | Where the rest went |
 | --- | ---: | ---: | --- |
-| `runtime.js` | 14.87 MB | 401 KB | `icons.js` and `file-viewer.js` are separate entries, fetched only on use |
-| `ui.js` | 4.05 MB | 543 KB | Mermaid/KaTeX/Cytoscape are hashed dynamic chunks |
-| `app.js` | 655 KB | 736 KB | icons are imported by name and bundled into the app |
+| `runtime.js` | 14.87 MB | 250 KB | `icons.js`, `file-viewer.js` and `typebox-host.js` are separate entries |
+| `ui.js` | 4.05 MB | 416 KB | Mermaid/KaTeX/Cytoscape are hashed dynamic chunks; Typebox is shared |
+| `app.js` | 655 KB | 609 KB | icons are imported by name; Typebox is no longer duplicated |
+
+All cold-path JavaScript together — app, host modules and enabled plugin
+halves — is about **1.64 MB raw / 485 KB gzipped**, down from ~19.6 MB raw.
+The artifacts plugin also stopped importing a core internal path for
+CodeMirror; it uses the public `@pi-web/host-ui` surface, as the files plugin
+does. `tests/web-core-separation.test.ts` guards that boundary.
 
 First-party app and plugin builds use `FIRST_PARTY_EXTERNALS`, which excludes
 only the icon shim; external plugins can still import any icon through the
