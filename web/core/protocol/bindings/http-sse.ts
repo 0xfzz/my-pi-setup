@@ -3,7 +3,7 @@
  * this module owns the binding's handshake, browser source attribution and
  * adapter dispatch for one browser client.
  */
-import { parseEnvelope, type BridgeEnvelope } from "../envelope.ts";
+import type { BridgeEnvelope } from "../envelope.ts";
 import type { Hello, HelloAck } from "../version.ts";
 import { createInProcessBinding, type InProcessOptions } from "./in-process.ts";
 import type { BindingReply, ProtocolBinding } from "./types.ts";
@@ -15,11 +15,9 @@ export interface HttpSseOptions extends InProcessOptions {
 
 /** The browser transport never lets a caller label itself as trusted core/host. */
 export function attributedEnvelope(envelope: BridgeEnvelope, clientId: string): BridgeEnvelope {
-  const parsed = parseEnvelope(envelope);
-  if (!parsed.ok) return envelope;
-  const source = parsed.envelope.source;
-  if (source.type !== "core" && source.type !== "host") return parsed.envelope;
-  return { ...parsed.envelope, source: { type: "browser", id: clientId } };
+  const source = envelope.source;
+  if (source.type !== "core" && source.type !== "host") return envelope;
+  return { ...envelope, source: { type: "browser", id: clientId } };
 }
 
 export function createHttpSseBinding(options: HttpSseOptions): ProtocolBinding {
@@ -43,6 +41,10 @@ export function createHttpSseBinding(options: HttpSseOptions): ProtocolBinding {
 
     invoke(envelope: BridgeEnvelope, signal?: AbortSignal): Promise<BindingReply> {
       return delegate.invoke(attributedEnvelope(envelope, clientId), signal);
+    },
+
+    invokeValidated(envelope: BridgeEnvelope, signal?: AbortSignal): Promise<BindingReply> {
+      return delegate.invokeValidated(attributedEnvelope(envelope, clientId), signal);
     },
 
     events: () => delegate.events(),

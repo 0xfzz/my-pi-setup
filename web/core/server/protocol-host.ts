@@ -284,7 +284,7 @@ function createHost(
 
       const binding = bindings.get(clientId);
       if (binding === undefined) return { ok: false, error: handshakeRequired() };
-      return binding.invoke(parsed.envelope);
+      return binding.invokeValidated?.(parsed.envelope) ?? binding.invoke(parsed.envelope);
     },
 
     denials: () => denials,

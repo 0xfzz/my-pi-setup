@@ -53,7 +53,13 @@ export interface ProtocolBinding {
   readonly name: BindingName;
   hello(hello: Hello, signal?: AbortSignal): Promise<BindingReply<HelloAck>>;
   invoke(envelope: BridgeEnvelope, signal?: AbortSignal): Promise<BindingReply>;
+  /** A host that already validated the envelope uses this to avoid a second parse. */
+  invokeValidated?(envelope: BridgeEnvelope, signal?: AbortSignal): Promise<BindingReply>;
   /** Snapshot of buffered/replayed events, for resync equivalence checks. */
   events(): readonly BridgeEnvelope[];
   close(): Promise<void>;
+}
+
+export interface ValidatedProtocolBinding extends ProtocolBinding {
+  invokeValidated(envelope: BridgeEnvelope, signal?: AbortSignal): Promise<BindingReply>;
 }

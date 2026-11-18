@@ -10,7 +10,7 @@ import { BRIDGE_PROTOCOL } from "./version.ts";
 
 type EndpointType = "core" | "extension" | "plugin" | "browser" | "host";
 
-export interface EndpointShape {
+interface EndpointShape {
   type: EndpointType;
   id: string;
 }
