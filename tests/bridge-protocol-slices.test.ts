@@ -7,7 +7,7 @@ import {
   createPluginBridge,
   type BridgeResult,
   type PluginBridgeTransport,
-} from "@pi/web-bridge";
+} from "@pi-web/bridge";
 import { createCorePluginBridge, ProtocolClient } from "../web/core/client/protocol-client.ts";
 
 function transport(calls: string[]): PluginBridgeTransport {

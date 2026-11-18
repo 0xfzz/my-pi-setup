@@ -16,6 +16,7 @@ import { cp, readFile, writeFile } from "node:fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { HOST_SPECIFIERS, hostImportMap } from "./plugin-host-specifiers.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)));
 const client = resolve(root, "core", "client");
@@ -49,7 +50,11 @@ await build({
   // Match the `@/*` tsconfig paths so shadcn components import from
   // `@/components/ui/…` and `@/lib/utils` without a bundler config file.
   alias: { "@": client },
+  external: HOST_SPECIFIERS,
 });
+
+execFileSync(process.execPath, [resolve(root, "build-host-modules.mjs")], { stdio: "inherit" });
+execFileSync(process.execPath, [resolve(root, "build-plugin-halves.mjs")], { stdio: "inherit" });
 
 const tailwindBin = resolve(root, "node_modules", ".bin", process.platform === "win32" ? "tailwindcss.cmd" : "tailwindcss");
 execFileSync(
@@ -58,14 +63,19 @@ execFileSync(
   { stdio: "inherit" },
 );
 
-await cp(resolve(client, "index.html"), resolve(dist, "index.html"));
+// The import map is generated from the same registry that builds the host
+// shims, so adding a shared browser module never means editing two files.
+const htmlTemplate = await readFile(resolve(client, "index.html"), "utf8");
+const importMap = JSON.stringify({ imports: hostImportMap() }, null, 2);
+const html = htmlTemplate.replace(
+  "<!-- PI_WEB_IMPORT_MAP -->",
+  `<script type="importmap">\n${importMap}\n  </script>`,
+);
+if (html === htmlTemplate) throw new Error("index.html import-map placeholder is missing");
+await writeFile(resolve(dist, "index.html"), html);
 await cp(resolve(client, "base.css"), resolve(dist, "app.css"));
-// First-party panel styles are composed here, alongside their client registrations.
-const panelStyles = await Promise.all([
-  readFile(resolve(client, "plugin-system", "plugins.css"), "utf8"),
-  readFile(resolve(root, "plugins", "router", "router.css"), "utf8"),
-]);
-await writeFile(resolve(dist, "plugins.css"), panelStyles.join("\n"));
+// Shared panel styles stay in core; each plugin owns and injects its own CSS.
+await cp(resolve(client, "plugin-system", "plugins.css"), resolve(dist, "plugins.css"));
 
 // Flyfish File Viewer's Workers/WASM/fonts are self-hosted beside the client
 // and resolved at /file-viewer/ (the default asset base). Only the renderers

@@ -4,7 +4,7 @@
  * descriptors may be shown or acted on. A descriptor whose plugin is disabled or
  * quarantined is hidden, and its actions are refused, in the same request.
  */
-import { createPluginMessageRegistry, setActivePluginMessageRegistry, type PluginMessageRegistry } from "@pi/web-bridge";
+import { createPluginMessageRegistry, setActivePluginMessageRegistry, type PluginMessageRegistry } from "@pi-web/bridge";
 import { AuditLog } from "./audit.ts";
 import { compatCandidates, type DescriptorLike } from "./compat.ts";
 import { discoverPlugins, type DiscoveredPlugin, type DiscoveryRoots, type Shadowed } from "./discovery.ts";
@@ -113,6 +113,7 @@ function browserHalfSource(plugin: DiscoveredPlugin): BrowserHalfSource | undefi
     sourcePath: entry,
     capabilities: plugin.manifest.capabilities.map(formatCapability),
     trust: plugin.manifest.trust,
+    corePlugin: plugin.source === "repo",
   };
 }
 

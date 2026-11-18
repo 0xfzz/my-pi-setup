@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { X } from "@phosphor-icons/react";
-import type { WebView } from "../../core/client/plugin-system/contract.ts";
+import type { WebView } from "@pi-web/host-ui";
 import { ArtifactCatalog, type ArtifactRow } from "./ArtifactCatalog.tsx";
 import { ArtifactPreview } from "./ArtifactPreview.tsx";
 

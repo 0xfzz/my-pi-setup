@@ -6,5 +6,5 @@ export {
   publishUiEditorComponent,
   publishUiFooter,
   publishUiHeader,
-} from "@pi/web-bridge";
-export type { BridgePublishTarget, PublishResult } from "@pi/web-bridge";
+} from "@pi-web/bridge";
+export type { BridgePublishTarget, PublishResult } from "@pi-web/bridge";

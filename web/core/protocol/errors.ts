@@ -3,5 +3,5 @@ export {
   BRIDGE_ERROR_CODES,
   BridgeErrorSchema,
   bridgeError,
-} from "@pi/web-bridge";
-export type { BridgeError, BridgeErrorCode } from "@pi/web-bridge";
+} from "@pi-web/bridge";
+export type { BridgeError, BridgeErrorCode } from "@pi-web/bridge";

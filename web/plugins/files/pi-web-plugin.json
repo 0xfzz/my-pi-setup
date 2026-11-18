@@ -3,9 +3,9 @@
   "name": "Files",
   "version": "1.0.0",
   "engines": { "piWeb": "^1.0.0", "sdk": "^1.0.0" },
-  "main": { "server": "./server/index.ts", "browser": "./browser/index.ts" },
+  "main": { "server": "./server/index.ts", "browser": "./dist/browser.js" },
   "trust": "trusted",
-  "capabilities": ["routes", "fs.read:*"],
+  "capabilities": ["routes", "fs.read:*", "ui.slots"],
   "activation": ["onStartup"],
   "contributes": {
     "title": "Files",

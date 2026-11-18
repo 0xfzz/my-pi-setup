@@ -3,8 +3,7 @@
 // this plugin's server half, not a core route. Returns a discriminated result
 // so the UI can tell a real failure from a partial page.
 
-import type { FileKind } from "../../../core/shared/file-kind.ts";
-import { getJson, type ApiFailure, type ApiResult } from "../../../core/client/plugin-system/api-client.ts";
+import { getJson, type ApiFailure, type ApiResult, type FileKind } from "@pi-web/host-ui";
 import { FILES_API_PATH } from "../contract.ts";
 
 export type FilesFailure = ApiFailure;

@@ -1,4 +1,4 @@
-import type { GraphNode, GraphWebView } from "../../core/plugin-contracts/view.ts";
+import type { GraphNode, GraphWebView } from "@pi-web/host-ui";
 
 export interface RoutingNode extends GraphNode {
   role: "input" | "target";

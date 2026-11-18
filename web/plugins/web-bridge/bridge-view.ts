@@ -3,14 +3,13 @@
  * No HTML is produced: the host renders the returned view with its own
  * sanitiser and placement ceilings.
  */
-import type { BridgeEnvelope } from "../../core/protocol/envelope.ts";
-import { webUiText } from "../../core/plugin-contracts/ui-event-models.ts";
+import { webUiText, type BridgeEnvelope } from "@pi-web/bridge";
 import {
   validateView,
   VIEW_MAX_ROWS,
   type StatusTone,
   type WebView,
-} from "../../core/plugin-contracts/view.ts";
+} from "@pi-web/host-ui";
 
 interface TextSurface {
   label: string;

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createPluginMessageRegistry } from "@pi/web-bridge";
+import { createPluginMessageRegistry } from "@pi-web/bridge";
 
 import { catalogCapabilities, lookupMessage } from "../protocol/catalog.ts";
 import { parseEnvelope, type BridgeEnvelope } from "../protocol/envelope.ts";

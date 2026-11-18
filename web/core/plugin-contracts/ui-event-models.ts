@@ -1,4 +1,4 @@
-import { webUiText } from "@pi/web-bridge/text";
+import { webUiText } from "@pi-web/bridge/text";
 import { validatePlacement, type WebPluginPlacement } from "./ui-contracts.ts";
 import { validateView, type WebView } from "./view.ts";
 

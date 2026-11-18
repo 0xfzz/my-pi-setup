@@ -2,11 +2,32 @@
  * Frozen Phase 4 rules for trusted browser halves. Pure decisions only: the
  * loader mounts code, the kernel audits, both use these rules unchanged.
  */
+import type { BridgeEnvelope } from "./envelope.ts";
 import { BRIDGE_MESSAGE_EVENT } from "./publisher.ts";
 
 export const BROWSER_MOUNT_CONTRACT = "mount(el, ctx): () => void";
 export const BROWSER_MAX_BREAKER = 3;
 export const BROWSER_LOAD_EVENT = BRIDGE_MESSAGE_EVENT;
+
+/** The public context a trusted browser half receives from its host. */
+export interface WebPluginContext {
+  readonly protocol: {
+    subscribe(name: string, listener: (envelope: BridgeEnvelope) => void): () => void;
+  };
+  readonly host: Readonly<Record<string, unknown>>;
+  readonly theme: Readonly<Record<string, string>>;
+  readonly logger: { info(message: string): void; warn(message: string): void };
+  readonly dom: { text(value: string): Text; clear(element: HTMLElement): void };
+  readonly register: (point: string, key: string, value: unknown) => boolean;
+  readonly contributions: {
+    list(point?: string): readonly {
+      readonly pluginId: string;
+      readonly point: string;
+      readonly key: string;
+      readonly value: unknown;
+    }[];
+  };
+}
 
 export interface BrowserGrantAuditEntry {
   readonly kind: "browser-granted" | "browser-revoked" | "browser-refused";

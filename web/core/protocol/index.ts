@@ -45,7 +45,7 @@ export {
   stripValidationMarker,
   validationMarkOf,
   versionMismatch,
-} from "@pi/web-bridge";
+} from "@pi-web/bridge";
 export type {
   BindingName,
   BridgeEnvelope,
@@ -69,4 +69,4 @@ export type {
   PluginMessageValidation,
   PublishOptions,
   RegisteredPluginMessage,
-} from "@pi/web-bridge";
+} from "@pi-web/bridge";

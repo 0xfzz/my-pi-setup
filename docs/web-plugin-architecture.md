@@ -89,11 +89,13 @@ plugin manager makes `/api/browser-halves` publish its metadata and exact asset
 bytes; the browser then requires a hash-bound operator grant before executing
 the bundle. Trusted only, contained paths, fixed MIME/type, a 2 MiB cap, safe
 mode, protected points and the render-failure breaker all apply. New projects
-depend only on the standalone SDK `@pi/web-bridge` (root
-`packages/pi-web-bridge`); `web/core/protocol/` re-exports that single
-implementation. The legacy `web/core/*` import allowlist remains only for
-unmigrated first-party panels and is enabled by the plugin checker for repo
-plugin folders, never for a new external project.
+depend on the standalone SDK `@pi-web/bridge` (root
+`packages/pi-web-bridge`). First-party browser bundles also import the
+generated `@pi-web/host-ui` module for shared React registries and host UI
+helpers; outside plugins need only the SDK. `web/core/protocol/` re-exports
+the single protocol implementation. The legacy `web/core/*` import allowlist
+remains only for declarative descriptors and server halves, never for a new
+external browser project.
 
 **A server half is code, and lives behind its own rule.** A plugin may declare
 `main.server`; that entry point runs in the web server process (native dynamic
@@ -450,8 +452,15 @@ points before mounting, restores the built-in on a render failure, and
 disabling one removes only its contributions. The fixture plugin is the
 dogfood: its build output is copied to a temporary `PI_WEB_PLUGIN_ROOTS`
 package by the e2e, with no repository edit at install time. Files, Artifacts,
-Router and Web Bridge remain deprecated static compatibility shims until their
-own self-contained bundles land.
+Router, Web Bridge, Plugin Manager and MCP Manager now load from their own
+manifest-declared bundles; repo-owned halves are marked core, while outside
+plugins still require the operator's hash-bound confirmation.
+
+The shared browser module graph is generated, not hardcoded. One registry in
+`web/plugin-host-specifiers.mjs` names React, the JSX runtime, the SDK,
+`@pi-web/host-ui` and renderer modules. The build emits matching `/host/*`
+shims, externalizes those specifiers in plugin bundles, and writes the import
+map into the built `index.html` from a template placeholder.
 
 ## The decision test
 
@@ -519,7 +528,7 @@ silent reach.
 
 Run `npm run plugin:scaffold <id> [title] [target]` for a new independent
 project. It writes a manifest, browser entry, self-contained build script,
-contract, `package.json` with `@pi/web-bridge`, and a README. Run
+contract, `package.json` with `@pi-web/bridge`, and a README. Run
 `npm run plugin:check <dir>` before installing: it rejects `web/core/*`
 imports for external projects while allowing the legacy paths only inside
 first-party plugin folders. The generated bundle can be installed under a

@@ -3,7 +3,7 @@
  * standalone SDK; only protected-point policy stays with the kernel.
  */
 import { isProtectedPoint } from "../plugin-contracts/kernel/catalog.ts";
-import { browserAllowedInSafeMode } from "@pi/web-bridge";
+import { browserAllowedInSafeMode } from "@pi-web/bridge";
 
 export {
   BROWSER_LOAD_EVENT,
@@ -16,12 +16,12 @@ export {
   browserGrantPromptText,
   browserGrantUpdate,
   confirmBrowserGrant,
-} from "@pi/web-bridge";
+} from "@pi-web/bridge";
 export type {
   BrowserGrant,
   BrowserGrantAuditEntry,
   BrowserGrantDecision,
-} from "@pi/web-bridge";
+} from "@pi-web/bridge";
 
 /** Protected core points accept observers, never replacements. */
 export function browserRegistrationRefusal(point: string): string | undefined {

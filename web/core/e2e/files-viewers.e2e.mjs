@@ -85,8 +85,13 @@ async function openFilesPanel(page) {
   await page.getByTestId("files-browser").waitFor({ state: "visible", timeout: 10_000 });
 }
 
+function fileOption(page, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return page.getByRole("option", { name: new RegExp(`^Open (?:file )?${escaped}$`) });
+}
+
 async function openFile(page, name) {
-  await page.getByRole("button", { name, exact: true }).click();
+  await fileOption(page, name).click();
   await page.getByTestId("files-preview").waitFor({ state: "visible", timeout: 10_000 });
 }
 
@@ -148,7 +153,7 @@ async function assertFullScreenFiles(page) {
   const docked = await panel.boundingBox();
   const search = page.getByRole("searchbox", { name: "Search filenames" });
   await search.fill("README");
-  await page.getByRole("button", { name: "README.md", exact: true }).waitFor();
+  await fileOption(page, "README.md").waitFor();
   await page.getByRole("button", { name: "Expand file explorer", exact: true }).click();
   assert.equal(await search.inputValue(), "README", "expanding preserves the explorer's search state");
   await assertPanelFillsViewport(page);

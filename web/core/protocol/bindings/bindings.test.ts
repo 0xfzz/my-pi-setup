@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createPluginMessageRegistry } from "@pi/web-bridge";
+import { createPluginMessageRegistry } from "@pi-web/bridge";
 import type { BridgeCommand } from "../../server/bridge.ts";
 import { createSessionAdapters, type SessionSurface } from "../../adapters/session.ts";
 import { MESSAGE_CATALOG, type MessageDefinition } from "../catalog.ts";

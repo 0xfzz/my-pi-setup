@@ -46,6 +46,7 @@ async function registerOne(
     sourcePath: half.sourcePath,
     capabilities: half.capabilities,
     trust: "trusted",
+    ...(half.corePlugin === true ? { corePlugin: true } : {}),
     url: half.url,
     expectedHash: half.hash,
   });

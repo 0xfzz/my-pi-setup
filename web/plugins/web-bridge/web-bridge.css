@@ -1,0 +1,15 @@
+.web-bridge-views {
+  position: fixed;
+  right: .5rem;
+  bottom: .5rem;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+  max-width: min(22rem, 42vw);
+  pointer-events: none;
+}
+
+.web-bridge-view-list > * {
+  pointer-events: auto;
+}

@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowsOut, Minus, Plus, X } from "@phosphor-icons/react";
-import type { GraphNode, GraphWebView } from "../../core/plugin-contracts/view.ts";
-import type { HostPanelProps } from "../../core/client/plugin-system/panel-registry.tsx";
-import { isCompactViewport } from "../../core/shared/responsive.ts";
+import {
+  isCompactViewport,
+  type GraphNode,
+  type GraphWebView,
+  type HostPanelProps,
+} from "@pi-web/host-ui";
 import { routingLayout, type RoutingLayout, type RoutingNode } from "./routing-layout.ts";
 import { useRoutingViewport } from "./use-routing-viewport.ts";
 

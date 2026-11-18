@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ArrowsClockwise, Plugs, WarningCircle } from "@phosphor-icons/react";
-import { KERNEL_MANAGER_ID } from "../../core/shared/plugin-manager.ts";
+import { KERNEL_MANAGER_ID } from "@pi-web/host-ui";
 import {
   applyManagerAction,
   availableActions,

@@ -1,0 +1,11 @@
+{
+  "name": "@pi-web/host-ui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Node-safe alias for pure host helpers shared by first-party browser halves",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.ts"
+  }
+}

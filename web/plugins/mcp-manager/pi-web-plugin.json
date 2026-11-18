@@ -1,0 +1,17 @@
+{
+  "id": "mcp-manager",
+  "name": "MCP servers",
+  "version": "1.0.0",
+  "engines": { "piWeb": "^1.0.0", "sdk": "^1.0.0" },
+  "main": { "browser": "./dist/browser.js" },
+  "trust": "trusted",
+  "capabilities": ["ui.slots"],
+  "activation": ["onStartup"],
+  "contributes": {
+    "title": "MCP servers",
+    "extension": "mcp-manager",
+    "icon": "sliders",
+    "description": "Setup and management for pi's MCP servers: the same mcp.json pi's /mcp reads, edited through pi's own config surface. A running session applies edits on /reload (or /mcp-manager-reload).",
+    "surfaces": [{ "kind": "page", "path": "/plugins/mcp-manager" }]
+  }
+}

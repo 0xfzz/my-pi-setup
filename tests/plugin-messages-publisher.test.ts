@@ -12,7 +12,7 @@ import {
   BRIDGE_PROTOCOL_VERSION,
   type BridgeEnvelope,
   type PluginMessageDeclaration,
-} from "@pi/web-bridge";
+} from "@pi-web/bridge";
 
 const declaration: PluginMessageDeclaration = {
   name: "acme.plugin.state.changed",

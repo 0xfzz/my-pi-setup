@@ -8,5 +8,5 @@ export {
   HelloAckSchema,
   HelloSchema,
   versionMismatch,
-} from "@pi/web-bridge";
-export type { BindingName, Hello, HelloAck } from "@pi/web-bridge";
+} from "@pi-web/bridge";
+export type { BindingName, Hello, HelloAck } from "@pi-web/bridge";

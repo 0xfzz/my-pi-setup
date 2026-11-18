@@ -8,13 +8,12 @@ import {
   ArrowCounterClockwise, Copy, File, FileAudio, FileCode, FileCsv, FileDoc, FileImage, FilePdf,
   FilePpt, FileText, FileVideo, FileXls, Folder, MagnifyingGlass, X,
 } from "@phosphor-icons/react";
-import type { FileKind } from "../../core/shared/file-kind.ts";
-import { classifyFile } from "../../core/shared/file-kind.ts";
+import { classifyFile, type FileKind } from "@pi-web/host-ui";
 import {
   fetchDirectory, fetchSearch, fileRefOf,
   type DirEntry, type FileRef, type FilesListData,
 } from "./lib/files-api.ts";
-import { LoadingSpinner } from "../../core/client/plugin-system/LoadingSpinner.tsx";
+import { LoadingSpinner } from "@pi-web/host-ui";
 
 function fileIcon(fileKind: FileKind | undefined) {
   switch (fileKind) {

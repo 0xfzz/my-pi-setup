@@ -28,3 +28,8 @@ export function registerPluginPage(id: string, component: HostPageComponent): vo
 export function getPluginPage(id: string): HostPageComponent | undefined {
   return pages.get(id);
 }
+
+/** Remove a plugin's page when its browser half unmounts. */
+export function unregisterPluginPage(id: string): void {
+  pages.delete(id);
+}

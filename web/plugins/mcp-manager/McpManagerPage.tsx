@@ -7,7 +7,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { Plus, Trash } from "@phosphor-icons/react";
-import type { PiMcpConfigState, PiMcpServerEntry, PiMcpWriteParams } from "../../core/shared/pi-api.ts";
+import type { PiMcpConfigState, PiMcpServerEntry, PiMcpWriteParams } from "@pi-web/host-ui";
 import { fetchMcpState, writeMcpConfig, type McpResult } from "./lib/mcp-client.ts";
 
 interface McpManagerPageProps {

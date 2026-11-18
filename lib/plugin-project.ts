@@ -15,7 +15,7 @@ export interface ScaffoldResult {
 const ID_RE = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)*$/;
 
 /** The installable protocol package; plugins import it instead of web/core paths. */
-const BRIDGE_SDK_SPECIFIER = "@pi/web-bridge";
+const BRIDGE_SDK_SPECIFIER = "@pi-web/bridge";
 
 function camel(id: string): string {
   return id.replace(/(^|[.-])([a-z])/g, (_match, _sep: string, letter: string) => letter.toUpperCase());

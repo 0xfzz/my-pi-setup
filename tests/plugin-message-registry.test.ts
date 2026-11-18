@@ -5,7 +5,7 @@ import {
   createPluginMessageRegistry,
   resolveMessage,
   type PluginMessageDeclaration,
-} from "@pi/web-bridge";
+} from "@pi-web/bridge";
 import { PluginManager } from "../web/core/plugin-contracts/kernel/manager.ts";
 import { defaultState } from "../web/core/plugin-contracts/kernel/state.ts";
 import type { DiscoveredPlugin } from "../web/core/plugin-contracts/kernel/discovery.ts";

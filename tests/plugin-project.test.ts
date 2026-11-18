@@ -31,14 +31,14 @@ test("scaffold declares the bridge SDK and its imports pass the boundary check",
   const result = scaffoldPluginProject("acme.sdk", "SDK");
   const pkgText = result.files.find((file) => file.path === "package.json")?.content ?? "{}";
   const pkg = JSON.parse(pkgText) as { dependencies?: Record<string, string> };
-  assert.deepEqual(pkg.dependencies, { "@pi/web-bridge": "^1.0.0" });
+  assert.deepEqual(pkg.dependencies, { "@pi-web/bridge": "^1.0.0" });
   const violations = checkPluginProject("/plugins/acme", [
     ...result.files,
     { path: "sdk.ts", content: [
-      'import { MESSAGE_NAMES } from "@pi/web-bridge";',
-      'import { parseEnvelope } from "@pi/web-bridge/envelope";',
-      'export * from "@pi/web-bridge/catalog";',
-      'const optional = await import("@pi/web-bridge/text");',
+      'import { MESSAGE_NAMES } from "@pi-web/bridge";',
+      'import { parseEnvelope } from "@pi-web/bridge/envelope";',
+      'export * from "@pi-web/bridge/catalog";',
+      'const optional = await import("@pi-web/bridge/text");',
       'import { shell } from "../../core/client/shell.tsx";',
     ].join("\n") },
   ]);

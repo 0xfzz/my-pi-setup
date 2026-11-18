@@ -10,7 +10,7 @@ const SDK_ROOT = join(process.cwd(), "packages", "pi-web-bridge");
 test("a temp ESM project imports the SDK by package name without editing the repo", () => {
   const target = mkdtempSync(join(tmpdir(), "pi-web-bridge-consumer-"));
   try {
-    const link = join(target, "node_modules", "@pi", "web-bridge");
+    const link = join(target, "node_modules", "@pi-web", "bridge");
     mkdirSync(dirname(link), { recursive: true });
     symlinkSync(SDK_ROOT, link, process.platform === "win32" ? "junction" : "dir");
     writeFileSync(join(target, "package.json"), `${JSON.stringify({
@@ -19,7 +19,7 @@ test("a temp ESM project imports the SDK by package name without editing the rep
       type: "module",
     }, null, 2)}\n`);
     writeFileSync(join(target, "entry.mjs"), [
-      'import { MESSAGE_NAMES, webUiText } from "@pi/web-bridge";',
+      'import { MESSAGE_NAMES, webUiText } from "@pi-web/bridge";',
       'console.log(JSON.stringify({ messages: MESSAGE_NAMES.length, text: webUiText("\\u001b[31mready\\u001b[0m") }));',
     ].join("\n"));
 

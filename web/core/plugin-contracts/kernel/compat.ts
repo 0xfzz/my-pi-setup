@@ -62,7 +62,7 @@ export function compatCandidates(descriptors: readonly DescriptorLike[], dir: st
   for (const descriptor of descriptors) {
     if (seen.has(descriptor.id)) continue;
     seen.add(descriptor.id);
-    out.push({ id: descriptor.id, source: "repo", dir, manifest: manifestForDescriptor(descriptor) });
+    out.push({ id: descriptor.id, source: "repo", dir, manifest: manifestForDescriptor(descriptor), inline: true });
   }
   return out;
 }

@@ -1,0 +1,20 @@
+{
+  "id": "router",
+  "name": "Router",
+  "version": "1.0.0",
+  "engines": { "piWeb": "^1.0.0", "sdk": "^1.0.0" },
+  "main": { "browser": "./dist/browser.js" },
+  "trust": "trusted",
+  "capabilities": ["ui.slots", "commands"],
+  "activation": ["onStartup"],
+  "contributes": {
+    "title": "Router",
+    "extension": "account-router",
+    "icon": "sliders",
+    "description": "Live routing fan for the selected virtual model: curved model branches, a green chosen path, and pan/zoom across the whole sidebar. Routes are edited in the shared model dialog.",
+    "surfaces": [{ "kind": "sidebar" }],
+    "actions": [
+      { "id": "router-reload", "title": "Re-read the router config files" }
+    ]
+  }
+}

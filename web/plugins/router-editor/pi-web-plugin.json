@@ -1,0 +1,26 @@
+{
+  "id": "router-editor",
+  "name": "Route editor",
+  "version": "1.0.0",
+  "engines": { "piWeb": "^1.0.0", "sdk": "^1.0.0" },
+  "trust": "declarative",
+  "capabilities": ["commands"],
+  "activation": ["onStartup"],
+  "contributes": {
+    "title": "Route editor",
+    "extension": "account-router",
+    "icon": "sliders",
+    "description": "Create, order, re-policy and delete routes through the shared dialog: name and file, routing method, re-decide trigger, and the model chain with its prompt-cache warmth.",
+    "surfaces": [{ "kind": "dialog" }],
+    "actions": [
+      { "id": "router-open", "title": "Edit a route, or start a new one" },
+      { "id": "router-save", "title": "Save the route on screen" },
+      { "id": "router-targets", "title": "Choose the route's models" },
+      { "id": "router-toggle", "title": "Tick or untick one model" },
+      { "id": "router-filter", "title": "Filter the model list" },
+      { "id": "router-delete", "title": "Ask before deleting the route" },
+      { "id": "router-delete-confirm", "title": "Delete the route" },
+      { "id": "router-back", "title": "Go back one screen" }
+    ]
+  }
+}

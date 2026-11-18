@@ -7,4 +7,6 @@ export interface BrowserHalfSource {
   readonly sourcePath: string;
   readonly capabilities: readonly string[];
   readonly trust: string;
+  /** Repo-owned halves are core UI: safe mode and the operator grant allow them. */
+  readonly corePlugin?: boolean;
 }

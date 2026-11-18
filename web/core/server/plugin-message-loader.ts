@@ -1,5 +1,5 @@
 /** Structural access to the registry owned by the kernel host. */
-import type { PluginMessageRegistry } from "@pi/web-bridge";
+import type { PluginMessageRegistry } from "@pi-web/bridge";
 
 import { getPluginHost } from "./plugin-host.ts";
 

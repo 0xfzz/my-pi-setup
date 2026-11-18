@@ -22,6 +22,8 @@ export interface DiscoveredPlugin {
   /** Absolute directory that holds the manifest; entry paths resolve against it. */
   dir: string;
   manifest: PluginManifest;
+  /** Declarative compatibility descriptors are lower priority than manifests. */
+  inline?: boolean;
 }
 
 export interface Shadowed {
@@ -135,7 +137,10 @@ export function discoverPlugins(roots: DiscoveryRoots): DiscoveryResult {
     }
   }
 
-  const ordered = [...found].sort((a, b) => RANK[a.source] - RANK[b.source] || a.dir.localeCompare(b.dir));
+  const ordered = [...found].sort((a, b) =>
+    RANK[a.source] - RANK[b.source]
+    || Number(a.inline === true) - Number(b.inline === true)
+    || a.dir.localeCompare(b.dir));
   const winners = new Map<string, DiscoveredPlugin>();
   const shadowed: Shadowed[] = [];
   for (const plugin of ordered) {

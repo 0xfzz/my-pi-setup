@@ -26,10 +26,49 @@ test("the migrated fixture is absent from client and server composition roots", 
     "web/plugins/browser-halves.ts",
     "web/plugins/pages.tsx",
   ];
+  const firstPartyIds = ["files", "artifacts", "router", "web-bridge", "mcp-manager", "core.plugin-manager"];
+  for (const root of roots) {
+    const text = readFileSync(root, "utf8");
+    for (const id of firstPartyIds) {
+      assert.equal(text.includes(`"${id}"`), false, `${root} must not statically register ${id}`);
+    }
+    assert.doesNotMatch(text, /registerPluginPanel|registerPluginPage/, `${root} must not register plugin UI`);
+  }
   for (const root of roots) {
     const text = readFileSync(root, "utf8");
     assert.equal(text.includes("fixture.e2e"), false, `${root} must not import the migrated plugin id`);
     assert.equal(text.includes("fixture-e2e/browser"), false, `${root} must not import the migrated module`);
+  }
+});
+
+test("every first-party browser UI ships from its own manifest", () => {
+  const plugins = [
+    "files",
+    "artifacts",
+    "router",
+    "web-bridge",
+    "plugin-manager",
+    "mcp-manager",
+  ];
+  for (const dir of plugins) {
+    const manifest = JSON.parse(readFileSync(`web/plugins/${dir}/pi-web-plugin.json`, "utf8")) as Record<string, any>;
+    assert.equal(manifest.main.browser, "./dist/browser.js", `${dir} must ship a bundled browser half`);
+    assert.equal(manifest.trust, "trusted", `${dir} must declare trusted browser code`);
+    assert.ok(manifest.contributes, `${dir} must contribute its descriptor from the manifest`);
+
+    const entry = readFileSync(`web/plugins/${dir}/browser/index.ts`, "utf8");
+    assert.match(entry, /from "@pi-web\/bridge"/, `${dir} must use the SDK context`);
+    assert.match(entry, /from "@pi-web\/host-ui"/, `${dir} must use the shared host UI`);
+    if (dir === "web-bridge") {
+      // The bridge owns a DOM surface and publishes views through ctx.register;
+      // it does not claim a panel or page slot in the host shell.
+      assert.match(entry, /ctx\.register\(/, `${dir} must register its own views`);
+      assert.match(entry, /root\.unmount\(/, `${dir} must clean up its React root`);
+    } else {
+      assert.match(entry, /registerPlugin(Panel|Page)/, `${dir} must register its own UI`);
+      assert.match(entry, /unregisterPlugin(Panel|Page)/, `${dir} must clean up its UI`);
+    }
+    assert.doesNotMatch(entry, /from "\.\.\/\.\.\/\.\.\/core\//, `${dir} must not import core source`);
   }
 });
 

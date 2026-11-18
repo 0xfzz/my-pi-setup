@@ -31,5 +31,6 @@ export function isBrowserHalfMetadata(value: unknown): value is BrowserHalfMetad
     && typeof row.trust === "string"
     && typeof row.url === "string"
     && typeof row.hash === "string"
-    && strings(row.capabilities) !== undefined;
+    && strings(row.capabilities) !== undefined
+    && (row.corePlugin === undefined || typeof row.corePlugin === "boolean");
 }

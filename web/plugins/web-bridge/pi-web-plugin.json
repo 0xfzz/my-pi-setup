@@ -1,0 +1,16 @@
+{
+  "id": "web-bridge",
+  "name": "Pi Web Bridge",
+  "version": "1.0.0",
+  "engines": { "piWeb": "^1.0.0", "sdk": "^1.0.0" },
+  "main": { "browser": "./dist/browser.js" },
+  "trust": "trusted",
+  "capabilities": ["ui.publish", "events.subscribe:session"],
+  "activation": ["onStartup"],
+  "contributes": {
+    "title": "Pi Web Bridge",
+    "extension": "bridge",
+    "description": "Maps bridged extension surfaces into host-rendered web views.",
+    "surfaces": [{ "kind": "override", "region": "header" }]
+  }
+}

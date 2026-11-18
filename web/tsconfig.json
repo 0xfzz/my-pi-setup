@@ -8,7 +8,8 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./core/client/*"]
+      "@/*": ["./core/client/*"],
+      "@pi-web/host-ui": ["./core/client/host/ui.ts"]
     },
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,

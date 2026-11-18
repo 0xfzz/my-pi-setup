@@ -2,11 +2,11 @@
 
 > Part of [pi-workflow-extensions](../../README.md). Plan for making plugin projects externally installable, protocol-only consumers with optional extension bridges.
 >
-> **Execution disclaimer.** The source of truth for the shipped bridge is [PRD: Pi Web Bridge Protocol](./pi-web-bridge-protocol.md); the earlier increment is recorded in [its implementation plan](./pi-web-bridge-protocol-implementation-plan.md). This document records the independent-plugin increment: all decision gates in §8 were resolved before code, and §12 records the committed implementation and its residual compatibility path.
+> **Execution disclaimer.** The source of truth for the shipped bridge is [PRD: Pi Web Bridge Protocol](./pi-web-bridge-protocol.md); the earlier increment is recorded in [its implementation plan](./pi-web-bridge-protocol-implementation-plan.md). This document records the independent-plugin increment: all decision gates in §8 were resolved before code, and §12 records the committed implementation, including the completed first-party migration.
 
 | Field | Value |
 | --- | --- |
-| **Status** | Implemented — Phases 0–6 committed (Phase 5 shims documented in §12) |
+| **Status** | Implemented — Phases 0–6 complete; all first-party browser halves load from their own manifests |
 | **Owner** | Faiz |
 | **Builds on** | [bridge protocol PRD](./pi-web-bridge-protocol.md), [web plugin architecture](../web-plugin-architecture.md), [pi-web](../pi-web.md), [plugin platform PRD](./pi-web-plugin-platform.md) |
 | **Gate** | `npm run tidy` green at every phase; browser-runtime e2e green when browser loading changes |
@@ -62,7 +62,7 @@ Every new plugin project has this shape. Names are proposed and frozen in Phase 
 
 ```text
 my-plugin/
-├── package.json              # depends only on @pi/web-bridge (+ declared build deps)
+├── package.json              # depends only on @pi-web/bridge (+ declared build deps)
 ├── pi-web-plugin.json        # manifest: browser, optional extension, bridge slice
 ├── browser/
 │   └── index.ts              # export function mount(el, ctx): () => void
@@ -89,7 +89,7 @@ Pi built-ins ────────────┤                            
                                                    Bridge Protocol
                                                           │
                                                           ▼
-                                          @pi/web-bridge SDK (public)
+                                          @pi-web/bridge SDK (public)
                                                           │
                                                           ▼
                                       plugin browser half / extension half
@@ -101,7 +101,7 @@ Pi built-ins ────────────┤                            
 
 | Component | Owns | Must not own |
 | --- | --- | --- |
-| `@pi/web-bridge` | envelope, version, errors, capabilities, client factory, publisher, schemas, browser/extension mount types | transport servers, pi imports, React components, plugin-specific code |
+| `@pi-web/bridge` | envelope, version, errors, capabilities, client factory, publisher, schemas, browser/extension mount types | transport servers, pi imports, React components, plugin-specific code |
 | Core bridge host | catalog, capability grants, bindings, message validation, relay | plugin-specific components, CSS, IDs, behavior |
 | Plugin browser half | views, styling, browser logic, subscriptions, owner-scoped registrations | pi behavior, core internals, security decisions |
 | Plugin extension half | behavior, state production, custom message publishing, action handling | browser code, web descriptors, core imports |
@@ -227,7 +227,7 @@ Each package is one commit with `npm run tidy` green. Revert the package commit 
 - Move or generate the pure protocol modules into the SDK: envelope, version, errors, catalog types, capability types, client factory, publisher, manifest extension and browser/extension mount contracts.
 - Make `web/core/protocol/` re-export the SDK so existing imports keep working.
 - Add an SDK boundary test: no import of `web/core/*`, pi packages, React DOM, Fastify, or Node-only modules.
-- Add `@pi/web-bridge` as the allowed import in new plugin projects; keep `PUBLIC_PROTOCOL_PATHS` as a deprecated compatibility list until Phase 5.
+- Add `@pi-web/bridge` as the allowed import in new plugin projects; keep `PUBLIC_PROTOCOL_PATHS` as a deprecated compatibility list until Phase 5.
 
 **Exit check**
 
@@ -286,14 +286,16 @@ Each package is one commit with `npm run tidy` green. Revert the package commit 
 
 - Move one existing browser plugin to an external discovery root while keeping its repository package as the install artifact.
 - Remove its import from `web/plugins/browser-halves.ts` and any plugin-specific page registration.
-- Repeat for Files and Router once the first migration is stable.
-- Mark `web/plugins/browser-halves.ts` static definitions as deprecated compatibility shims.
-- Narrow `PUBLIC_PROTOCOL_PATHS` to the SDK for new projects; keep an explicit legacy allowance for unmigrated first-party plugins.
+- Repeat for Files, Artifacts, Router, Web Bridge, Plugin Manager and MCP Manager once the first migration is stable.
+- Generate the browser import map from one host-module registry; keep `index.html` a template with a placeholder.
+- Move plugin-owned CSS out of the shared client stylesheet and into each plugin's bundle.
+- Narrow `PUBLIC_PROTOCOL_PATHS` to the SDK for new projects; first-party browser halves use the SDK plus the generated `@pi-web/host-ui` runtime module.
 
 **Exit check**
 
-- The migrated plugins activate from their manifests only.
+- Each first-party plugin activates from its own manifest and bundled `main.browser` asset.
 - `web/core/` and composition roots contain no migrated plugin ID, component or CSS.
+- Browser half metadata marks repo-owned halves as core plugins for grant and safe-mode decisions.
 
 ### Phase 6 — Documentation and retirement
 
@@ -314,7 +316,7 @@ Each package is one commit with `npm run tidy` green. Revert the package commit 
 
 | ID | Criterion | Verification |
 | --- | --- | --- |
-| AC1 | An external plugin imports only `@pi/web-bridge` | SDK boundary test and plugin import check |
+| AC1 | An external plugin imports only `@pi-web/bridge` | SDK boundary test and plugin import check |
 | AC2 | A browser half mounts from an arbitrary trusted directory with no repository edit | temp-directory Playwright e2e |
 | AC3 | A hash change revokes the browser grant until reconfirmed | browser-runtime e2e |
 | AC4 | Safe mode and disable/quarantine remove only that plugin's contributions | browser-runtime e2e |
@@ -337,7 +339,7 @@ Each package is one commit with `npm run tidy` green. Revert the package commit 
 | Dynamic message registration weakens the frozen catalog | Namespaced names, schemas, capability gate, core names remain immutable |
 | Custom messages become a side door around capabilities | Check declarations at client, relay, and host; audit denied calls |
 | Browser code remains local code execution | Trusted tier only, hash-bound operator confirmation, safe mode, breaker |
-| Static compatibility path duplicates discovery logic | Deprecate in Phase 5 and dogfood a real external plugin |
+| Static compatibility path duplicates discovery logic | Removed: all first-party browser halves now load from manifests |
 | SDK extraction creates two protocol implementations | SDK is the single implementation; `web/core/protocol/` only re-exports |
 
 Each phase is committed separately. Rollback is `git revert <phase-commit>`; dynamic registrations, routes and manifest fields disappear with their phase. Existing grants remain in operator state and are simply unused after rollback.
@@ -348,7 +350,7 @@ Resolved 2026-11-18. The recommendation in each row is now the binding decision.
 
 | ID | Question | Decision |
 | --- | --- | --- |
-| D1 | Where does the standalone SDK live and what is its package name? | New top-level `packages/pi-web-bridge`, published as `@pi/web-bridge`; `web/core/protocol/` re-exports it |
+| D1 | Where does the standalone SDK live and what is its package name? | New top-level `packages/pi-web-bridge`, published as `@pi-web/bridge`; `web/core/protocol/` re-exports it |
 | D2 | Should plugin-specific messages be first-class catalog extensions? | Yes: namespaced `<plugin-id>.*` messages with plugin-owned schemas |
 | D3 | Should a browser half ship one bundle or arbitrary relative assets? | One bundled ES module per plugin initially; add an asset manifest later if needed |
 | D4 | One generic bridge extension or one bridge extension per plugin? | Keep the generic `extensions/bridge.ts` relay; each plugin ships only a normal Pi extension half |
@@ -378,7 +380,7 @@ Not covered: untrusted/sandboxed plugin execution, arbitrary multi-file browser 
 
 ## 10. Removal
 
-Disabling a plugin stops its browser half, unregisters its custom messages, and restores built-in regions. Removing a plugin leaves its operator grant entry behind unless the plugin manager explicitly forgets it; a stale grant cannot load a missing bundle. The static compatibility registrations remain until Phase 5 and can be removed as their plugins migrate.
+Disabling a plugin stops its browser half, unregisters its custom messages, and restores built-in regions. Removing a plugin leaves its operator grant entry behind unless the plugin manager explicitly forgets it; a stale grant cannot load a missing bundle. The static browser registrations are gone; declarative descriptors remain as shadowed compatibility candidates while manifests are authoritative.
 
 ## 11. Definition of done
 
@@ -394,10 +396,13 @@ Done when AC1–AC14 pass, all §8 decisions are resolved, at least one real plu
 | 3 | `09b3bfa` | Manifest-declared core slices are enforced by client, bindings and host with named denials and audit. |
 | 2 | `bfe5011` | External browser halves load from authenticated, hash-bound, contained asset routes. |
 | 4 | `f8a59b8` | Plugin-owned namespaced messages flow through the SDK registry, kernel lifecycle, bindings, action bus and generic bridge relay. |
-| 5 | `f14185c` | The fixture plugin loads from an external discovery root; new projects import only `@pi/web-bridge`; static halves are deprecated compatibility shims. |
+| 5 | `f14185c` | The fixture plugin loads from an external discovery root; new projects import only `@pi-web/bridge`; static halves are deprecated compatibility shims. |
+| 5 (completion) | final migration | All first-party browser halves and pages load from manifest-declared bundles; the import map and host runtime shims are generated from one registry. |
 
 **Verified.** `npm run tidy` and `npm run lint:dead` pass; both `web/core/e2e/browser-runtime.e2e.mjs` and `web/core/e2e/browser-loading.e2e.mjs` pass with the external fixture; generated protocol catalog and parity docs are unchanged.
 
 **External install.** Put a trusted plugin package under a directory listed in `PI_WEB_PLUGIN_ROOTS` (colon-separated absolute paths). Its `package.json` may declare `pi.webPlugins`; its `pi-web-plugin.json` declares `main.browser` as a bundled `.js`/`.mjs` entry. The plugin starts disabled: enable it from the plugin manager, then confirm the hash-bound browser-code prompt. `--experimental-strip-types` is required only for SDK source consumers in this repository; shipped plugin bundles are ordinary JavaScript.
 
-**Compatibility path and removal condition.** `web/plugins/browser-halves.ts` still statically mounts Files, Artifacts, Router and Web Bridge because their bundles currently depend on shared React/panel-registry module instances. They are marked `@deprecated`; remove each static entry only after that plugin ships a self-contained browser bundle and its manifest activates it from discovery. Sandboxed/untrusted browser code, multi-file browser asset graphs and hot reload with state preservation remain out of scope.
+**Shared browser runtime.** First-party bundles import React, the JSX runtime, the SDK, icons and file-viewer packages through the generated import map. `web/plugin-host-specifiers.mjs` is the single registry for those specifiers: `web/build-host-modules.mjs` emits the runtime/shims, `web/build-plugin-halves.mjs` externalizes them for plugin bundles, and `web/build.mjs` writes the import map into the built `index.html`. The composition root starts only the discovery runtime. Plugin-owned CSS is injected by each half and removed on unmount.
+
+**Compatibility path.** Declarative descriptors remain in `WEB_PLUGINS` as compatibility candidates, but real manifests sort ahead of them and contribute the descriptor used by the host. Sandboxed/untrusted browser code, multi-file browser asset graphs and hot reload with state preservation remain out of scope.

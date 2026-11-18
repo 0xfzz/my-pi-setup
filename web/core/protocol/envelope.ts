@@ -5,5 +5,5 @@ export {
   ENVELOPE_MAX_DEPTH,
   UNSAFE_KEYS,
   parseEnvelope,
-} from "@pi/web-bridge";
-export type { BridgeEnvelope, EnvelopeValidation } from "@pi/web-bridge";
+} from "@pi-web/bridge";
+export type { BridgeEnvelope, EnvelopeValidation } from "@pi-web/bridge";

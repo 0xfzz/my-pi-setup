@@ -1,0 +1,17 @@
+{
+  "id": "core.plugin-manager",
+  "name": "Plugins",
+  "version": "1.0.0",
+  "engines": { "piWeb": "^1.0.0", "sdk": "^1.0.0" },
+  "main": { "browser": "./dist/browser.js" },
+  "trust": "trusted",
+  "capabilities": ["ui.slots"],
+  "activation": ["onStartup"],
+  "contributes": {
+    "title": "Plugins",
+    "extension": "web-core.plugin-manager",
+    "icon": "puzzle-piece",
+    "description": "Every installed plugin with its kernel state, capabilities and mounted routes; enable, disable, reload or clear a quarantine.",
+    "surfaces": [{ "kind": "page", "path": "/plugins/core.plugin-manager" }]
+  }
+}

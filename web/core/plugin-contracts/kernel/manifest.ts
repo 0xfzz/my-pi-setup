@@ -3,7 +3,7 @@
  * any plugin code. Validation is total: every field is either accepted in its
  * declared shape or the whole manifest is rejected with a named error.
  */
-import { lookupMessage } from "@pi/web-bridge";
+import { lookupMessage } from "@pi-web/bridge";
 import { TRUSTED_ONLY, validateCapabilities, type Capability } from "./capabilities.ts";
 import { isAllowedBrowserEntry } from "../../protocol/manifest-extension.ts";
 import { isValidRange } from "./semver.ts";

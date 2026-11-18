@@ -6,7 +6,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
-import type { PluginMessageRegistry } from "@pi/web-bridge";
+import type { PluginMessageRegistry } from "@pi-web/bridge";
 import type { DirectorySurface } from "../adapters/directory.ts";
 import type { SessionSurface } from "../adapters/session.ts";
 import { createDirectoryBinding } from "../protocol/bindings/directory.ts";

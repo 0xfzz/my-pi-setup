@@ -9,5 +9,5 @@ export {
   legacyWires,
   lookupMessage,
   protocolInvoke,
-} from "@pi/web-bridge";
-export type { MessageDefinition, MessageKind, MessageName } from "@pi/web-bridge";
+} from "@pi-web/bridge";
+export type { MessageDefinition, MessageKind, MessageName } from "@pi-web/bridge";

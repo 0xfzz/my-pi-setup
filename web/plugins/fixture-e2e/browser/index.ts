@@ -2,7 +2,7 @@
  * Independent fixture plugin: its only contact with the host is mount(el, ctx)
  * and the public registration context. No web/core branch knows this id.
  */
-import type { WebPluginContext } from "../../../core/client/plugin-system/browser-loader.ts";
+import type { WebPluginContext } from "@pi-web/bridge";
 
 const RESTYLED = "fixture-transcript-restyled";
 

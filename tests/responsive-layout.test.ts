@@ -7,6 +7,7 @@ import { COMPACT_VIEWPORT_WIDTH, SHORT_LANDSCAPE_HEIGHT, isCompactViewport } fro
 const source = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8");
 const baseCss = source("../web/core/client/base.css");
 const pluginsCss = source("../web/core/client/plugin-system/plugins.css");
+const filesCss = source("../web/plugins/files/files.css");
 const routerCss = source("../web/plugins/router/router.css");
 const shell = source("../web/core/client/shell.tsx");
 
@@ -42,10 +43,10 @@ test("bottom sheets never use bare 100vw and fixed overlays follow the visual vi
     const block = new RegExp(`${selector}\\s*\\{[^}]*--app-viewport-(top|height)`);
     assert.match(baseCss, block, selector);
   }
-  for (const selector of [".app-side-panel-scrim", ".app-side-panel.files-panel"]) {
-    const block = new RegExp(`${selector.replace(/\./g, "\\.")}\\s*\\{[^}]*--app-viewport-(top|height)`);
-    assert.match(pluginsCss, block, selector);
-  }
+  const scrim = new RegExp(".app-side-panel-scrim\\s*\\{[^}]*--app-viewport-(top|height)");
+  assert.match(pluginsCss, scrim, ".app-side-panel-scrim");
+  const filesPanel = new RegExp(".app-side-panel\\.files-panel\\s*\\{[^}]*--app-viewport-(top|height)");
+  assert.match(filesCss, filesPanel, ".app-side-panel.files-panel");
 });
 
 test("coarse pointers get 44px targets, 16px inputs and readable minimum type", () => {

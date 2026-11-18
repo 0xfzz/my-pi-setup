@@ -38,3 +38,8 @@ export function registerPluginPanel(id: string, component: HostPanelComponent): 
 export function getPluginPanel(id: string): HostPanelComponent | undefined {
   return panels.get(id);
 }
+
+/** Remove a plugin's panel when its browser half unmounts. */
+export function unregisterPluginPanel(id: string): void {
+  panels.delete(id);
+}

@@ -1,0 +1,27 @@
+{
+  "id": "artifacts",
+  "name": "Artifacts",
+  "version": "1.0.0",
+  "engines": { "piWeb": "^1.0.0", "sdk": "^1.0.0" },
+  "main": { "browser": "./dist/browser.js" },
+  "trust": "trusted",
+  "capabilities": ["ui.slots"],
+  "activation": ["onStartup"],
+  "contributes": {
+    "title": "Artifacts",
+    "extension": "artifacts",
+    "icon": "files",
+    "description": "Persisted workspace artifacts catalog and editor.",
+    "ui": [
+      {
+        "id": "catalog",
+        "component": "ui.plugin-view.v1",
+        "view": "artifacts",
+        "scope": "session",
+        "visibleWhen": "has-view",
+        "placement": { "kind": "region", "region": "floating", "maxWidth": 400, "maxHeight": 360 }
+      }
+    ],
+    "surfaces": [{ "kind": "sidebar" }]
+  }
+}

@@ -11,7 +11,7 @@ import FileViewer, { useFileViewerState } from "@file-viewer/react";
 import { setDefaultFileViewerAssetBaseUrl, type FileViewerOptions } from "@file-viewer/core";
 import officePreset from "@file-viewer/preset-office";
 import { downloadUrl, type FileRef } from "./lib/files-api.ts";
-import { LoadingSpinner } from "../../core/client/plugin-system/LoadingSpinner.tsx";
+import { LoadingSpinner } from "@pi-web/host-ui";
 
 // The bundled default derives the asset base from import.meta.url, which
 // esbuild rewrites to a chunk URL: workers then 404 at the site root. Pin it

@@ -1,7 +1,6 @@
-// Client composition root: wires the core shell to the first-party plugin
-// panel registrations before the first render. This file lives OUTSIDE
-// web/core so the core client never imports a plugin — panels self-register
-// into the core plugin-system registry from their own browser halves.
+// Client composition root: starts the core shell and the browser-half runtime.
+// Plugins register their own panels and pages from manifest-discovered bundles;
+// this file lives OUTSIDE web/core so the core client never imports a plugin.
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -11,12 +10,8 @@ import { AppShell } from "./core/client/shell.tsx";
 import { RequestLoading } from "./core/client/request-loading.tsx";
 import { initTheme } from "./core/client/theme.ts";
 import { installBrowserLogging } from "./core/client/logging.ts";
-// Plugin-owned browser halves register their own panels; core only provides
-// the registry and context (web/core has no plugin-specific import).
 import { pluginProtocolClient } from "./core/client/protocol-client.ts";
 import { mountPluginBrowserHalves } from "./plugins/browser-halves.ts";
-// Side-effect import: registers the MCP manager bespoke page.
-import "./plugins/pages.tsx";
 
 // Before the first paint: the theme is on <html> before React renders.
 initTheme();

@@ -5,7 +5,7 @@
  * injected, so the same logic runs in production (a native dynamic import of
  * the manifest's `main.server`) and in tests (fakes).
  */
-import type { PluginMessageRegistry } from "@pi/web-bridge";
+import type { PluginMessageRegistry } from "@pi-web/bridge";
 import { AuditLog } from "./audit.ts";
 import { CircuitBreaker } from "./breaker.ts";
 import { engineMismatch } from "./compat.ts";

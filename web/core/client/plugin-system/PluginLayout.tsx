@@ -4,7 +4,7 @@
 
 import type { WebPluginDescriptor, WebView } from "./contract.ts";
 import { ArrowLeft } from "@phosphor-icons/react";
-import { getPluginPage } from "./page-registry.ts";
+import { getPluginPage } from "@pi-web/host-ui";
 import { PluginViewRenderer } from "./PluginViewRenderer.tsx";
 import { PluginActions } from "./PluginActions.tsx";
 

@@ -2,9 +2,16 @@
 // selected session id; the server resolves the working directory and pi's own
 // config surface does the read and the write.
 
-import type { PiApiName, PiApiParams, PiApiResult, PiMcpConfigState, PiMcpWriteParams } from "../../../core/shared/pi-api.ts";
-import { protocolClient } from "../../../core/client/protocol-client.ts";
-import type { ApiFailure, ApiResult } from "../../../core/client/plugin-system/api-client.ts";
+import {
+  protocolClient,
+  type ApiFailure,
+  type ApiResult,
+  type PiApiName,
+  type PiApiParams,
+  type PiApiResult,
+  type PiMcpConfigState,
+  type PiMcpWriteParams,
+} from "@pi-web/host-ui";
 
 export type McpFailure = ApiFailure;
 export type McpResult<T> = ApiResult<T>;

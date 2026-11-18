@@ -7,6 +7,10 @@
     "noEmit": true,
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
+    "baseUrl": ".",
+    "paths": {
+      "@pi-web/host-ui": ["./packages/pi-web-host-ui/index.ts"]
+    },
     "types": ["node"]
   },
   "include": ["extensions/**/*.ts", "tests/**/*.ts"]

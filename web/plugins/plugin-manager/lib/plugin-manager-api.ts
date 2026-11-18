@@ -1,17 +1,20 @@
 // Typed client for the plugin manager endpoints. Pure shaping + fetch, no React,
 // so the page stays a view over the kernel's answers.
 
-import { getJson, postJson, type ApiFailure, type ApiResult } from "../../../core/client/plugin-system/api-client.ts";
 import {
-  PLUGIN_MANAGER_API,
+  getJson,
   PLUGIN_MANAGER_ACTIONS,
+  PLUGIN_MANAGER_API,
+  postJson,
+  type ApiFailure,
+  type ApiResult,
   type PluginCapabilityAction,
   type PluginManagerAction,
   type PluginManagerCommand,
   type PluginManagerOutcome,
   type PluginManagerReport,
   type PluginManagerRow,
-} from "../../../core/shared/plugin-manager.ts";
+} from "@pi-web/host-ui";
 
 export type {
   PluginCapabilityAction,
