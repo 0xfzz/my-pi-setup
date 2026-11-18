@@ -1,0 +1,14 @@
+{
+  "name": "@pi-web-plugin/fixture-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Independent fixture project used by the browser-runtime Playwright checks.",
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "node ../../../scripts/check-web-plugin.mjs ."
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

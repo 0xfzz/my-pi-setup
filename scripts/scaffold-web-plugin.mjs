@@ -16,7 +16,8 @@ if (id === undefined) {
   console.error("usage: node --experimental-strip-types scripts/scaffold-web-plugin.mjs <id> <dir>");
   process.exit(1);
 }
-const result = scaffoldPluginProject(id, process.argv[4] ?? id);
+const checkerPath = join(rootDir, "scripts", "check-web-plugin.mjs");
+const result = scaffoldPluginProject(id, process.argv[4] ?? id, { checkerPath });
 if (!result.ok) {
   console.error(result.error);
   process.exit(1);

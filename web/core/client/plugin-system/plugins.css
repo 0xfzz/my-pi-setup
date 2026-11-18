@@ -2603,3 +2603,38 @@
   text-overflow: clip;
   overflow: visible;
 }
+
+/* Trusted browser-half operator confirmation. Text only, no plugin markup. */
+.browser-grant-dialog {
+  position: fixed;
+  z-index: 2000;
+  inset: 15vh auto auto 50%;
+  transform: translateX(-50%);
+  max-width: min(36rem, 92vw);
+  padding: 1.25rem;
+  border: 1px solid var(--border, #475569);
+  border-radius: 0.75rem;
+  background: var(--background, #fff);
+  color: var(--foreground, #0f172a);
+  box-shadow: 0 18px 60px rgb(0 0 0 / 35%);
+}
+.browser-grant-details {
+  margin: 0 0 1rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+.browser-grant-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+.browser-grant-allow,
+.browser-grant-refuse {
+  padding: 0.45rem 0.9rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+.browser-grant-allow { background: #2563eb; border: 0; color: white; }
+.browser-grant-refuse { background: transparent; border: 1px solid currentColor; color: inherit; }
+

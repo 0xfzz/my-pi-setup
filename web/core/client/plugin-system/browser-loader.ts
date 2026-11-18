@@ -5,12 +5,12 @@
 import type { ProtocolClient } from "../protocol-client.ts";
 import {
   BROWSER_MAX_BREAKER,
-  browserAllowedInSafeMode,
   browserFailureDecision,
   browserGrantDecision,
-  browserRegistrationRefusal,
+  browserMountRefusal,
   type BrowserGrant,
 } from "../../protocol/browser-runtime.ts";
+import type { BrowserContributionRegistry } from "./browser-contributions.ts";
 
 export interface WebPluginContext {
   readonly protocol: ProtocolClient;
@@ -21,6 +21,9 @@ export interface WebPluginContext {
     text(value: string): Text;
     clear(element: HTMLElement): void;
   };
+  /** Extension-point registration for this half; protected points are refused. */
+  readonly register: (point: string, key: string, value: unknown) => boolean;
+  readonly contributions: BrowserContributionRegistry;
 }
 
 export interface BrowserModule {
@@ -39,6 +42,9 @@ export interface BrowserRegistration {
   readonly safeMode?: boolean;
   readonly corePlugin?: boolean;
   readonly point?: string;
+  readonly disabled?: boolean;
+  readonly quarantined?: boolean;
+  readonly failedLoad?: boolean;
 }
 
 export type BrowserLoadResult =
@@ -54,13 +60,8 @@ export interface BrowserMountHost {
 
 /** The loader never executes a browser half without a matching grant. */
 export function loadBrowserHalf(registration: BrowserRegistration): BrowserLoadResult {
-  const refusal = registration.point === undefined
-    ? undefined
-    : browserRegistrationRefusal(registration.point);
+  const refusal = browserMountRefusal(registration);
   if (refusal !== undefined) return { ok: false, reason: refusal, kind: "refusal" };
-  if (!browserAllowedInSafeMode(registration.safeMode === true, registration.corePlugin === true)) {
-    return { ok: false, reason: "safe mode loads Pi Web Core only", kind: "refusal" };
-  }
   const decision = browserGrantDecision(registration);
   if (decision.kind !== "load") {
     return { ok: false, reason: decision.kind === "confirm" ? "operator confirmation required" : decision.reason, kind: decision.kind };
@@ -78,7 +79,10 @@ export function mountBrowserHalf(
   failures = 0,
 ): BrowserLoadResult {
   const loaded = loadBrowserHalf(registration);
-  if (!loaded.ok) return loaded;
+  if (!loaded.ok) {
+    host.restoreBuiltIn();
+    return loaded;
+  }
   try {
     const cleanup = registration.module.mount(el, ctx);
     if (typeof cleanup !== "function") throw new Error("mount must return a cleanup function");

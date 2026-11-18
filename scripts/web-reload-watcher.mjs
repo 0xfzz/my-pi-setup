@@ -10,6 +10,7 @@ import { resolve } from "node:path";
 import { defaultWebUiStatePath, reloadWebUiIfChanged, webRootUrl } from "../lib/web-ui.ts";
 import { parseReloadState, repoRootFromServerDir, sourceWatchRoots, watchSources } from "../lib/web-ui-reload.ts";
 import { WebAuthConfigCache, webAuthConfigPath } from "../web/core/auth/config.ts";
+import { pluginProjectRoots } from "../lib/plugin-project.ts";
 
 const DEBOUNCE_MS = 2_000;
 /** A deferred restart is retried after this long; the blocker may close without a file save. */
@@ -66,14 +67,33 @@ async function attemptReload() {
   }
 }
 
+// Core inputs still need a rebuild/restart. External plugin projects have
+// their own build: a page reload is enough to fetch their new browser module,
+// so they are watched separately and never restart the server.
 const watcher = watchSources({
-  roots: sourceWatchRoots(serverDir, repoRootFromServerDir(serverDir), process.env),
+  roots: sourceWatchRoots(serverDir, repoRootFromServerDir(serverDir), { ...process.env, PI_WEB_PLUGIN_ROOTS: undefined }),
   debounceMs: DEBOUNCE_MS,
   onChange: () => void attemptReload(),
 });
 
+const pluginWatcher = watchSources({
+  roots: pluginProjectRoots(process.env),
+  debounceMs: DEBOUNCE_MS,
+  onChange: () => void notifyPluginReload(),
+});
+
+async function notifyPluginReload() {
+  try {
+    await notifyReloading("Plugin modules changed");
+  } catch (error) {
+    console.warn("[web watcher] plugin reload notice failed; falling back to a source reload", error);
+    await attemptReload();
+  }
+}
+
 function stop() {
   watcher.close();
+  pluginWatcher.close();
   if (retryTimer !== undefined) clearTimeout(retryTimer);
   process.exit(0);
 }

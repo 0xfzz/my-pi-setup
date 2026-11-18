@@ -1,0 +1,11 @@
+{
+  "id": "fixture.e2e",
+  "name": "Browser Runtime Fixture",
+  "version": "0.1.0",
+  "engines": { "piWeb": "^1.0.0", "sdk": "^1.0.0" },
+  "main": { "browser": "./browser/index.ts" },
+  "trust": "trusted",
+  "capabilities": ["ui.replace:chat.composer", "ui.route", "commands", "keys", "ui.theme", "events.subscribe:ui.status.changed"],
+  "activation": ["onStartup"],
+  "contributes": { "title": "Browser Runtime Fixture" }
+}

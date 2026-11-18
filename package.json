@@ -69,6 +69,8 @@
     "prepare": "simple-git-hooks",
     "tidy": "npm run typecheck && npm run lint:smell && npm test && npm run test:web",
     "test:web": "npm --prefix web run check && npm --prefix web test",
+    "plugin:scaffold": "node --experimental-strip-types --no-warnings scripts/scaffold-web-plugin.mjs",
+    "plugin:check": "node --experimental-strip-types --no-warnings scripts/check-web-plugin.mjs",
     "bench:web": "npm --prefix web run bench"
   },
   "peerDependencies": {

@@ -18,6 +18,18 @@ import { mountPluginBrowserHalves } from "./plugins/browser-halves.ts";
 // Side-effect import: registers the MCP manager bespoke page.
 import "./plugins/pages.tsx";
 
+// Before the first paint: the theme is on <html> before React renders.
+initTheme();
+// Capture native fetch and console before auth wraps either one. Browser
+// warnings and crashes then reach the server log without a retry loop.
+installBrowserLogging();
+// Wraps window.fetch so a request that finds the access token expired refreshes the
+// session and retries, before any component issues its first request.
+getAuth();
+
+// The composition root never calls a plugin's mount directly: the runtime
+// checks trust, safe mode, lifecycle, hash-bound grants and point rules, then
+// drives loadBrowserHalf/mountBrowserHalf with a built-in restoring host.
 mountPluginBrowserHalves(document.body, {
   protocol: new ProtocolClient({ sessionId: "browser" }),
   host: {},
@@ -28,15 +40,6 @@ mountPluginBrowserHalves(document.body, {
     clear: (element) => { element.replaceChildren(); },
   },
 });
-
-// Before the first paint: the theme is on <html> before React renders.
-initTheme();
-// Capture native fetch and console before auth wraps either one. Browser
-// warnings and crashes then reach the server log without a retry loop.
-installBrowserLogging();
-// Wraps window.fetch so a request that finds the access token expired refreshes the
-// session and retries, before any component issues its first request.
-getAuth();
 
 const rootElement = document.getElementById("root");
 if (rootElement === null) {
